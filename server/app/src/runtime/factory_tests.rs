@@ -1275,7 +1275,7 @@ async fn signal_connector_recovers_after_the_original_deadline_with_bounded_read
               attempts: 1,
               elapsed_millis: 5,
               tokens: 1,
-              cost_micro_units: 1,
+              cost_micro_units: 1.into(),
               output_bytes: 1,
             },
           )
@@ -1334,6 +1334,7 @@ fn qualified_codex_profile() -> FactoryCodexBuildProfile {
 
   let grants: FactoryPermissionSet = serde_json::from_value(grants).unwrap();
   FactoryCodexBuildProfile {
+    authentication: octacity_server_application::FactoryCodexAuthentication::default(),
     mcp_configurations: vec![],
     toolchain: FactoryTaskToolchain {
       plugin: managed::reference("codex", "0.5.0"),
@@ -1393,6 +1394,60 @@ fn codex_catalog_document(profile: &FactoryCodexBuildProfile) -> serde_json::Val
 }
 
 #[test]
+fn deployment_mcp_declarations_use_the_shared_owner_to_pin_authenticated_peers() {
+  let profile = qualified_codex_profile();
+  let key = |value| FactoryKey::new(value).unwrap();
+  let mut document = codex_catalog_document(&profile);
+  document["projects"][0]["references"] = serde_json::json!([
+    {"kind":"node_capability", "alias":"native-runtime", "reference":profile.toolchain.executable}
+  ]);
+  let server = serde_json::json!({"transport":"http", "url":"http://127.0.0.1:8444/mcp/issues",
+    "bearer_token_env_var":"ISSUE_MCP_TOKEN", "enabled_tools":["read_issue"]});
+  let authorization = serde_json::json!({"credential_profile":"mcp-reader",
+    "secret":{"provider":"agent-private","reference":"ISSUE_MCP_TOKEN"},
+    "environment":"ISSUE_MCP_TOKEN", "purpose":"mcp_read",
+    "resource":managed::reference("project-issues", "v1")});
+  let declaration = serde_json::json!({"identity":"issues", "version":"v1",
+    "server":server, "authorization":authorization});
+  document["codex"][0]["mcp_configurations"] = serde_json::json!([declaration]);
+  let parameters = FlowDataSchema::new(
+    key("parameters"),
+    key("v1"),
+    FlowValueSchema::Object {
+      fields: Default::default(),
+    },
+  )
+  .unwrap();
+  document["projects"][0]["role_profiles"] = serde_json::json!({"native-runtime":{
+    "ceiling":{"name":"Native review", "instructions":[], "toolchain":profile.toolchain,
+      "model_parameters":{}, "skills":{}, "context_requirements":[],
+      "build_configuration":profile.build_configuration, "credential_purpose":"evaluator",
+      "permissions":profile.project_permissions,
+      "budget":BudgetLimit::new(1, 1000, 100, 100, 1024).unwrap()},
+    "parameters":parameters, "public_environment":{}, "enforcement":PermissionCategory::ALL,
+    "settings_support":{"mcp_transports":["http"], "mcp_executables":{},
+      "authenticated_mcp":{"issues":declaration}}}});
+  let parsed = FactoryRuntimeProfileCatalog::parse_json(&serde_json::to_vec(&document).unwrap())
+    .expect("a private installation declares exact peers without duplicating their canonical serialization");
+  let expected = FactoryMcpConfiguration::new(key("issues"), key("v1"), serde_json::from_value(server).unwrap(), None)
+    .unwrap()
+    .with_authorization(serde_json::from_value(authorization).unwrap())
+    .unwrap();
+  assert_eq!(parsed.codex[0].mcp_configurations.len(), 1);
+  assert_eq!(parsed.codex[0].mcp_configurations[0].reference(), expected.reference());
+  assert_eq!(
+    parsed.projects[0]
+      .1
+      .runtime_settings_support(&key("native-runtime"))
+      .unwrap()
+      .authenticated_mcp[&key("issues")],
+    expected
+  );
+  document["codex"][0]["mcp_configurations"][0]["authorization"]["environment"] = serde_json::json!("OTHER_SECRET");
+  assert!(FactoryRuntimeProfileCatalog::parse_json(&serde_json::to_vec(&document).unwrap()).is_err());
+}
+
+#[test]
 fn deployment_codex_mcp_configuration_keeps_its_exact_content_pin() {
   use octacity_server_application::{FactoryCodexMcpConfiguration, FactoryCodexMcpServer};
   let key = |value: &str| FactoryKey::new(value).unwrap();
@@ -1414,6 +1469,34 @@ fn deployment_codex_mcp_configuration_keeps_its_exact_content_pin() {
   let parsed = FactoryRuntimeProfileCatalog::parse_json(&serde_json::to_vec(&document).unwrap()).unwrap();
   assert_eq!(parsed.codex[0].mcp_configurations[0].reference(), installed.reference());
   document["codex"][0]["mcp_configurations"][0]["server"]["command"] = serde_json::json!("/usr/bin/false");
+  assert!(FactoryRuntimeProfileCatalog::parse_json(&serde_json::to_vec(&document).unwrap()).is_err());
+  document["codex"][0]["mcp_configurations"][0]["identity"] = serde_json::json!("installed-reader");
+  document["codex"][0]["mcp_configurations"][0]["version"] = serde_json::json!("v1");
+  assert!(
+    FactoryRuntimeProfileCatalog::parse_json(&serde_json::to_vec(&document).unwrap()).is_err(),
+    "a substituted retained pin cannot fall back to a fresh declaration"
+  );
+}
+
+#[tokio::test]
+async fn deployment_native_login_is_explicit_and_part_of_the_installed_task_pin() {
+  use octacity_server_application::FactoryCodexAuthentication;
+  let profile = qualified_codex_profile();
+  let mut document = codex_catalog_document(&profile);
+  let legacy = FactoryRuntimeProfileCatalog::parse_json(&serde_json::to_vec(&document).unwrap()).unwrap();
+  assert_eq!(legacy.codex[0].authentication, FactoryCodexAuthentication::ApiKey);
+  let legacy_pin = legacy.codex[0].task_digest();
+  document["codex"][0]["authentication"] = serde_json::json!("native_login_file");
+  let native = FactoryRuntimeProfileCatalog::parse_json(&serde_json::to_vec(&document).unwrap()).unwrap();
+  assert_eq!(
+    native.codex[0].authentication,
+    FactoryCodexAuthentication::NativeLoginFile
+  );
+  assert_eq!(
+    native.codex[0].task_digest(),
+    FactoryCodexAuthentication::NativeLoginFile.task_digest(legacy_pin)
+  );
+  document["codex"][0]["authentication"] = serde_json::json!("ambient_login");
   assert!(FactoryRuntimeProfileCatalog::parse_json(&serde_json::to_vec(&document).unwrap()).is_err());
 }
 

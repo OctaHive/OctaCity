@@ -342,7 +342,7 @@ impl JevDecisionSignalProvider {
       attempts: 1,
       elapsed_millis: wire.latency_ms,
       tokens,
-      cost_micro_units,
+      cost_micro_units: cost_micro_units.into(),
       output_bytes: response_bytes,
     };
     if usage.validate(request.request().budget()).is_err() {

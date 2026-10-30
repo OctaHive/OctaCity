@@ -207,7 +207,7 @@ pub fn configured_phase_pool_input(
       attempts: budget.max_attempts(),
       elapsed_millis: budget.max_elapsed_millis(),
       tokens: budget.max_tokens(),
-      cost_micro_units: budget.max_cost_micro_units(),
+      cost_micro_units: budget.max_cost_micro_units().into(),
       output_bytes: budget.max_output_bytes(),
     },
   })
@@ -254,7 +254,7 @@ pub fn derive_phase_pool_entry(
     attempts: budget.max_attempts(),
     elapsed_millis: budget.max_elapsed_millis(),
     tokens: budget.max_tokens(),
-    cost_micro_units: budget.max_cost_micro_units(),
+    cost_micro_units: budget.max_cost_micro_units().into(),
     output_bytes: budget.max_output_bytes(),
   };
   if &settings.policy != policy
@@ -501,7 +501,7 @@ pub fn phase_pool_run_budget_ready(entry: &PhasePoolEntry, snapshot: &FactoryRun
   usage.attempts < limit.max_attempts()
     && usage.elapsed_millis < limit.max_elapsed_millis()
     && usage.tokens < limit.max_tokens()
-    && usage.cost_micro_units < limit.max_cost_micro_units()
+    && usage.cost_micro_units.known_micro_units() < limit.max_cost_micro_units()
     && usage.output_bytes < limit.max_output_bytes()
     && reserve_phase_budget(usage, entry.input.reservation, limit).is_some()
 }

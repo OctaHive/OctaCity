@@ -188,7 +188,7 @@ fn reserved_budget(budget: BudgetLimit) -> BudgetUsage {
     attempts: 1,
     elapsed_millis: budget.max_elapsed_millis(),
     tokens: budget.max_tokens(),
-    cost_micro_units: budget.max_cost_micro_units(),
+    cost_micro_units: budget.max_cost_micro_units().into(),
     output_bytes: budget.max_output_bytes(),
   }
 }

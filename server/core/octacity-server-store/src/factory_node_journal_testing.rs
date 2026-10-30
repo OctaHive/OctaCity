@@ -739,7 +739,7 @@ fn arbitrary_configured_pools_reconstruct_frozen_inputs_and_reject_caller_suppli
           attempts: 1,
           elapsed_millis: 1000,
           tokens: 100,
-          cost_micro_units: 1000,
+          cost_micro_units: 1000.into(),
           output_bytes: 10000,
         },
       };

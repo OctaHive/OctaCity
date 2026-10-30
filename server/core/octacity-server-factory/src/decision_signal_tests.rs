@@ -242,7 +242,7 @@ fn result(
       attempts: budget.max_attempts().min(1),
       elapsed_millis: budget.max_elapsed_millis().min(5),
       tokens: budget.max_tokens().min(10),
-      cost_micro_units: budget.max_cost_micro_units().min(2),
+      cost_micro_units: budget.max_cost_micro_units().min(2).into(),
       output_bytes: budget.max_output_bytes().min(20),
     },
   )

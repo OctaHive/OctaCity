@@ -4,9 +4,26 @@ import { MemoryRouter } from 'react-router-dom';
 import { afterEach, expect, it } from 'vitest';
 import type { components } from '../../.generated/api/schema';
 import { triageCompletion } from '../../tests/fixtures/factoryTriage';
-import { DiagnosticRecordDetails } from './FactoryDiagnosticRecord';
+import { DiagnosticRecordDetails, SafeFactoryMetadata } from './FactoryDiagnosticRecord';
 
 afterEach(cleanup);
+it('shows unpriced monetary metadata while excluding unrelated private members', () => {
+  render(
+    <SafeFactoryMetadata
+      value={{
+        cost_micro_units: {
+          status: 'unknown',
+          known_micro_units: 7,
+          private_payload: 'private-cost-canary',
+        },
+      }}
+    />,
+  );
+  expect(screen.getByText('unknown')).toBeTruthy();
+  expect(screen.getByText('known micro units')).toBeTruthy();
+  expect(screen.getByText('7')).toBeTruthy();
+  expect(screen.queryByText('private-cost-canary')).toBeNull();
+});
 it('renders safe profile selection metadata without unknown instruction or provider content', () => {
   const reference = { project_id: 'project', id: 'profile', version: 1, digest: 'a'.repeat(64) };
   const record: components['schemas']['FactoryProfileSelectionProjection'] = {

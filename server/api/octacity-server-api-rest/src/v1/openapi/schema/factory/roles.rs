@@ -552,7 +552,7 @@ fn selection(schemas: &mut Map<String, Value>) {
   ]}));
   schemas.insert("FactoryProfileSelectionBinding".into(),object([
     ("role",schema_ref("FactoryRoleReference")),("candidates",bounded_map(object([("profile",schema_ref("FactoryRoleProfile")),("build",schema_ref("FactoryFlowBuildBinding"))], &["profile","build"]),b.role_entries)),
-    ("policy",schema_ref("FactoryProfileSelectionPolicy")),("failure",json!({"oneOf":[tagged("kind","manual_selection",[], &[]),tagged("kind","reserve_profile",[("candidate",key())], &["candidate"])]})),("selection_budget",schema_ref("FactoryBudgetUsage"))
+    ("policy",schema_ref("FactoryProfileSelectionPolicy")),("failure",json!({"oneOf":[tagged("kind","manual_selection",[], &[]),tagged("kind","reserve_profile",[("candidate",key())], &["candidate"])]})),("selection_budget",schema_ref("FactoryBudgetReservation"))
   ], &["role","candidates","policy","failure","selection_budget"]));
   schemas.insert("FactoryProfileRuleOutcome".into(),json!({"oneOf":[
     tagged("kind","matched",[("rule",non_negative_integer())], &["rule"]),tagged("kind","catch_all",[], &[]),tagged("kind","no_match",[], &[]),

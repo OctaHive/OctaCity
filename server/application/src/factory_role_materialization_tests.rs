@@ -135,6 +135,7 @@ fn fixture_for_work_mode_with_context(
   binding.result_output = key("codex-run-result");
   binding.result_tool = result_contract.map(|(_, verifier)| verifier.clone());
   let installed = FactoryCodexBuildProfile {
+    authentication: crate::FactoryCodexAuthentication::default(),
     mcp_configurations: vec![],
     toolchain: toolchain.clone(),
     build_configuration: binding.build_configuration.clone(),

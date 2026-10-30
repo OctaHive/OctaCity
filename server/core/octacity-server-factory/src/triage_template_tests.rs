@@ -7,6 +7,23 @@ fn triage_template() -> Result<FlowDefinitionTemplate, FactoryError> {
   crate::flow_test_support::supplied_triage_template()
 }
 
+#[test]
+fn an_unpriced_observation_cannot_be_used_as_a_declared_selection_reservation() {
+  let project = octacity_server_domain::ProjectId::generate();
+  let (mut template, _) = reviewed_template(project);
+  publication_draft(&template).unwrap();
+  template.nodes[0]
+    .profile_selection
+    .as_mut()
+    .unwrap()
+    .selection_budget
+    .cost_micro_units = BudgetCost::unknown();
+  assert!(
+    publication_draft(&template).is_err(),
+    "an admission allowance requires an explicit monetary bound"
+  );
+}
+
 #[path = "triage_classification_tests.rs"]
 mod classification;
 

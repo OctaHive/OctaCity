@@ -1734,6 +1734,42 @@ mod run_contract {
 
   #[tokio::test]
   #[ignore = "requires an explicitly configured disposable PostgreSQL service"]
+  async fn subscription_usage_preserves_unknown_cost_and_known_subtotal_after_restart() {
+    let setup = Setup::new().await;
+    let claimed = claim(&setup.admission.run, "worker.subscription", 30, 10, 100);
+    setup.postgres.claim_factory_run(claimed.clone()).await.unwrap();
+    let mut request = transition(
+      &setup.admission,
+      &claimed.record,
+      20,
+      "factory.subscription",
+      "dispatch.accepted",
+    );
+    let usage: BudgetUsage = serde_json::from_value(serde_json::json!({
+      "attempts":1,"elapsed_millis":2,"tokens":3,"output_bytes":5,
+      "cost_micro_units":{"status":"unknown","known_micro_units":4}
+    }))
+    .unwrap();
+    request.budget = FactoryBudgetRecord::new(setup.admission.run.id(), request.next_run.version(), usage, time(20));
+    request.current.budget_id = request.budget.id;
+    setup.postgres.commit_factory_run_transition(request).await.unwrap();
+    let restarted = PostgresStore::new(setup.database.pool.clone());
+    let snapshot = restarted.factory_run_snapshot(setup.admission.run.id()).await.unwrap();
+    let retained = snapshot
+      .budgets
+      .iter()
+      .find(|record| record.id == snapshot.current.budget_id)
+      .unwrap();
+    assert_eq!(retained.usage, usage);
+    assert_eq!(
+      serde_json::to_value(retained.usage).unwrap()["cost_micro_units"],
+      serde_json::json!({"status":"unknown","known_micro_units":4})
+    );
+    setup.cleanup().await;
+  }
+
+  #[tokio::test]
+  #[ignore = "requires an explicitly configured disposable PostgreSQL service"]
   async fn transition_commits_all_authority_or_rolls_everything_back() {
     let setup = Setup::new().await;
     let transition_claim = claim(&setup.admission.run, "worker.transition", 30, 10, 100);
@@ -2085,7 +2121,7 @@ mod run_contract {
         attempts: 1,
         elapsed_millis: 2,
         tokens: 3,
-        cost_micro_units: 4,
+        cost_micro_units: 4.into(),
         output_bytes: 5,
       },
       time(committed_at),

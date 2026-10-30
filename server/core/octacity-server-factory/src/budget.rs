@@ -160,8 +160,9 @@ pub struct BudgetUsage {
   pub elapsed_millis: u64,
   /// Model tokens already consumed.
   pub tokens: u64,
-  /// Provider cost already consumed in millionths of the configured currency unit.
-  pub cost_micro_units: u64,
+  /// Measured provider cost subtotal and any explicitly unpriced operations.
+  /// Unknown monetary cost never removes token, time or known-cost limits.
+  pub cost_micro_units: crate::BudgetCost,
   /// Output bytes already published.
   pub output_bytes: u64,
 }
@@ -199,7 +200,10 @@ impl BudgetUsage {
         BudgetResource::ElapsedTime,
       ),
       (self.tokens > limit.max_tokens, BudgetResource::Tokens),
-      (self.cost_micro_units > limit.max_cost_micro_units, BudgetResource::Cost),
+      (
+        self.cost_micro_units.known_micro_units() > limit.max_cost_micro_units,
+        BudgetResource::Cost,
+      ),
       (self.output_bytes > limit.max_output_bytes, BudgetResource::OutputBytes),
     ] {
       if exceeded {
@@ -261,7 +265,7 @@ mod tests {
       attempts: 1,
       elapsed_millis: 1,
       tokens: 1,
-      cost_micro_units: 1,
+      cost_micro_units: 1.into(),
       output_bytes: 1,
     };
     for saturated in [
@@ -278,7 +282,7 @@ mod tests {
         ..BudgetUsage::default()
       },
       BudgetUsage {
-        cost_micro_units: u64::MAX,
+        cost_micro_units: u64::MAX.into(),
         ..BudgetUsage::default()
       },
       BudgetUsage {

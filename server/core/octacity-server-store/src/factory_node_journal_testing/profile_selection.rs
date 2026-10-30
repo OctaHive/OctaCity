@@ -242,7 +242,7 @@ fn configured_selection_fixture(
           original.budget().max_attempts() - allowance.attempts,
           original.budget().max_elapsed_millis() - allowance.elapsed_millis,
           original.budget().max_tokens() - allowance.tokens,
-          original.budget().max_cost_micro_units() - allowance.cost_micro_units,
+          original.budget().max_cost_micro_units() - allowance.cost_micro_units.known_micro_units(),
           original.budget().max_output_bytes() - allowance.output_bytes,
         )
         .unwrap(),

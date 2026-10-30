@@ -213,6 +213,8 @@ const NESTED_FIELDS = new Set([
   'elapsed_millis',
   'tokens',
   'cost_micro_units',
+  'known_micro_units',
+  'status',
   'output_bytes',
   'max_attempts',
   'max_elapsed_millis',

@@ -89,6 +89,8 @@ impl FactoryCodexReviewCompilation<'_> {
 /// Neither option contains provider credentials, URLs or API configuration.
 #[derive(Clone, Copy, Default)]
 pub struct FactoryCodexFlowCompilationOptions<'a> {
+  /// Installed native-client authentication contract, independent of Role input.
+  pub authentication: FactoryCodexAuthentication,
   /// Exact installed MCP configurations; their content pins are checked against the selected role.
   pub mcp_configurations: Option<&'a [crate::FactoryCodexMcpConfiguration]>,
   /// Exact retained role package; absent preserves static compilation.
@@ -152,6 +154,7 @@ pub fn compile_codex_flow_task_with_options(
     consumer,
     usage_policy,
     RenderedCompilationOptions {
+      authentication: options.authentication,
       context: context.as_deref(),
       tool_risk: options.tool_risk,
       tool_response_limits: options.tool_response_limits,
@@ -236,6 +239,7 @@ fn render_selected_context(
 }
 
 struct RenderedCompilationOptions<'a> {
+  authentication: FactoryCodexAuthentication,
   mcp_configurations: Option<&'a [crate::FactoryCodexMcpConfiguration]>,
   role: Option<&'a crate::FactoryRoleInvocation>,
   context: Option<&'a str>,
@@ -262,7 +266,7 @@ fn compile_flow_task(
     intent.permissions().tools().next().is_some(),
     options.tool_response_limits,
   )?;
-  let base_digest = codex_response_policy_digest(
+  let base_digest = options.authentication.task_digest(codex_response_policy_digest(
     codex_flow_task_digest(
       instructions,
       profiles.profile(consumer.purpose()),
@@ -270,7 +274,7 @@ fn compile_flow_task(
       usage_policy,
     ),
     options.tool_response_limits,
-  );
+  ));
   let selected_digest = options
     .tool_risk
     .map_or(base_digest, |policy| policy.task_digest(base_digest));
@@ -305,6 +309,7 @@ fn compile_flow_task(
     return Err(CodexCompilationError::NodeBindings);
   }
   if profile.plugin.identity().as_str() != CODEX_PLUGIN_IDENTITY
+    || !usage_policy.matches_authentication(options.authentication)
     || !usage_policy.matches_selection(
       &profile.model_or_tool,
       options
@@ -478,6 +483,9 @@ fn compile_flow_task(
     "input": intent.input(), "result_schema": schema.reference(), "profile": profile,
     "budget": model_budget, "permissions": permissions, "usage_policy": usage_policy,
   });
+  if options.authentication != FactoryCodexAuthentication::ApiKey {
+    task_envelope["authentication"] = json!(options.authentication);
+  }
   if let Some(review) = options.reviewer {
     task_envelope["reviewer"] = json!(review.policy);
   }
@@ -551,6 +559,16 @@ fn compile_flow_task(
     })
     .transpose()?
     .flatten();
+  if options.authentication == FactoryCodexAuthentication::NativeLoginFile {
+    const HOME_VARIABLE: &str = "OCTACITY_FACTORY_CODEX_AUTH_HOME";
+    public_environment.insert("CODEX_HOME".to_owned(), HOME_VARIABLE.to_owned());
+    variables.insert(
+      HOME_VARIABLE.to_owned(),
+      json!(format!("{}/codex", octacity_protocol::FACTORY_PRIVATE_CREDENTIAL_ROOT)),
+    );
+    secret_environment.remove(CODEX_AUTH_ENVIRONMENT);
+    variables.remove(CODEX_AUTH_VARIABLE);
+  }
   let mcp_servers = options
     .role
     .map(|role| {

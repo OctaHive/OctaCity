@@ -39,6 +39,31 @@ const RESULT_SCHEMA_DESTINATION: &str = "/octacity/protected/result-schema.json"
 const TASK_ENVELOPE_DESTINATION: &str = "/octacity/protected/task-envelope.json";
 const CODEX_RUN_RECORDS: &str = ".octa/factory/codex-runs";
 
+/// Explicit installed authentication contract; credentials stay Agent-local.
+/// Native login delegates session handling to the pinned Codex client in its
+/// private per-Job home. Existing installations retain API-key compilation.
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq, serde::Deserialize, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum FactoryCodexAuthentication {
+  /// Existing named private variable mapped to the client's API-key environment.
+  #[default]
+  ApiKey,
+  /// Only the selected native login file, installed below private Job scratch.
+  NativeLoginFile,
+}
+impl FactoryCodexAuthentication {
+  /// Bind a different authentication contract into the immutable task identity.
+  /// Default installations keep their previously published digests unchanged.
+  pub fn task_digest(self, base: FactoryDigest) -> FactoryDigest {
+    match self {
+      Self::ApiKey => base,
+      Self::NativeLoginFile => {
+        FactoryDigest::sha256("octacity.factory.codex.native-login-file.v1", &[&base.as_bytes()])
+      }
+    }
+  }
+}
+
 /// Stable kind of server-owned input emitted by the trusted Codex compiler.
 #[derive(Clone, Copy, Debug, Eq, Ord, PartialEq, PartialOrd)]
 pub enum FactoryProtectedDocumentKind {

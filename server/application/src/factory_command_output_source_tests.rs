@@ -315,7 +315,7 @@ fn retained_command_json_uses_installed_schema_and_charges_server_wall_time() {
         attempts: 1,
         elapsed_millis: 18,
         tokens: 0,
-        cost_micro_units: 0,
+        cost_micro_units: 0.into(),
         output_bytes: 11
       }
     );
@@ -330,7 +330,7 @@ fn retained_command_json_uses_installed_schema_and_charges_server_wall_time() {
         attempts: 0,
         elapsed_millis: 18,
         tokens: 0,
-        cost_micro_units: 0,
+        cost_micro_units: 0.into(),
         output_bytes: 11
       }
     );
@@ -802,7 +802,7 @@ fn command_usage_includes_a_failed_retry_without_needing_a_json_report_from_it()
         elapsed_millis: 22,
         output_bytes: 11,
         tokens: 0,
-        cost_micro_units: 0
+        cost_micro_units: 0.into()
       }
     );
     let FactoryNodeBuildOutputObservation::Verified(outputs) = source
@@ -856,7 +856,7 @@ fn cancellation_blocks_semantic_output_but_preserves_ordinary_terminal_consumpti
         elapsed_millis: 18,
         output_bytes: 11,
         tokens: 0,
-        cost_micro_units: 0
+        cost_micro_units: 0.into()
       }
     );
   });
@@ -922,7 +922,7 @@ fn cancellation_accepted_during_command_output_io_discards_completion_without_re
         elapsed_millis: 18,
         output_bytes: 11,
         tokens: 0,
-        cost_micro_units: 0,
+        cost_micro_units: 0.into(),
       }
     );
     assert_eq!(

@@ -163,7 +163,9 @@ impl FactoryTransitionObservation {
         factory.usage.attempts = self.usage.attempts,
         factory.usage.elapsed_ms = self.usage.elapsed_millis,
         factory.usage.tokens = self.usage.tokens,
-        factory.usage.cost_micro_units = self.usage.cost_micro_units,
+        factory.usage.cost_micro_units = self.usage.cost_micro_units.is_known().then_some(self.usage.cost_micro_units.known_micro_units()),
+        factory.usage.known_cost_micro_units = (!self.usage.cost_micro_units.is_known()).then_some(self.usage.cost_micro_units.known_micro_units()),
+        factory.usage.cost_unknown = (!self.usage.cost_micro_units.is_known()).then_some(true),
         factory.usage.output_bytes = self.usage.output_bytes,
         "Factory transition committed"
       );
@@ -228,7 +230,10 @@ impl FactoryTransitionObservation {
           factory.node.fence.digest = %completion.claim().fence().digest(), factory.node.outcome.digest = %outcome,
           factory.node.output.digest = %completion.output_digest(), factory.node.latency_ms = latency,
           factory.node.usage.attempts = usage.attempts, factory.node.usage.elapsed_ms = usage.elapsed_millis,
-          factory.node.usage.tokens = usage.tokens, factory.node.usage.cost_micro_units = usage.cost_micro_units,
+          factory.node.usage.tokens = usage.tokens,
+          factory.node.usage.cost_micro_units = usage.cost_micro_units.is_known().then_some(usage.cost_micro_units.known_micro_units()),
+          factory.node.usage.known_cost_micro_units = (!usage.cost_micro_units.is_known()).then_some(usage.cost_micro_units.known_micro_units()),
+          factory.node.usage.cost_unknown = (!usage.cost_micro_units.is_known()).then_some(true),
           factory.node.usage.output_bytes = usage.output_bytes, "Factory node attempt completed"
         );
       }
@@ -251,7 +256,10 @@ impl FactoryTransitionObservation {
           factory.node.execution.digest = stop.execution().as_ref().map(FactoryDigest::to_string),
           factory.node.latency_ms = latency,
           factory.node.usage.attempts = usage.attempts, factory.node.usage.elapsed_ms = usage.elapsed_millis,
-          factory.node.usage.tokens = usage.tokens, factory.node.usage.cost_micro_units = usage.cost_micro_units,
+          factory.node.usage.tokens = usage.tokens,
+          factory.node.usage.cost_micro_units = usage.cost_micro_units.is_known().then_some(usage.cost_micro_units.known_micro_units()),
+          factory.node.usage.known_cost_micro_units = (!usage.cost_micro_units.is_known()).then_some(usage.cost_micro_units.known_micro_units()),
+          factory.node.usage.cost_unknown = (!usage.cost_micro_units.is_known()).then_some(true),
           factory.node.usage.output_bytes = usage.output_bytes, "Factory node attempt stopped"
         );
       }

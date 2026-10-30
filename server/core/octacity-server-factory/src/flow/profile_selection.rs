@@ -113,7 +113,8 @@ impl FlowProfileSelectionBinding {
   pub fn validate_signal_budget(&self, budget: crate::BudgetLimit) -> Result<(), crate::FactoryError> {
     if budget.max_elapsed_millis() > self.selection_budget.elapsed_millis
       || budget.max_tokens() > self.selection_budget.tokens
-      || budget.max_cost_micro_units() > self.selection_budget.cost_micro_units
+      || !self.selection_budget.cost_micro_units.is_known()
+      || budget.max_cost_micro_units() > self.selection_budget.cost_micro_units.known_micro_units()
       || budget.max_output_bytes() > self.selection_budget.output_bytes
     {
       return Err(invalid());
@@ -146,7 +147,10 @@ impl FlowProfileSelectionBinding {
   }
 
   pub(super) fn validate_node(&self, node: &crate::FlowNodeDefinition) -> Result<(), crate::FactoryError> {
-    if node.build().is_some() || node.kind() != crate::FlowNodeKind::Reasoning {
+    if !self.selection_budget.cost_micro_units.is_known()
+      || node.build().is_some()
+      || node.kind() != crate::FlowNodeKind::Reasoning
+    {
       return Err(invalid());
     }
     if self.candidates.len() > crate::MAX_FACTORY_ROLE_PROFILE_ENTRIES
@@ -191,7 +195,7 @@ impl FlowProfileSelectionBinding {
           attempts: execution.max_attempts(),
           elapsed_millis: execution.max_elapsed_millis(),
           tokens: execution.max_tokens(),
-          cost_micro_units: execution.max_cost_micro_units(),
+          cost_micro_units: execution.max_cost_micro_units().into(),
           output_bytes: execution.max_output_bytes(),
         })
         .ok_or_else(invalid)?

@@ -1127,7 +1127,7 @@ fn result(request: &DecisionSignalProviderRequest, selected: &str) -> DecisionSi
       attempts: 1,
       elapsed_millis: 5,
       tokens: 10,
-      cost_micro_units: 0,
+      cost_micro_units: 0.into(),
       output_bytes: 20,
     },
   )

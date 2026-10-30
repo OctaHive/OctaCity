@@ -1404,6 +1404,8 @@ export const enMessages = {
   'factory.budgetAttempts': 'Attempts',
   'factory.budgetTokens': 'Tokens',
   'factory.budgetCost': 'Cost, micro-units',
+  'factory.costUnknown': 'Unknown',
+  'factory.knownCostSubtotal': 'Known subtotal: {used} / {limit}',
   'factory.budgetTime': 'Elapsed, ms',
   'factory.budgetOutput': 'Output, bytes',
   'factory.exactIdentities': 'Exact subject and audit identities',

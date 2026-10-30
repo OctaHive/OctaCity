@@ -299,11 +299,11 @@ pub fn validate_factory_transition(
   Ok(())
 }
 
-const fn budget_is_monotonic(current: BudgetUsage, next: BudgetUsage) -> bool {
+fn budget_is_monotonic(current: BudgetUsage, next: BudgetUsage) -> bool {
   next.attempts >= current.attempts
     && next.elapsed_millis >= current.elapsed_millis
     && next.tokens >= current.tokens
-    && next.cost_micro_units >= current.cost_micro_units
+    && next.cost_micro_units.checked_sub(current.cost_micro_units).is_some()
     && next.output_bytes >= current.output_bytes
 }
 
@@ -322,7 +322,7 @@ fn completion_budget_is_covered(
   totals.is_some_and(|total| {
     next.elapsed_millis >= total.elapsed_millis
       && next.tokens >= total.tokens
-      && next.cost_micro_units >= total.cost_micro_units
+      && next.cost_micro_units.checked_sub(total.cost_micro_units).is_some()
       && next.output_bytes >= total.output_bytes
   })
 }

@@ -1706,7 +1706,7 @@ async fn decision_signal_dispatch_reserves_frozen_budget_before_external_io() {
       attempts: 1,
       elapsed_millis: 1000,
       tokens: 100,
-      cost_micro_units: 1000,
+      cost_micro_units: 1000.into(),
       output_bytes: 1000
     }
   );
@@ -1775,7 +1775,7 @@ async fn decision_signal_dispatch_reserves_frozen_budget_before_external_io() {
       attempts: 1,
       elapsed_millis: 5,
       tokens: 7,
-      cost_micro_units: 3,
+      cost_micro_units: 3.into(),
       output_bytes: 0
     }
   );

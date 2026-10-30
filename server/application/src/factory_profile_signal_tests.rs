@@ -128,7 +128,7 @@ fn fixture_with_failure(
       attempts: 0,
       elapsed_millis: 100,
       tokens: 10,
-      cost_micro_units: 100,
+      cost_micro_units: 100.into(),
       output_bytes: 100,
     },
   );

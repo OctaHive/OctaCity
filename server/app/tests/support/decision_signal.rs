@@ -117,7 +117,7 @@ pub fn receipt(request: &DecisionSignalProviderRequest) -> DecisionSignalReceipt
           attempts: 1,
           elapsed_millis: 5,
           tokens: 7,
-          cost_micro_units: 3,
+          cost_micro_units: 3.into(),
           output_bytes: 0,
         },
       )

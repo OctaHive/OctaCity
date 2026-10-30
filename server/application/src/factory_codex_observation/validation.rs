@@ -94,7 +94,7 @@ pub(super) fn validate_codex_run<T: DeserializeOwned>(
     .ok_or_else(|| failure(FactoryCodexObservationStatus::BudgetExceeded, base_usage))?;
   let usage = BudgetUsage {
     tokens,
-    cost_micro_units: result.usage.get("cost_micro_units").copied().unwrap_or(0),
+    cost_micro_units: result.usage.get("cost_micro_units").copied().unwrap_or(0).into(),
     ..base_usage
   };
   if usage.validate(envelope.budget()).is_err() {

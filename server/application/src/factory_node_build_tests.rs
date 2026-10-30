@@ -176,7 +176,7 @@ fn codex_structured_result_retains_raw_artifact_identity_without_copying_harness
         attempts: 1,
         elapsed_millis: 1,
         tokens: 5,
-        cost_micro_units: 1,
+        cost_micro_units: 1.into(),
         output_bytes: document.bytes.len() as u64,
       },
       documents: vec![document],

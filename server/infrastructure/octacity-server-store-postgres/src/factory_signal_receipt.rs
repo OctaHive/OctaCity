@@ -186,7 +186,9 @@ pub(super) fn emit_committed(
     factory.signal.usage.attempts = usage.map(|usage| usage.attempts),
     factory.signal.usage.elapsed_ms = usage.map(|usage| usage.elapsed_millis),
     factory.signal.usage.tokens = usage.map(|usage| usage.tokens),
-    factory.signal.usage.cost_micro_units = usage.map(|usage| usage.cost_micro_units),
+    factory.signal.usage.cost_micro_units = usage.filter(|usage| usage.cost_micro_units.is_known()).map(|usage| usage.cost_micro_units.known_micro_units()),
+    factory.signal.usage.known_cost_micro_units = usage.filter(|usage| !usage.cost_micro_units.is_known()).map(|usage| usage.cost_micro_units.known_micro_units()),
+    factory.signal.usage.cost_unknown = usage.filter(|usage| !usage.cost_micro_units.is_known()).map(|_| true),
     factory.signal.usage.output_bytes = usage.map(|usage| usage.output_bytes),
     "Factory Signal journal committed"
   );

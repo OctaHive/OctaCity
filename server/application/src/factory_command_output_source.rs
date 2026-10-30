@@ -270,7 +270,7 @@ impl<R: FactoryRunStore, Q: BuildQueryStore, A: ArtifactRecordStore, B: Artifact
         elapsed_millis,
         output_bytes: total,
         tokens: 0,
-        cost_micro_units: 0,
+        cost_micro_units: 0.into(),
       },
       succeeded: build.state == BuildState::Succeeded
         && attempt.state == AttemptState::Succeeded

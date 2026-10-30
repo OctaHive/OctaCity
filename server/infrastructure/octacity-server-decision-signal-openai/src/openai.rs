@@ -273,7 +273,8 @@ impl OpenAiDecisionSignalProvider {
       elapsed_millis: u64::try_from(start.elapsed().as_millis()).unwrap_or(u64::MAX),
       tokens,
       cost_micro_units: u64::try_from(cost.div_ceil(1_000_000))
-        .map_err(|_| unknown(request, DecisionSignalState::Invalid))?,
+        .map_err(|_| unknown(request, DecisionSignalState::Invalid))?
+        .into(),
       output_bytes: bytes.len() as u64,
     };
     if usage.validate(request.request().budget()).is_err() {

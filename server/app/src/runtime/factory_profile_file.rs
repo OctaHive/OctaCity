@@ -629,7 +629,69 @@ struct RoleProfileDeclaration {
   #[serde(default)]
   model_discovery: Option<ModelDiscoveryDeclaration>,
   #[serde(default)]
-  settings_support: Option<FactoryRuntimeSettingsSupport>,
+  settings_support: Option<RuntimeSettingsSupportDeclaration>,
+}
+
+/// Private installation input may delegate canonical pins to their existing
+/// domain owner. Retained pinned entries remain strict and are never repaired.
+#[derive(Deserialize)]
+#[serde(untagged, deny_unknown_fields)]
+enum McpConfigurationDeclaration {
+  Pinned(FactoryMcpConfiguration),
+  Declared {
+    identity: FactoryKey,
+    version: FactoryKey,
+    server: FactoryMcpServer,
+    #[serde(default)]
+    integration: Option<FactoryRoleIntegrationBinding>,
+    #[serde(default)]
+    authorization: Option<FactoryMcpAuthorization>,
+  },
+}
+impl McpConfigurationDeclaration {
+  fn resolve(self) -> Result<FactoryMcpConfiguration, FactoryRuntimeInstallationError> {
+    let invalid = |_| FactoryRuntimeInstallationError::Invalid;
+    let configuration = match self {
+      Self::Pinned(configuration) => configuration,
+      Self::Declared {
+        identity,
+        version,
+        server,
+        integration,
+        authorization,
+      } => {
+        let configuration = FactoryMcpConfiguration::new(identity, version, server, integration).map_err(invalid)?;
+        match authorization {
+          Some(authorization) => configuration.with_authorization(authorization).map_err(invalid)?,
+          None => configuration,
+        }
+      }
+    };
+    configuration.validate().map_err(invalid)?;
+    Ok(configuration)
+  }
+}
+
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct RuntimeSettingsSupportDeclaration {
+  mcp_transports: std::collections::BTreeSet<FactoryMcpTransport>,
+  mcp_executables: BTreeMap<String, ImmutableReference>,
+  #[serde(default)]
+  authenticated_mcp: BTreeMap<FactoryKey, McpConfigurationDeclaration>,
+}
+impl RuntimeSettingsSupportDeclaration {
+  fn resolve(self) -> Result<FactoryRuntimeSettingsSupport, FactoryRuntimeInstallationError> {
+    Ok(FactoryRuntimeSettingsSupport {
+      mcp_transports: self.mcp_transports,
+      mcp_executables: self.mcp_executables,
+      authenticated_mcp: self
+        .authenticated_mcp
+        .into_iter()
+        .map(|(alias, configuration)| Ok((alias, configuration.resolve()?)))
+        .collect::<Result<_, FactoryRuntimeInstallationError>>()?,
+    })
+  }
 }
 #[derive(Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -684,7 +746,9 @@ enum CodexExecutionMode {
 #[serde(deny_unknown_fields)]
 struct CodexProfile {
   #[serde(default)]
-  mcp_configurations: Vec<octacity_server_application::FactoryCodexMcpConfiguration>,
+  authentication: octacity_server_application::FactoryCodexAuthentication,
+  #[serde(default)]
+  mcp_configurations: Vec<McpConfigurationDeclaration>,
   toolchain: Toolchain,
   build_configuration: BuildConfigurationRef,
   instructions: FactoryText,
@@ -862,7 +926,7 @@ impl FactoryRuntimeProfileCatalog {
             .map_err(|_| Invalid)?;
           if let Some(support) = declaration.settings_support {
             choices = choices
-              .with_runtime_settings_support(alias, support)
+              .with_runtime_settings_support(alias, support.resolve()?)
               .map_err(|_| Invalid)?;
           }
         }
@@ -879,9 +943,11 @@ impl FactoryRuntimeProfileCatalog {
         if profile.mcp_configurations.len() > MAX_FACTORY_ROLE_PROFILE_ENTRIES {
           return Err(Invalid);
         }
-        for configuration in &profile.mcp_configurations {
-          configuration.validate().map_err(|_| Invalid)?;
-        }
+        let mcp_configurations = profile
+          .mcp_configurations
+          .into_iter()
+          .map(|configuration| configuration.resolve()?.try_into().map_err(|_| Invalid))
+          .collect::<Result<_, FactoryRuntimeInstallationError>>()?;
         let capture = profile
           .capture
           .map(|capture| FactoryCodexCapturePolicy::new(capture.tool, capture.instruction).map_err(|_| Invalid))
@@ -897,7 +963,8 @@ impl FactoryRuntimeProfileCatalog {
           _ => return Err(Invalid),
         };
         Ok(FactoryCodexBuildProfile {
-          mcp_configurations: profile.mcp_configurations,
+          authentication: profile.authentication,
+          mcp_configurations,
           toolchain: FactoryTaskToolchain {
             plugin: profile.toolchain.plugin,
             executable: profile.toolchain.executable,

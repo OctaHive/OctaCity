@@ -685,7 +685,7 @@ impl NodeAttemptCompletion {
         &usage.attempts.to_be_bytes(),
         &usage.elapsed_millis.to_be_bytes(),
         &usage.tokens.to_be_bytes(),
-        &usage.cost_micro_units.to_be_bytes(),
+        &usage.cost_micro_units.canonical_bytes(),
         &usage.output_bytes.to_be_bytes(),
         &observed_at.unix_millis().to_be_bytes(),
       ],

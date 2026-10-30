@@ -1651,7 +1651,7 @@ mod tests {
             attempts: 1,
             elapsed_millis: 1,
             tokens: 1,
-            cost_micro_units: 1,
+            cost_micro_units: 1.into(),
             output_bytes: 1,
           },
         };
@@ -1671,7 +1671,7 @@ mod tests {
             attempts: 1,
             elapsed_millis: 1,
             tokens: 1,
-            cost_micro_units: 1,
+            cost_micro_units: 1.into(),
             output_bytes: 1
           }
         );
@@ -1921,7 +1921,7 @@ mod tests {
             ..entry.input.reservation
           },
           BudgetUsage {
-            cost_micro_units: limit.max_cost_micro_units(),
+            cost_micro_units: limit.max_cost_micro_units().into(),
             ..entry.input.reservation
           },
           BudgetUsage {
@@ -2282,7 +2282,7 @@ mod tests {
         attempts: 2,
         elapsed_millis: 20,
         tokens: 30,
-        cost_micro_units: 40,
+        cost_micro_units: 40.into(),
         output_bytes: 50,
       },
       time(20),

@@ -344,6 +344,7 @@ impl<R: FactoryRunStore, Q: BuildQueryStore, A: ArtifactRecordStore, B: Artifact
       profile.consumer,
       &profile.usage_policy,
       FactoryCodexFlowCompilationOptions {
+        authentication: profile.authentication,
         mcp_configurations: Some(&mcp_configurations),
         role: role.as_ref(),
         context: selected.as_ref(),

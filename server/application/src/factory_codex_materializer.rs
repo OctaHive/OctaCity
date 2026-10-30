@@ -131,6 +131,8 @@ impl FactoryCodexReviewerPolicy {
 /// No logical Flow or node name selects these instructions or credential purpose.
 #[derive(Clone)]
 pub struct FactoryCodexBuildProfile {
+  /// Installed authentication method; no credential bytes enter this profile.
+  pub authentication: crate::FactoryCodexAuthentication,
   /// Immutable installed MCP transport versions; selection grants no additional authority.
   pub mcp_configurations: Vec<crate::FactoryCodexMcpConfiguration>,
   /// Exact installed executable, plugin and model, independent of Flow names.
@@ -203,15 +205,17 @@ impl FactoryCodexBuildProfile {
   }
   /// Installed model task before the separately pinned provider allocation.
   pub fn base_task_digest(&self) -> octacity_server_factory::FactoryDigest {
-    crate::factory_codex::codex_response_policy_digest(
-      crate::codex_flow_task_digest(
-        &self.instructions,
-        self.credentials.profile(self.consumer.purpose()),
-        self.consumer,
-        &self.usage_policy,
-      ),
-      self.tool_response_limits,
-    )
+    self
+      .authentication
+      .task_digest(crate::factory_codex::codex_response_policy_digest(
+        crate::codex_flow_task_digest(
+          &self.instructions,
+          self.credentials.profile(self.consumer.purpose()),
+          self.consumer,
+          &self.usage_policy,
+        ),
+        self.tool_response_limits,
+      ))
   }
   /// Selects the complete immutable installed profile for one frozen Build intent.
   /// Sharing an executable does not share model instructions or capture authority.
@@ -254,6 +258,7 @@ impl FactoryCodexBuildProfile {
       .validate()
       .map_err(|_| CodexCompilationError::UnsupportedToolchain)?;
     if self.toolchain.plugin.identity().as_str() != CODEX_PLUGIN_IDENTITY
+      || !self.usage_policy.matches_authentication(self.authentication)
       || !self.usage_policy.matches_model(&self.toolchain.model)
       || self.toolchain.executable.identity().as_str() != CODEX_EXECUTABLE_IDENTITY
       || approved.octa.plugin_digests.get(CODEX_PLUGIN_IDENTITY) != Some(&self.toolchain.plugin.digest().to_string())
@@ -628,6 +633,7 @@ impl<
       profile.consumer,
       &profile.usage_policy,
       FactoryCodexFlowCompilationOptions {
+        authentication: profile.authentication,
         mcp_configurations: Some(&mcp_configurations),
         role: role.as_ref(),
         context: selected.as_ref(),

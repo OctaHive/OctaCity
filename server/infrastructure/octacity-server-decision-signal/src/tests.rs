@@ -172,7 +172,7 @@ fn provider_result(request: &DecisionSignalProviderRequest) -> DecisionSignalPro
       attempts: 1,
       elapsed_millis: 7,
       tokens: 10,
-      cost_micro_units: 0,
+      cost_micro_units: 0.into(),
       output_bytes: 100,
     },
   )

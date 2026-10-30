@@ -212,6 +212,72 @@ async fn prepared_source() -> SourceFixture {
 }
 
 #[test]
+fn native_subscription_records_charge_tokens_without_fabricating_a_monetary_price() {
+  crate::factory_admission_tests::run_ready(async {
+    let policy = serde_json::from_value(serde_json::json!({"kind":"subscription"})).unwrap();
+    let fixture = prepared_role_options(PreparedRoleOptions {
+      authentication: FactoryCodexAuthentication::NativeLoginFile,
+      usage_policy: Some(policy),
+      recorded_usage: Some(serde_json::json!({"input_tokens":2,"output_tokens":3})),
+      ..Default::default()
+    })
+    .await;
+    let source = fixture.source(fixture.query.clone());
+    let observation = source
+      .published_outputs(fixture.query.build.build.id, fixture.query.attempt.id, 10000)
+      .await
+      .unwrap();
+    let FactoryNodeBuildOutputObservation::Verified(outputs) = observation else {
+      panic!("native subscription records must remain verifiable without a monetary counter")
+    };
+    assert_eq!(outputs.usage.tokens, 5);
+    assert_eq!(outputs.usage.elapsed_millis, 4);
+    assert_eq!(
+      serde_json::to_value(outputs.usage).unwrap()["cost_micro_units"],
+      serde_json::json!({"status":"unknown","known_micro_units":0})
+    );
+    let retained = source
+      .terminal_usage(fixture.query.build.build.id, fixture.query.attempt.id)
+      .await
+      .unwrap();
+    assert_eq!(retained.tokens, 5);
+    assert!(!retained.cost_micro_units.is_known());
+  });
+}
+
+fn approved_observer_policy(profile: &FactoryCodexBuildProfile) -> crate::JobSpecToolchainPolicy {
+  let mut spec = crate::factory_job_test_support::canonical_v3_spec();
+  spec
+    .octa
+    .plugin_digests
+    .insert("codex".into(), profile.toolchain.plugin.digest().to_string());
+  crate::JobSpecToolchainPolicy {
+    source: octacity_server_job::SourcePluginPolicy::new(
+      spec.source.provider,
+      spec.source.plugin_version,
+      spec.source.plugin_sha256,
+      "url",
+    )
+    .unwrap(),
+    octa: spec.octa,
+    validity: octacity_server_job::JobSpecValidity::new(60).unwrap(),
+  }
+}
+
+#[test]
+fn subscription_accounting_cannot_remove_monetary_verification_from_an_api_key_installation() {
+  crate::factory_admission_tests::run_ready(async {
+    let mut profile = prepared_source().await.profile;
+    let approved = approved_observer_policy(&profile);
+    profile.validate_installation(&approved).unwrap();
+    profile.usage_policy = FactoryCodexUsagePolicy::Subscription;
+    assert!(profile.validate_installation(&approved).is_err());
+    profile.authentication = FactoryCodexAuthentication::NativeLoginFile;
+    profile.validate_installation(&approved).unwrap();
+  });
+}
+
+#[test]
 fn installed_codex_capture_observer_retains_the_verified_candidate_separately_from_model_records() {
   crate::factory_admission_tests::run_ready(async {
     use octacity_protocol::{CHANGE_SET_BUNDLE_OUTPUT, CHANGE_SET_MANIFEST_OUTPUT};
@@ -399,6 +465,46 @@ async fn prepared_role_source_with_mcp_evidence(
   verify_mcp: bool,
   native_mcp: bool,
 ) -> SourceFixture {
+  prepared_role_options(PreparedRoleOptions {
+    capture,
+    capture_paths,
+    observation_override,
+    selected_role,
+    mcp,
+    verify_mcp,
+    native_mcp,
+    ..Default::default()
+  })
+  .await
+}
+
+#[derive(Default)]
+struct PreparedRoleOptions {
+  capture: Option<FactoryCodexCapturePolicy>,
+  capture_paths: Vec<octacity_protocol::CapturedChangeSetPathV1>,
+  observation_override: Option<serde_json::Value>,
+  selected_role: bool,
+  mcp: Option<FactoryMcpServer>,
+  verify_mcp: bool,
+  native_mcp: bool,
+  authentication: FactoryCodexAuthentication,
+  usage_policy: Option<FactoryCodexUsagePolicy>,
+  recorded_usage: Option<serde_json::Value>,
+}
+
+async fn prepared_role_options(options: PreparedRoleOptions) -> SourceFixture {
+  let PreparedRoleOptions {
+    capture,
+    capture_paths,
+    observation_override,
+    selected_role,
+    mcp,
+    verify_mcp,
+    native_mcp,
+    authentication,
+    usage_policy,
+    recorded_usage,
+  } = options;
   let capture_schema = capture
     .as_ref()
     .and_then(|capture| capture.instruction().observation.as_ref())
@@ -469,6 +575,7 @@ async fn prepared_role_source_with_mcp_evidence(
   }
   let base = authoritative_store_contract_fixture();
   let profile = FactoryCodexBuildProfile {
+    authentication,
     mcp_configurations: vec![],
     toolchain: FactoryTaskToolchain {
       plugin: binding.plugin.clone(),
@@ -489,7 +596,7 @@ async fn prepared_role_source_with_mcp_evidence(
     } else {
       FactoryCredentialConsumer::ReadOnlyReview
     },
-    usage_policy: FactoryCodexUsagePolicy::ReportedCost,
+    usage_policy: usage_policy.unwrap_or(FactoryCodexUsagePolicy::ReportedCost),
     tool_risk: None,
     tool_response_limits: None,
     reviewer: None,
@@ -813,6 +920,7 @@ async fn prepared_role_source_with_mcp_evidence(
     profile.consumer,
     &profile.usage_policy,
     FactoryCodexFlowCompilationOptions {
+      authentication: profile.authentication,
       mcp_configurations: mcp_configuration.as_ref().map(std::slice::from_ref),
       role: role.as_ref(),
       context: Some(&context_map),
@@ -869,6 +977,7 @@ async fn prepared_role_source_with_mcp_evidence(
     observation_override,
     model_result: serde_json::json!({"count":9}),
     native_mcp,
+    recorded_usage,
   })
   .await;
   fixture.role = selected_role.then_some(retained);
@@ -886,6 +995,7 @@ struct PreparedSourceInput {
   observation_override: Option<serde_json::Value>,
   model_result: serde_json::Value,
   native_mcp: bool,
+  recorded_usage: Option<serde_json::Value>,
   source: Option<(
     octacity_protocol::ChangeSetMaterializationV3,
     Vec<octacity_protocol::ProtectedInputV3>,
@@ -905,6 +1015,7 @@ async fn finish_prepared_source(input: PreparedSourceInput) -> SourceFixture {
     observation_override,
     model_result,
     native_mcp,
+    recorded_usage,
   } = input;
   let canonical = crate::factory_job_test_support::canonical_v3_spec();
   let grants = profile.project_permissions.clone();
@@ -1042,7 +1153,8 @@ async fn finish_prepared_source(input: PreparedSourceInput) -> SourceFixture {
     job_id,
     expires_at: at(5000),
   }));
-  let usage = serde_json::json!({"input_tokens":2,"output_tokens":3,"cost_micro_units":1});
+  let usage =
+    recorded_usage.unwrap_or_else(|| serde_json::json!({"input_tokens":2,"output_tokens":3,"cost_micro_units":1}));
   let mut result=serde_json::to_vec(&serde_json::json!({"format_version":1,"outcome":"completed","structured_result":model_result,"harness_identifiers":{"session_id":"private-session-canary"},"usage":usage})).unwrap();
   let prompt = std::str::from_utf8(compiled.document(FactoryProtectedDocumentKind::Prompt).bytes()).unwrap();
   let selected_revision = intent
@@ -1358,6 +1470,7 @@ async fn prepared_candidate_source() -> (SourceFixture, Arc<dyn FactoryRetainedC
     observation_override: None,
     model_result: serde_json::json!({"count":9}),
     native_mcp: false,
+    recorded_usage: None,
   })
   .await;
   let source = Arc::new(FactoryStoredCandidateContextSource::new(
@@ -1921,22 +2034,7 @@ fn installed_capture_observations_cannot_reuse_model_publication_names() {
 fn installed_model_policy_accepts_independent_mcp_profiles_and_rejects_other_consumers() {
   crate::factory_admission_tests::run_ready(async {
     let mut profile = prepared_source().await.profile;
-    let mut spec = crate::factory_job_test_support::canonical_v3_spec();
-    spec
-      .octa
-      .plugin_digests
-      .insert("codex".into(), profile.toolchain.plugin.digest().to_string());
-    let approved = crate::JobSpecToolchainPolicy {
-      source: octacity_server_job::SourcePluginPolicy::new(
-        spec.source.provider,
-        spec.source.plugin_version,
-        spec.source.plugin_sha256,
-        "url",
-      )
-      .unwrap(),
-      octa: spec.octa,
-      validity: octacity_server_job::JobSpecValidity::new(60).unwrap(),
-    };
+    let approved = approved_observer_policy(&profile);
     let base = serde_json::to_value(&profile.project_permissions).unwrap();
     for extra in ["mcp-read", "source-only", "delivery-only", "author-only"] {
       let mut grants = base.clone();

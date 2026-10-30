@@ -1,5 +1,5 @@
 // @vitest-environment jsdom
-import { cleanup, render, screen } from '@testing-library/react';
+import { cleanup, render, screen, within } from '@testing-library/react';
 import { createMemoryRouter, RouterProvider } from 'react-router-dom';
 import { afterEach, expect, it } from 'vitest';
 import { runFixture } from '../../tests/fixtures/factory';
@@ -7,6 +7,27 @@ import { issueFixture } from '../../tests/fixtures/issues';
 import { FactoryRunSummary } from './FactoryRunSummary';
 
 afterEach(cleanup);
+
+it.each([0, 7])(
+  'shows unpriced usage without presenting its known subtotal %s as total cost',
+  (known) => {
+    const resource = runFixture();
+    resource.diagnostics.budget.usage.cost_micro_units = {
+      status: 'unknown',
+      known_micro_units: known,
+    };
+    render(
+      <RouterProvider
+        router={createMemoryRouter([{ path: '/', element: <FactoryRunSummary run={resource} /> }])}
+      />,
+    );
+    const metric = screen.getByText('Cost, micro-units').closest('div')!;
+    expect(within(metric).getByText('Unknown')).toBeTruthy();
+    expect(metric.textContent).not.toContain('0 /');
+    if (known > 0) expect(within(metric).getByText(/Known subtotal: 7/)).toBeTruthy();
+    else expect(within(metric).queryByText(/Known subtotal/)).toBeNull();
+  },
+);
 it.each([null, 'reviewed-request'])(
   'links an authorized original Run to its exact task lineage (%s)',
   (request) => {

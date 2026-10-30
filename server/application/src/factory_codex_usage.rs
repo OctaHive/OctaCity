@@ -1,6 +1,6 @@
 //! Operator-selected Codex cost accounting; no built-in model prices.
 use crate::ApplicationError;
-use octacity_server_factory::ImmutableReference;
+use octacity_server_factory::{BudgetCost, ImmutableReference};
 use serde::{Deserialize, Serialize};
 use std::collections::BTreeMap;
 
@@ -12,6 +12,9 @@ use std::collections::BTreeMap;
 pub enum FactoryCodexUsagePolicy {
   /// Require a cost counter cross-checked in the result and provenance.
   ReportedCost,
+  /// Native account-plan usage. Retain verified token/time counters and any
+  /// reported monetary amount; absence of a price remains explicitly unknown.
+  Subscription,
   /// Price independently reported token counters for one exact model.
   TokenRates {
     /// Full immutable model identity, including version and digest.
@@ -25,15 +28,20 @@ pub enum FactoryCodexUsagePolicy {
   },
 }
 impl FactoryCodexUsagePolicy {
+  pub(crate) fn matches_authentication(&self, authentication: crate::FactoryCodexAuthentication) -> bool {
+    !matches!(self, Self::Subscription) || authentication == crate::FactoryCodexAuthentication::NativeLoginFile
+  }
+
   /// A manually selected model must not inherit another model's exact tariff.
   pub(crate) fn matches_selection(&self, model: &ImmutableReference, identifier: Option<&str>) -> bool {
     self.matches_model(model)
-      && (matches!(self, Self::ReportedCost) || identifier.is_none_or(|id| id == model.identity().as_str()))
+      && (matches!(self, Self::ReportedCost | Self::Subscription)
+        || identifier.is_none_or(|id| id == model.identity().as_str()))
   }
 
   pub(crate) fn matches_model(&self, model: &ImmutableReference) -> bool {
     match self {
-      Self::ReportedCost => true,
+      Self::ReportedCost | Self::Subscription => true,
       Self::TokenRates { model: priced, .. } => priced == model,
     }
   }
@@ -41,13 +49,20 @@ impl FactoryCodexUsagePolicy {
     &self,
     executed_model: &ImmutableReference,
     counters: &BTreeMap<String, u64>,
-  ) -> Result<u64, ApplicationError> {
+  ) -> Result<BudgetCost, ApplicationError> {
     let invalid = ApplicationError::invalid;
     match self {
       Self::ReportedCost => counters
         .get("cost_micro_units")
         .copied()
+        .map(BudgetCost::from)
         .ok_or_else(ApplicationError::unavailable),
+      Self::Subscription => Ok(
+        counters
+          .get("cost_micro_units")
+          .copied()
+          .map_or_else(BudgetCost::unknown, BudgetCost::from),
+      ),
       Self::TokenRates {
         model,
         input_micro_units_per_million: input_rate,
@@ -78,7 +93,7 @@ impl FactoryCodexUsagePolicy {
         {
           return Err(invalid());
         }
-        Ok(cost)
+        Ok(cost.into())
       }
     }
   }

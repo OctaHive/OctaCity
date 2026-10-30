@@ -738,7 +738,7 @@ fn zero_consumable_budgets_allow_control_work_but_deny_any_consumption() {
       ..Default::default()
     },
     crate::BudgetUsage {
-      cost_micro_units: 1,
+      cost_micro_units: 1.into(),
       ..Default::default()
     },
     crate::BudgetUsage {

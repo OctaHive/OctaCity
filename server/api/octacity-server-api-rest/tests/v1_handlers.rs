@@ -97,6 +97,20 @@ use support::{
 
 const DOCUMENTED_SECTION_FOUR_WORKFLOW: &str = include_str!("../../../../docs/reference/management-rest-v1.md");
 
+#[test]
+fn factory_usage_contract_accepts_measured_zero_and_explicitly_unpriced_subtotals() {
+  let document = openapi_document();
+  for cost in [
+    serde_json::json!(0),
+    serde_json::json!({"status":"unknown","known_micro_units":0}),
+    serde_json::json!({"status":"unknown","known_micro_units":7}),
+  ] {
+    let usage =
+      serde_json::json!({"attempts":1,"elapsed_millis":10,"tokens":20,"output_bytes":30,"cost_micro_units":cost});
+    assert_json_matches_component(&document, "FactoryBudgetUsage", &usage);
+  }
+}
+
 #[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
 struct ProtectedSideEffectCounts {
   handler: usize,

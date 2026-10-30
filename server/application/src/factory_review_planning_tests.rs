@@ -1212,6 +1212,7 @@ fn reviewer_profile(work: &WorkEnvelope) -> FactoryCodexBuildProfile {
   grants["outputs"]["kinds"] = serde_json::json!(["codex-run-trace", "codex-run-provenance", "codex-run-result"]);
   let grants: FactoryPermissionSet = serde_json::from_value(grants).unwrap();
   FactoryCodexBuildProfile {
+    authentication: crate::FactoryCodexAuthentication::default(),
     mcp_configurations: vec![],
     toolchain: FactoryTaskToolchain {
       plugin: crate::factory_job_test_support::reference("codex", "0.5.0"),

@@ -1414,6 +1414,8 @@ export const ruMessages = {
   'factory.budgetAttempts': 'Попытки',
   'factory.budgetTokens': 'Токены',
   'factory.budgetCost': 'Стоимость, микроединицы',
+  'factory.costUnknown': 'Неизвестна',
+  'factory.knownCostSubtotal': 'Известная часть: {used} / {limit}',
   'factory.budgetTime': 'Время, мс',
   'factory.budgetOutput': 'Результат, байты',
   'factory.exactIdentities': 'Точные идентификаторы и привязка к аудиту',

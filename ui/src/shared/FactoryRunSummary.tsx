@@ -74,14 +74,35 @@ export function FactoryRunSummary({ run }: { run: FactoryRun }) {
       <h3>{t('factory.diag.budgets')}</h3>
       <p className={styles.supportingText}>{t('factory.budgetUsageLimit')}</p>
       <dl className={styles.budgetMetrics}>
-        {metrics.map(([used, limit, label]) => (
-          <div key={used}>
-            <dt>{t(label)}</dt>
-            <dd>
-              {diagnostics.budget.usage[used]} <span>/ {diagnostics.budget.limit[limit]}</span>
-            </dd>
-          </div>
-        ))}
+        {metrics.map(([used, limit, label]) => {
+          const amount = diagnostics.budget.usage[used];
+          return (
+            <div key={used}>
+              <dt>{t(label)}</dt>
+              <dd>
+                {typeof amount === 'number' ? (
+                  <>
+                    {amount} <span>/ {diagnostics.budget.limit[limit]}</span>
+                  </>
+                ) : (
+                  <>
+                    <span>{t('factory.costUnknown')}</span>
+                    {amount.known_micro_units > 0 ? (
+                      <span>
+                        {' '}
+                        ·{' '}
+                        {t('factory.knownCostSubtotal', {
+                          used: amount.known_micro_units,
+                          limit: diagnostics.budget.limit[limit],
+                        })}
+                      </span>
+                    ) : null}
+                  </>
+                )}
+              </dd>
+            </div>
+          );
+        })}
       </dl>
     </section>
   );

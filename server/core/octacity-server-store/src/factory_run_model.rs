@@ -75,7 +75,7 @@ impl FactoryBudgetRecord {
     let attempts = usage.attempts.to_be_bytes();
     let elapsed = usage.elapsed_millis.to_be_bytes();
     let tokens = usage.tokens.to_be_bytes();
-    let cost = usage.cost_micro_units.to_be_bytes();
+    let cost = usage.cost_micro_units.canonical_bytes();
     let output = usage.output_bytes.to_be_bytes();
     let timestamp = recorded_at.unix_millis().to_be_bytes();
     let id = FactoryDigest::sha256(

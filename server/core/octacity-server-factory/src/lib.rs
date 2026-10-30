@@ -16,6 +16,8 @@ mod build_pipeline;
 pub use build_pipeline::{FactoryBuildCompilationContract, FactoryBuildPipelineContract};
 mod assessment;
 mod budget;
+mod budget_cost;
+pub use budget_cost::BudgetCost;
 mod configuration;
 #[cfg(test)]
 mod configuration_tests;

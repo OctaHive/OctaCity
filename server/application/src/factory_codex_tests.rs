@@ -220,6 +220,72 @@ fn a_read_only_codex_flow_task_uses_the_declared_schema_and_frozen_input_without
 }
 
 #[test]
+fn native_login_compilation_pins_authentication_and_uses_only_private_codex_home() {
+  use crate::factory_node_test_support::fixtures;
+  use octacity_server_factory::{FactoryCredentialConsumer, FlowBuildIntent, FlowNodeKind};
+  let authentication = crate::FactoryCodexAuthentication::NativeLoginFile;
+  let work = fixtures::work();
+  let plugin = reference("codex", 10);
+  let executable = reference("codex-cli", 11);
+  let grants = permissions(FactoryTaskMode::Evaluate, plugin.clone(), executable.clone(), true);
+  let mut binding = fixtures::binding(work.subject().project_id());
+  binding.plugin = plugin;
+  binding.tool = executable;
+  binding.model_or_tool = reference("an-exact-model", 12);
+  binding.result_output = key("codex-run-result");
+  let instructions = octacity_server_factory::FactoryText::new("Classify only the selected input.").unwrap();
+  let legacy = crate::codex_flow_task_digest(
+    &instructions,
+    credential_profiles().profile(FactoryCredentialConsumer::ReadOnlyReview.purpose()),
+    FactoryCredentialConsumer::ReadOnlyReview,
+    &crate::FactoryCodexUsagePolicy::ReportedCost,
+  );
+  binding.task_digest = authentication.task_digest(legacy);
+  assert_ne!(
+    binding.task_digest, legacy,
+    "credential modes are different installed tasks"
+  );
+  let (_, admitted, _, input, attempt) =
+    fixtures::execution_fixture_with_permissions(FlowNodeKind::Reasoning, work, binding, None, grants);
+  let intent = FlowBuildIntent::new(input, &admitted, attempt, Default::default(), 0).unwrap();
+  let compiled = crate::compile_codex_flow_task_with_options(
+    &intent,
+    &admitted,
+    &instructions,
+    &credential_profiles(),
+    FactoryCredentialConsumer::ReadOnlyReview,
+    &crate::FactoryCodexUsagePolicy::ReportedCost,
+    crate::FactoryCodexFlowCompilationOptions {
+      authentication,
+      ..Default::default()
+    },
+  )
+  .unwrap();
+  let document: Value =
+    serde_json::from_slice(compiled.document(FactoryProtectedDocumentKind::Octafile).bytes()).unwrap();
+  let task = &document["tasks"]["observe"]["cmds"][0]["codex"];
+  let home = task["environment"]["public"]["CODEX_HOME"].as_str().unwrap();
+  assert_eq!(document["vars"][home], "/workspace/scratch/.credentials/codex");
+  assert_eq!(task["environment"]["secret"], serde_json::json!({}));
+  assert!(document["vars"].get("OCTACITY_CODEX_AUTH").is_none());
+  let envelope: Value =
+    serde_json::from_slice(compiled.document(FactoryProtectedDocumentKind::TaskEnvelope).bytes()).unwrap();
+  assert_eq!(envelope["authentication"], "native_login_file");
+  assert!(
+    crate::compile_codex_flow_task(
+      &intent,
+      &admitted,
+      &instructions,
+      &credential_profiles(),
+      FactoryCredentialConsumer::ReadOnlyReview,
+      &crate::FactoryCodexUsagePolicy::ReportedCost,
+    )
+    .is_err(),
+    "API-key compilation cannot substitute for a pinned native login"
+  );
+}
+
+#[test]
 fn codex_flow_compilation_includes_only_exact_selected_context_bytes() {
   use crate::factory_node_test_support::fixtures;
   use octacity_server_factory::{

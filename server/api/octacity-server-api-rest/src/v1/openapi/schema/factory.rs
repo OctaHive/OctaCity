@@ -248,24 +248,34 @@ pub(super) fn insert_factory_schemas(schemas: &mut Map<String, Value>) {
     ),
   );
   schemas.insert(
-    "FactoryBudgetUsage".to_owned(),
-    object(
-      [
-        ("attempts", bounded_integer(0, u64::from(bounds.attempts))),
-        ("elapsed_millis", bounded_integer(0, bounds.elapsed_millis)),
-        ("tokens", bounded_integer(0, bounds.tokens)),
-        ("cost_micro_units", bounded_integer(0, bounds.cost_micro_units)),
-        ("output_bytes", bounded_integer(0, bounds.output_bytes)),
-      ],
-      &[
-        "attempts",
-        "elapsed_millis",
-        "tokens",
-        "cost_micro_units",
-        "output_bytes",
-      ],
-    ),
+    "FactoryBudgetCost".to_owned(),
+    json!({"description":"Measured monetary amount, or an explicitly unknown total preserving its measured subtotal.",
+    "oneOf":[bounded_integer(0, bounds.cost_micro_units), object(
+      [("status", json!({"type":"string","enum":["unknown"]})),
+       ("known_micro_units", bounded_integer(0, bounds.cost_micro_units))],
+      &["status","known_micro_units"],
+    )]}),
   );
+  let reservation = object(
+    [
+      ("attempts", bounded_integer(0, u64::from(bounds.attempts))),
+      ("elapsed_millis", bounded_integer(0, bounds.elapsed_millis)),
+      ("tokens", bounded_integer(0, bounds.tokens)),
+      ("cost_micro_units", bounded_integer(0, bounds.cost_micro_units)),
+      ("output_bytes", bounded_integer(0, bounds.output_bytes)),
+    ],
+    &[
+      "attempts",
+      "elapsed_millis",
+      "tokens",
+      "cost_micro_units",
+      "output_bytes",
+    ],
+  );
+  schemas.insert("FactoryBudgetReservation".to_owned(), reservation.clone());
+  let mut usage = reservation;
+  usage["properties"]["cost_micro_units"] = schema_ref("FactoryBudgetCost");
+  schemas.insert("FactoryBudgetUsage".to_owned(), usage);
   schemas.insert(
     "FactoryRunSummaryDiagnostics".to_owned(),
     object(
