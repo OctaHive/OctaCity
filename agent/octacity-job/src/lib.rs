@@ -94,6 +94,8 @@ pub struct JobCompletion {
   job_root: Option<PathBuf>,
   execution: Option<ExecutionEvidenceV2>,
   change_set: Option<CapturedChangeSet>,
+  private_credential: Option<octacity_runner::RunnerPrivateCredentialGuard>,
+  sensitive_values: octacity_runner::RunnerSensitiveValues,
 }
 
 /// Failed execution plus any workspace that must be cleaned by the caller.
@@ -171,6 +173,24 @@ impl From<JobError> for JobFailure {
 }
 
 impl JobCompletion {
+  /// Inspect the final native credential copy after backend destruction.
+  /// Both original and refreshed values must be excluded from frozen outputs;
+  /// an uninspectable credential file prevents publication.
+  pub fn output_sensitive_values(&self) -> Result<octacity_runner::RunnerSensitiveValues, JobError> {
+    let current = self
+      .private_credential
+      .as_ref()
+      .map(|guard| guard.snapshot())
+      .transpose()
+      .map_err(map_runner_error)?;
+    Ok(octacity_runner::RunnerSensitiveValues::new(
+      self
+        .sensitive_values
+        .values()
+        .chain(current.iter().flat_map(|values| values.values())),
+    ))
+  }
+
   /// Returns verified provenance from source materialization.
   pub fn source(&self) -> &MaterializedSource {
     &self.source
@@ -742,6 +762,10 @@ impl JobExecutor {
         Some(paths) => prepare_source_write_paths(&workspace, paths)?,
         None => Vec::new(),
       };
+      let private_file = match (&managed, &scratch) {
+        (Some(intent), Some(scratch)) => self.materialize_factory_credential_file(intent, scratch)?,
+        _ => None,
+      };
       let identity = match spec.runtime.workload_identity_profile() {
         Some(profile) => Some(
           self
@@ -834,6 +858,14 @@ impl JobExecutor {
         ),
         _ => return Err(JobError::Invalid("managed execution layout is incomplete".to_owned())),
       };
+      let variable_values = private_variables.as_ref().map(|variables| variables.sensitive_values());
+      let sensitive_values = octacity_runner::RunnerSensitiveValues::new(
+        identity
+          .iter()
+          .map(|lease| lease.sensitive_value())
+          .chain(cache.iter().filter_map(|session| session.sensitive_value()))
+          .chain(variable_values.iter().flat_map(|values| values.values())),
+      );
       let operation = async {
         supervise_with_private_variables(
           &self.runner,
@@ -863,7 +895,9 @@ impl JobExecutor {
                 .iter()
                 .map(|lease| lease.sensitive_value())
                 .chain(cache.iter().filter_map(|session| session.sensitive_value())),
-            ),
+            )
+            .with_private_files(private_file.iter().cloned())
+            .map_err(map_runner_error)?,
             cancellation_grace: self.cancellation_grace,
             external_executables,
           },
@@ -876,6 +910,10 @@ impl JobExecutor {
         .map_err(map_runner_error)
       }
       .await;
+      let operation = match &private_file {
+        Some(file) => file.persist_updates().map_err(map_runner_error).and(operation),
+        None => operation,
+      };
       let operation = finish_identity(operation, identity).await;
       let runner = finish_cache_session(operation, cache).await?;
 
@@ -904,21 +942,33 @@ impl JobExecutor {
       } else {
         None
       };
-      Ok((source, runner, workspace, change_set, publication_workspace))
+      Ok((
+        source,
+        runner,
+        workspace,
+        change_set,
+        publication_workspace,
+        private_file,
+        sensitive_values,
+      ))
     }
     .await;
     let result = finish_protected_inputs(result, staged);
     match result {
-      Ok((source, runner, workspace, change_set, publication_workspace)) => Ok(JobCompletion {
-        source,
-        runner,
-        output_limits: spec.outputs,
-        workspace,
-        publication_workspace,
-        job_root: Some(job_root),
-        execution: selected.evidence,
-        change_set,
-      }),
+      Ok((source, runner, workspace, change_set, publication_workspace, private_credential, sensitive_values)) => {
+        Ok(JobCompletion {
+          source,
+          runner,
+          output_limits: spec.outputs,
+          workspace,
+          publication_workspace,
+          job_root: Some(job_root),
+          execution: selected.evidence,
+          change_set,
+          private_credential,
+          sensitive_values,
+        })
+      }
       Err(operation) => Err(JobFailure::with_workspace(operation, job_root)),
     }
   }

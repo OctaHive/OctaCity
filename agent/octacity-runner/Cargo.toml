@@ -31,8 +31,8 @@ tokio.workspace = true
 tokio-util.workspace = true
 tracing.workspace = true
 zeroize.workspace = true
+tempfile.workspace = true
 
 [dev-dependencies]
 async-trait.workspace = true
 octacity-private-fs = { path = "../octacity-private-fs", features = ["test-support"] }
-tempfile.workspace = true

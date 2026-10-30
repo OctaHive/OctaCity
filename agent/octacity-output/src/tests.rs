@@ -204,6 +204,81 @@ async fn retries_one_presigned_put_then_completes_and_removes_staging() {
 }
 
 #[tokio::test]
+async fn private_values_in_frozen_files_reports_or_archives_are_refused_before_upload_without_rewriting_evidence() {
+  let private = b"scoped-private-refresh-canary";
+  for kind in ["artifact", "report", "directory"] {
+    let coordinator = Arc::new(UploadCoordinator {
+      put_url: "https://objects.example/object".into(),
+      expires_at: unix_now() + 60,
+      begun: Mutex::new(Vec::new()),
+      completed: Mutex::new(Vec::new()),
+    });
+    let publisher = publisher(
+      coordinator.clone(),
+      "https://objects.example".into(),
+      RetryPolicy {
+        max_attempts: 1,
+        initial_delay: Duration::from_millis(1),
+        max_delay: Duration::from_millis(1),
+      },
+    );
+    let root = tempfile::tempdir().unwrap();
+    let workspace = root.path().join("workspace");
+    std::fs::create_dir(&workspace).unwrap();
+    let folder = workspace.join("records");
+    std::fs::create_dir(&folder).unwrap();
+    let source = folder.join("result.json");
+    let mut contents = vec![b'x'; 65531];
+    contents.extend_from_slice(private);
+    contents.extend_from_slice(b"end");
+    std::fs::write(&source, &contents).unwrap();
+    let declaration = if kind == "report" {
+      serde_json::json!({"task_id":23,"reports":[{"name":"result","path":"records/result.json","format":"json"}]})
+    } else {
+      serde_json::json!({"task_id":23,"artifacts":[{"name":"result","path":if kind == "directory" {"records"} else {"records/result.json"}}]})
+    };
+    let results = [serde_json::json!({"run_id":17,"tasks":[declaration]})];
+    let staging = root.path().join("staging");
+    let frozen = publisher
+      .freeze(
+        FreezeOutputs {
+          workspace: &workspace,
+          workspace_prefix: None,
+          results: &results,
+          trusted_files: &[],
+          limits: &OutputLimits {
+            artifact_count: 1,
+            artifact_bytes: 262144,
+            report_count: 1,
+            report_bytes: 262144,
+            single_output_bytes: 262144,
+          },
+          staging_root: &staging,
+        },
+        CancellationToken::new(),
+      )
+      .await
+      .unwrap();
+    let failure = match frozen
+      .reject_sensitive_values(&[private.as_slice()], CancellationToken::new())
+      .await
+    {
+      Ok(_) => panic!("private values cannot be published as {kind}"),
+      Err(error) => error,
+    };
+    assert!(!format!("{failure:?}").contains("scoped-private-refresh-canary"));
+    assert!(!staging.exists(), "rejected immutable snapshots must be removed");
+    assert_eq!(
+      std::fs::read(source).unwrap(),
+      contents,
+      "producer evidence must not be rewritten"
+    );
+    assert!(coordinator.begun.lock().unwrap().is_empty());
+    assert!(coordinator.completed.lock().unwrap().is_empty());
+  }
+}
+
+#[tokio::test]
 async fn mounted_output_publication_cannot_read_another_resource_namespace() {
   let coordinator = Arc::new(UploadCoordinator {
     put_url: "https://objects.example/object".to_owned(),

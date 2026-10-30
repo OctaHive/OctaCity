@@ -227,8 +227,18 @@ impl RunningExecution for FakeExecution {
 async fn fake_runner(
   request_id: String,
   input: tokio::io::DuplexStream,
+  output: tokio::io::DuplexStream,
+  exposed_identity: Option<String>,
+) {
+  fake_runner_outcome(request_id, input, output, exposed_identity, false).await;
+}
+
+async fn fake_runner_outcome(
+  request_id: String,
+  input: tokio::io::DuplexStream,
   mut output: tokio::io::DuplexStream,
   exposed_identity: Option<String>,
+  fail: bool,
 ) {
   output
       .write_all(
@@ -272,9 +282,14 @@ async fn fake_runner(
   } else {
     "[]".to_owned()
   };
-  messages.push_str(&format!(
-    "{{\"type\":\"finished\",\"request_id\":{id},\"status\":\"succeeded\",\"results\":{results}}}\n"
-  ));
+  if fail {
+    messages.push_str(&serde_json::json!({"type":"error","request_id":request_id,"message":results}).to_string());
+    messages.push('\n');
+  } else {
+    messages.push_str(&format!(
+      "{{\"type\":\"finished\",\"request_id\":{id},\"status\":\"succeeded\",\"results\":{results}}}\n"
+    ));
+  }
   output.write_all(messages.as_bytes()).await.unwrap();
 }
 

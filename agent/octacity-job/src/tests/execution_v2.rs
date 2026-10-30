@@ -1,7 +1,157 @@
 use super::*;
+#[cfg(unix)]
+use std::os::unix::fs::PermissionsExt as _;
 use std::time::SystemTime;
 
 const FACTORY_RUNNER_BYTES: &[u8] = b"factory runner fixture";
+
+/// The backend sees only the selected execution file and deliberately echoes a
+/// nested token, exercising the final supervisor boundary before durable output.
+#[cfg(unix)]
+struct LoginFileBackend {
+  starts: Arc<AtomicUsize>,
+  observed: Arc<std::sync::Mutex<Option<PathBuf>>>,
+  fail: bool,
+}
+
+#[cfg(unix)]
+#[async_trait]
+impl ExecutionBackend for LoginFileBackend {
+  async fn start(
+    &self,
+    runner: &RunnerProgram,
+    request: StartExecution,
+    _cancellation: CancellationToken,
+  ) -> Result<Box<dyn RunningExecution>, ExecutionError> {
+    let scratch = &request.factory.as_ref().unwrap().scratch;
+    let login = scratch.join(".credentials/codex/auth.json");
+    let bytes = fs::read(&login).expect("selected login exists before backend start");
+    let mut document: serde_json::Value = serde_json::from_slice(&bytes).unwrap();
+    assert_eq!(document["auth_mode"], "chatgpt");
+    assert_eq!(fs::metadata(&login).unwrap().permissions().mode() & 0o777, 0o600);
+    assert!(!login.parent().unwrap().join("config.toml").exists());
+    // Native clients may refresh their execution-local login before emitting
+    // any output. The supervisor must protect the refreshed value too.
+    document["tokens"]["access_token"] = serde_json::json!("native-rotated-canary");
+    fs::write(&login, serde_json::to_vec(&document).unwrap()).unwrap();
+    *self.observed.lock().unwrap() = Some(login);
+    self.starts.fetch_add(1, Ordering::SeqCst);
+    let (agent_stdin, runner_input) = tokio::io::duplex(4096);
+    let (runner_output, agent_stdout) = tokio::io::duplex(4096);
+    let (agent_stderr, runner_stderr) = tokio::io::duplex(64);
+    drop(agent_stderr);
+    tokio::spawn(fake_runner_outcome(
+      request.execution_id,
+      runner_input,
+      runner_output,
+      Some(document["tokens"]["access_token"].as_str().unwrap().to_owned()),
+      self.fail,
+    ));
+    Ok(Box::new(FakeExecution {
+      io: Some(ExecutionIo {
+        stdin: Box::pin(agent_stdin),
+        stdout: Box::pin(agent_stdout),
+        stderr: Box::pin(runner_stderr),
+      }),
+      paths: ExecutionPaths {
+        workspace: request.workspace,
+        data_dir: request.data_dir,
+        plugin_projection: runner.plugin_projection.clone(),
+        cache: None,
+      },
+      destroyed: Arc::new(AtomicBool::new(false)),
+    }))
+  }
+  async fn cleanup_orphans(&self) -> Result<(), ExecutionError> {
+    Ok(())
+  }
+}
+
+#[cfg(unix)]
+#[tokio::test]
+async fn selected_native_login_is_private_redacted_and_removed_with_the_job() {
+  native_login_case(false).await;
+}
+
+#[cfg(unix)]
+#[tokio::test]
+async fn native_login_refresh_survives_a_failed_runner_and_its_disposable_workspace() {
+  native_login_case(true).await;
+}
+
+#[cfg(unix)]
+async fn native_login_case(fail: bool) {
+  let mut fixture =
+    credential_job_fixture_with_document(b"version: 1\ntasks:\n  implement:\n    shell: echo managed\n").await;
+  let installation = tempfile::tempdir().unwrap();
+  fs::set_permissions(installation.path(), fs::Permissions::from_mode(0o700)).unwrap();
+  let source = installation.path().canonicalize().unwrap().join("auth.json");
+  fs::write(&source, br#"{"auth_mode":"chatgpt","tokens":{"access_token":"native-private-canary","refresh_token":"refresh-private-canary"}}"#).unwrap();
+  fs::set_permissions(&source, fs::Permissions::from_mode(0o600)).unwrap();
+  fs::write(installation.path().join("config.toml"), "unselected MCP settings").unwrap();
+  let profile = FactoryCredentialProfile::from_private_json_file(
+    "author-private-profile".into(),
+    source.clone(),
+    "codex/auth.json".into(),
+    Some(vec!["/tokens".into()]),
+    true,
+  )
+  .unwrap();
+  assert!(!format!("{profile:?}").contains("canary"));
+  fixture.executor = fixture.executor.with_factory_credential_profiles([profile]).unwrap();
+  let observed = Arc::new(std::sync::Mutex::new(None));
+  fixture.executor.execution_backends.values_mut().next().unwrap().backend = Arc::new(LoginFileBackend {
+    starts: fixture.starts.clone(),
+    observed: observed.clone(),
+    fail,
+  });
+  let (events, mut receiver) = mpsc::channel(128);
+  let outcome = fixture
+    .executor
+    .execute(
+      ExecuteJobRequest {
+        spec: fixture.spec.into(),
+        source_credentials: BTreeMap::new(),
+        cache_grant: None,
+        protected_inputs: fixture.inputs,
+      },
+      CancellationToken::new(),
+      &events,
+    )
+    .await;
+  let retained: serde_json::Value = serde_json::from_slice(&fs::read(&source).unwrap()).unwrap();
+  assert_eq!(
+    retained["tokens"]["access_token"], "native-rotated-canary",
+    "the next serialized Job must use the native client's refreshed login"
+  );
+  drop(events);
+  while let Some(event) = receiver.recv().await {
+    assert!(!format!("{event:?}").contains("canary"));
+  }
+  let materialized = observed.lock().unwrap().clone().unwrap();
+  assert_eq!(fixture.starts.load(Ordering::SeqCst), 1);
+  if fail {
+    let failure = outcome.unwrap_err();
+    assert!(matches!(failure.error(), JobError::Runner(_)));
+    assert!(!format!("{failure:?}").contains("canary"));
+    failure.cleanup().await.unwrap();
+  } else {
+    let completion = outcome.unwrap();
+    assert_eq!(completion.runner().status, RunStatus::Succeeded);
+    let sensitive = completion.output_sensitive_values().unwrap();
+    let values = sensitive.values().collect::<Vec<_>>();
+    assert!(values.contains(&b"native-private-canary".as_slice()));
+    assert!(values.contains(&b"native-rotated-canary".as_slice()));
+    assert_eq!(
+      completion.runner().results,
+      vec![serde_json::json!({"identity":"[redacted]"})]
+    );
+    completion.cleanup().await.unwrap();
+  }
+  assert!(!materialized.exists(), "private login shares Job cleanup lifetime");
+  assert!(source.exists(), "Job cleanup does not remove the operator login");
+  fixture.server.abort();
+}
 
 struct CredentialJobFixture {
   executor: JobExecutor,

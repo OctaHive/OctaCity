@@ -417,3 +417,133 @@ async fn fencing_during_output_publication_keeps_the_lease_loss_reason() {
     assert!(coordinator.completions.lock().unwrap().is_empty());
   }
 }
+struct CredentialOutputPublisher {
+  contents: &'static [u8],
+  published: AtomicBool,
+}
+
+struct UnusedUploadCoordinator;
+#[async_trait]
+impl octacity_coordinator::OutputUploadCoordinator for UnusedUploadCoordinator {
+  async fn begin_output_upload(
+    &self,
+    _: &Registration,
+    _: &LeaseAssignment,
+    _: &octacity_protocol::BeginOutputUploadRequest,
+    _: CancellationToken,
+  ) -> Result<octacity_protocol::BeginOutputUploadResponse, CoordinatorError> {
+    panic!("the lifecycle fixture does not request upload capabilities")
+  }
+  async fn complete_output_upload(
+    &self,
+    _: &Registration,
+    _: &LeaseAssignment,
+    _: &octacity_protocol::CompleteOutputUploadRequest,
+    _: CancellationToken,
+  ) -> Result<(), CoordinatorError> {
+    panic!("the lifecycle fixture does not complete uploads")
+  }
+}
+#[async_trait]
+impl OutputPublisher for CredentialOutputPublisher {
+  async fn freeze(
+    &self,
+    request: FreezeOutputs<'_>,
+    cancellation: CancellationToken,
+  ) -> Result<FrozenOutputs, OutputError> {
+    fs::write(request.workspace.join("result.txt"), self.contents).unwrap();
+    let publisher = octacity_output::PresignedOutputPublisher::new(
+      Arc::new(UnusedUploadCoordinator),
+      octacity_output::PresignedOutputPublisherConfig {
+        allowed_origins: vec!["http://127.0.0.1:1".into()],
+        ca_certificate_file: None,
+        max_archive_entries: 16,
+        upload_timeout: Duration::from_secs(2),
+        retry: octacity_coordinator::RetryPolicy {
+          max_attempts: 1,
+          initial_delay: Duration::from_millis(1),
+          max_delay: Duration::from_millis(1),
+        },
+      },
+    )
+    .unwrap();
+    let results =
+      vec![serde_json::json!({"run_id":1,"tasks":[{"task_id":1,"artifacts":[{"name":"result","path":"result.txt"}]}]})];
+    publisher
+      .freeze(
+        FreezeOutputs {
+          results: &results,
+          ..request
+        },
+        cancellation,
+      )
+      .await
+  }
+  async fn publish(&self, request: PublishOutputs<'_>, _: CancellationToken) -> Result<(), OutputError> {
+    self.published.store(true, Ordering::SeqCst);
+    drop(request);
+    Ok(())
+  }
+}
+
+#[tokio::test]
+async fn credential_bearing_output_stops_before_uploading_and_cleans_the_job() {
+  for (contents, expected) in [
+    (
+      b"workload-private-output-token".as_slice(),
+      JobCompletionStatus::InfrastructureFailed,
+    ),
+    (b"ordinary retained result".as_slice(), JobCompletionStatus::Succeeded),
+  ] {
+    let state_root = tempfile::tempdir().unwrap();
+    let work_root = tempfile::tempdir().unwrap();
+    let credentials = tempfile::tempdir().unwrap();
+    #[cfg(unix)]
+    {
+      use std::os::unix::fs::PermissionsExt as _;
+      fs::set_permissions(credentials.path(), fs::Permissions::from_mode(0o700)).unwrap();
+    }
+    let source = credentials.path().canonicalize().unwrap().join("identity");
+    fs::write(&source, b"workload-private-output-token").unwrap();
+    #[cfg(unix)]
+    {
+      use std::os::unix::fs::PermissionsExt as _;
+      fs::set_permissions(&source, fs::Permissions::from_mode(0o600)).unwrap();
+    }
+    let coordinator = Arc::new(LifecycleCoordinator::default());
+    let outputs = Arc::new(CredentialOutputPublisher {
+      contents,
+      published: AtomicBool::new(false),
+    });
+    let (_cache, lifecycle, mut lease, snapshot) = lifecycle_fixture_with_identity(
+      coordinator.clone(),
+      outputs.clone(),
+      state_root.path(),
+      work_root.path(),
+      false,
+      Arc::new(FileWorkloadIdentityProvider::new(BTreeMap::from([(
+        "private".into(),
+        source,
+      )]))),
+    );
+    let octacity_protocol::VerifiedJobSpec::V1(spec) = &mut lease.spec else {
+      unreachable!()
+    };
+    spec.runtime.workload_identity_profile = Some("private".into());
+    spec.outputs.artifact_count = 1;
+    spec.outputs.artifact_bytes = 1024;
+    spec.outputs.single_output_bytes = 1024;
+    let outcome = lifecycle.run(lease, snapshot, CancellationToken::new()).await.unwrap();
+    assert_eq!(outcome.status, expected);
+    assert_eq!(
+      outputs.published.load(Ordering::SeqCst),
+      expected == JobCompletionStatus::Succeeded
+    );
+    assert_eq!(
+      lifecycle_states(&coordinator.events.lock().unwrap()).contains(&JobLifecycleState::Uploading),
+      expected == JobCompletionStatus::Succeeded
+    );
+    assert!(fs::read_dir(work_root.path()).unwrap().next().is_none());
+    assert!(coordinator.completions.lock().unwrap()[0].results.is_empty());
+  }
+}

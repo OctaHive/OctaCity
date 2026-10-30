@@ -15,7 +15,7 @@ use crate::{RunnerJobRequest, RunnerRedactions, RunnerSupervisionError};
 
 // A credential set has the same finite bound as an Octa secret profile. JSON
 // escaping still fits inside the runner's independent input-frame ceiling.
-const MAX_PRIVATE_VARIABLE_BYTES: usize = 1024 * 1024;
+pub(crate) const MAX_PRIVATE_VARIABLE_BYTES: usize = 1024 * 1024;
 
 /// Maximum protected task-document bytes parsed to authorize private values.
 /// Separate from the credential-value budget: public instructions, JSON escaping
@@ -183,6 +183,11 @@ pub struct AuthorizedRunnerPrivateVariables {
 }
 
 impl AuthorizedRunnerPrivateVariables {
+  /// Opaque values for the same credential exclusion rule on frozen outputs.
+  pub fn sensitive_values(&self) -> crate::RunnerSensitiveValues {
+    crate::RunnerSensitiveValues::new(self.variables.values.values().map(|value| value.as_bytes()))
+  }
+
   pub(crate) fn verify_for_job(&self, job: &RunnerJobRequest) -> Result<(), RunnerSupervisionError> {
     if job.spec.commands != self.tasks
       || job.spec.octafile.as_deref() != Some(self.input.destination.as_str())

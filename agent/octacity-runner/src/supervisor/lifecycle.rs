@@ -87,6 +87,15 @@ pub(super) async fn drive(
           Ok(None) => return Err(protocol("stdout closed before a terminal message")),
           Err(error) => return Err(error.into()),
         };
+        for event in job.redactions.refresh_private_files()? {
+          handle_delivery(
+            deliver(events, RunnerStreamItem::Event(event), &cancellation, stop_deadline.unwrap_or(deadline)).await?,
+            &mut stop_reason,
+            &mut stop_deadline,
+            job,
+            &mut stdin,
+          ).await?;
+        }
         match message {
           RunnerMessage::Accepted { request_id } if request_id == job.request_id && !accepted => {
             accepted = true;

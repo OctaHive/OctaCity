@@ -67,7 +67,7 @@ fn reader_distribution_cannot_contain_private_factory_profiles() {
   let reader = configured_reader(&fixture);
   fixture.config.factory_credential_profiles.insert(
     "operator-model".to_owned(),
-    reader.release_root.join("private-values.json"),
+    FactoryCredentialProfileConfig::Variables(reader.release_root.join("private-values.json")),
   );
   fixture.config.protected_reader = Some(reader);
   assert!(

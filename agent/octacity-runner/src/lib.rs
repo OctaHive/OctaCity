@@ -13,6 +13,9 @@ mod private_variables;
 mod protocol;
 mod supervisor;
 
+mod private_files;
+pub use private_files::{RunnerPrivateCredentialGuard, RunnerPrivateJsonFile, RunnerSensitiveValues};
+
 pub use private_variables::{AuthorizedRunnerPrivateVariables, MAX_MANAGED_OCTAFILE_BYTES, RunnerPrivateVariables};
 
 pub use installation::{

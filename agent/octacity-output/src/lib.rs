@@ -8,6 +8,7 @@
 #![warn(missing_docs)]
 
 mod prepare;
+mod privacy;
 mod snapshot;
 #[cfg(test)]
 mod tests;
@@ -100,6 +101,22 @@ pub struct FrozenOutputs {
 }
 
 impl FrozenOutputs {
+  /// Refuses credential-bearing immutable snapshots before upload authorization.
+  /// Evidence bytes and digests are never rewritten. Rejected snapshots share
+  /// normal staging cleanup; values remain borrowed from their private owner.
+  pub async fn reject_sensitive_values(
+    self,
+    values: &[&[u8]],
+    cancellation: CancellationToken,
+  ) -> Result<Self, OutputError> {
+    if let Err(operation) = privacy::validate(&self.outputs, values, &cancellation).await {
+      return Err(match &self.staging_root {
+        Some(root) => cleanup_failed_staging(operation, root).await,
+        None => operation,
+      });
+    }
+    Ok(self)
+  }
   /// Creates an empty frozen set for publishers with no filesystem outputs.
   pub fn empty() -> Self {
     Self {

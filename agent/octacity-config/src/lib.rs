@@ -30,6 +30,30 @@ pub use protected_reader::{ProtectedReaderBridgeConfig, ProtectedReaderConfig};
 
 use validation::*;
 
+/// Local credential sources selected by signed logical profile identity.
+/// A legacy path supplies named secret variables. A structured reference copies
+/// only the selected JSON file into private Job scratch, never its host home.
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq)]
+#[serde(untagged, deny_unknown_fields)]
+pub enum FactoryCredentialProfileConfig {
+  /// Private JSON map of named secret variables (existing configuration form).
+  Variables(PathBuf),
+  /// Native-client JSON credential file; no provider session logic is involved.
+  JsonFile {
+    /// Owner-private source file outside Job and installation storage.
+    path: PathBuf,
+    /// Relative destination below the per-Job private credential root.
+    destination: String,
+    /// JSON pointers selecting sensitive subtrees; omitted selects all strings.
+    #[serde(default)]
+    sensitive_fields: Option<Vec<String>>,
+    /// Retain native updates in an Agent-owned installation and serialize Jobs.
+    /// Leave false for operator-managed files and personal credential caches.
+    #[serde(default)]
+    persist_updates: bool,
+  },
+}
+
 /// Configuration read from the agent's TOML file.
 #[derive(Clone, Debug, Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -138,7 +162,7 @@ pub struct AgentConfig {
   /// Configuration contains file references only. Optional files are loaded by
   /// the executable composition root when Factory execution is enabled.
   #[serde(default)]
-  pub factory_credential_profiles: BTreeMap<String, PathBuf>,
+  pub factory_credential_profiles: BTreeMap<String, FactoryCredentialProfileConfig>,
   /// HTTPS origins allowed for output uploads.
   pub allowed_upload_origins: Vec<String>,
   /// Maximum filesystem entries traversed in one directory artifact.
@@ -802,7 +826,20 @@ impl AgentConfig {
         .validate()
         .map_err(|error| ConfigError::Invalid(format!("invalid factory_permissions: {error}")))?;
     }
-    for (profile, path) in &mut self.factory_credential_profiles {
+    for (profile, source) in &mut self.factory_credential_profiles {
+      if let FactoryCredentialProfileConfig::JsonFile { destination, .. } = source
+        && (destination.is_empty()
+          || destination.len() > 1024
+          || destination.contains(['\\', ':'])
+          || Path::new(destination)
+            .components()
+            .any(|part| !matches!(part, std::path::Component::Normal(_))))
+      {
+        return invalid("Factory credential destination must remain below private execution credentials");
+      }
+      let path = match source {
+        FactoryCredentialProfileConfig::Variables(path) | FactoryCredentialProfileConfig::JsonFile { path, .. } => path,
+      };
       if profile.is_empty()
         || profile.len() > octacity_protocol::MAX_FACTORY_WIRE_IDENTITY_BYTES
         || !profile

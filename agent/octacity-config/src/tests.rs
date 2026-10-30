@@ -1105,17 +1105,77 @@ fn example_configuration_stays_parseable() {
 }
 
 #[test]
+fn native_login_profile_is_a_private_file_reference_without_reading_optional_values() {
+  let mut fixture = Fixture::new();
+  let path = fixture._temp.path().join("native-login.json");
+  let source: FactoryCredentialProfileConfig = toml::from_str(&format!(
+    "path = {}\ndestination = 'codex/auth.json'\nsensitive_fields = ['/tokens']\npersist_updates = true\n",
+    toml::Value::String(path.to_string_lossy().into_owned())
+  ))
+  .unwrap();
+  fixture
+    .config
+    .factory_credential_profiles
+    .insert("model-login".into(), source);
+  let validated = fixture.config.validate().unwrap();
+  match &validated.config.factory_credential_profiles["model-login"] {
+    FactoryCredentialProfileConfig::JsonFile {
+      path: installed,
+      destination,
+      sensitive_fields,
+      persist_updates,
+    } => {
+      assert_eq!(installed, &path);
+      assert_eq!(destination, "codex/auth.json");
+      assert_eq!(sensitive_fields.as_deref(), Some(["/tokens".to_owned()].as_slice()));
+      assert!(*persist_updates);
+    }
+    _ => panic!("the native login must not be interpreted as named API-key variables"),
+  }
+  assert!(!path.exists(), "disabled Factory does not load optional credentials");
+}
+
+#[test]
+fn native_login_destination_cannot_escape_private_execution_credentials() {
+  for destination in [
+    "",
+    "../auth.json",
+    "/auth.json",
+    "codex/../../auth.json",
+    "codex\\auth.json",
+    "C:auth.json",
+  ] {
+    let mut fixture = Fixture::new();
+    fixture.config.factory_credential_profiles.insert(
+      "model-login".into(),
+      FactoryCredentialProfileConfig::JsonFile {
+        path: fixture._temp.path().join("native-login.json"),
+        destination: destination.into(),
+        sensitive_fields: None,
+        persist_updates: false,
+      },
+    );
+    assert!(
+      fixture.config.validate().is_err(),
+      "destination must remain a relative private credential path: {destination}"
+    );
+  }
+}
+
+#[test]
 fn private_factory_profile_files_are_operator_references_without_reading_secret_values() {
   let mut fixture = Fixture::new();
   let variables_file = fixture._temp.path().join("private-model-values.json");
   // The configuration boundary validates references. Disabled Factory must
   // not require this optional dependency or read its secret contents.
-  fixture.config.factory_credential_profiles =
-    BTreeMap::from([("Operator.Model-1".to_owned(), variables_file.clone())]);
+  fixture.config.factory_credential_profiles = BTreeMap::from([(
+    "Operator.Model-1".to_owned(),
+    FactoryCredentialProfileConfig::Variables(variables_file.clone()),
+  )]);
   let validated = fixture.config.validate().unwrap();
   assert_eq!(
     validated.config.factory_credential_profiles["Operator.Model-1"],
-    variables_file
+    FactoryCredentialProfileConfig::Variables(variables_file.clone())
   );
   assert!(!variables_file.exists());
 }
@@ -1126,7 +1186,7 @@ fn private_factory_profile_references_cannot_name_paths_or_job_storage() {
     let mut fixture = Fixture::new();
     fixture.config.factory_credential_profiles.insert(
       identity.to_owned(),
-      fixture._temp.path().join("private-model-values.json"),
+      FactoryCredentialProfileConfig::Variables(fixture._temp.path().join("private-model-values.json")),
     );
     assert!(fixture.config.validate().is_err(), "invalid logical profile identity");
   }
@@ -1140,10 +1200,10 @@ fn private_factory_profile_references_cannot_name_paths_or_job_storage() {
       _ => &fixture.config.source_plugins_dir,
     }
     .join("private-values.json");
-    fixture
-      .config
-      .factory_credential_profiles
-      .insert("operator-model".to_owned(), path);
+    fixture.config.factory_credential_profiles.insert(
+      "operator-model".to_owned(),
+      FactoryCredentialProfileConfig::Variables(path),
+    );
     assert!(
       fixture.config.validate().is_err(),
       "private profile cannot occupy job or installation storage"

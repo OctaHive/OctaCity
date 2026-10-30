@@ -200,21 +200,33 @@ impl FinishingAttempt<'_> {
       match completion.change_set().map(trusted_change_set_outputs).transpose() {
         Ok(trusted_files) => {
           let trusted_files = trusted_files.unwrap_or_default();
-          let freeze = self.lifecycle.outputs.freeze(
-            FreezeOutputs {
-              workspace: completion.publication_workspace(),
-              workspace_prefix: completion.publication_prefix(),
-              results: &results,
-              trusted_files: &trusted_files,
-              limits: completion.output_limits(),
-              staging_root: &staging_root,
-            },
-            cancellation.clone(),
-          );
+          let freeze = async {
+            let sensitive = completion.output_sensitive_values().map_err(|_| {
+              OutputError::Invalid("private execution credentials cannot be inspected for publication".into())
+            })?;
+            let frozen = self
+              .lifecycle
+              .outputs
+              .freeze(
+                FreezeOutputs {
+                  workspace: completion.publication_workspace(),
+                  workspace_prefix: completion.publication_prefix(),
+                  results: &results,
+                  trusted_files: &trusted_files,
+                  limits: completion.output_limits(),
+                  staging_root: &staging_root,
+                },
+                cancellation.clone(),
+              )
+              .await?;
+            frozen
+              .reject_sensitive_values(&sensitive.values().collect::<Vec<_>>(), cancellation.clone())
+              .await
+          };
           frozen = accept_output_result(
             run_output_while_owned(
               freeze,
-              cancellation,
+              cancellation.clone(),
               &mut self.active.monitor,
               &mut self.active.lease_outcome,
             )

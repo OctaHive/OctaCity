@@ -692,6 +692,24 @@ fn lifecycle_fixture(
   work_root: &std::path::Path,
   wait_for_cancel: bool,
 ) -> (CacheFixtureRoot, JobLifecycle, VerifiedLease, HostSnapshot) {
+  lifecycle_fixture_with_identity(
+    coordinator,
+    outputs,
+    state_root,
+    work_root,
+    wait_for_cancel,
+    Arc::new(FileWorkloadIdentityProvider::default()),
+  )
+}
+
+fn lifecycle_fixture_with_identity(
+  coordinator: Arc<LifecycleCoordinator>,
+  outputs: Arc<dyn OutputPublisher>,
+  state_root: &std::path::Path,
+  work_root: &std::path::Path,
+  wait_for_cancel: bool,
+  identity: Arc<dyn octacity_identity::WorkloadIdentityProvider>,
+) -> (CacheFixtureRoot, JobLifecycle, VerifiedLease, HostSnapshot) {
   let now = std::time::SystemTime::now()
     .duration_since(std::time::UNIX_EPOCH)
     .unwrap()
@@ -712,7 +730,7 @@ fn lifecycle_fixture(
     JobExecutor::new(
       lifecycle_runner_installation(),
       Arc::new(LifecycleSource),
-      Arc::new(FileWorkloadIdentityProvider::default()),
+      identity,
       BTreeMap::from([(
         RuntimeMode::Native,
         Arc::new(LifecycleBackend {
@@ -727,7 +745,12 @@ fn lifecycle_fixture(
         max_workspace_bytes: 2 * 1024 * 1024,
         allow_unrestricted_network: true,
         allowed_network_hosts: Vec::new(),
-        max_output_limits: spec.outputs.clone(),
+        max_output_limits: OutputLimits {
+          artifact_count: 4,
+          artifact_bytes: 1024 * 1024,
+          single_output_bytes: 1024 * 1024,
+          ..spec.outputs.clone()
+        },
         cancellation_grace: Duration::from_secs(1),
         runner_supervision: RunnerSupervisionPolicy {
           resource_sample_interval: Duration::from_millis(1),

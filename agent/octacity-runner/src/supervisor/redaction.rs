@@ -33,6 +33,7 @@ pub struct RunnerRedactions {
   streams: BTreeMap<StreamKey, RedactionStream>,
   pending: VecDeque<PendingEvent>,
   pending_bytes: usize,
+  private_files: Vec<crate::RunnerPrivateCredentialGuard>,
 }
 
 impl RunnerRedactions {
@@ -42,24 +43,39 @@ impl RunnerRedactions {
       .map(|value| Zeroizing::new(value.to_vec()))
       .collect::<Vec<_>>();
     let replacement = Self::new(self.values.iter().chain(&additional).map(|value| value.as_slice()));
+    let private_files = std::mem::take(&mut self.private_files);
     *self = replacement;
+    self.private_files = private_files;
+  }
+
+  /// Observe native-client credential refreshes before untrusted output crosses
+  /// the supervisor boundary. The same guards can inspect final output files.
+  pub fn with_private_files(
+    mut self,
+    files: impl IntoIterator<Item = crate::RunnerPrivateCredentialGuard>,
+  ) -> Result<Self, RunnerSupervisionError> {
+    for file in files {
+      self.extend(file.snapshot()?.values());
+      self.private_files.push(file);
+    }
+    Ok(self)
+  }
+
+  pub(super) fn refresh_private_files(&mut self) -> Result<Vec<RunnerEvent>, RunnerSupervisionError> {
+    let mut emitted = Vec::new();
+    for file in self.private_files.clone() {
+      if let Some(values) = file.updated_values()? {
+        // Do not discard pending stream tails or join them against a changed
+        // matcher. Conservatively mask ambiguous tails before adding secrets.
+        emitted.extend(self.relieve_pressure()?);
+        self.extend(values.values());
+      }
+    }
+    Ok(emitted)
   }
   /// Copies non-empty values into a short-lived redaction set.
   pub fn new<'a>(values: impl IntoIterator<Item = &'a [u8]>) -> Self {
-    let mut copied = Vec::new();
-    for value in values.into_iter().filter(|value| !value.is_empty()) {
-      copied.push(Zeroizing::new(value.to_vec()));
-      let trimmed = value.trim_ascii();
-      if !trimmed.is_empty() && trimmed != value {
-        // Vault authenticates with the trimmed JWT. Retaining both forms also
-        // covers `cat`/line output, where the event payload omits the newline
-        // present in an ordinary token file.
-        copied.push(Zeroizing::new(trimmed.to_vec()));
-      }
-    }
-    let mut values = copied;
-    values.sort_by(|left, right| left.as_slice().cmp(right.as_slice()));
-    values.dedup_by(|left, right| left.as_slice() == right.as_slice());
+    let mut values = crate::RunnerSensitiveValues::new(values).into_values();
     // Replacing a contained prefix first could hide the longer credential
     // from subsequent passes while leaving its suffix visible.
     values.sort_by_key(|value| std::cmp::Reverse(value.len()));
@@ -70,6 +86,7 @@ impl RunnerRedactions {
       streams: BTreeMap::new(),
       pending: VecDeque::new(),
       pending_bytes: 0,
+      private_files: Vec::new(),
     }
   }
 

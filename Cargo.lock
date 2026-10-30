@@ -4398,6 +4398,7 @@ version = "0.1.0"
 dependencies = [
  "async-trait",
  "hex",
+ "memchr",
  "octacity-coordinator",
  "octacity-private-fs",
  "octacity-protocol",
@@ -4411,6 +4412,7 @@ dependencies = [
  "tokio",
  "tokio-util",
  "uuid",
+ "zeroize",
 ]
 
 [[package]]

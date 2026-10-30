@@ -6,6 +6,10 @@ use serde::{Deserialize, Serialize};
 
 use crate::{ExecutionMode, NetworkPolicy, OctaSpec, OutputLimits, RuntimeSpecV2};
 
+/// Private per-execution credential files below the existing scratch mount.
+/// These bytes are local credentials, never published protected Artifacts.
+pub const FACTORY_PRIVATE_CREDENTIAL_ROOT: &str = "/workspace/scratch/.credentials";
+
 /// Maximum entries in any v3 Factory permission category.
 pub const MAX_FACTORY_PERMISSION_ENTRIES: usize = 256;
 /// Maximum protected inputs carried by one managed execution manifest.

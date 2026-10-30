@@ -1,8 +1,14 @@
 //! Operator-installed credentials selected only by signed logical identity.
 use crate::{JobError, JobExecutor, StagedProtectedInputs, factory_preflight::ManagedFactoryExecution};
 use octacity_protocol::MAX_FACTORY_WIRE_IDENTITY_BYTES;
-use octacity_runner::{AuthorizedRunnerPrivateVariables, RunnerPrivateVariables};
-use std::{collections::BTreeMap, fmt, path::PathBuf};
+use octacity_runner::{
+  AuthorizedRunnerPrivateVariables, RunnerPrivateCredentialGuard, RunnerPrivateJsonFile, RunnerPrivateVariables,
+};
+use std::{
+  collections::BTreeMap,
+  fmt,
+  path::{Path, PathBuf},
+};
 
 /// One immutable local credential installation, independent of provider format.
 /// Values remain zeroing, opaque and absent from Debug and the public JobSpec.
@@ -15,6 +21,12 @@ pub struct FactoryCredentialProfile {
 enum CredentialSource {
   Values(RunnerPrivateVariables),
   File(PathBuf),
+  JsonFile {
+    path: PathBuf,
+    destination: String,
+    sensitive_fields: Option<Vec<String>>,
+    persist_updates: bool,
+  },
 }
 impl FactoryCredentialProfile {
   /// Freezes one bounded logical identity and its private named variables.
@@ -36,11 +48,54 @@ impl FactoryCredentialProfile {
       source: CredentialSource::File(path),
     })
   }
-  fn variables(&self) -> Result<RunnerPrivateVariables, JobError> {
+  /// Selects one native-client login file without importing its home directory,
+  /// configuration, MCP connections or API-key environment. The signed logical
+  /// profile selects this installation; the workload cannot choose its path.
+  pub fn from_private_json_file(
+    identity: String,
+    path: PathBuf,
+    destination: String,
+    sensitive_fields: Option<Vec<String>>,
+    persist_updates: bool,
+  ) -> Result<Self, JobError> {
+    validate_identity(&identity)?;
+    load_json(&path, &destination, sensitive_fields.as_deref()).map_err(|_| invalid())?;
+    Ok(Self {
+      identity,
+      source: CredentialSource::JsonFile {
+        path,
+        destination,
+        sensitive_fields,
+        persist_updates,
+      },
+    })
+  }
+  fn variables(&self) -> Result<Option<RunnerPrivateVariables>, JobError> {
     match &self.source {
-      CredentialSource::Values(values) => Ok(values.clone()),
-      CredentialSource::File(path) => RunnerPrivateVariables::from_private_file(path).map_err(|_| invalid()),
+      CredentialSource::Values(values) => Ok(Some(values.clone())),
+      CredentialSource::File(path) => RunnerPrivateVariables::from_private_file(path)
+        .map(Some)
+        .map_err(|_| invalid()),
+      CredentialSource::JsonFile {
+        path,
+        destination,
+        sensitive_fields,
+        ..
+      } => {
+        load_json(path, destination, sensitive_fields.as_deref()).map_err(|_| invalid())?;
+        Ok(None)
+      }
     }
+  }
+}
+fn load_json(
+  path: &Path,
+  destination: &str,
+  fields: Option<&[String]>,
+) -> Result<RunnerPrivateJsonFile, octacity_runner::RunnerSupervisionError> {
+  match fields {
+    Some(fields) => RunnerPrivateJsonFile::load_scoped(path, destination, fields),
+    None => RunnerPrivateJsonFile::load(path, destination),
   }
 }
 fn validate_identity(identity: &str) -> Result<(), JobError> {
@@ -86,12 +141,47 @@ impl JobExecutor {
         .get(identity)
         .ok_or_else(error)?
         .variables()
-        .map_err(|_| error())?;
-      variables = variables
-        .with_selected_credential(variable, &profile)
-        .map_err(|_| error())?;
+        .map_err(|_| error())?
+        .ok_or_else(error)?;
+      variables = Some(
+        variables
+          .unwrap_or_default()
+          .with_selected_credential(variable, &profile)
+          .map_err(|_| error())?,
+      );
     }
-    Ok(Some(variables))
+    Ok(variables)
+  }
+  /// Revalidates the selected native file immediately before runner setup.
+  /// Its copy lives only below private Job scratch and shares Job cleanup.
+  pub(super) fn materialize_factory_credential_file(
+    &self,
+    intent: &ManagedFactoryExecution,
+    scratch: &Path,
+  ) -> Result<Option<RunnerPrivateCredentialGuard>, JobError> {
+    let error = || JobError::FactoryPreflight(crate::FactoryPreflightError::SecretProfile);
+    let Some(identity) = &intent.execution.credential_profile else {
+      return Ok(None);
+    };
+    let profile = self.factory_credential_profiles.get(identity).ok_or_else(error)?;
+    match &profile.source {
+      CredentialSource::JsonFile {
+        path,
+        destination,
+        sensitive_fields,
+        persist_updates,
+      } => {
+        let file = load_json(path, destination, sensitive_fields.as_deref()).map_err(|_| error())?;
+        if *persist_updates {
+          file.publish_persistent(scratch)
+        } else {
+          file.publish(scratch)
+        }
+        .map(Some)
+        .map_err(|_| error())
+      }
+      _ => Ok(None),
+    }
   }
   /// Installs local profiles without copying any signed server grants or values.
   /// Repeated logical identities are ambiguous and rejected before execution.
