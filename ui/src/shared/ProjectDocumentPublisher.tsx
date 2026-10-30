@@ -5,24 +5,33 @@ import type { ProjectDocumentsApi } from '../api/projectDocuments';
 import { queryKeys } from '../app/query';
 import { usePresentation } from '../app/presentation/PresentationProvider';
 import { ConfirmedCommand } from './ConfirmedCommand';
+import { ProjectDocumentReader } from './ProjectDocumentReader';
 
 type Request = components['schemas']['PublishProjectDocumentRequest'];
-/** Publishes one reviewed immutable input; assigning it to a stage is a separate explicit choice. */
-export function ProjectDocumentPublisher({
-  api,
-  projectId,
-}: {
+interface Props {
   api: ProjectDocumentsApi;
   projectId: string;
-}) {
+}
+/** Publishes one reviewed immutable input; assigning it to a stage is a separate explicit choice. */
+export function ProjectDocumentPublisher(props: Props) {
+  return <ProjectDocumentEditor key={props.projectId} {...props} />;
+}
+function ProjectDocumentEditor({ api, projectId }: Props) {
   const { t } = usePresentation();
   const queryClient = useQueryClient();
   const [draft, setDraft] = useState<Request>({ name: '', content: '' });
+  const [reading, setReading] = useState(false);
   const [review, setReview] = useState<{ request: Request; returnFocus: HTMLElement } | null>(null);
   return (
-    <fieldset>
+    <fieldset disabled={reading}>
       <legend>{t('projectDocument.publish')}</legend>
       <p>{t('projectDocument.help')}</p>
+      <ProjectDocumentReader
+        api={api}
+        projectId={projectId}
+        onLoad={setDraft}
+        onLoading={setReading}
+      />
       <label>
         {t('projectDocument.name')}
         <input

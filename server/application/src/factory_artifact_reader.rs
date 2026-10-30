@@ -287,7 +287,7 @@ impl FactoryProjectInputReader {
     read_project_input_object(self.bytes.as_ref(), &request, input).await
   }
 }
-async fn read_project_input_object(
+pub(crate) async fn read_project_input_object(
   bytes: &(impl ArtifactByteReader + ?Sized),
   request: &ReadFactoryArtifact,
   input: octacity_server_store::PublishedProjectInput,

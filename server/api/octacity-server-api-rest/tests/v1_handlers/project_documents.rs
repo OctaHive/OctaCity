@@ -6,6 +6,56 @@ use octacity_server_application::*;
 struct Documents {
   publications: Mutex<Vec<PublishProjectDocumentCommand>>,
   pages: Mutex<Vec<ListProjectInputDocumentsQuery>>,
+  reads: Mutex<Vec<ReadProjectInputDocumentQuery>>,
+}
+#[async_trait]
+impl ManagementQueryUseCase<ReadProjectInputDocumentQuery> for Documents {
+  type Error = ApplicationError;
+  async fn execute_management_query(
+    &self,
+    _: &ManagementRequestContext,
+    _: &ManagementAuthorizationGrant,
+    query: ReadProjectInputDocumentQuery,
+  ) -> Result<ProjectDocumentContent, ApplicationError> {
+    let document = resource(query.project_id);
+    assert_eq!(query.artifact_id, document.artifact.artifact_id());
+    self.reads.lock().unwrap().push(query);
+    Ok(ProjectDocumentContent {
+      project_id: document.project_id,
+      artifact: document.artifact,
+      content: "Private goals\r\nexactly\n".into(),
+    })
+  }
+}
+
+#[tokio::test]
+async fn project_document_content_is_explicitly_read_through_the_project_owner_without_caching() {
+  let peer = Arc::new(RecordingApplication::default());
+  let documents = Arc::new(Documents::default());
+  let policy = Arc::new(TrustedNetworkManagementPolicy);
+  let app = recording_management_application(peer.clone(), peer.clone()).with_project_documents(
+    Arc::new(AuthorizedCommandHandler::new(policy.clone(), documents.clone())),
+    Arc::new(AuthorizedQueryHandler::new(policy, documents.clone())),
+  );
+  let router = management_router_with_application(|| true, app);
+  let response = router
+    .oneshot(empty_request(
+      "GET",
+      "/api/v1/projects/11111111-1111-4111-8111-111111111111/input-documents/22222222-2222-4222-8222-222222222222",
+      None,
+    ))
+    .await
+    .unwrap();
+  assert_eq!(response.status(), StatusCode::OK);
+  assert_eq!(response.headers()["cache-control"], "no-store");
+  let body: serde_json::Value =
+    serde_json::from_slice(&to_bytes(response.into_body(), usize::MAX).await.unwrap()).unwrap();
+  assert_eq!(body["content"], "Private goals\r\nexactly\n");
+  assert_json_matches_component(&openapi_document(), "ProjectDocumentContent", &body);
+  assert_eq!(documents.reads.lock().unwrap().len(), 1);
+  assert!(documents.publications.lock().unwrap().is_empty());
+  assert!(documents.pages.lock().unwrap().is_empty());
+  assert!(peer.calls.lock().unwrap().is_empty());
 }
 fn resource(project: ProjectId) -> ProjectDocumentResource {
   ProjectDocumentResource {

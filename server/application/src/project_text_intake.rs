@@ -194,7 +194,10 @@ pub(crate) async fn authorize_project_text(
 #[path = "project_input_document.rs"]
 mod documents;
 
-pub use documents::{ListProjectInputDocumentsQuery, ProjectDocumentPage, PublishProjectDocumentCommand};
+pub use documents::{
+  ListProjectInputDocumentsQuery, ProjectDocumentContent, ProjectDocumentPage, PublishProjectDocumentCommand,
+  ReadProjectInputDocumentQuery,
+};
 
 #[path = "project_input_publication.rs"]
 mod publication;

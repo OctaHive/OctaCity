@@ -975,6 +975,216 @@ fn project_input_owner_publishes_a_named_context_document_without_build_or_admis
   });
 }
 
+#[test]
+fn project_goals_can_be_read_and_revised_without_changing_an_accepted_version() {
+  run(async {
+    let project = ProjectId::generate();
+    let store = Arc::new(InMemoryFactoryConfigurationStore::new());
+    store.seed_project(project).unwrap();
+    let bytes = Arc::new(DocumentBytes::default());
+    let resolver = Arc::new(RecordingResolver::default());
+    let policy = Arc::new(TrustedNetworkManagementPolicy);
+    let owner = Arc::new(ProjectTextIntake::new(
+      store,
+      bytes,
+      resolver.clone(),
+      policy.clone(),
+      Arc::new(Clock),
+    ));
+    let commands = AuthorizedCommandHandler::new(policy.clone(), owner.clone());
+    let queries = AuthorizedQueryHandler::new(policy, owner);
+    let first = commands
+      .handle_command(
+        &context(),
+        PublishProjectDocumentCommand {
+          submission: ProjectDocumentSubmission {
+            project_id: project,
+            name: "Project goals".parse().unwrap(),
+            content: "Original private goals\r\nIsolated agents.\n".into(),
+            idempotency_key: "goals-original".parse().unwrap(),
+          },
+        },
+      )
+      .await
+      .unwrap();
+    let read = queries
+      .handle_query(
+        &context(),
+        ReadProjectInputDocumentQuery {
+          project_id: project,
+          artifact_id: first.artifact.artifact_id(),
+        },
+      )
+      .await
+      .unwrap();
+    assert_eq!(read.artifact, first.artifact);
+    assert_eq!(read.content, "Original private goals\r\nIsolated agents.\n");
+    assert!(!format!("{read:?}").contains("Original private goals"));
+    let revised = commands
+      .handle_command(
+        &context(),
+        PublishProjectDocumentCommand {
+          submission: ProjectDocumentSubmission {
+            project_id: project,
+            name: "Project goals".parse().unwrap(),
+            content: "Revised goals\nBounded selected context.\n".into(),
+            idempotency_key: "goals-revised".parse().unwrap(),
+          },
+        },
+      )
+      .await
+      .unwrap();
+    assert_ne!(first.artifact, revised.artifact);
+    let original = queries
+      .handle_query(
+        &context(),
+        ReadProjectInputDocumentQuery {
+          project_id: project,
+          artifact_id: first.artifact.artifact_id(),
+        },
+      )
+      .await
+      .unwrap();
+    assert_eq!(original.content, "Original private goals\r\nIsolated agents.\n");
+    let revision = queries
+      .handle_query(
+        &context(),
+        ReadProjectInputDocumentQuery {
+          project_id: project,
+          artifact_id: revised.artifact.artifact_id(),
+        },
+      )
+      .await
+      .unwrap();
+    assert_eq!(revision.content, "Revised goals\nBounded selected context.\n");
+    assert_eq!(resolver.call_count(), 0, "editing context cannot admit or execute work");
+  });
+}
+
+#[test]
+fn absent_foreign_and_expired_project_documents_are_not_found_before_private_reads() {
+  run(async {
+    let project = ProjectId::generate();
+    let other = ProjectId::generate();
+    let store = Arc::new(InMemoryFactoryConfigurationStore::new());
+    store.seed_project(project).unwrap();
+    store.seed_project(other).unwrap();
+    let bytes = Arc::new(DocumentBytes::default());
+    let resolver = Arc::new(RecordingResolver::default());
+    let policy = Arc::new(TrustedNetworkManagementPolicy);
+    let publisher = ProjectTextIntake::new(
+      store.clone(),
+      bytes.clone(),
+      resolver.clone(),
+      policy.clone(),
+      Arc::new(Clock),
+    );
+    let document = publisher
+      .publish_document(
+        &context(),
+        ProjectDocumentSubmission {
+          project_id: project,
+          name: "Goals".parse().unwrap(),
+          content: "Private goals".into(),
+          idempotency_key: "goals".parse().unwrap(),
+        },
+      )
+      .await
+      .unwrap();
+    let before = bytes.reads.load(Ordering::SeqCst);
+    for (owner_project, artifact_id, now) in [
+      (project, ArtifactId::generate(), time(20)),
+      (other, document.artifact.artifact_id(), time(20)),
+      (project, document.artifact.artifact_id(), document.expires_at),
+    ] {
+      let owner = Arc::new(ProjectTextIntake::new(
+        store.clone(),
+        bytes.clone(),
+        resolver.clone(),
+        policy.clone(),
+        Arc::new(DocumentClock(now)),
+      ));
+      let failure = AuthorizedQueryHandler::new(policy.clone(), owner)
+        .handle_query(
+          &context(),
+          ReadProjectInputDocumentQuery {
+            project_id: owner_project,
+            artifact_id,
+          },
+        )
+        .await
+        .expect_err("an unavailable document cannot disclose bytes");
+      assert_eq!(
+        failure.application().unwrap().classification(),
+        ApplicationFailure::NotFound
+      );
+      assert_eq!(bytes.reads.load(Ordering::SeqCst), before);
+    }
+  });
+}
+
+struct MetadataWithoutDownload;
+#[async_trait::async_trait]
+impl ManagementAuthorizationPolicy for MetadataWithoutDownload {
+  async fn authorize(
+    &self,
+    _: &ManagementRequestContext,
+    action: ManagementAction,
+    _: &ManagementResource,
+  ) -> Result<ManagementAuthorizationGrant, ManagementAuthorizationDenial> {
+    if action == ManagementAction::Download {
+      return Err(ManagementAuthorizationDenial::forbidden());
+    }
+    Ok(ManagementAuthorizationGrant::new(ManagementVisibility::all()))
+  }
+}
+#[test]
+fn project_document_metadata_visibility_does_not_grant_private_content_download() {
+  run(async {
+    let project = ProjectId::generate();
+    let store = Arc::new(InMemoryFactoryConfigurationStore::new());
+    store.seed_project(project).unwrap();
+    let bytes = Arc::new(DocumentBytes::default());
+    let policy = Arc::new(MetadataWithoutDownload);
+    let owner = Arc::new(ProjectTextIntake::new(
+      store,
+      bytes.clone(),
+      Arc::new(RecordingResolver::default()),
+      policy.clone(),
+      Arc::new(Clock),
+    ));
+    let published = owner
+      .publish_document(
+        &context(),
+        ProjectDocumentSubmission {
+          project_id: project,
+          name: "Goals".parse().unwrap(),
+          content: "Private goals".into(),
+          idempotency_key: "private-goals".parse().unwrap(),
+        },
+      )
+      .await
+      .unwrap();
+    let before = bytes.reads.load(Ordering::SeqCst);
+    let queries = AuthorizedQueryHandler::new(policy, owner);
+    let result = queries
+      .handle_query(
+        &context(),
+        ReadProjectInputDocumentQuery {
+          project_id: project,
+          artifact_id: published.artifact.artifact_id(),
+        },
+      )
+      .await;
+    assert!(result.is_err(), "viewing metadata cannot authorize document bytes");
+    assert_eq!(
+      bytes.reads.load(Ordering::SeqCst),
+      before,
+      "denial precedes private byte reads"
+    );
+  });
+}
+
 #[derive(Default)]
 struct DocumentBytes {
   objects: Mutex<BTreeMap<ArtifactId, (ArtifactObject, Vec<u8>)>>,

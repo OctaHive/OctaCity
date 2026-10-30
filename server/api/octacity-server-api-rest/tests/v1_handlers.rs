@@ -453,6 +453,10 @@ unavailable_query!(
   octacity_server_application::ListProjectInputDocumentsQuery,
   "list_project_input_documents"
 );
+unavailable_query!(
+  octacity_server_application::ReadProjectInputDocumentQuery,
+  "read_project_input_document"
+);
 unavailable_command!(PublishPipelineVersionCommand, "publish_pipeline");
 unavailable_query!(GetPipelineQuery, "get_pipeline");
 unavailable_command!(PublishRepositoryVersionCommand, "publish_repository");
@@ -1337,6 +1341,7 @@ fn management_contract_requests() -> Vec<Request<Body>> {
     empty_request("GET", "/api/v1/projects?limit=10", None),
     json_request("POST", &format!("/api/v1/projects/{project_id}/input-documents"), "project-document", None, r#"{"name":"Goals","content":"Reviewed goals"}"#),
     empty_request("GET", &format!("/api/v1/projects/{project_id}/input-documents?limit=10"), None),
+    empty_request("GET", &format!("/api/v1/projects/{project_id}/input-documents/{job_id}"), None),
     empty_request(
       "GET",
       &format!("/api/v1/projects/{project_id}/pipelines?limit=10"),
@@ -1773,6 +1778,7 @@ async fn every_management_operation_is_allowed_before_application_dispatch() {
       "list_projects",
       "publish_project_document",
       "list_project_input_documents",
+      "read_project_input_document",
       "list_project_pipelines",
       "list_project_repositories",
       "list_project_build_configurations",

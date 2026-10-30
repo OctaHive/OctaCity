@@ -131,11 +131,13 @@ export const enMessages = {
   'triage.addDocument': 'Add supporting document',
   'triage.removeDocument': 'Remove document {name}',
   'projectDocument.name': 'Document name',
+  'projectDocument.existing': 'Retained Project document',
+  'projectDocument.open': 'Open document for viewing or editing',
   'projectDocument.content': 'Document text',
   'projectDocument.review': 'Review document publication',
   'projectDocument.publish': 'Publish document',
   'projectDocument.help':
-    'Retain this exact private Project document. Publication does not start work or grant a stage access; select it explicitly for each stage.',
+    'Open a retained document to view or edit it, or write a new one. Publication retains a new immutable document; existing Runs keep their original input. Select the published document explicitly for each stage.',
   'projectDocument.published':
     'Document published. Select it explicitly for the stages that need it.',
   'triage.noDocuments':

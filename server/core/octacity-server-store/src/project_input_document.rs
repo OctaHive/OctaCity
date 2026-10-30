@@ -4,6 +4,9 @@ use octacity_server_domain::{ArtifactName, ProjectId, Timestamp};
 use octacity_server_factory::FactoryArtifactReference;
 use serde::{Deserialize, Serialize};
 
+/// Versioned mapping distinguishing standalone documents from task/acceptance inputs.
+pub const PROJECT_CONTEXT_DOCUMENT_MAPPING: &str = "context-document.v1";
+
 /// One reviewed standalone document; it cannot carry a Configuration, Run or execution authority.
 #[derive(Clone, Eq, PartialEq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -138,7 +141,7 @@ impl ProjectDocumentPreparation {
       intent: ProjectDocumentIntent {
         project_id: submission.project_id,
         name: submission.name.clone(),
-        mapping: FactoryKey::new("context-document.v1").map_err(|_| document_conflict())?,
+        mapping: FactoryKey::new(PROJECT_CONTEXT_DOCUMENT_MAPPING).map_err(|_| document_conflict())?,
         idempotency_key: submission.idempotency_key.clone(),
       },
       objects: vec![object],

@@ -207,6 +207,9 @@ function fixture({
     expires_at: Date.now() + 60_000,
   });
   const documents = {
+    read: vi.fn(async () => {
+      throw new Error('document content must be requested explicitly');
+    }),
     list: vi.fn(async () => ({
       items: [
         document('goals', 'Reviewed Project goals'),

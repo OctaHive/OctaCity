@@ -1,6 +1,17 @@
 use super::*;
 
 impl ManagementInputFactory {
+  /// Selects one immutable named Project document without a producing execution.
+  pub fn read_project_input_document(
+    &self,
+    project: &str,
+    artifact: &str,
+  ) -> Result<crate::ReadProjectInputDocumentQuery, ManagementInputError> {
+    Ok(crate::ReadProjectInputDocumentQuery {
+      project_id: parse(project, "project id")?,
+      artifact_id: parse(artifact, "document id")?,
+    })
+  }
   /// Builds one immutable named Project input without execution or admission fields.
   pub fn publish_project_document(
     &self,

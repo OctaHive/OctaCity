@@ -10,6 +10,19 @@ use super::{ManagementOperation, ParameterProfile};
 
 pub(super) const OPERATIONS: &[ManagementOperation] = &[
   operation!(
+    octacity_server_application::ReadProjectInputDocumentQuery,
+    "GET",
+    "/api/v1/projects/{project_id}/input-documents/{artifact_id}",
+    "readProjectInputDocument",
+    "Projects",
+    "Read one retained private Project document",
+    None,
+    "ProjectDocumentContent",
+    "200",
+    false,
+    false
+  ),
+  operation!(
     octacity_server_application::PublishProjectDocumentCommand,
     "POST",
     "/api/v1/projects/{project_id}/input-documents",

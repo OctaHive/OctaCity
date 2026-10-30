@@ -17,6 +17,8 @@ for (const language of ['en', 'ru'] as const) {
             content: 'Document text',
             publication: 'Review document publication',
             confirm: 'Publish document',
+            existing: 'Retained Project document',
+            load: 'Open document for viewing or editing',
             close: 'Close',
             project: 'Project analyst',
             analyst: 'Systems analyst',
@@ -33,6 +35,8 @@ for (const language of ['en', 'ru'] as const) {
             content: 'Текст документа',
             publication: 'Проверить публикацию документа',
             confirm: 'Опубликовать документ',
+            existing: 'Сохранённый документ проекта',
+            load: 'Открыть документ для просмотра или правки',
             close: 'Закрыть',
             project: 'Аналитик проекта',
             analyst: 'Системный аналитик',
@@ -73,6 +77,11 @@ for (const language of ['en', 'ru'] as const) {
     const resolutions: Record<string, unknown>[] = [];
     const forbidden: string[] = [];
     let buildReads = 0;
+    let contentReads = 0;
+    let continueRead: () => void;
+    const readReady = new Promise<void>((resolve) => {
+      continueRead = resolve;
+    });
     await page.route(`**/api/v1/projects/${owner}/**`, async (route) => {
       const request = route.request();
       const path = new URL(request.url()).pathname;
@@ -115,13 +124,26 @@ for (const language of ['en', 'ru'] as const) {
           const resource = {
             project_id: owner,
             name: body.name,
-            artifact: reference,
+            artifact:
+              publications.length === 1
+                ? reference
+                : {
+                    ...reference,
+                    artifact_id: '12345678-1234-4234-8234-123456789013',
+                    content_digest: 'c'.repeat(64),
+                  },
             published_at: Date.now(),
             expires_at: Date.now() + 86_400_000,
           };
           documents.push(resource);
           await route.fulfill({ status: 201, json: resource });
         } else await route.fulfill({ json: { items: documents, next_cursor: null } });
+      } else if (path.endsWith(`/input-documents/${reference.artifact_id}`)) {
+        contentReads += 1;
+        await readReady;
+        await route.fulfill({
+          json: { project_id: owner, artifact: reference, content: 'Exact reviewed goals\n' },
+        });
       } else if (request.method() !== 'GET') {
         forbidden.push(`${request.method()} ${path}`);
         await route.abort();
@@ -178,6 +200,39 @@ for (const language of ['en', 'ru'] as const) {
     await page.keyboard.press('ArrowDown');
     await page.keyboard.press('Enter');
     await expect(goals).toContainText(privateDraft);
+    await page.getByRole('button', { name: text.resolve, exact: true }).press('Enter');
+    await expect
+      .poll(() => resolutions.at(-1)?.context)
+      .toEqual({
+        eligibility: { project_id: owner, goals: reference, rules: null, documents: {} },
+      });
+    expect(contentReads, 'document discovery does not fetch private content').toBe(0);
+    const retained = page.getByRole('combobox', { name: text.existing, exact: true });
+    await retained.press('Enter');
+    await page.keyboard.press('ArrowDown');
+    await page.keyboard.press('Enter');
+    await page.getByRole('button', { name: text.load, exact: true }).press('Enter');
+    const editor = page.getByRole('textbox', { name: text.content, exact: true });
+    await expect(editor).toBeDisabled();
+    continueRead!();
+    await expect(editor).toBeEnabled();
+    await expect(editor).toHaveValue('Exact reviewed goals\n');
+    expect(contentReads).toBe(1);
+    await editor.fill('Revised goals\nBounded context.\n');
+    expect(publications, 'opening and editing never publishes implicitly').toHaveLength(1);
+    await review.press('Enter');
+    await page
+      .getByRole('dialog', { name: privateDraft })
+      .getByRole('button', { name: text.confirm, exact: true })
+      .press('Enter');
+    await page
+      .getByRole('dialog', { name: privateDraft })
+      .getByRole('button', { name: text.close, exact: true })
+      .press('Enter');
+    expect(publications[1]).toEqual({
+      body: { name: privateDraft, content: 'Revised goals\nBounded context.\n' },
+      key: expect.any(String),
+    });
     await page.getByRole('button', { name: text.resolve, exact: true }).press('Enter');
     await expect
       .poll(() => resolutions.at(-1)?.context)

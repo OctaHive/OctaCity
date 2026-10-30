@@ -475,6 +475,10 @@ fn registered_routes() -> ManagementRoutes {
       super::project_documents::list,
     )
     .get::<GetProjectQuery, _, _>("getProject", get_project)
+    .get::<octacity_server_application::ReadProjectInputDocumentQuery, _, _>(
+      "readProjectInputDocument",
+      super::project_documents::read,
+    )
     .get::<ListProjectPipelinesQuery, _, _>("listProjectPipelines", list_project_pipelines)
     .get::<ListProjectRepositoriesQuery, _, _>("listProjectRepositories", list_project_repositories)
     .get::<ListProjectBuildConfigurationsQuery, _, _>(
