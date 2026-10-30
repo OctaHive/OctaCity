@@ -111,6 +111,42 @@ class LocalStandContextTests(unittest.TestCase):
             with self.assertRaisesRegex(VERIFY.ContextError, "completion-v1.json"):
                 VERIFY.validate_repository(root)
 
+    def test_released_triage_manifest_and_parts_survive_the_build_context_filter(self):
+        rules = VERIFY.validate_dockerignore(REPOSITORY / ".dockerignore")
+        manifest = "config/factory/presets/triage/v1.json"
+        document = json.loads((REPOSITORY / manifest).read_text(encoding="utf-8"))
+        for path in (manifest, *(f"config/factory/{part}" for part in document["parts"])):
+            with self.subTest(path=path):
+                self.assertTrue(VERIFY.docker_path_included(path, rules))
+        for path in (
+            "config/factory/presets/triage/private.json",
+            "config/factory/flows/base-flow/schemas/private.json",
+            "config/factory/flows/other/schemas/work.json",
+        ):
+            with self.subTest(path=path):
+                self.assertFalse(VERIFY.docker_path_included(path, rules))
+
+    def test_context_preflight_rejects_each_missing_released_triage_part(self):
+        manifest = "config/factory/presets/triage/v1.json"
+        document = json.loads((REPOSITORY / manifest).read_text(encoding="utf-8"))
+        assets = (manifest, *(f"config/factory/{part}" for part in document["parts"]))
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            shutil.copyfile(REPOSITORY / ".dockerignore", root / ".dockerignore")
+            for relative in (*VERIFY.REQUIRED_CONTEXT_PATHS, *assets):
+                destination = root / relative
+                destination.parent.mkdir(parents=True, exist_ok=True)
+                shutil.copyfile(REPOSITORY / relative, destination)
+            VERIFY.validate_repository(root)
+            for relative in assets:
+                with self.subTest(path=relative):
+                    (root / relative).unlink()
+                    try:
+                        with self.assertRaisesRegex(VERIFY.ContextError, relative):
+                            VERIFY.validate_repository(root)
+                    finally:
+                        shutil.copyfile(REPOSITORY / relative, root / relative)
+
     def test_openapi_wire_examples_are_available_in_the_filtered_build_context(self):
         rules = VERIFY.validate_dockerignore(REPOSITORY / ".dockerignore")
         fixture = "server/api/octacity-server-api-rest/fixtures/v1/integration-contracts.json"

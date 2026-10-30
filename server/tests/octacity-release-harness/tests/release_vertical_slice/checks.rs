@@ -261,7 +261,7 @@ pub(super) async fn verify_codex_outputs(client: &Client, origin: &str, build: &
   );
   for line in trace_text.lines() {
     let record: Value = serde_json::from_str(line).unwrap();
-    assert_eq!(record["format_version"], 1);
+    assert_eq!(record["format_version"], 2);
   }
 
   let result_bytes = download_output(client, origin, result).await;
@@ -279,7 +279,7 @@ pub(super) async fn verify_codex_outputs(client: &Client, origin: &str, build: &
   );
   let provenance_bytes = download_output(client, origin, provenance).await;
   let provenance_document: Value = serde_json::from_slice(&provenance_bytes).unwrap();
-  assert_eq!(provenance_document["format_version"], 1);
+  assert_eq!(provenance_document["format_version"], 2);
   let retained = format!(
     "{trace_text}\n{}\n{}",
     serde_json::to_string(&result_document).unwrap(),
@@ -452,6 +452,49 @@ async fn wait_for_search(
 #[cfg(test)]
 mod tests {
   use super::*;
+
+  #[tokio::test]
+  async fn codex_release_accepts_native_trace_and_provenance_v2_with_result_v1() {
+    use axum::{
+      Json, Router,
+      extract::Path as AxumPath,
+      routing::{get, post},
+    };
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let origin = format!("http://{}", listener.local_addr().unwrap());
+    let download_origin = origin.clone();
+    let router = Router::new()
+      .route("/api/v1/builds/released-build/artifacts", get(|| async {
+        Json(json!({"items":[
+          {"id":"trace", "name":"codex-run-trace", "media_type":"application/x-ndjson", "output_type":{"kind":"artifact"}},
+          {"id":"provenance", "name":"codex-run-provenance", "output_type":{"kind":"artifact"}},
+          {"id":"result", "name":"codex-run-result", "output_type":{"kind":"report", "format":"octa.codex.result.v1"}}
+        ]}))
+      }))
+      .route("/api/v1/artifacts/{id}/download", post(move |AxumPath(id): AxumPath<String>| {
+        let origin = download_origin.clone();
+        async move { Json(json!({"get_url":format!("{origin}/outputs/{id}")})) }
+      }))
+      .route("/outputs/{id}", get(|AxumPath(id): AxumPath<String>| async move {
+        let document = match id.as_str() {
+          "trace" => json!({"format_version":2, "sequence":0, "observed_at_unix_millis":1000,
+            "event":{"type":"item.completed", "item":{"type":"agent_message", "text":"credential=*****"}}}),
+          "provenance" => json!({"format_version":2, "trace_format_version":2, "result_format_version":1,
+            "capture":{"status":"complete", "coverage":"emitted_native_events", "record_count":1}}),
+          "result" => json!({"format_version":1, "outcome":"completed", "structured_result":{"outcome":"completed", "files":1}}),
+          _ => panic!("unexpected artifact download: {id}"),
+        };
+        document.to_string()
+      }));
+    let server = tokio::spawn(async move { axum::serve(listener, router).await.unwrap() });
+    let evidence = verify_codex_outputs(&Client::new(), &origin, &json!({"id":"released-build"})).await;
+    server.abort();
+    assert_eq!(
+      evidence["result"]["structured_result"],
+      json!({"outcome":"completed", "files":1})
+    );
+    assert_eq!(evidence["provenance"]["capture"]["record_count"], 1);
+  }
 
   #[test]
   fn cache_diagnostics_keep_only_runner_cache_events() {

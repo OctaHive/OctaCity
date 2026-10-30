@@ -261,7 +261,7 @@ pub(super) struct InstalledIntegrationManagement {
   pub(super) source_reads: Option<super::issue_source_worker::IssueSourceWorker>,
   pub(super) source_management: Option<Arc<super::source_management::SourceManagement>>,
 }
-#[cfg(test)]
+#[cfg(all(test, unix))]
 pub(super) async fn install(
   config: &crate::ServerConfig,
   store: Arc<PostgresStore>,

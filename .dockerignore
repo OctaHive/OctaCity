@@ -101,6 +101,24 @@ config/factory/presets/*
 config/factory/presets/triage/*
 !config/factory/presets/triage/completion-v1.json
 !config/factory/presets/triage/ticket-input-v1.json
+!config/factory/presets/triage/v1.json
+!config/factory/presets/triage/inputs-v1.json
+!config/factory/presets/triage/eligibility-results-v1.json
+!config/factory/presets/triage/classification-results-v1.json
+!config/factory/presets/triage/eligibility-v1.json
+!config/factory/presets/triage/eligibility-gate-v1.json
+!config/factory/presets/triage/classification-v1.json
+!config/factory/presets/triage/classification-gate-v1.json
+!config/factory/presets/triage/routing-v1.json
+!config/factory/presets/triage/direct-classification-v1.json
+!config/factory/flows/
+config/factory/flows/*
+!config/factory/flows/base-flow/
+config/factory/flows/base-flow/*
+!config/factory/flows/base-flow/schemas/
+config/factory/flows/base-flow/schemas/*
+!config/factory/flows/base-flow/schemas/artifact_reference.json
+!config/factory/flows/base-flow/schemas/work.json
 
 # Locked UI production build inputs. The ignored OpenAPI schema is generated
 # inside the builder from the checked-in Rust contract and generator script.
