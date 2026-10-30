@@ -303,6 +303,7 @@ class LocalStandLauncherTests(unittest.TestCase):
         self.assertIsNone(configure.call_args.kwargs["factory_profiles"])
         self.assertIsNone(configure.call_args.kwargs["factory_runtime_bundle"])
 
+    @unittest.skipUnless(os.name == "posix", "private Issue MCP bundles require POSIX ownership and modes")
     def test_explicit_factory_profiles_reach_server_configuration(self):
         profiles = self.root.parent / "profiles.json"
         connectors = self.root.parent / "connectors.json"

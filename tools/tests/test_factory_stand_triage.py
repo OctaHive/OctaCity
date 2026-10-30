@@ -27,6 +27,7 @@ import factory_local_stand as stand
 
 
 class FactoryStandTriageTests(unittest.TestCase):
+    @unittest.skipUnless(os.name == "posix", "private stand initialization requires POSIX ownership and modes")
     def test_guest_image_contains_only_the_public_ca_and_returns_the_verified_msb_identity(self):
         import factory_triage_setup as setup
         import types
@@ -130,6 +131,7 @@ class FactoryStandTriageTests(unittest.TestCase):
                 thread.join(timeout=2)
         self.assertTrue(any(f"connection_id={connection}&connection_version=3" in path for path in reads))
 
+    @unittest.skipUnless(os.name == "posix", "private credential installation requires POSIX ownership and modes")
     def test_native_triage_installation_keeps_model_login_and_project_mcp_separate(self):
         import factory_triage_setup as setup
         import configure_local_stand_agent as agent
@@ -395,6 +397,7 @@ class FactoryStandTriageTests(unittest.TestCase):
                 server.shutdown()
                 thread.join(timeout=2)
 
+    @unittest.skipUnless(os.name == "posix", "private Factory bundles require POSIX ownership and modes")
     @unittest.skipUnless(shutil.which("docker"), "Docker Compose is required for effective deployment configuration")
     def test_factory_overlay_publishes_only_a_loopback_mcp_listener_with_an_explicit_route(self):
         with tempfile.TemporaryDirectory() as directory:

@@ -18,6 +18,10 @@ class FactoryFixturePlatformTests(unittest.TestCase):
             ("test_factory_pilot_cli", "FactoryPilotCliTests.test_denied_hook_never_dispatches_the_tool_or_writes_requested_files"),
             ("test_factory_pilot_cli", "FactoryPilotCliTests.test_tool_client_allows_cold_reader_startup_within_the_hook_deadline"),
             ("test_local_stand_launcher", "LocalStandLauncherTests.test_all_compose_operations_reuse_only_an_installed_private_factory_bundle"),
+            ("test_local_stand_launcher", "LocalStandLauncherTests.test_explicit_factory_profiles_reach_server_configuration"),
+            ("test_factory_stand_triage", "FactoryStandTriageTests.test_guest_image_contains_only_the_public_ca_and_returns_the_verified_msb_identity"),
+            ("test_factory_stand_triage", "FactoryStandTriageTests.test_native_triage_installation_keeps_model_login_and_project_mcp_separate"),
+            ("test_factory_stand_triage", "FactoryStandTriageTests.test_factory_overlay_publishes_only_a_loopback_mcp_listener_with_an_explicit_route"),
             ("test_stage_local_stand_native", "NativeStandStagingTests.test_public_install_cli_stages_a_separate_pinned_guest_reader"),
         ):
             with self.subTest(module=name, selected=selected):
@@ -26,7 +30,9 @@ class FactoryFixturePlatformTests(unittest.TestCase):
                 # Load host-specific dependencies before simulating Windows discovery.
                 spec.loader.exec_module(module)
                 windows_os = SimpleNamespace(**{**vars(os), "name": "nt"})
-                with patch.dict(sys.modules, {"os": windows_os}):
+                # Available tools must not hide a missing platform restriction.
+                with patch.dict(sys.modules, {"os": windows_os}), \
+                        patch("shutil.which", return_value="available-tool"):
                     spec.loader.exec_module(module)
                 suite = (unittest.defaultTestLoader.loadTestsFromName(selected, module) if selected
                          else unittest.defaultTestLoader.loadTestsFromModule(module))
