@@ -6,8 +6,16 @@ pub(super) async fn raw_source() {
   {
     let mut replies = environment.provider.replies.lock().await;
     replies.clear();
+    let mut labeled = source_provider::issue(9002, 18);
+    labeled["labels"] = json!([{"name":"human-owned"}]);
+    let mut pull_request = source_provider::issue(9003, 19);
+    pull_request["pull_request"] = json!({"url":"https://github.example/owner/tickets/pulls/19"});
     for _ in 0..128 {
-      replies.push_back(source_provider::Reply::json(json!([source_provider::issue(9001, 17)])));
+      replies.push_back(source_provider::Reply::json(json!([
+        source_provider::issue(9001, 17),
+        labeled,
+        pull_request
+      ])));
     }
   }
   let project = source_setup::enroll_writer(&environment.client, &environment.origin, &environment.installation).await;
@@ -53,6 +61,31 @@ pub(super) async fn raw_source() {
     "definition":{"target":target,"repository":repository,"source":source["binding"],"enabled":true,"reporter":null,
       "predicate":{"state":"open","label_presence":"none","all_of":[],"any_of":[],"none_of":[]},
       "connection":{"id":connection,"version":1,"access_version":1,"source_configuration":source["connection_configuration"],"reporter_configuration":null}}}]});
+  let preview = post_management(
+    &environment.client,
+    &environment.origin,
+    &format!("/api/v1/projects/{project}/factory-sources/preview"),
+    &Uuid::new_v4().to_string(),
+    json!({"intent":intent,"limit":10}),
+  )
+  .await;
+  let candidates = preview["candidates"].as_array().unwrap();
+  assert_eq!(candidates.len(), 2, "preview omits PRs but explains filtered Issues");
+  let selected: Vec<_> = candidates
+    .iter()
+    .filter(|item| item["disposition"] == "selected")
+    .collect();
+  assert_eq!(selected.len(), 1);
+  assert_eq!(selected[0]["summary"]["labels"], json!([]));
+  let filtered = candidates
+    .iter()
+    .find(|item| item["disposition"] == "filtered")
+    .unwrap();
+  assert_eq!(filtered["summary"]["labels"], json!(["human-owned"]));
+  assert_eq!(
+    filtered["summary"]["selections"][0]["reasons"],
+    json!(["labels_present"])
+  );
   source_setup::publish(
     &environment.client,
     &environment.origin,
@@ -103,7 +136,7 @@ pub(super) async fn raw_source() {
   fs::write(
     environment.evidence.join("triage-raw-source.json"),
     serde_json::to_vec_pretty(&json!({
-      "project_id":project,"input_id":id,"preparation":source["preparation"],"diagnostics":diagnostics,"work":work
+      "project_id":project,"input_id":id,"preparation":source["preparation"],"preview":preview,"diagnostics":diagnostics,"work":work
     }))
     .unwrap(),
   )

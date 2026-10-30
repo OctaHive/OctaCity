@@ -40,6 +40,26 @@ pub struct NativeResource {
   pub metadata: Value,
   pub issues: Vec<Value>,
 }
+
+/// A one-shot provider barrier: state is already applied, but no reply has been sent.
+#[derive(Clone)]
+pub struct MutationPause {
+  arrived: Arc<Notify>,
+  resumed: Arc<Notify>,
+}
+// Listing-only users share this fixture without the recovery barrier.
+#[allow(dead_code)]
+impl MutationPause {
+  pub async fn wait(&self) {
+    tokio::time::timeout(Duration::from_secs(60), self.arrived.notified())
+      .await
+      .expect("the real provider mutation reached its response barrier");
+  }
+  pub fn resume(self) {
+    self.resumed.notify_one();
+  }
+}
+
 pub struct Forge {
   pub endpoint: String,
   pub certificate: String,
@@ -54,6 +74,8 @@ pub struct Forge {
   pub changed: Arc<Notify>,
   #[allow(dead_code)]
   pub reporting: Arc<Mutex<Option<reporting::Issue>>>,
+  #[allow(dead_code)]
+  mutation_pause: Arc<Mutex<Option<MutationPause>>>,
   task: tokio::task::JoinHandle<()>,
 }
 impl Forge {
@@ -94,6 +116,8 @@ impl Forge {
     let changed = Arc::new(Notify::new());
     let reporting = Arc::new(Mutex::new(None::<reporting::Issue>));
     let effects = reporting.clone();
+    let mutation_pause = Arc::new(Mutex::new(None::<MutationPause>));
+    let pause_next_write = mutation_pause.clone();
     let (captured, queued, signal) = (requests.clone(), replies.clone(), changed.clone());
     let task = tokio::spawn(async move {
       loop {
@@ -161,6 +185,13 @@ impl Forge {
             ..Reply::json(json!({"message":"private-provider-error"}))
           })
         };
+        if !request.starts_with("GET ") {
+          let paused = pause_next_write.lock().await.take();
+          if let Some(paused) = paused {
+            paused.arrived.notify_one();
+            paused.resumed.notified().await;
+          }
+        }
         if reply.disconnect {
           continue;
         }
@@ -207,8 +238,18 @@ impl Forge {
       repository_reply,
       changed,
       reporting,
+      mutation_pause,
       task,
     }
+  }
+  #[allow(dead_code)]
+  pub async fn pause_next_mutation(&self) -> MutationPause {
+    let paused = MutationPause {
+      arrived: Arc::new(Notify::new()),
+      resumed: Arc::new(Notify::new()),
+    };
+    assert!(self.mutation_pause.lock().await.replace(paused.clone()).is_none());
+    paused
   }
   pub async fn wait_for_requests(&self, count: usize) {
     tokio::time::timeout(Duration::from_secs(5), async {

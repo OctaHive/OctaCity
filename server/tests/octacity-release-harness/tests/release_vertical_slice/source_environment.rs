@@ -46,12 +46,17 @@ impl SourceEnvironment {
   /// Explicit operator bootstrap; the normal runtime validates the private reader
   /// reference. Investigation receives one Project/Issue and no mutation scope.
   pub(super) async fn install_issue_reader(&mut self, project: &str, issue: &str, token: &str) {
+    self.install_issue_readers(project, &[issue], token).await;
+  }
+
+  /// Keep an explicitly reviewed finite Issue scope for pagination qualification.
+  pub(super) async fn install_issue_readers(&mut self, project: &str, issues: &[&str], token: &str) {
     let credential = private_file(self._directory.path(), "issue-mcp-reader", token);
     let mut config: toml::Value = toml::from_str(&fs::read_to_string(&self.config).unwrap()).unwrap();
     config.as_table_mut().unwrap().insert(
       "issue_mcp_readers".into(),
       toml::Value::try_from(json!([{
-        "id":"packaged-triage", "project_id":project, "issue_ids":[issue],
+        "id":"packaged-triage", "project_id":project, "issue_ids":issues,
         "credential_file":credential, "expires_at_unix_ms":chrono::Utc::now().timestamp_millis()+600_000
       }]))
       .unwrap(),
@@ -210,6 +215,17 @@ impl SourceEnvironment {
   pub(super) async fn restart(&mut self) {
     self.stop_server().await;
     self.start_server().await;
+  }
+
+  /// Crash injection for durable recovery qualification; no shutdown handler acknowledges pending work.
+  pub(super) async fn crash_and_restart(&mut self) -> (u32, u32) {
+    let previous = self.server.id().expect("packaged server is running");
+    self.server.kill().await.unwrap();
+    self.server.wait().await.unwrap();
+    self.start_server().await;
+    let current = self.server.id().expect("replacement packaged server is running");
+    assert_ne!(previous, current);
+    (previous, current)
   }
 
   pub(super) async fn stop_server(&mut self) {

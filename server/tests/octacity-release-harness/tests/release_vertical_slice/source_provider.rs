@@ -3,7 +3,7 @@ use serde_json::{Value, json};
 #[path = "../../../../infrastructure/octacity-github/tests/support/https_peer.rs"]
 #[allow(dead_code)]
 mod https_peer;
-pub(super) use https_peer::{Forge, NativeResource, Reply};
+pub(super) use https_peer::{Forge, MutationPause, NativeResource, Reply};
 #[path = "../../../../infrastructure/octacity-github/tests/support/reporting.rs"]
 #[allow(dead_code)]
 pub(super) mod reporting;

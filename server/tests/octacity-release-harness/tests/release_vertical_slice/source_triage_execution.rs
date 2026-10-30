@@ -1,6 +1,8 @@
 //! Source qualification uses the existing real Agent resources and Git transport.
 //! No application handler or executable is substituted by the test.
 use super::*;
+#[path = "source_triage_adversarial.rs"]
+mod adversarial;
 #[path = "source_triage_console.rs"]
 mod console_journey;
 
@@ -52,7 +54,11 @@ impl ExecutionEnvironment {
     .unwrap();
     fs::write(
       repository.join("health.mjs"),
-      "import { createServer } from 'node:http';\nexport const server = createServer((_request, response) => { response.writeHead(500); response.end('unexpected health status'); });\n",
+      if adversarial::Scenario::selected().reproduction_failed() {
+        "import './missing-reviewed-dependency.mjs';\n"
+      } else {
+        "import { createServer } from 'node:http';\nexport const server = createServer((_request, response) => { response.writeHead(500); response.end('unexpected health status'); });\n"
+      },
     )
     .unwrap();
     let git = required_path("OCTACITY_CONTRACT_GIT_EXECUTABLE", true);
@@ -217,6 +223,7 @@ pub(super) async fn console_results() {
 }
 
 async fn run_pipeline(defect: bool, console: bool) {
+  let scenario = adversarial::Scenario::selected();
   let mut execution = ExecutionEnvironment::start().await;
   let project = execution.resources.project.clone();
   if defect || console {
@@ -241,6 +248,7 @@ async fn run_pipeline(defect: bool, console: bool) {
     profiles::install(&mut execution, defect, &connection).await
   };
   let mut target = installed["target"].clone();
+  scenario.after_install(&mut execution).await;
   {
     let mut replies = execution.environment.provider.replies.lock().await;
     replies.clear();
@@ -264,6 +272,7 @@ async fn run_pipeline(defect: bool, console: bool) {
     .into();
     *execution.environment.provider.reporting.lock().await = Some(native);
   }
+  let mutation_pause = scenario.pause_mutation(&execution.environment).await;
   let choices = get_json(
     &execution.environment.client,
     format!(
@@ -361,6 +370,7 @@ async fn run_pipeline(defect: bool, console: bool) {
     intent["inputs"][0]["definition"]["reporting"] = selected["mapping"].clone();
     intent["inputs"][0]["definition"]["connection"]["reporter_configuration"] = selected["configuration"].clone();
   }
+  let admission_checkpoint = scenario.admission_checkpoint(&project).await;
   let input_publication = if let Some(observed) = &console_setup {
     observed["publication"].clone()
   } else {
@@ -413,7 +423,20 @@ async fn run_pipeline(defect: bool, console: bool) {
     );
     sleep(Duration::from_millis(100)).await;
   };
-  let deadline = Instant::now() + Duration::from_secs(180);
+  let mut checkpoints: Vec<_> = scenario
+    .after_admission(&mut execution, &run, admission_checkpoint)
+    .await
+    .into_iter()
+    .collect();
+  let admitted_work = get_json(
+    &execution.environment.client,
+    format!("{}/api/v1/factory-runs/{run}/work", execution.environment.origin),
+  )
+  .await;
+  // A native failure includes guest startup and the installed 120-second execution budget.
+  // This watchdog bounds qualification; it never extends a runtime deadline.
+  let deadline = Instant::now() + Duration::from_secs(360);
+  let mut last_progress = Value::Null;
   let completions = loop {
     let observed = get_json(
       &execution.environment.client,
@@ -423,13 +446,24 @@ async fn run_pipeline(defect: bool, console: bool) {
       ),
     )
     .await;
+    if observed != last_progress {
+      fs::write(
+        execution.environment.evidence.join("triage-progress-completions.json"),
+        serde_json::to_vec_pretty(&observed).unwrap(),
+      )
+      .unwrap();
+      last_progress = observed.clone();
+    }
+    scenario
+      .after_stage(&mut execution, &run, &connection, &observed, &mut checkpoints)
+      .await;
     if observed["items"]
       .as_array()
       .unwrap()
       .iter()
       .filter(|item| item["record"]["public_result"].is_object())
       .count()
-      >= 2
+      >= scenario.accepted_stages()
     {
       break observed;
     }
@@ -468,9 +502,24 @@ async fn run_pipeline(defect: bool, console: bool) {
     }
     sleep(Duration::from_millis(500)).await;
   };
+  fs::write(
+    execution.environment.evidence.join("triage-stage-checkpoints.json"),
+    serde_json::to_vec_pretty(&checkpoints).unwrap(),
+  )
+  .unwrap();
+  scenario
+    .after_mutation(
+      &mut execution,
+      &run,
+      mutation_pause,
+      &admitted_work,
+      &completions,
+      &mut checkpoints,
+    )
+    .await;
   let mut delivery = json!({"items":[]});
-  if defect || console {
-    let deadline = Instant::now() + Duration::from_secs(30);
+  if (defect || console) && !scenario.reproduction_failed() {
+    let deadline = Instant::now() + scenario.delivery_wait();
     loop {
       delivery = get_json(
         &execution.environment.client,
@@ -497,7 +546,9 @@ async fn run_pipeline(defect: bool, console: bool) {
       format!("{}/api/v1/factory-runs/{run}", execution.environment.origin),
     )
     .await;
-    if observed["state"] == "completed" || Instant::now() >= terminal_deadline {
+    if matches!(observed["state"].as_str(), Some("completed" | "failed" | "cancelled"))
+      || Instant::now() >= terminal_deadline
+    {
       break observed;
     }
     sleep(Duration::from_millis(250)).await;
@@ -581,22 +632,87 @@ async fn run_pipeline(defect: bool, console: bool) {
   worker.kill().await.unwrap();
   worker.wait().await.unwrap();
   execution.environment.stop().await;
+  fs::write(
+    execution.environment.evidence.join("triage-profile-results.json"),
+    serde_json::to_vec_pretty(&json!({
+      "schema_version":1,"scenario":scenario.name(),"checkpoints":checkpoints,"image":execution.backend.immutable_image(),
+      "server_sha256":octacity_server_factory::FactoryDigest::content_sha256(&fs::read(required_path("OCTACITY_RELEASE_SERVER_ROOT",false).join("bin/octacity-server")).unwrap()),
+      "agent_sha256":octacity_server_factory::FactoryDigest::content_sha256(&fs::read(&execution.release.agent_binary).unwrap()),
+      "native_codex_sha256":installed["native_codex_sha256"],"external_mcp_sha256":installed["external_mcp_sha256"],
+      "factory_catalog_sha256":installed["factory_catalog_sha256"],"profiles":installed["profiles"],
+      "agent_release":execution.release.agent_manifest,"toolchain":execution.release.toolchain,
+      "configuration":target,"input_publication":input_publication,
+      "input_id":id,"run_id":run,"repository":repository,"source":source["binding"],"node_completions":completions,"execution":diagnostics
+    }))
+    .unwrap(),
+  )
+  .unwrap();
+  execution
+    .environment
+    .record(&project, "packaged-triage-products.json")
+    .await;
   let accepted: Vec<_> = completions["items"]
     .as_array()
     .unwrap()
     .iter()
     .filter(|item| item["record"]["public_result"].is_object())
     .collect();
+  if scenario.reproduction_failed() {
+    assert_eq!(accepted.len(), 1);
+    assert_eq!(accepted[0]["record"]["node_key"], "eligibility_gate");
+    assert_eq!(accepted[0]["record"]["outcome"], "classify");
+    assert_eq!(diagnostics["builds"]["items"].as_array().unwrap().len(), 2);
+    assert!(
+      execution
+        .environment
+        .provider
+        .requests
+        .lock()
+        .await
+        .iter()
+        .all(|request| request.starts_with("GET "))
+    );
+    return;
+  }
+  if scenario.unverified() {
+    assert!(
+      accepted.len() <= 1,
+      "unverified evidence cannot dispatch classification"
+    );
+    assert!(
+      accepted
+        .iter()
+        .all(|item| matches!(item["record"]["outcome"].as_str(), Some("review" | "needs_input")))
+    );
+    assert_eq!(
+      diagnostics["builds"]["items"].as_array().unwrap().len(),
+      1,
+      "only the Project invocation may run"
+    );
+    assert!(
+      execution
+        .environment
+        .provider
+        .requests
+        .lock()
+        .await
+        .iter()
+        .all(|request| request.starts_with("GET ")),
+      "unverified data has no Reporter authority"
+    );
+    return;
+  }
   assert_eq!(
     accepted.len(),
-    2,
-    "both triage stages must produce accepted public results: {completions}"
+    scenario.accepted_stages(),
+    "only policy-selected triage stages produce accepted public results: {completions}"
   );
   let project_result = accepted
     .iter()
     .find(|item| item["record"]["node_key"] == "eligibility_gate")
     .unwrap();
   let lookup = &project_result["record"]["public_result"]["lookup"];
+  assert_eq!(project_result["record"]["outcome"], scenario.eligibility());
   assert_eq!(lookup["capture_status"], "complete");
   let calls = lookup["observations"].as_array().unwrap();
   assert_eq!(calls.len(), 4, "retain every native lookup observation");
@@ -645,15 +761,18 @@ async fn run_pipeline(defect: bool, console: bool) {
     let writes: Vec<_> = requests.iter().filter(|request| !request.starts_with("GET ")).collect();
     assert_eq!(
       writes.len(),
-      1,
-      "accepted defect triage must deliver the one reviewed native label effect"
+      scenario.native_writes(),
+      "only the independently authorized reviewed Reporter may mutate the native task"
     );
-    assert!(
-      writes[0]
-        .to_lowercase()
-        .contains(&format!("authorization: bearer {}", source_evidence::WRITER)),
-      "use the independently selected Reporter credential"
-    );
+    if let Some(write) = writes.first() {
+      assert!(
+        write
+          .to_lowercase()
+          .contains(&format!("authorization: bearer {}", source_evidence::WRITER)),
+        "use the independently selected Reporter credential"
+      );
+      assert!(write.starts_with("POST /api/v3/repos/owner/tickets/issues/17/labels HTTP/"));
+    }
     let receipt: Vec<_> = delivery["items"]
       .as_array()
       .unwrap()
@@ -661,11 +780,12 @@ async fn run_pipeline(defect: bool, console: bool) {
       .filter(|item| item["record"]["kind"] == "work.status.projection")
       .collect();
     assert_eq!(receipt.len(), 1, "one logical native effect has an independent receipt");
-    assert_eq!(receipt[0]["record"]["state"], "delivered");
-    assert!(writes[0].starts_with("POST /api/v3/repos/owner/tickets/issues/17/labels HTTP/"));
+    let expected_delivery = scenario.expected_delivery();
+    assert_eq!(receipt[0]["record"]["state"], expected_delivery.0);
+    assert_eq!(receipt[0]["record"]["failure"].as_str(), expected_delivery.1);
     let state = execution.environment.provider.reporting.lock().await;
     let state = state.as_ref().expect("retain the actual native task state");
-    assert_eq!(state.labels, ["ready / review".to_owned()].into_iter().collect());
+    assert_eq!(state.labels, scenario.expected_labels());
     assert_eq!(
       state.state, "open",
       "triage does not claim the reproduced defect was fixed"
@@ -701,24 +821,9 @@ async fn run_pipeline(defect: bool, console: bool) {
     .flat_map(|item| item["record"]["result_provenance"].as_array().unwrap())
     .filter_map(|call| call["profile"]["selected_profile"]["id"].as_str())
     .collect();
-  assert_eq!(profiles.len(), 2, "the stages must invoke distinct exact role profiles");
-  fs::write(
-    execution.environment.evidence.join("triage-profile-results.json"),
-    serde_json::to_vec_pretty(&json!({
-      "schema_version":1,"image":execution.backend.immutable_image(),
-      "server_sha256":octacity_server_factory::FactoryDigest::content_sha256(&fs::read(required_path("OCTACITY_RELEASE_SERVER_ROOT",false).join("bin/octacity-server")).unwrap()),
-      "agent_sha256":octacity_server_factory::FactoryDigest::content_sha256(&fs::read(&execution.release.agent_binary).unwrap()),
-      "native_codex_sha256":installed["native_codex_sha256"],"external_mcp_sha256":installed["external_mcp_sha256"],
-      "factory_catalog_sha256":installed["factory_catalog_sha256"],"profiles":installed["profiles"],
-      "agent_release":execution.release.agent_manifest,"toolchain":execution.release.toolchain,
-      "configuration":target,"input_publication":input_publication,
-      "input_id":id,"run_id":run,"repository":repository,"source":source["binding"],"node_completions":completions,"execution":diagnostics
-    }))
-    .unwrap(),
-  )
-  .unwrap();
-  execution
-    .environment
-    .record(&project, "packaged-triage-products.json")
-    .await;
+  assert_eq!(
+    profiles.len(),
+    scenario.accepted_stages(),
+    "only selected distinct profiles execute"
+  );
 }

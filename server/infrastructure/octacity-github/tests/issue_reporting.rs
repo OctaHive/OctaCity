@@ -95,6 +95,56 @@ fn observe(request: Request) -> Request {
 mod recovery;
 
 #[tokio::test]
+async fn controlled_mutation_barrier_pauses_after_apply_before_acknowledgement() {
+  let forge = Forge::start().await;
+  *forge.reporting.lock().await = Some(reporting::Issue::new(&["human-owned"]));
+  let paused = forge.pause_next_mutation().await;
+  let (installation, request) = install(&forge, mapping());
+  let operation = tokio::spawn(async move {
+    let response = installation
+      .provider()
+      .execute(&request, CancellationToken::new())
+      .await;
+    response.validate_for(&request).unwrap();
+    response
+  });
+  paused.wait().await;
+  assert!(
+    forge
+      .reporting
+      .lock()
+      .await
+      .as_ref()
+      .unwrap()
+      .labels
+      .contains("ready / review")
+  );
+  assert!(
+    !operation.is_finished(),
+    "the actual provider response remains unacknowledged"
+  );
+  paused.resume();
+  let response = operation.await.unwrap();
+  assert!(matches!(
+    response,
+    Response::Reporter(reporter::Response {
+      outcome: reporter::Outcome::Applied(_),
+      ..
+    })
+  ));
+  assert_eq!(
+    forge
+      .requests
+      .lock()
+      .await
+      .iter()
+      .filter(|request| !request.starts_with("GET "))
+      .count(),
+    1
+  );
+}
+
+#[tokio::test]
 async fn observation_checks_pinned_arbitrary_effects_without_writes() {
   for (labels, matches) in [
     (json!([{"name":"ready / review"},{"name":"human-owned"}]), true),
