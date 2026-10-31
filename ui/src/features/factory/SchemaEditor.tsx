@@ -58,6 +58,7 @@ export function SchemaEditor({
   return (
     <fieldset>
       <legend>{t('factory.schemas')}</legend>
+      <p>{t('factory.structuralSchemaHelp')}</p>
       <label>
         {t('factory.schemaName')}
         <input

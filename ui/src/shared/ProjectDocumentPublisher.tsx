@@ -1,10 +1,8 @@
 import { useState } from 'react';
-import { useQueryClient } from '@tanstack/react-query';
 import type { components } from '../../.generated/api/schema';
 import type { ProjectDocumentsApi } from '../api/projectDocuments';
-import { queryKeys } from '../app/query';
 import { usePresentation } from '../app/presentation/PresentationProvider';
-import { ConfirmedCommand } from './ConfirmedCommand';
+import { ProjectDocumentPublication } from './ProjectDocumentPublication';
 import { ProjectDocumentReader } from './ProjectDocumentReader';
 
 type Request = components['schemas']['PublishProjectDocumentRequest'];
@@ -18,7 +16,6 @@ export function ProjectDocumentPublisher(props: Props) {
 }
 function ProjectDocumentEditor({ api, projectId }: Props) {
   const { t } = usePresentation();
-  const queryClient = useQueryClient();
   const [draft, setDraft] = useState<Request>({ name: '', content: '' });
   const [reading, setReading] = useState(false);
   const [review, setReview] = useState<{ request: Request; returnFocus: HTMLElement } | null>(null);
@@ -56,20 +53,12 @@ function ProjectDocumentEditor({ api, projectId }: Props) {
         {t('projectDocument.review')}
       </button>
       {review ? (
-        <ConfirmedCommand
+        <ProjectDocumentPublication
+          api={api}
+          projectId={projectId}
           request={review.request}
-          title={review.request.name}
-          consequence={review.request.content}
-          confirmLabel={t('projectDocument.publish')}
           returnFocus={review.returnFocus}
-          queryClient={queryClient}
-          invalidations={[
-            { queryKey: queryKeys.projectInputDocuments(projectId) },
-            { queryKey: queryKeys.audit },
-          ]}
-          execute={({ request, headers }) => api.publish(projectId, { ...request }, headers)}
           onClose={() => setReview(null)}
-          renderSuccess={() => <p>{t('projectDocument.published')}</p>}
         />
       ) : null}
     </fieldset>

@@ -1,13 +1,21 @@
 import { useState } from 'react';
 import { useMutation } from '@tanstack/react-query';
 import type { components } from '../../.generated/api/schema';
-import type { ProjectDocumentsApi } from '../api/projectDocuments';
+import { readExactProjectDocument, type ProjectDocumentsApi } from '../api/projectDocuments';
 import { usePresentation } from '../app/presentation/PresentationProvider';
 import { queryKeys } from '../app/query';
 import { formatTimestamp } from './display';
 import { PagedExplorerBranch, useCursorPage } from './PagedExplorerBranch';
 import { QueryFailureNotice } from './QueryStateNotice';
 import { SelectMenu } from './SelectMenu';
+import { useDeadline } from './useDeadline';
+
+type ExactDocumentSelection = Pick<
+  components['schemas']['ProjectDocumentResource'],
+  'name' | 'artifact'
+> & {
+  expires_at?: number;
+};
 
 /** Reads bytes only on explicit request; private content is not kept in the query cache. */
 export function ProjectDocumentReader({
@@ -38,26 +46,12 @@ export function ProjectDocumentReader({
       .flatMap((page) => page.items)
       .filter((item) => item.project_id === projectId) ?? [];
   const selectedDocument = documents.find((item) => item.id === selected);
-  const read = useMutation({
-    gcTime: 0,
-    mutationFn: async (document: NonNullable<typeof selectedDocument>) => {
-      const result = await api.read(projectId, document.id);
-      if (result.project_id !== projectId || result.artifact.artifact_id !== document.id)
-        throw new Error('Project document response is invalid');
-      return { name: document.name, content: result.content };
-    },
-  });
   const label = t('projectDocument.existing');
-  const open = () => {
-    if (!selectedDocument) return;
-    onLoading(true);
-    read.mutate(selectedDocument, { onSuccess: onLoad, onSettled: () => onLoading(false) });
-  };
   return (
     <>
       <PagedExplorerBranch
         query={catalog}
-        empty={t('triage.noDocuments')}
+        empty={t('projectDocument.empty')}
         labels={{
           loading: label,
           failure: label,
@@ -71,9 +65,8 @@ export function ProjectDocumentReader({
             <SelectMenu
               ariaLabel={label}
               value={selected}
-              disabled={read.isPending}
               options={[
-                { value: '', label: t('factory.none') },
+                { value: '', label: t('projectDocument.choose') },
                 ...documents.map((document) => ({
                   value: document.id,
                   label: `${document.name} · ${formatTimestamp(document.published_at, locale).display}`,
@@ -81,18 +74,78 @@ export function ProjectDocumentReader({
               ]}
               onValueChange={setSelected}
             />
-            <button
-              type="button"
-              disabled={!selectedDocument || catalog.isError || read.isPending}
-              onClick={open}
-            >
-              {t('projectDocument.open')}
-            </button>
+            <ProjectDocumentRead
+              key={selectedDocument?.id ?? ''}
+              api={api}
+              projectId={projectId}
+              document={selectedDocument}
+              disabled={catalog.isError}
+              onLoad={onLoad}
+              onLoading={onLoading}
+            />
           </>
         )}
       </PagedExplorerBranch>
+    </>
+  );
+}
+
+/** Reads an exact selection independently of catalog pagination; the owner enforces current access/expiry. */
+export function ProjectDocumentRead({
+  api,
+  projectId,
+  document,
+  disabled,
+  onLoad,
+  onLoading,
+  label,
+}: {
+  api: ProjectDocumentsApi;
+  projectId: string;
+  document: ExactDocumentSelection | undefined;
+  disabled: boolean;
+  onLoad: (document: components['schemas']['PublishProjectDocumentRequest']) => void;
+  onLoading: (loading: boolean) => void;
+  label?: string;
+}) {
+  const { t } = usePresentation();
+  const expired = useDeadline(document?.expires_at ?? null);
+  const read = useMutation({
+    gcTime: 0,
+    mutationFn: async (selected: NonNullable<typeof document>) => {
+      return {
+        name: selected.name,
+        content: await readExactProjectDocument(api, projectId, selected.artifact),
+      };
+    },
+  });
+  const open = () => {
+    if (
+      !document ||
+      disabled ||
+      (document.expires_at !== undefined && Date.now() >= document.expires_at) ||
+      read.isPending
+    )
+      return;
+    onLoading(true);
+    read.mutate(document, { onSuccess: onLoad, onSettled: () => onLoading(false) });
+  };
+  return (
+    <>
+      <button
+        type="button"
+        disabled={!document || disabled || expired || read.isPending}
+        onClick={open}
+      >
+        {label ?? t('projectDocument.open')}
+      </button>
+      {expired ? <p role="status">{t('projectDocument.expired')}</p> : null}
       {read.isError ? (
-        <QueryFailureNotice error={read.error} title={t('projectDocument.open')} onRetry={open} />
+        <QueryFailureNotice
+          error={read.error}
+          title={label ?? t('projectDocument.open')}
+          onRetry={open}
+        />
       ) : null}
     </>
   );

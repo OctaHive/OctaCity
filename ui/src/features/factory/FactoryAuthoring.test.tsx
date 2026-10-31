@@ -8,7 +8,58 @@ import { createConsoleQueryClient } from '../../app/query';
 import { FactoryAuthoring } from './FactoryAuthoring';
 import { factoryApi, type FactoryApi } from './api';
 import { configurationFixture } from '../../../tests/fixtures/factory';
+import { projectDocumentsApi } from '../../api/projectDocuments';
 afterEach(cleanup);
+
+it('blocks Flow publication while process text is being edited and restores the unchanged draft after cancellation', async () => {
+  const flow = configurationFixture().configuration.flow;
+  const projectId = configurationFixture().configuration.reference.project_id;
+  vi.spyOn(projectDocumentsApi, 'list').mockResolvedValue({ items: [], next_cursor: null });
+  const api = {
+    ...factoryApi,
+    listChoices: vi.fn(async () => ({ items: [], total: 0, next_cursor: null })),
+    listFlows: vi.fn(async () => ({ items: [], total: 0, next_cursor: null })),
+    validateFlow: vi.fn<FactoryApi['validateFlow']>(async () => flow),
+  };
+  render(
+    <QueryClientProvider client={createConsoleQueryClient()}>
+      <RouterProvider
+        router={createMemoryRouter([
+          {
+            path: '*',
+            element: (
+              <FactoryAuthoring
+                api={api}
+                baseline={{ flow, project_id: projectId, published_at_unix_ms: 1 }}
+                onDiscard={() => {}}
+              />
+            ),
+          },
+        ])}
+      />
+    </QueryClientProvider>,
+  );
+  await userEvent.click(await screen.findByRole('button', { name: 'Validate draft' }));
+  expect(await screen.findByText('Authoritative validation passed.')).toBeTruthy();
+  await userEvent.click(screen.getByRole('button', { name: 'Edit completion criteria' }));
+  await userEvent.type(
+    screen.getByRole('textbox', { name: 'Completion criteria' }),
+    'Unpublished private draft',
+  );
+  expect(screen.getByRole('button', { name: 'Validate draft' })).toHaveProperty('disabled', true);
+  expect(screen.getByRole('button', { name: 'Review publication' })).toHaveProperty(
+    'disabled',
+    true,
+  );
+  await userEvent.click(screen.getByRole('button', { name: 'Cancel process edit' }));
+  expect(screen.getByRole('button', { name: 'Review publication' })).toHaveProperty(
+    'disabled',
+    false,
+  );
+  expect(screen.queryByDisplayValue('Unpublished private draft')).toBeNull();
+  expect(api.validateFlow).toHaveBeenCalledTimes(1);
+  vi.restoreAllMocks();
+});
 it('authors and confirms a first Flow through guided controls, generating identities internally and invalidating only owning caches', async () => {
   const configuration = configurationFixture().configuration;
   const schema = configuration.flow.data_schemas[0]!;

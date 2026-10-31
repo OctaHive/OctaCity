@@ -19,6 +19,23 @@ export interface ProjectDocumentsApi {
     headers: IdempotencyRequestHeaders,
   ): Promise<components['schemas']['ProjectDocumentResource']>;
 }
+
+/** Confirms the exact server-owned content identity without deriving a new digest in the browser. */
+export async function readExactProjectDocument(
+  api: ProjectDocumentsApi,
+  projectId: string,
+  artifact: components['schemas']['FactoryArtifactReference'],
+): Promise<string> {
+  const result = await api.read(projectId, artifact.artifact_id);
+  if (
+    result.project_id !== projectId ||
+    result.artifact.artifact_id !== artifact.artifact_id ||
+    result.artifact.content_digest !== artifact.content_digest ||
+    result.artifact.encoded_size !== artifact.encoded_size
+  )
+    throw new Error('Project document response is invalid');
+  return result.content;
+}
 export const projectDocumentsApi: ProjectDocumentsApi = {
   async read(project_id, artifact_id, signal) {
     const { data } = await managementApi.GET(

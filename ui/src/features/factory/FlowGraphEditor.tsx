@@ -16,6 +16,8 @@ import type { FlowSourceServices } from './FlowSourceUpdate';
 import { FlowProjections } from './FlowProjections';
 import { FlowTransitions } from './FlowTransitions';
 import { BudgetEditor, PermissionEditor } from './ResourceEditors';
+import { FlowDocuments, type FlowDocumentServices } from './FlowDocuments';
+import { FlowProcess } from './FlowProcess';
 
 type Draft = components['schemas']['FactoryFlowDefinitionDraft'];
 interface Props {
@@ -25,6 +27,8 @@ interface Props {
   onChange: (value: Draft) => void;
   sources?: FlowSourceServices;
   roles?: RoleServices | undefined;
+  documents?: FlowDocumentServices | undefined;
+  onProcessEditingChange?: ((editing: boolean) => void) | undefined;
   issueStatus?: FlowIssueServices | undefined;
 }
 
@@ -49,6 +53,8 @@ export function FlowGraphEditor({
   sources,
   issueStatus,
   roles,
+  documents,
+  onProcessEditingChange,
 }: Props) {
   const { t } = usePresentation();
   const [selected, setSelected] = useState(() =>
@@ -83,6 +89,14 @@ export function FlowGraphEditor({
   return (
     <section className={styles.editor} data-factory-field="/root" tabIndex={-1}>
       <h3>{t('factory.graphEditor')}</h3>
+      {documents ? (
+        <FlowProcess
+          value={value}
+          services={documents}
+          onChange={onChange}
+          onEditingChange={onProcessEditingChange}
+        />
+      ) : null}
       <FlowGraphOverview value={value.root} />
       <button
         type="button"
@@ -197,6 +211,9 @@ export function FlowGraphEditor({
                 ...value,
                 root: {
                   ...value.root,
+                  ...(value.root.process
+                    ? { process: updateProcessRecipients(value.root.process, key, null) }
+                    : {}),
                   entry: value.root.entry === key ? '' : value.root.entry,
                   nodes: value.root.nodes.filter((_, index) => index !== selected),
                   transitions: value.root.transitions.filter(
@@ -266,6 +283,7 @@ export function FlowGraphEditor({
           />
           <FlowBindings
             key={bindingRevision}
+            documentsManaged={!!documents}
             issueStatus={issueStatus}
             sources={sources}
             node={node}
@@ -273,6 +291,15 @@ export function FlowGraphEditor({
             schemas={value.data_schemas}
             onChange={(next) => updateNode(next)}
           />
+          {documents ? (
+            <FlowDocuments
+              key={node.key}
+              node={node}
+              services={documents}
+              onChange={updateNode}
+              processManaged={value.root.process != null}
+            />
+          ) : null}
           <BudgetEditor
             label={t('factory.nodeBudget')}
             value={node.budget}
@@ -375,6 +402,7 @@ function renameNode(value: Draft, index: number, name: string): Draft {
   if (node === undefined) return next;
   const old = node.key;
   node.key = name;
+  if (next.root.process) next.root.process = updateProcessRecipients(next.root.process, old, name);
   if (next.root.entry === old) next.root.entry = name;
   for (const edge of next.root.transitions) {
     if (edge.predecessor === old) edge.predecessor = name;
@@ -387,5 +415,25 @@ function renameNode(value: Draft, index: number, name: string): Draft {
   for (const target of next.root.nodes)
     for (const source of Object.values(target.input_binding?.sources ?? {}))
       if (source.source === 'record' && source.node === old) source.node = name;
+  return next;
+}
+
+function updateProcessRecipients(
+  process: NonNullable<Draft['root']['process']>,
+  old: string,
+  replacement: string | null,
+) {
+  const next = { ...process };
+  for (const kind of ['goals', 'criteria'] as const) {
+    const document = process[kind];
+    if (document)
+      next[kind] = {
+        ...document,
+        recipients:
+          replacement === null
+            ? document.recipients.filter((key) => key !== old)
+            : document.recipients.map((key) => (key === old ? replacement : key)),
+      };
+  }
   return next;
 }

@@ -6,6 +6,7 @@ import { ValueMappingEditor } from './ValueMappingEditor';
 import { SelectMenu } from '../../shared/SelectMenu';
 import { FlowIssueStatus, type FlowIssueServices } from './FlowIssueStatus';
 import { FlowSourceUpdate, type FlowSourceServices } from './FlowSourceUpdate';
+import { documentSelections } from './flowDocumentBindings';
 
 type Node = components['schemas']['FactoryFlowNodeDefinition'];
 type Root = components['schemas']['FactoryFlowRootDraft'];
@@ -37,6 +38,7 @@ export function FlowBindings({
   onChange,
   sources: services,
   issueStatus,
+  documentsManaged = false,
 }: {
   node: Node;
   root: Root;
@@ -44,12 +46,17 @@ export function FlowBindings({
   onChange: (node: Node) => void;
   sources?: FlowSourceServices | undefined;
   issueStatus?: FlowIssueServices | undefined;
+  documentsManaged?: boolean;
 }) {
   const { t } = usePresentation();
   const sources = node.input_binding?.sources ?? {};
   const entries = node.context_binding?.entries ?? {};
   const sourceKeys = useDraftRowKeys(Object.values(sources));
-  const entryKeys = useDraftRowKeys(Object.values(entries));
+  const documentKeys = new Set(
+    documentsManaged ? documentSelections(node).map((entry) => entry.key) : [],
+  );
+  const editableEntries = Object.entries(entries).filter(([key]) => !documentKeys.has(key));
+  const entryKeys = useDraftRowKeys(editableEntries.map(([, entry]) => entry));
   const updateSources = (sources: Record<string, Source>) =>
     onChange({
       ...node,
@@ -241,7 +248,7 @@ export function FlowBindings({
       >
         {t('factory.addContextEntry')}
       </button>
-      {Object.entries(entries).map(([name, entry], index) => (
+      {editableEntries.map(([name, entry], index) => (
         <fieldset key={entryKeys[index]}>
           <label>
             {t('factory.contextEntryName')}

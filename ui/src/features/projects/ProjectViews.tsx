@@ -15,6 +15,7 @@ import { WorkspaceWelcome } from '../../shared/WorkspaceWelcome';
 import type { ProjectDetails, ProjectsApi } from './api';
 import { ProjectBuilds } from './ProjectBuilds';
 import { ProjectDefinitions } from './ProjectDefinitions';
+import { ProjectDocuments } from './ProjectDocuments';
 import styles from './Projects.module.css';
 
 interface ProjectsViewProps {
@@ -99,6 +100,7 @@ function SelectedProject({ api, projectId }: ProjectsViewProps & { projectId: st
           {t('issues.tasks')}
         </Link>
       </nav>
+      <ProjectDocuments key={`documents:${projectId}`} projectId={projectId} />
       <ProjectDefinitions key={projectId} api={api} projectId={projectId} />
       <ProjectBuilds key={`builds:${projectId}`} api={api} projectId={projectId} />
     </section>

@@ -5,6 +5,41 @@ import { afterEach, it, expect, vi } from 'vitest';
 import { SchemaEditor } from './SchemaEditor';
 import { configurationFixture } from '../../../tests/fixtures/factory';
 afterEach(cleanup);
+it('authors bounded document-guided component and priority fields without a copied enum and explains structural validation', async () => {
+  const normalizeSchema = vi.fn(
+    async () => configurationFixture().configuration.flow.data_schemas[0]!,
+  );
+  render(<SchemaEditor api={{ normalizeSchema }} projectId="visible-project" onAdd={() => {}} />);
+  expect(
+    screen.getByText(
+      'Schema validation checks structure. Document meaning requires declared checks or review.',
+    ),
+  ).toBeTruthy();
+  await userEvent.type(screen.getByRole('textbox', { name: 'Schema name' }), 'assessment.result');
+  await userEvent.type(screen.getByRole('textbox', { name: 'Schema version' }), 'v1');
+  await userEvent.click(screen.getByRole('combobox', { name: 'Schema type' }));
+  await userEvent.click(screen.getByRole('option', { name: 'Object' }));
+  for (const [index, name] of ['component', 'priority'].entries()) {
+    await userEvent.click(screen.getByRole('button', { name: 'Add field' }));
+    await userEvent.type(screen.getAllByRole('textbox', { name: 'Field name' })[index]!, name);
+    await userEvent.click(screen.getAllByRole('combobox', { name: 'Schema type' })[index + 1]!);
+    await userEvent.click(screen.getByRole('option', { name: 'String' }));
+  }
+  await userEvent.click(screen.getByRole('button', { name: 'Add schema' }));
+  expect(normalizeSchema).toHaveBeenCalledWith({
+    project_id: 'visible-project',
+    identity: 'assessment.result',
+    version: 'v1',
+    shape: {
+      type: 'object',
+      fields: {
+        component: { required: true, value: { type: 'string', min_bytes: 0, max_bytes: 128 } },
+        priority: { required: true, value: { type: 'string', min_bytes: 0, max_bytes: 128 } },
+      },
+    },
+  });
+  expect(screen.queryByRole('button', { name: 'Add enum value' })).toBeNull();
+});
 it('authors a signed 64-bit schema bound without rounding it through a JavaScript number', async () => {
   const normalizeSchema = vi.fn(
     async () => configurationFixture().configuration.flow.data_schemas[0]!,

@@ -13,6 +13,7 @@ import { useFactoryChoices } from './useFactoryChoices';
 import type { IssueWorkflowsApi } from '../../api/issueWorkflows';
 import { factoryRolesApi } from './roleApi';
 import { factorySourcesApi } from './sourceApi';
+import { projectDocumentsApi } from '../../api/projectDocuments';
 
 type Choice = components['schemas']['FactoryConfigurationChoiceResource'];
 /** Entire editor state is owned here and discarded when its immutable baseline or Project changes. */
@@ -36,6 +37,7 @@ export function FactoryAuthoring({
   const { t } = usePresentation();
   const configuration = baseline && 'configuration' in baseline ? baseline.configuration : null;
   const [newId] = useState(() => globalThis.crypto.randomUUID());
+  const [processEditing, setProcessEditing] = useState(false);
   const projectId =
     configuration?.reference.project_id ??
     (baseline && 'project_id' in baseline ? baseline.project_id : (newProjectId ?? ''));
@@ -126,6 +128,8 @@ export function FactoryAuthoring({
         ) : draft ? (
           <>
             <FlowGraphEditor
+              onProcessEditingChange={setProcessEditing}
+              documents={{ api: projectDocumentsApi, projectId }}
               issueStatus={workflows ? { api: workflows, projectId } : undefined}
               roles={{ api: factoryRolesApi, projectId }}
               sources={{ api: factorySourcesApi, projectId }}
@@ -136,6 +140,7 @@ export function FactoryAuthoring({
             />
             <FactoryPublication
               api={api}
+              ready={!processEditing}
               subject={{
                 kind: 'flow',
                 request: {
