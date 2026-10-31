@@ -75,6 +75,7 @@ impl Components {
       .tool_executables
       .iter()
       .map(|(product, executable)| ConfiguredExternalExecutable {
+        guest_filename: executable.guest_filename.clone(),
         product: product.clone(),
         version: executable.version.clone(),
         platform: executable.platform.clone(),
@@ -607,6 +608,9 @@ async fn build_executor(
     executor
       .with_factory_credential_profiles(factory_credentials::load(&validated.config)?)?
       .with_protected_input_stager(ProtectedInputStager::new(ProtectedInputStagerConfig {
+        root_certificates: octacity_coordinator::load_additional_root_certificates(
+          validated.config.tls_ca_certificate_file.as_deref(),
+        )?,
         allowed_origins: validated.config.allowed_upload_origins.clone(),
         download_timeout: Duration::from_secs(validated.config.upload_timeout_seconds),
       })?)

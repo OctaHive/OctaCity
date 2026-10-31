@@ -94,6 +94,41 @@ fn capabilities() -> RunnerCapabilities {
 }
 
 #[test]
+fn installed_inventory_accepts_an_exact_signed_plugin_subset_without_implicit_plugins() {
+  let (release, _, _) = codex_release();
+  let shell = release.path().join("plugins/shell");
+  write_executable(&shell, b"another installed plugin");
+  let lock = release.path().join("Octa.lock");
+  let mut contents = fs::read_to_string(&lock).unwrap();
+  contents.push_str(&format!(
+    "  shell:\n    version: '0.5.1'\n    protocol: 2\n    platforms: [linux-x86_64]\n    entrypoint: shell\n    sha256: {}\n    capabilities: []\n    source: shell.plugin.yml\n",
+    file_sha256(&shell).unwrap()
+  ));
+  fs::write(lock, contents).unwrap();
+  let installation = RunnerInstallation::load(release.path()).unwrap();
+  let mut requirement = OctaSpec {
+    version: "0.5.1".to_owned(),
+    runner_sha256: installation.sha256.clone(),
+    runner_protocol: 1,
+    event_schema: 3,
+    plugin_protocol: 2,
+    plugin_digests: BTreeMap::from([("codex".to_owned(), installation.plugins["codex"].sha256.clone())]),
+  };
+  installation.verify(&requirement).unwrap();
+  assert_eq!(requirement.plugin_digests.len(), 1);
+  assert_eq!(installation.plugins.len(), 2);
+  requirement.plugin_digests.insert("codex".to_owned(), "f".repeat(64));
+  assert!(installation.verify(&requirement).is_err());
+  requirement.plugin_digests = BTreeMap::from([("missing".to_owned(), "a".repeat(64))]);
+  assert!(installation.verify(&requirement).is_err());
+  requirement.plugin_digests.clear();
+  assert!(
+    installation.verify(&requirement).is_err(),
+    "empty selection must not enable inventory defaults"
+  );
+}
+
+#[test]
 fn validates_capability_sets() {
   assert!(validate_capabilities(&capabilities()).is_ok());
   let mut invalid = capabilities();
@@ -165,6 +200,7 @@ fn verifies_external_executable_against_release_compatibility() {
   let (_release, installation, executable) = codex_release();
   let digest = file_sha256(&executable).unwrap();
   let configured = ConfiguredExternalExecutable {
+    guest_filename: None,
     product: "codex-cli".to_owned(),
     version: "0.161.0".to_owned(),
     platform: "linux-x86_64".to_owned(),
@@ -191,6 +227,7 @@ fn explicitly_installed_standalone_mcp_program_is_projected_without_a_plugin_con
   write_executable(&executable, &linux_x86_64_executable_with_version("finite MCP peer"));
   let configured = ConfiguredExternalExecutable {
     product: "issue-reader".into(),
+    guest_filename: Some("issue-reader".into()),
     version: "1.2.0".into(),
     platform: "linux-x86_64".into(),
     executable: executable.clone(),
@@ -214,7 +251,7 @@ fn explicitly_installed_standalone_mcp_program_is_projected_without_a_plugin_con
   assert_eq!(projections[0].source, executable.canonicalize().unwrap());
   assert_eq!(
     projections[0].destination(Path::new("/opt/octacity/tools")),
-    Path::new("/opt/octacity/tools/tool-0")
+    Path::new("/opt/octacity/tools/issue-reader")
   );
   fs::write(
     &executable,
@@ -240,6 +277,7 @@ fn standalone_mcp_program_requires_native_guest_bytes() {
   let executable = codex.with_file_name("unqualified-script");
   write_executable(&executable, b"#!/bin/sh\n# version 1.2.0\n");
   let configured = ConfiguredExternalExecutable {
+    guest_filename: None,
     product: "issue-reader".into(),
     version: "1.2.0".into(),
     platform: "linux-x86_64".into(),
@@ -260,6 +298,7 @@ fn standalone_mcp_program_requires_native_guest_bytes() {
 fn revalidation_rejects_plugin_and_executable_drift_before_spawn() {
   let (_release, installation, executable) = codex_release();
   let configured = ConfiguredExternalExecutable {
+    guest_filename: None,
     product: "codex-cli".to_owned(),
     version: "0.161.0".to_owned(),
     platform: "linux-x86_64".to_owned(),
@@ -363,6 +402,7 @@ fn rejects_absent_wrong_version_digest_and_platform_external_executables() {
   let (release, installation, executable) = codex_release();
   let digest = file_sha256(&executable).unwrap();
   let configured = ConfiguredExternalExecutable {
+    guest_filename: None,
     product: "codex-cli".to_owned(),
     version: "0.161.0".to_owned(),
     platform: "linux-x86_64".to_owned(),
@@ -417,6 +457,7 @@ fn rejects_binary_platform_and_version_claims_not_present_in_the_executable() {
   write_executable(&executable, &linux_x86_64_executable_with_version("codex-cli 0.129.0"));
   let digest = file_sha256(&executable).unwrap();
   let wrong_version_bytes = ConfiguredExternalExecutable {
+    guest_filename: None,
     product: "codex-cli".to_owned(),
     version: "0.161.0".to_owned(),
     platform: "linux-x86_64".to_owned(),
@@ -435,6 +476,7 @@ fn rejects_binary_platform_and_version_claims_not_present_in_the_executable() {
   arm[18..20].copy_from_slice(&183_u16.to_le_bytes());
   write_executable(&executable, &arm);
   let wrong_platform_bytes = ConfiguredExternalExecutable {
+    guest_filename: None,
     product: "codex-cli".to_owned(),
     version: "0.161.0".to_owned(),
     platform: "linux-x86_64".to_owned(),
@@ -460,6 +502,7 @@ fn rejects_external_executable_writable_by_other_users() {
   fs::set_permissions(&executable, fs::Permissions::from_mode(0o777)).unwrap();
   let error = installation
     .verify_external_executables(&[ConfiguredExternalExecutable {
+      guest_filename: None,
       product: "codex-cli".to_owned(),
       version: "0.161.0".to_owned(),
       platform: "linux-x86_64".to_owned(),
@@ -517,6 +560,7 @@ fn inventories_and_matches_a_cross_platform_release_without_importing_octa() {
         directory: installation.plugins_dir.clone(),
         lock: installation.default_plugin_lock.clone()
       }),
+      external_executable_names: std::collections::BTreeMap::new(),
       external_executables: BTreeMap::new(),
     }
   );

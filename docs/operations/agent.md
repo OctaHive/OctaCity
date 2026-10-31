@@ -56,6 +56,13 @@ be a real executable file outside Agent job-writable roots and must not be
 writable by an untrusted local user. Omitting a tool keeps its plugin
 capability unavailable while leaving ordinary CI/CD execution valid.
 
+An independently pinned runtime companion may opt into a `guest_filename`
+under `tool_executables`. The verified inventory checks that it is a single safe
+filename and does not collide with another selected executable. Omitted names
+retain their opaque `tool-N` paths; named companions do not renumber those paths.
+This metadata grants no execution authority: JobSpec v3 must still select each
+companion's exact identity, version and digest in its executable permissions.
+
 JobSpec v1/v2 do not carry a per-Job tool selector. A configured executable is
 therefore projected into every execution accepted by that Agent, although only
 the release-locked plugin knows its environment selector. Run such a

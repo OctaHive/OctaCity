@@ -197,6 +197,7 @@ fn creates_a_restricted_oci_spec_and_guest_paths() {
       directory: release.join("plugins"),
       lock: release.join("plugins.lock"),
     }),
+    external_executable_names: std::collections::BTreeMap::new(),
     external_executables: std::collections::BTreeMap::from([(
       "OCTA_CODEX_EXECUTABLE".to_owned(),
       external_executable.clone(),
@@ -344,6 +345,7 @@ fn projects_the_factory_layout_without_a_writable_parent_mount() {
       directory: release.join("plugins"),
       lock: release.join("Octa.lock"),
     }),
+    external_executable_names: std::collections::BTreeMap::new(),
     external_executables: BTreeMap::new(),
   };
   let mut request = StartExecution {

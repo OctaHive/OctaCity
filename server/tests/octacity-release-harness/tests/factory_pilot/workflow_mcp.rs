@@ -305,6 +305,7 @@ impl NativeMcp {
     .into_iter()
     .map(
       |(product, path, version, digest)| octacity_runner::ConfiguredExternalExecutable {
+        guest_filename: None,
         product: product.into(),
         version: version.into(),
         platform: model.platform.clone(),

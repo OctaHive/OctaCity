@@ -102,6 +102,7 @@ async fn candidate_inputs_remain_host_readable_and_are_absent_from_the_real_gues
   manifest.validate().unwrap();
   let cancellation = CancellationToken::new();
   let stage_result = ProtectedInputStager::new(ProtectedInputStagerConfig {
+    root_certificates: Vec::new(),
     allowed_origins: vec![origin],
     download_timeout: Duration::from_secs(5),
   })

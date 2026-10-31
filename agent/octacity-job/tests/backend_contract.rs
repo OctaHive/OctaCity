@@ -87,10 +87,10 @@ impl SourceMaterializer for FixtureSource {
         allowed_host,
         denied_host,
       }) => format!(
-        "version: 1\n\ntasks:\n  contract:\n    shell: |\n      test \"$(cat /run/octa-identity)\" = backend-contract-identity\n      ! printf tamper >> /run/octa-identity\n      command -v curl > /dev/null\n      curl --fail --silent --show-error --max-time 10 https://{allowed_host}/ > /dev/null\n      ! curl --fail --silent --show-error --max-time 3 https://{denied_host}/ > /dev/null 2>&1\n      echo octacity-backend-contract\n  wait:\n    shell: sleep 60\n"
+        "version: 1\n\ntasks:\n  contract:\n    shell: |\n      set -eu\n      test \"$(cat /run/octa-identity)\" = backend-contract-identity\n      ! printf tamper >> /run/octa-identity || exit 1\n      command -v curl > /dev/null\n      curl --fail --silent --show-error --tlsv1.3 --max-time 10 https://{allowed_host}/ > /dev/null\n      ! curl --fail --silent --show-error --max-time 3 https://{denied_host}/ > /dev/null 2>&1 || exit 1\n      echo octacity-backend-contract\n  wait:\n    shell: sleep 60\n"
       ),
       Some(OciProbe::DisabledNetwork) => {
-        "version: 1\n\ntasks:\n  contract:\n    shell: |\n      test \"$(cat /run/octa-identity)\" = backend-contract-identity\n      ! printf tamper >> /run/octa-identity\n      command -v curl > /dev/null\n      ! curl --fail --silent --show-error --max-time 3 https://example.com/ > /dev/null 2>&1\n      echo octacity-backend-contract\n  wait:\n    shell: sleep 60\n"
+        "version: 1\n\ntasks:\n  contract:\n    shell: |\n      set -eu\n      test \"$(cat /run/octa-identity)\" = backend-contract-identity\n      ! printf tamper >> /run/octa-identity || exit 1\n      command -v curl > /dev/null\n      ! curl --fail --silent --show-error --max-time 3 https://example.com/ > /dev/null 2>&1 || exit 1\n      echo octacity-backend-contract\n  wait:\n    shell: sleep 60\n"
           .to_owned()
       }
       None => FIXTURE_OCTAFILE.to_owned(),
@@ -436,6 +436,7 @@ async fn run_oci_v2_contract(contract: OciV2Contract) {
   let executor = if let Some((_, _, protected_origin, _)) = &factory_setup {
     executor.with_protected_input_stager(
       ProtectedInputStager::new(ProtectedInputStagerConfig {
+        root_certificates: Vec::new(),
         allowed_origins: vec![protected_origin.clone()],
         download_timeout: Duration::from_secs(10),
       })
@@ -955,14 +956,15 @@ fn factory_octafile(probe: &OciProbe) -> Vec<u8> {
       allowed_host,
       denied_host,
     } => format!(
-      "      curl --fail --silent --show-error --max-time 10 https://{allowed_host}/ > /dev/null\n      ! curl --fail --silent --show-error --max-time 3 https://{denied_host}/ > /dev/null 2>&1\n"
+      "      curl --fail --silent --show-error --tlsv1.3 --max-time 10 https://{allowed_host}/ > /dev/null\n      ! curl --fail --silent --show-error --max-time 3 https://{denied_host}/ > /dev/null 2>&1 || exit 1\n"
     ),
     OciProbe::DisabledNetwork => {
-      "      ! curl --fail --silent --show-error --max-time 3 https://example.com/ > /dev/null 2>&1\n".to_owned()
+      "      ! curl --fail --silent --show-error --max-time 3 https://example.com/ > /dev/null 2>&1 || exit 1\n"
+        .to_owned()
     }
   };
   format!(
-    "version: 1\n\ntasks:\n  contract:\n    shell: |\n      test \"$(cat /run/octa-identity)\" = backend-contract-identity\n      ! printf tamper >> /run/octa-identity\n      test -r /octacity/protected/Octafile.yml\n      ! printf tamper >> /octacity/protected/Octafile.yml\n      test ! -e /workspace/protected/Octafile.yml\n      printf source > /workspace/source/factory-source\n      printf scratch > /workspace/scratch/factory-scratch\n      printf output > /workspace/output/factory-output\n      ! mkdir /workspace/escape\n      test ! -e /run/octa-cache/token\n{network_probe}      echo octacity-factory-backend-contract\n"
+    "version: 1\n\ntasks:\n  contract:\n    shell: |\n      set -eu\n      test \"$(cat /run/octa-identity)\" = backend-contract-identity\n      ! printf tamper >> /run/octa-identity || exit 1\n      test -r /octacity/protected/Octafile.yml\n      ! printf tamper >> /octacity/protected/Octafile.yml || exit 1\n      test ! -e /workspace/protected/Octafile.yml\n      printf source > /workspace/source/factory-source\n      printf scratch > /workspace/scratch/factory-scratch\n      printf output > /workspace/output/factory-output\n      ! mkdir /workspace/escape || exit 1\n      test ! -e /run/octa-cache/token\n{network_probe}      echo octacity-factory-backend-contract\n"
   )
   .into_bytes()
 }

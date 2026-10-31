@@ -42,6 +42,7 @@ fn runner(root: &Path) -> RunnerProgram {
       lock: release.join("Octa.lock"),
     }),
     release_root: release,
+    external_executable_names: std::collections::BTreeMap::new(),
     external_executables: BTreeMap::new(),
   }
 }

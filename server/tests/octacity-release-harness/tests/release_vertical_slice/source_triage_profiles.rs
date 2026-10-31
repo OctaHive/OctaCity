@@ -466,6 +466,7 @@ async fn compose(
     .unwrap()
     .iter()
     .map(|(name, tool)| octacity_runner::ConfiguredExternalExecutable {
+      guest_filename: None,
       product: name.clone(),
       version: tool["version"].as_str().unwrap().into(),
       platform: model.platform.clone(),

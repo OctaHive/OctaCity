@@ -14,6 +14,7 @@ fn runner(root: &Path) -> RunnerProgram {
       directory: root.join("plugins"),
       lock: root.join("Octa.lock"),
     }),
+    external_executable_names: std::collections::BTreeMap::new(),
     external_executables: std::collections::BTreeMap::new(),
   }
 }

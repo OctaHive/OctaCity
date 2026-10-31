@@ -213,6 +213,7 @@ async fn credential_job_fixture_with_document(octafile: &'static [u8]) -> Creden
   executor.factory_permissions = Some(spec.permissions.clone());
   executor.protected_input_stager = Some(
     ProtectedInputStager::new(ProtectedInputStagerConfig {
+      root_certificates: Vec::new(),
       allowed_origins: vec![origin.clone()],
       download_timeout: Duration::from_secs(5),
     })
@@ -1242,6 +1243,7 @@ async fn captured_factory_job_with_observation(
   }
   executor.factory_permissions = Some(spec.permissions.clone());
   let stager = ProtectedInputStager::new(ProtectedInputStagerConfig {
+    root_certificates: Vec::new(),
     allowed_origins: vec![origin.clone()],
     download_timeout: Duration::from_secs(2),
   })

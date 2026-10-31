@@ -676,6 +676,7 @@ mod tests {
         directory: PathBuf::new(),
         lock: PathBuf::new(),
       }),
+      external_executable_names: std::collections::BTreeMap::new(),
       external_executables: BTreeMap::new(),
     };
 
@@ -730,6 +731,7 @@ mod tests {
         directory: plugins_dir,
         lock: plugin_lock,
       }),
+      external_executable_names: std::collections::BTreeMap::new(),
       external_executables: BTreeMap::new(),
     };
     let request = StartExecution {

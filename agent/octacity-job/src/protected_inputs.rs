@@ -24,6 +24,9 @@ pub struct ProtectedInputStagerConfig {
   pub allowed_origins: Vec<String>,
   /// Per-input upper bound covering connection and body transfer.
   pub download_timeout: Duration,
+  /// Additional operator-approved TLS roots, parsed by the installation owner.
+  /// An empty set retains the platform trust store.
+  pub root_certificates: Vec<reqwest::Certificate>,
 }
 
 /// Downloads and publishes immutable v3 inputs below one private Job root.
@@ -47,11 +50,13 @@ impl ProtectedInputStager {
     if allowed_origins.len() != config.allowed_origins.len() {
       return Err(ProtectedInputError::Policy);
     }
-    let client = reqwest::Client::builder()
+    let mut client = reqwest::Client::builder()
       .connect_timeout(config.download_timeout)
-      .redirect(reqwest::redirect::Policy::none())
-      .build()
-      .map_err(|_| ProtectedInputError::Transport)?;
+      .redirect(reqwest::redirect::Policy::none());
+    for certificate in config.root_certificates {
+      client = client.add_root_certificate(certificate);
+    }
+    let client = client.build().map_err(|_| ProtectedInputError::Transport)?;
     Ok(Self {
       client,
       allowed_origins,
@@ -683,10 +688,81 @@ mod tests {
 
   fn stager(origin: &str) -> ProtectedInputStager {
     ProtectedInputStager::new(ProtectedInputStagerConfig {
+      root_certificates: Vec::new(),
       allowed_origins: vec![origin.to_owned()],
       download_timeout: Duration::from_secs(2),
     })
     .unwrap()
+  }
+
+  #[tokio::test]
+  async fn protected_downloads_use_only_explicit_additional_tls_roots() {
+    use std::sync::Arc;
+    use tokio::io::AsyncReadExt as _;
+    use tokio_rustls::{TlsAcceptor, rustls};
+    let _ = rustls::crypto::aws_lc_rs::default_provider().install_default();
+    let rcgen::CertifiedKey { cert, signing_key } =
+      rcgen::generate_simple_self_signed(vec!["127.0.0.1".into()]).unwrap();
+    let root = reqwest::Certificate::from_pem(cert.pem().as_bytes()).unwrap();
+    let config = rustls::ServerConfig::builder()
+      .with_no_client_auth()
+      .with_single_cert(
+        vec![cert.der().clone()],
+        rustls::pki_types::PrivatePkcs8KeyDer::from(signing_key.serialize_der()).into(),
+      )
+      .unwrap();
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let origin = format!("https://{}", listener.local_addr().unwrap());
+    let body = b"{\"context\":\"pinned\"}";
+    let task = tokio::spawn(async move {
+      let acceptor = TlsAcceptor::from(Arc::new(config));
+      for _ in 0..2 {
+        let (socket, _) = listener.accept().await.unwrap();
+        let Ok(mut socket) = acceptor.accept(socket).await else {
+          continue;
+        };
+        let mut request = [0_u8; 4096];
+        let received = socket.read(&mut request).await.unwrap();
+        assert!(received > 0);
+        socket
+          .write_all(
+            format!(
+              "HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n",
+              body.len()
+            )
+            .as_bytes(),
+          )
+          .await
+          .unwrap();
+        socket.write_all(body).await.unwrap();
+        socket.shutdown().await.unwrap();
+      }
+    });
+    let (_temporary, job) = private_job_root();
+    let transfers = [transfer(
+      input(body, "/octacity/protected/task.json"),
+      format!("{origin}/input"),
+    )];
+    assert_eq!(
+      stager(&origin)
+        .stage(&transfers, &job, &CancellationToken::new())
+        .await
+        .err(),
+      Some(ProtectedInputError::Transport)
+    );
+    let trusted = ProtectedInputStager::new(ProtectedInputStagerConfig {
+      allowed_origins: vec![origin],
+      download_timeout: Duration::from_secs(2),
+      root_certificates: vec![root],
+    })
+    .unwrap();
+    let staged = trusted
+      .stage(&transfers, &job, &CancellationToken::new())
+      .await
+      .unwrap();
+    assert_eq!(fs::read(staged.root.join("task.json")).unwrap(), body);
+    cleanup_private_tree(&staged.root).unwrap();
+    task.await.unwrap();
   }
 
   #[tokio::test]
@@ -776,6 +852,7 @@ mod tests {
       responses.push(response);
     }
     let stager = ProtectedInputStager::new(ProtectedInputStagerConfig {
+      root_certificates: Vec::new(),
       allowed_origins: origins,
       download_timeout: Duration::from_secs(10),
     })

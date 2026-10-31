@@ -330,6 +330,7 @@ mod tests {
         directory: release.join("plugins"),
         lock: release.join("Octa.lock"),
       }),
+      external_executable_names: std::collections::BTreeMap::new(),
       external_executables: std::collections::BTreeMap::new(),
     };
     let request = StartExecution {

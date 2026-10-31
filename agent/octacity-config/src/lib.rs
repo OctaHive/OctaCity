@@ -217,6 +217,10 @@ pub struct AgentConfig {
 #[derive(Clone, Debug, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct ToolExecutableConfig {
+  /// Optional single-component guest filename for a runtime companion.
+  /// The verified runner inventory validates names and collisions before execution.
+  #[serde(default)]
+  pub guest_filename: Option<String>,
   /// Explicit operator opt-in for a standalone tool (for example a stdio MCP
   /// server), independently pinned rather than selected by a task plugin.
   /// This supplies inventory only and grants no Job execution authority.

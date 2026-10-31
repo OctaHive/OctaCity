@@ -69,6 +69,14 @@ vocabulary. Apple VF continues to run only the v2
 contract until it can enforce restricted host allowlists, so backend names do
 not stand in for semantic qualification.
 
+Microsandbox's restricted network contract checks both successful HTTPS to an
+allowed host and rejection of an ungranted host. The shell probes stop on failed
+positive checks and explicitly reject successful negative checks; a final marker
+cannot hide an earlier failure. The adapter retains strict hostname enforcement
+and enables the SDK's TLS authority inspection for restricted networking. The
+SDK installs its per-sandbox CA in the guest and verifies upstream certificates;
+this does not grant additional destinations or disable certificate validation.
+
 ### Private controlled-reader transport
 
 The ignored `octacity-execution-microsandbox` test

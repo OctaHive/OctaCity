@@ -93,6 +93,8 @@ pub struct RunnerPlugin {
 /// Operator configuration for one executable consumed by a trusted task plugin.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct ConfiguredExternalExecutable {
+  /// Optional explicit guest filename for a qualified runtime companion.
+  pub guest_filename: Option<String>,
   /// Operator-selected product identity; plugin-owned products must also occur
   /// in the installed release compatibility metadata.
   pub product: String,
@@ -110,6 +112,8 @@ pub struct ConfiguredExternalExecutable {
 /// installed Octa release contract.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct VerifiedExternalExecutable {
+  /// Optional operator-selected guest filename, validated with the projected set.
+  pub guest_filename: Option<String>,
   /// Provider-neutral product identity.
   pub product: String,
   /// Operator-reviewed version paired with the verified digest. Plugin-owned
@@ -280,7 +284,9 @@ impl RunnerInstallation {
     })
   }
 
-  /// Matches the inventory against the exact requirement signed by the server.
+  /// Matches every explicitly selected plugin and runner pin against the inventory.
+  /// Extra installed plugins do not join the signed runner request. An empty
+  /// selection cannot activate Octa's default plugins from a nonempty inventory.
   pub fn verify(&self, requirement: &OctaSpec) -> Result<(), RunnerInstallationError> {
     if self.capabilities.octa_version != requirement.version {
       return requirement_error(format!(
@@ -312,14 +318,14 @@ impl RunnerInstallation {
         return requirement_error(format!("{name} {required} is not supported"));
       }
     }
-    if requirement.plugin_digests.len() != self.plugins.len() {
-      return requirement_error("signed plugin set differs from the installed Octa.lock");
+    if requirement.plugin_digests.is_empty() && !self.plugins.is_empty() {
+      return requirement_error("signed plugin selection is empty for a nonempty installation");
     }
-    for (name, plugin) in &self.plugins {
-      let required_digest = requirement
-        .plugin_digests
+    for (name, required_digest) in &requirement.plugin_digests {
+      let plugin = self
+        .plugins
         .get(name)
-        .ok_or_else(|| RunnerInstallationError::Requirement(format!("plugin '{name}' is not signed for this job")))?;
+        .ok_or_else(|| RunnerInstallationError::Requirement(format!("signed plugin '{name}' is not installed")))?;
       if required_digest != &plugin.sha256 {
         return requirement_error(format!("plugin '{name}' SHA-256 differs from the required digest"));
       }
@@ -457,6 +463,7 @@ impl RunnerInstallation {
       verified.insert(
         executable.product.clone(),
         VerifiedExternalExecutable {
+          guest_filename: executable.guest_filename.clone(),
           product: executable.product.clone(),
           version: executable.version.clone(),
           platform: executable.platform.clone(),
@@ -466,6 +473,10 @@ impl RunnerInstallation {
         },
       );
     }
+    self
+      .program_with_external_executables(&verified)
+      .validate()
+      .map_err(|_| invalid("external executable guest names are unsafe or collide"))?;
     Ok(verified)
   }
 
@@ -537,6 +548,15 @@ impl RunnerInstallation {
         directory: self.plugins_dir.clone(),
         lock: self.default_plugin_lock.clone(),
       }),
+      external_executable_names: executables
+        .values()
+        .filter_map(|executable| {
+          executable
+            .guest_filename
+            .as_ref()
+            .map(|name| (executable.selection_environment.clone(), name.clone()))
+        })
+        .collect(),
       external_executables: executables
         .values()
         .map(|executable| (executable.selection_environment.clone(), executable.executable.clone()))

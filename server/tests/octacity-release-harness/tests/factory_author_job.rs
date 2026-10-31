@@ -160,6 +160,7 @@ async fn signed_compiled_author_job_captures_only_its_declared_change() {
   let runner = RunnerInstallation::load(&PathBuf::from(required("OCTACITY_CONTRACT_OCTA_RELEASE_ROOT"))).unwrap();
   let external = runner
     .verify_external_executables(&[ConfiguredExternalExecutable {
+      guest_filename: None,
       product: "codex-cli".to_owned(),
       version: "0.161.0".to_owned(),
       platform: runner.capabilities.platform.clone(),
@@ -424,6 +425,7 @@ async fn signed_compiled_author_job_captures_only_its_declared_change() {
   .unwrap()
   .with_protected_input_stager(
     ProtectedInputStager::new(ProtectedInputStagerConfig {
+      root_certificates: Vec::new(),
       allowed_origins: vec![origin],
       download_timeout: Duration::from_secs(10),
     })

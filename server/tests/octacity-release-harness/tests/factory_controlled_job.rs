@@ -133,6 +133,7 @@ async fn signed_controlled_job_reads_hidden_source_only_through_the_current_leas
   let cli = PathBuf::from(required("OCTACITY_FACTORY_PILOT_CLI"));
   let mut external = runner
     .verify_external_executables(&[ConfiguredExternalExecutable {
+      guest_filename: None,
       product: "codex-cli".to_owned(),
       version: "0.161.0".to_owned(),
       platform: runner.capabilities.platform.clone(),
@@ -159,6 +160,7 @@ async fn signed_controlled_job_reads_hidden_source_only_through_the_current_leas
   external.insert(
     worker_pin.identity.clone(),
     VerifiedExternalExecutable {
+      guest_filename: None,
       product: worker_pin.identity.clone(),
       version: worker_pin.version.clone(),
       platform: "linux-aarch64".to_owned(),
@@ -480,6 +482,7 @@ async fn signed_controlled_job_reads_hidden_source_only_through_the_current_leas
   .unwrap()
   .with_protected_input_stager(
     ProtectedInputStager::new(ProtectedInputStagerConfig {
+      root_certificates: Vec::new(),
       allowed_origins: vec![origin],
       download_timeout: Duration::from_secs(10),
     })

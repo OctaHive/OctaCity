@@ -62,6 +62,7 @@ pub(super) fn load(
   executables.insert(
     reader.executable.identity.clone(),
     VerifiedExternalExecutable {
+      guest_filename: None,
       product: reader.executable.identity.clone(),
       version: reader.executable.version.clone(),
       platform: reader.platform.clone(),

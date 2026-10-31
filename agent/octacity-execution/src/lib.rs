@@ -19,7 +19,7 @@ mod factory_tool_channel;
 pub use factory_tool_channel::FactoryToolChannel;
 
 use std::{
-  collections::BTreeMap,
+  collections::{BTreeMap, BTreeSet},
   path::{Component, Path, PathBuf},
   pin::Pin,
   time::Duration,
@@ -58,7 +58,7 @@ pub struct ExternalExecutableProjection {
   pub selector: String,
   /// Verified absolute path on the Agent host.
   pub source: PathBuf,
-  /// Opaque filename used below a backend-owned read-only tools root.
+  /// Single-component filename used below a backend-owned read-only tools root.
   pub file_name: String,
 }
 
@@ -145,6 +145,9 @@ pub struct ExecutionProgram {
   /// Operator-selected executables exposed only through release-declared
   /// environment selectors. Backends project these paths read-only.
   pub external_executables: BTreeMap<String, PathBuf>,
+  /// Explicit guest filenames for selected runtime companions, keyed by selector.
+  /// Omitted selectors retain their stable opaque `tool-N` projection.
+  pub external_executable_names: BTreeMap<String, String>,
 }
 
 /// Compatibility name for existing Octa-runner callers.
@@ -157,6 +160,7 @@ impl ExecutionProgram {
       release_root,
       executable,
       plugin_projection: None,
+      external_executable_names: std::collections::BTreeMap::new(),
       external_executables: BTreeMap::new(),
     };
     program.validate()?;
@@ -172,22 +176,31 @@ impl ExecutionProgram {
       .ok_or_else(|| ExecutionError::Unavailable("backend has no qualified standalone program contract".to_owned()))
   }
 
-  /// Projects trusted executables in selector order without exposing product names.
+  /// Projects trusted executables in selector order, retaining opaque names unless explicitly overridden.
   pub fn external_executable_projections(&self) -> Vec<ExternalExecutableProjection> {
+    let mut opaque_index = 0;
     self
       .external_executables
       .iter()
-      .enumerate()
-      .map(|(index, (selector, source))| ExternalExecutableProjection {
+      .map(|(selector, source)| ExternalExecutableProjection {
         selector: selector.clone(),
         source: source.clone(),
-        file_name: format!("{EXTERNAL_EXECUTABLE_FILE_PREFIX}{index}"),
+        file_name: self
+          .external_executable_names
+          .get(selector)
+          .cloned()
+          .unwrap_or_else(|| {
+            let name = format!("{EXTERNAL_EXECUTABLE_FILE_PREFIX}{opaque_index}");
+            opaque_index += 1;
+            name
+          }),
       })
       .collect()
   }
 
   /// Checks that every distribution path is absolute and confined to its root.
   pub fn validate(&self) -> Result<(), ExecutionError> {
+    let mut guest_names = BTreeSet::new();
     if !self.release_root.is_absolute()
       || !self.executable.is_absolute()
       || !self.executable.starts_with(&self.release_root)
@@ -196,6 +209,20 @@ impl ExecutionProgram {
           || !projection.lock.is_absolute()
           || !projection.directory.starts_with(&self.release_root)
           || !projection.lock.starts_with(&self.release_root)
+      })
+      || self
+        .external_executable_names
+        .keys()
+        .any(|selector| !self.external_executables.contains_key(selector))
+      || self.external_executable_projections().iter().any(|projection| {
+        let name = &projection.file_name;
+        name.is_empty()
+          || name.len() > 128
+          || !name.as_bytes()[0].is_ascii_alphanumeric()
+          || !name
+            .bytes()
+            .all(|value| value.is_ascii_alphanumeric() || b"._-".contains(&value))
+          || !guest_names.insert(name.clone())
       })
       || self.external_executables.iter().any(|(selector, executable)| {
         selector.is_empty()
@@ -883,6 +910,52 @@ mod tests {
   include!("private_tool_channel_tests.rs");
 
   #[test]
+  fn selected_companions_keep_explicit_guest_names_without_renaming_other_executables() {
+    let mut program =
+      ExecutionProgram::standalone(PathBuf::from("/release"), PathBuf::from("/release/runner")).unwrap();
+    program.external_executables = BTreeMap::from([
+      ("A_TOOL".to_owned(), PathBuf::from("/tools/main")),
+      ("B_TOOL".to_owned(), PathBuf::from("/tools/companion")),
+      ("C_TOOL".to_owned(), PathBuf::from("/tools/previous-tool")),
+    ]);
+    program
+      .external_executable_names
+      .insert("B_TOOL".to_owned(), "runtime-helper".to_owned());
+    program.validate().unwrap();
+    let projected = program.external_executable_projections();
+    assert_eq!(
+      projected[0].destination(Path::new("/guest/tools")),
+      PathBuf::from("/guest/tools/tool-0")
+    );
+    assert_eq!(
+      projected[1].destination(Path::new("/guest/tools")),
+      PathBuf::from("/guest/tools/runtime-helper")
+    );
+    assert_eq!(
+      projected[2].destination(Path::new("/guest/tools")),
+      PathBuf::from("/guest/tools/tool-1"),
+      "adding a named companion must preserve existing opaque filenames"
+    );
+    for invalid in ["../escape", "/absolute", "nested/helper", "tool-0"] {
+      program
+        .external_executable_names
+        .insert("B_TOOL".to_owned(), invalid.to_owned());
+      assert!(
+        program.validate().is_err(),
+        "unsafe or colliding guest name {invalid} must be rejected"
+      );
+    }
+    program.external_executable_names.clear();
+    program
+      .external_executable_names
+      .insert("UNSELECTED".to_owned(), "helper".to_owned());
+    assert!(
+      program.validate().is_err(),
+      "names cannot project unselected executables"
+    );
+  }
+
+  #[test]
   fn projects_external_executables_in_stable_selector_order() {
     let runner = RunnerProgram {
       release_root: PathBuf::from("/release"),
@@ -891,6 +964,7 @@ mod tests {
         directory: PathBuf::from("/release/plugins"),
         lock: PathBuf::from("/release/Octa.lock"),
       }),
+      external_executable_names: std::collections::BTreeMap::new(),
       external_executables: BTreeMap::from([
         ("Z_TOOL".to_owned(), PathBuf::from("/tools/z")),
         ("A_TOOL".to_owned(), PathBuf::from("/tools/a")),

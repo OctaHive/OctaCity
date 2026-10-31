@@ -373,7 +373,14 @@ impl OciEngine for MicrosandboxEngine {
           }
         }
         builder = match network {
-          Some(policy) => builder.network(|configuration| configuration.policy(policy)),
+          Some(policy) => builder.network(|configuration| {
+            configuration.policy(policy).tls(|tls| {
+              // Strict hostname grants require the HTTP authority inside TLS;
+              // opaque TLS is deliberately denied by the SDK. Its per-sandbox
+              // CA is projected into the guest; upstream verification stays on.
+              tls.enabled(matches!(request.network, NetworkAccess::Restricted { .. }))
+            })
+          }),
           None => builder.disable_network(),
         };
         builder.create().await

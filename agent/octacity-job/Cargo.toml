@@ -26,6 +26,8 @@ tracing.workspace = true
 url.workspace = true
 
 [dev-dependencies]
+rcgen.workspace = true
+tokio-rustls.workspace = true
 async-trait.workspace = true
 octacity-execution-apple-vf = { path = "../octacity-execution-apple-vf" }
 octacity-execution-containerd = { path = "../octacity-execution-containerd" }

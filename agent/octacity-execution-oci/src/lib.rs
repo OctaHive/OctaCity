@@ -302,6 +302,7 @@ mod tests {
         directory: PathBuf::from("/release/plugins"),
         lock: PathBuf::from("/release/plugins.lock"),
       }),
+      external_executable_names: std::collections::BTreeMap::new(),
       external_executables: std::collections::BTreeMap::new(),
     };
     (temporary, request, runner)
