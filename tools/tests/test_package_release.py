@@ -526,7 +526,7 @@ class PackageReleaseTests(unittest.TestCase):
     def test_released_host_gate_covers_every_supported_host_without_self_hosting(self):
         workflow = (REPOSITORY / ".github/workflows/backend-contracts.yml").read_text(encoding="utf-8")
         host = workflow.split("  released-host:\n", 1)[1].split("  vault-artifact-contract:\n", 1)[0]
-        for runner in ("ubuntu-24.04", "macos-14", "windows-2025"):
+        for runner in ("ubuntu-24.04", "macos-15", "windows-2025"):
             self.assertIn(f"runner: {runner}", host)
         self.assertIn("name: released host\n", host)
         self.assertNotIn("name: released host (${{ matrix.platform }})", host)
@@ -547,6 +547,15 @@ class PackageReleaseTests(unittest.TestCase):
             encoding="utf-8"
         )
         self.assertIn("GITHUB_TOKEN: ${{ github.token }}", stage_action)
+
+    def test_ci_and_release_select_the_supported_pinned_macos_runner(self):
+        for filename, selection in (
+            ("ci.yml", "os: [ubuntu-24.04, macos-15, windows-2025]"),
+            ("release.yml", "runner: macos-15\n            platform: macos-arm64\n            target: aarch64-apple-darwin"),
+        ):
+            with self.subTest(workflow=filename):
+                workflow = (REPOSITORY / ".github/workflows" / filename).read_text(encoding="utf-8")
+                self.assertIn(selection, workflow)
 
     def test_backend_matrix_separates_portable_and_privileged_cadence(self):
         workflow = (REPOSITORY / ".github/workflows/backend-contracts.yml").read_text(encoding="utf-8")

@@ -111,7 +111,7 @@ jobs:
           - platform: linux-amd64
             runner: ubuntu-24.04
           - platform: macos-arm64
-            runner: macos-14
+            runner: macos-15
           - platform: windows-amd64
             runner: windows-2025
     steps:

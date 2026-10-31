@@ -50,7 +50,7 @@ jobs:
             target: x86_64-pc-windows-msvc
             extension: .exe
             archive: zip
-          - runner: macos-14
+          - runner: macos-15
             platform: macos-arm64
             target: aarch64-apple-darwin
             extension: ""
