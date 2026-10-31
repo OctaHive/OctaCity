@@ -149,6 +149,103 @@ exact role and candidate digest without publishing a version, reserving a mutati
 key, or starting a Build. Executable admission and dispatch still require their
 ordinary installed compiler, Project and backend authority.
 
+First-step execution bindings can be resolved without a saved Flow through
+`POST /api/v1/projects/{project_id}/factory-execution-bindings/resolve`. Submit
+the exact published `profile` reference, installed `capability` alias and declared
+`result_outcome`. The shared installed compiler owner returns the ordinary
+`build` binding with its server-derived profile task digest. Incompatible or
+deleted agents and compilers without Role/Profile support cannot supply a new
+binding. This read-only, no-store query grants no execution authority and performs
+no publication, credential resolution or provider call; presets reuse the same
+compiler binding owner.
+
+`GET /api/v1/projects/{project_id}/factory-authoring-capabilities` returns the
+common interpreter's exact deterministic policy and permitted human responses,
+including producer-owned response shapes and resource requirements. These
+contracts require no saved Flow. `declarative_gate_v1` identifies the bounded
+`FlowGateProgram` grammar; it cannot execute arbitrary scripts. The returned
+Build source modes describe current ordinary execution support, not a grant.
+An unsupported source-free mode has an explicit prerequisite.
+
+Trusted Reporter actions remain in the existing authorized TaskUpdate Source
+choices. Their `action.parameters` declares the `work_status_v1` parameter form
+and native requirements, alongside the exact queued receipt schema/outcome.
+Use the selected connection's current effect ceiling and exact Source/Reporter
+pins; a gate contract or document never grants write access. Missing action
+metadata means the installed producer is unqualified for authoring, not that
+parameters may be inferred from a saved node. Discovery performs no provider,
+credential-value or model I/O and publishes nothing.
+
+### Reviewed step assignments
+
+Reasoning nodes may carry an explicit `task` instruction string or ordered
+instruction entries in the ordinary Flow definition. Role/Profile instructions
+remain reusable agent settings; Work payloads and reference documents remain
+data. The compiler renders the reviewed assignment after the reusable and
+installed technical instructions and before the labeled frozen input. It
+cannot waive controlling Project rules, selected tools or execution ceilings.
+The immutable Flow digest and retained Build intent bind the assignment; its
+text is not stored in another prompt journal. An edit requires a new Flow
+version. Existing Runs and technical retries keep their original admitted
+definition, assignment and operation identity. Omission preserves historical
+node/intent encoding and the existing installed instruction behavior.
+
+### Reviewed Project documents
+
+Project settings provide **Manage Project documents** for explicit content reads
+and reviewed immutable publication. Choosing a saved document opens it; it does
+not attach it to a Flow. Each common step inspector has one **Documents** list.
+Select exact publications independently per step, then choose **Agent instructions**
+(Policy Context) or **Reference material** (Specification Context). Publication of
+a later document never repins a selected version. Missing/expired content remains
+an explicit blocker. A selected Profile's named input requirements can be mapped
+explicitly under **Input details**, without inventing aliases or granting access.
+The Project editor opens alongside the in-memory Flow draft; returning preserves
+that draft and does not attach newly published content automatically.
+
+### Reviewed execution limits
+
+Flow validation returns `diagnostics.constraints` with the original request,
+effective authoring allowance, scope and existing limiting owners. `run_total`
+and `flow_run_total` are cumulative; a `node_execution` allowance does not reset
+those totals when a technical retry is permitted. Profile candidates have
+separate exact-reference budget rows. Permission diagnostics retain the node
+request and enclosing owners, with candidate-specific ceilings produced by
+the same `execution_permissions` helper as ordinary dispatch.
+
+Configuration validation additionally supplies its actual global Run/node WIP
+and hard-budget ceilings. Flow-only validation reports those values as
+`configuration_required`; it never copies the per-Run limit into a global field.
+Project policy, installed runtime policy, Agent-local and backend placement checks
+remain explicitly unresolved until dispatch. A declared monetary ceiling does not assert a known provider cost;
+the existing API/subscription accounting and unknown-cost rules still apply.
+
+An oversized budget is rejected with `budget_exceeds_ceiling`, the exact location,
+resource, requested value, applicable maximum and enclosing owner. Definition,
+admission and Configuration ceilings remain distinct. Oversized node concurrency
+uses `concurrency_exceeds_ceiling` with the same numeric explanation and its
+admission or Configuration WIP owner. Requests are not clamped or published.
+Validation and these explanations allocate no budget and perform no
+credential-value, model or provider I/O.
+
+### Pipeline goals and process criteria
+
+The common Flow root accepts optional `process` metadata. `goals` and `criteria`
+each retain an exact managed Project `artifact` and an explicit `recipients` set
+of step keys. Publish new content through the existing Project input API, then
+confirm a Flow version selecting those references. The server normalizes the
+process-owned `process.goals`/`process.criteria` Specification entries only for
+those steps. Other documents, candidate bindings and permission ceilings remain
+independent. Criteria describe this process; they do not replace an Issue author's
+implementation acceptance or authorize an external effect.
+
+Changing content means a new immutable input and reviewed Flow version. Existing
+Runs keep their admitted definition and exact references. An explicit empty
+`process: {}` removes process-owned entries in the new version; absence retains
+the legacy grammar and canonical encoding. Publication/replay and private reads
+use the existing Project input owner, including authorization, expiry and
+unknown-write recovery; no criteria journal is created.
+
 ### Reviewed Project Runtime settings
 
 `PublishFactoryRuntimeSettingsCommand` and `GetFactoryRuntimeSettingsQuery` use
@@ -868,6 +965,15 @@ unscheduled or rejected; it must never select a weaker route. See
 [JobSpec v3](../reference/protocols/signed-job-spec-v3.md).
 
 ## Admit and follow one Work item
+
+Manual REST admission can also select `source: {"kind":"project_input_v1"}`
+and omit both `repository_id` and `repository_version`. The server binds the
+Project and exact admitted Artifact manifest without a VCS lookup, Repository or
+revision placeholder. The response omits `base_revision` for this form. Reusing
+an admission key with changed inputs conflicts; repository-backed request bytes
+and replay fingerprints remain compatible. This Work identity grants no code
+access: executable source modes are validated separately. Migration 0108 retains
+existing history; keep readers capable of the new form while such Work exists.
 
 1. Select the owning Project, exact enabled Factory Configuration and Repository
    version. Confirm that the immutable Flow closure, budgets, permissions,
