@@ -49,7 +49,12 @@ impl FlowNodeStop {
     {
       return Err(invalid());
     }
-    usage.validate(attempt.budget())?;
+    // Already measured tokens, cost and time cannot be rejected or clipped to
+    // a reservation. Stops confer no result/dispatch authority. Output bytes
+    // remain bounded because their verification requires bounded reads.
+    if usage.output_bytes > attempt.budget().max_output_bytes() {
+      return Err(invalid());
+    }
     Ok(Self {
       node_attempt_id: attempt.id(),
       input_digest: attempt.input_digest(),

@@ -261,10 +261,8 @@ pub fn validate_factory_transition(
             .map(octacity_server_factory::FlowNodeStop::usage),
         ),
     )
-    || request
-      .budget
-      .usage
-      .validate(baseline.admitted_flow.limits().budget())
+    || history
+      .validate_budget_usage(baseline.admitted_flow, request.budget.usage)
       .is_err()
     || request.current.budget_id != request.budget.id
     || (baseline.lifecycle.cancellation_requested
@@ -604,12 +602,15 @@ fn validate_node_journal(
   )
   .map_err(|_| invalid())?;
   let pending_signal_usage = data.pending_profile_signal_usage().map_err(|_| invalid())?;
-  request
-    .budget
-    .usage
-    .checked_add(pending_signal_usage)
-    .ok_or_else(invalid)?
-    .validate(baseline.admitted_flow.limits().budget())
+  history
+    .validate_budget_usage(
+      baseline.admitted_flow,
+      request
+        .budget
+        .usage
+        .checked_add(pending_signal_usage)
+        .ok_or_else(invalid)?,
+    )
     .map_err(|_| invalid())?;
   for intent in &request.append.flow.data.build_intents {
     if let Some(control) =

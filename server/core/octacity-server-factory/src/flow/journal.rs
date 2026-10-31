@@ -144,7 +144,7 @@ impl FlowDataHistory {
       ..history
     };
     validate_flow_runtime_history(admitted, history)?;
-    super::history::validate_flow_budgets(admitted, history.flow_runs, &self.budget_usage_by_flow(history)?)?;
+    super::history::validate_flow_budgets(admitted, history, &self.budget_usage_by_flow(history)?)?;
     if self.incoming.len() > 1 {
       return Err(invalid());
     }

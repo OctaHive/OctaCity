@@ -32,7 +32,7 @@ pub(crate) async fn admit_pending_build(
 
 #[test]
 fn verified_harness_failure_stops_a_node_even_when_the_ordinary_build_succeeded() {
-  struct VerifiedFailure;
+  struct VerifiedFailure(u64);
   #[async_trait::async_trait]
   impl FactoryNodeBuildOutputSource for VerifiedFailure {
     async fn terminal_usage(
@@ -50,7 +50,7 @@ fn verified_harness_failure_stops_a_node_even_when_the_ordinary_build_succeeded(
     ) -> Result<FactoryNodeBuildOutputObservation, OrdinaryBuildApplicationError> {
       Ok(FactoryNodeBuildOutputObservation::ExecutionStopped {
         usage: BudgetUsage {
-          tokens: 23,
+          tokens: self.0,
           elapsed_millis: 2,
           ..Default::default()
         },
@@ -60,29 +60,31 @@ fn verified_harness_failure_stops_a_node_even_when_the_ordinary_build_succeeded(
   crate::factory_admission_tests::run_ready(async {
     let (work, admitted, schema, input, node) = execution_fixture(FlowNodeKind::Reasoning);
     let intent = FlowBuildIntent::new(input, &admitted, node, Default::default(), 7).unwrap();
-    let builds = Arc::new(Builds::new());
-    admit_pending_build(&builds, &intent, &admitted, &schema).await;
-    *builds.state.lock().unwrap() = octacity_server_orchestrator::BuildState::Succeeded;
-    let adapter = FactoryNodeBuildAdapter::new(builds, Arc::new(VerifiedFailure));
-    let step = adapter
-      .observe(FactoryNodeExecutionRequest {
-        run_id: intent.input().factory_run_id(),
-        admitted: &admitted,
-        work: &work,
-        input: intent.input(),
-        attempt: intent.node(),
-        build: Some(&intent),
-        ownership: ownership(&intent),
-        observed_at: time(31),
-      })
-      .await
-      .unwrap();
-    let FactoryNodeExecutionStep::ExecutionStopped { execution, usage } = step else {
-      panic!("a technical harness failure cannot create a configured semantic result");
-    };
-    assert!(execution.is_some());
-    assert_eq!(usage.tokens, 23);
-    assert_eq!(usage.attempts, 0);
+    for tokens in [23, intent.budget().max_tokens() + 1] {
+      let builds = Arc::new(Builds::new());
+      admit_pending_build(&builds, &intent, &admitted, &schema).await;
+      *builds.state.lock().unwrap() = octacity_server_orchestrator::BuildState::Succeeded;
+      let adapter = FactoryNodeBuildAdapter::new(builds, Arc::new(VerifiedFailure(tokens)));
+      let step = adapter
+        .observe(FactoryNodeExecutionRequest {
+          run_id: intent.input().factory_run_id(),
+          admitted: &admitted,
+          work: &work,
+          input: intent.input(),
+          attempt: intent.node(),
+          build: Some(&intent),
+          ownership: ownership(&intent),
+          observed_at: time(31),
+        })
+        .await
+        .unwrap();
+      let FactoryNodeExecutionStep::ExecutionStopped { execution, usage } = step else {
+        panic!("a technical harness failure cannot create a configured semantic result");
+      };
+      assert!(execution.is_some());
+      assert_eq!(usage.tokens, tokens);
+      assert_eq!(usage.attempts, 0);
+    }
   });
 }
 

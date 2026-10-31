@@ -21,6 +21,45 @@ pub struct FlowRuntimeHistory<'a> {
 }
 
 impl<'a> FlowRuntimeHistory<'a> {
+  /// Validates journal consumption, including verified overruns from stopped
+  /// operations. This is retention authority only: all new dispatches must
+  /// still reserve against the full, unmodified measured consumption.
+  pub fn validate_budget_usage(self, admitted: &AdmittedFlow, usage: BudgetUsage) -> Result<(), FactoryError> {
+    let overrun = sum_usage(self.stop_overruns_by_flow()?.values().copied())?;
+    usage
+      .checked_sub(overrun)
+      .ok_or_else(|| invalid("stopped usage accounting"))?
+      .validate(admitted.limits().budget())
+      .map(|_| ())
+  }
+
+  fn stop_overruns_by_flow(self) -> Result<BTreeMap<FlowRunId, BudgetUsage>, FactoryError> {
+    let mut overruns = BTreeMap::new();
+    for receipt in self.stops {
+      let attempt = self
+        .attempts
+        .iter()
+        .find(|a| a.id() == receipt.node_attempt_id())
+        .ok_or_else(|| invalid("Node stop attempt"))?;
+      let spent = receipt.usage();
+      let limit = attempt.budget();
+      add_flow_usage(
+        &mut overruns,
+        attempt.flow_run_id(),
+        BudgetUsage {
+          tokens: spent.tokens.saturating_sub(limit.max_tokens()),
+          elapsed_millis: spent.elapsed_millis.saturating_sub(limit.max_elapsed_millis()),
+          cost_micro_units: spent
+            .cost_micro_units
+            .known_micro_units()
+            .saturating_sub(limit.max_cost_micro_units())
+            .into(),
+          ..BudgetUsage::default()
+        },
+      )?;
+    }
+    Ok(overruns)
+  }
   /// Tests active authority through the owning cycle and every enclosing call.
   /// Superseded rows remain readable for audit, but cannot dispatch or accept work.
   #[must_use]
@@ -178,7 +217,9 @@ pub fn validate_flow_runtime_history(
       return Err(invalid("unique Node stop"));
     }
     attempt.verify_observer(receipt.ownership(), receipt.observed_at())?;
-    receipt.usage().validate(attempt.budget())?;
+    if receipt.usage().attempts != 0 || receipt.usage().output_bytes > attempt.budget().max_output_bytes() {
+      return Err(invalid("Node stop usage"));
+    }
   }
   let active = history.active_node_count();
   if active > usize::from(limits.max_wip()) {
@@ -186,16 +227,17 @@ pub fn validate_flow_runtime_history(
   }
 
   let usage = history.observed_usage_by_flow()?;
-  validate_flow_budgets(admitted, history.flow_runs, &usage)
+  validate_flow_budgets(admitted, history, &usage)
 }
 
 pub(super) fn validate_flow_budgets(
   admitted: &AdmittedFlow,
-  flow_runs: &[FlowRun],
+  history: FlowRuntimeHistory<'_>,
   usage: &BTreeMap<FlowRunId, BudgetUsage>,
 ) -> Result<(), FactoryError> {
-  sum_usage(usage.values().copied())?.validate(admitted.limits().budget())?;
-  for flow_run in flow_runs {
+  history.validate_budget_usage(admitted, sum_usage(usage.values().copied())?)?;
+  let overruns = history.stop_overruns_by_flow()?;
+  for flow_run in history.flow_runs {
     let definition = admitted
       .closure()
       .definition(flow_run.definition())
@@ -204,6 +246,8 @@ pub(super) fn validate_flow_budgets(
       .get(&flow_run.id())
       .copied()
       .unwrap_or_default()
+      .checked_sub(overruns.get(&flow_run.id()).copied().unwrap_or_default())
+      .ok_or_else(|| invalid("stopped Flow usage accounting"))?
       .validate(definition.execution().budget())?;
   }
   Ok(())

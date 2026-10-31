@@ -42,7 +42,8 @@ impl FactoryCodexNodeRunContract<'_> {
 }
 /// Bounded typed facts with private harness identifiers and trace content removed.
 pub struct FactoryCodexNodeRunObservation {
-  /// Harness execution status, independent of a configured semantic outcome.
+  /// Verified execution status, including exhaustion derived from measured
+  /// consumption; independent of a configured semantic outcome.
   pub outcome: CodexHarnessOutcome,
   /// Schema-validated public data; execution failures provide no semantic result.
   pub data: Option<FlowVerifiedBuildData>,
@@ -297,9 +298,15 @@ fn verified_records(
       .cost(&expected.profile.model_or_tool, &result.usage)?,
     output_bytes,
   };
-  usage.validate(expected.budget).map_err(|_| invalid())?;
+  // A reservation limits authority to continue, not the facts already spent.
+  // Keep verified consumption for settlement and withhold semantic authority.
+  let outcome = if usage.validate(expected.budget).is_err() {
+    CodexHarnessOutcome::BudgetExhausted
+  } else {
+    result.outcome.into()
+  };
   Ok(VerifiedRecords {
-    outcome: result.outcome.into(),
+    outcome,
     value: result.structured_result,
     usage,
     result: artifact_reference(&result_document.identity).ok_or_else(invalid)?,

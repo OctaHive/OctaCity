@@ -917,6 +917,14 @@ an active Run. Confirm terminal stop and retained measured usage through the
 journal before treating effects as stopped. Never fabricate a completion from a
 killed process or delete claim rows manually.
 
+Verified consumption from a stopped operation is retained even when tokens,
+time or measured cost exceed its reservation. Such an overrun stops the node
+without accepting its semantic result; it does not replenish or raise any
+limit. Recovery charges the original receipt once. Subsequent dispatches and
+explicit retries still reserve against the full measured usage, including the
+overrun. Output verification keeps its original byte bounds. An operation with
+unverifiable usage keeps its reservation until accounting can be settled.
+
 On restart, restore the same immutable profile/connector identities and let fenced
 recovery use durable inputs, receipts, original deadlines and budgets. A missing
 provider session is not missing authoritative state. Reporter retry/failure affects

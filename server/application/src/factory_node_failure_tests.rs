@@ -230,6 +230,117 @@ impl FactoryNodeExecutor for FailedExecution {
   }
 }
 struct RecoveredExecution;
+struct OverBudgetExecution;
+#[async_trait]
+impl FactoryNodeExecutor for OverBudgetExecution {
+  async fn cancel(
+    &self,
+    _: FactoryNodeExecutionRequest<'_>,
+    _: octacity_server_domain::Timestamp,
+  ) -> Result<FactoryNodeCancellationStep, ApplicationError> {
+    panic!("this operation has already stopped")
+  }
+  async fn observe(
+    &self,
+    request: FactoryNodeExecutionRequest<'_>,
+  ) -> Result<FactoryNodeExecutionStep, ApplicationError> {
+    Ok(FactoryNodeExecutionStep::ExecutionStopped {
+      execution: None,
+      usage: BudgetUsage {
+        tokens: request.admitted.limits().budget().max_tokens() + 1,
+        cost_micro_units: octacity_server_factory::BudgetCost::unknown(),
+        ..Default::default()
+      },
+    })
+  }
+}
+
+#[test]
+fn a_confirmed_budget_overrun_releases_the_node_and_preserves_actual_consumption() {
+  crate::factory_admission_tests::run_ready(async {
+    let fixture = octacity_server_store::testing::factory_node_journal_contract_fixture();
+    let store = Arc::new(octacity_server_store::testing::InMemoryFactoryConfigurationStore::new());
+    let audit = octacity_server_store::testing::management_mutation_with_request((), "overrun-node")
+      .audit()
+      .clone();
+    store
+      .seed_factory_run(fixture.admission.clone(), FactoryDigest::from_bytes([1; 32]), &audit)
+      .unwrap();
+    let run = &fixture.admission.run;
+    let claim = FactoryRunClaimRecord::new(run.id(), fixture.attempt.owner().clone(), fixture.attempt.claim());
+    store
+      .claim_factory_run(ClaimFactoryRun {
+        run_id: run.id(),
+        expected_version: run.version(),
+        record: claim.clone(),
+        audit: FactoryAuditFact::new(
+          run.id(),
+          AuditActorKind::Worker,
+          None,
+          FactoryKey::new("factory.claimed").unwrap(),
+          FactoryDigest::from_bytes([1; 32]),
+          FactoryKey::new("accepted").unwrap(),
+          at(10),
+        ),
+      })
+      .await
+      .unwrap();
+    let target = FactoryNodeTarget {
+      flow_run_id: fixture.input.flow_run_id(),
+      cycle_id: fixture.input.cycle_id(),
+      node: fixture.input.node().clone(),
+    };
+    let runner = FactoryNodeRunner::new(
+      store.clone(),
+      Arc::new(OverBudgetExecution),
+      crate::factory_node_test_support::clock(),
+    );
+    assert_eq!(
+      runner
+        .run_once(run.id(), claim.id, target.clone(), Some(fixture.input.clone()), at(11))
+        .await
+        .unwrap(),
+      FactoryNodeStep::Advanced
+    );
+    assert_eq!(
+      runner
+        .run_once(run.id(), claim.id, target.clone(), None, at(12))
+        .await
+        .expect("stopped execution must settle even above both node and root token budgets"),
+      FactoryNodeStep::ExecutionStopped
+    );
+    let stopped = store.factory_run_snapshot(run.id()).await.unwrap();
+    assert_eq!(stopped.flow.runtime().active_node_count(), 0);
+    assert!(stopped.flow.completions.is_empty());
+    assert!(stopped.flow.data.records.is_empty());
+    let spent = stopped
+      .budgets
+      .iter()
+      .find(|b| b.id == stopped.current.budget_id)
+      .unwrap()
+      .usage;
+    assert_eq!(spent.tokens, fixture.admission.flow.limits().budget().max_tokens() + 1);
+    assert!(!spent.cost_micro_units.is_known());
+    let restarted = FactoryNodeRunner::new(
+      store.clone(),
+      Arc::new(RecoveredExecution),
+      crate::factory_node_test_support::clock(),
+    );
+    assert_eq!(
+      restarted
+        .run_once(run.id(), claim.id, target, None, at(13))
+        .await
+        .unwrap(),
+      FactoryNodeStep::ExecutionStopped
+    );
+    assert_eq!(
+      store.factory_run_snapshot(run.id()).await.unwrap(),
+      stopped,
+      "recovery cannot charge the same overrun twice"
+    );
+  });
+}
+
 #[async_trait]
 impl FactoryNodeExecutor for RecoveredExecution {
   async fn cancel(

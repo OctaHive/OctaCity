@@ -191,6 +191,40 @@ fn codex_node_observation_verifies_exact_execution_provenance_and_projects_only_
 }
 
 #[test]
+fn codex_node_budget_overrun_retains_actual_usage_without_a_semantic_result() {
+  let (fixture, profile, schema) = node_observation_fixture();
+  let ceiling = fixture.envelope.budget();
+  let observed = crate::verify_codex_node_run(
+    crate::FactoryCodexNodeRunContract {
+      model_identifier: None,
+      usage_policy: &crate::FactoryCodexUsagePolicy::ReportedCost,
+      profile: &profile,
+      schema: &schema,
+      prompt_digest: fixture.envelope.digests().prompt_provenance,
+      source_revision: fixture.envelope.subject().exact().base_revision(),
+      budget: BudgetLimit::new(
+        1,
+        ceiling.max_elapsed_millis(),
+        17,
+        ceiling.max_cost_micro_units(),
+        ceiling.max_output_bytes(),
+      )
+      .unwrap(),
+      execution_window: Timestamp::from_unix_millis(1000).unwrap()..=Timestamp::from_unix_millis(1010).unwrap(),
+    },
+    &fixture.documents,
+  )
+  .expect("verified consumption must remain available when it exceeds its reservation");
+  assert_eq!(observed.outcome, CodexHarnessOutcome::BudgetExhausted);
+  assert!(
+    observed.data.is_none(),
+    "overrun cannot authorize a semantic transition"
+  );
+  assert_eq!(observed.usage.tokens, 18);
+  assert_eq!(observed.usage.cost_micro_units, 2);
+}
+
+#[test]
 fn codex_node_execution_failure_keeps_measured_usage_without_a_semantic_result() {
   use crate::{FactoryCodexNodeRunContract, verify_codex_node_run};
   let (mut fixture, profile, schema) = node_observation_fixture();

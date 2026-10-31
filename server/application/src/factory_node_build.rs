@@ -244,7 +244,7 @@ where
         let outputs = match observation {
           FactoryNodeBuildOutputObservation::Verified(outputs) => *outputs,
           FactoryNodeBuildOutputObservation::ExecutionStopped { usage } => {
-            if usage.attempts != 0 || usage.validate(intent.budget()).is_err() {
+            if usage.attempts != 0 || usage.output_bytes > intent.budget().max_output_bytes() {
               return Err(ApplicationError::invalid());
             }
             return Ok(FactoryNodeBuildStep::ExecutionStopped {
