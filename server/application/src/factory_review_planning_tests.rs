@@ -79,6 +79,26 @@ impl FactoryFlowActionPlugin for EvidenceAction {
     Ok(Some(BudgetUsage::default()))
   }
   async fn execute(&self, r: FactoryFlowActionRequest<'_>) -> Result<FactoryFlowActionObservation, ApplicationError> {
+    if r.binding.action().as_str() == "retain-candidate" {
+      let schema = r
+        .schemas
+        .iter()
+        .find(|schema| schema.reference() == r.input.payload().schema())
+        .unwrap();
+      return Ok(FactoryFlowActionObservation {
+        discovery: Some(FlowDiscoveryFacts::candidate(
+          r.binding
+            .parameters()
+            .get("candidate")
+            .map(|candidate| serde_json::from_value(candidate.clone()).unwrap())
+            .unwrap_or_else(|| self.manifest.subject().clone()),
+        )),
+        outcome: key("retained"),
+        payload: FlowPayload::new(schema, serde_json::json!(true)).unwrap(),
+        usage: BudgetUsage::default(),
+        outbox: vec![],
+      });
+    }
     let schema = r
       .schemas
       .iter()
@@ -132,28 +152,45 @@ fn fixture_with_review_probe(
   probe: Option<bool>,
   codex: bool,
 ) -> Fixture {
-  fixture_with_review_elapsed(
+  fixture_with_execution(
     available,
     output_limit,
     complete_projection,
     fresh_until,
     probe,
     codex,
-    1000,
+    ReviewFixtureExecution {
+      plan_elapsed: 1000,
+      source: ReviewFixtureSource::Work,
+    },
   )
 }
-fn fixture_with_review_elapsed(
+#[derive(Clone, Copy, PartialEq)]
+pub(crate) enum ReviewFixtureSource {
+  Work,
+  IndependentExact,
+  AcceptedCandidate,
+  OtherCandidate { recipient: &'static str, digest_only: bool },
+}
+struct ReviewFixtureExecution {
+  plan_elapsed: u64,
+  source: ReviewFixtureSource,
+}
+
+fn fixture_with_execution(
   available: bool,
   output_limit: u64,
   complete_projection: bool,
   fresh_until: i64,
   probe: Option<bool>,
   codex: bool,
-  plan_elapsed: u64,
+  execution: ReviewFixtureExecution,
 ) -> Fixture {
+  let plan_elapsed = execution.plan_elapsed;
+  let independent_resource = execution.source != ReviewFixtureSource::Work;
   let work = store_testing::factory_node_journal_contract_fixture().admission.work;
   let subject = CandidateSubject::new(
-    work.subject().clone(),
+    work.subject().repository().unwrap().clone(),
     ImmutableRevision::new("reviewed-revision").unwrap(),
     FactoryDigest::from_bytes([9; 32]),
   );
@@ -167,6 +204,11 @@ fn fixture_with_review_elapsed(
     ArtifactId::generate(),
   )
   .unwrap();
+  let work = if independent_resource {
+    crate::factory_node_test_support::repository_free_work(&work)
+  } else {
+    work
+  };
   let schema = reference("verified-test-report");
   let tool = reference("test-runner");
   let plugin = reference("tests-plugin");
@@ -292,7 +334,7 @@ fn fixture_with_review_elapsed(
     EvaluationPlanDefinition {
       id: EvaluationPlanId::generate(),
       purpose: profile.purpose,
-      subject,
+      subject: subject.clone(),
       criterion_packs: profile.criterion_packs.clone(),
       branches: profile.branches.clone(),
       budget: profile.policy.budget(),
@@ -627,7 +669,87 @@ fn fixture_with_review_elapsed(
         .clone(),
     );
   }
-  let definition = FlowDefinition::new(definition).unwrap();
+  if matches!(
+    execution.source,
+    ReviewFixtureSource::AcceptedCandidate | ReviewFixtureSource::OtherCandidate { .. }
+  ) {
+    let mut candidate = node(
+      "retain_candidate",
+      &initial_schema,
+      FlowOutcomeDefinition::new(
+        key("retained"),
+        FlowOutcomeKind::Success,
+        initial_schema.reference().clone(),
+      ),
+      "qualified-evidence",
+      "retain-candidate",
+      FlowInputBinding::new(
+        Default::default(),
+        FlowDataMapping::new(FlowValueMapping::Constant {
+          value: serde_json::json!(true),
+        })
+        .unwrap(),
+      )
+      .unwrap(),
+    );
+    if let ReviewFixtureSource::OtherCandidate { digest_only, .. } = execution.source {
+      let selected = CandidateSubject::new(
+        subject.exact().clone(),
+        if digest_only {
+          subject.candidate_revision().clone()
+        } else {
+          ImmutableRevision::new("another-reviewed-revision").unwrap()
+        },
+        if digest_only {
+          FactoryDigest::from_bytes([10; 32])
+        } else {
+          subject.changeset_digest()
+        },
+      );
+      candidate = candidate
+        .with_action(
+          FlowActionBinding::new(
+            reference("qualified-evidence"),
+            key("retain-candidate"),
+            serde_json::json!({"candidate": selected}),
+          )
+          .unwrap(),
+        )
+        .unwrap();
+    }
+    definition.entry = candidate.key().clone();
+    definition.nodes.push(candidate);
+    definition.transitions.push(FlowTransition::new(
+      key("retain_candidate"),
+      key("retained"),
+      FlowTransitionTarget::Node(key("collect_observations")),
+    ));
+    for node in &mut definition.nodes {
+      let selected = match execution.source {
+        ReviewFixtureSource::OtherCandidate { recipient, .. } => node.key().as_str() == recipient,
+        _ => node.key() != &key("retain_candidate"),
+      };
+      if selected {
+        let mut wire = serde_json::to_value(&*node).unwrap();
+        wire["code"] = serde_json::to_value(FlowCodeBinding::Source {
+          source: key("review-code"),
+          access: MountMode::ReadOnly,
+          scope: FlowCodeScope::Repository,
+          revision: FlowCodeRevision::AcceptedCandidate {
+            node: key("retain_candidate"),
+            outcome: key("retained"),
+          },
+        })
+        .unwrap();
+        *node = serde_json::from_value(wire).unwrap();
+      }
+    }
+  }
+  let definition = if independent_resource {
+    crate::factory_node_test_support::flow_with_explicit_resource(definition, subject.exact())
+  } else {
+    FlowDefinition::new(definition).unwrap()
+  };
   let run = FactoryRun::admitted(FactoryRunId::generate(), &work);
   let flow = FlowRun::root(&run, definition.reference()).unwrap();
   let cycle = WorkflowCycle::initial(&flow).unwrap();
@@ -753,6 +875,67 @@ fn executor_with_clock(
   }
   Arc::new(FactoryNodeExecutorRegistry::new(bindings).unwrap())
 }
+#[test]
+fn planning_action_rejects_genuine_evidence_for_another_selected_candidate() {
+  crate::factory_admission_tests::run_ready(async {
+    for digest_only in [false, true] {
+      let h = fixture_with_execution(
+        true,
+        10_000,
+        true,
+        2000,
+        None,
+        false,
+        ReviewFixtureExecution {
+          plan_elapsed: 1000,
+          source: ReviewFixtureSource::OtherCandidate {
+            recipient: "freeze_independent_checks",
+            digest_only,
+          },
+        },
+      );
+      let runner = FactoryFlowRunner::new(
+        h.store.clone(),
+        executor(&h, true),
+        Arc::new(Inputs),
+        crate::factory_node_test_support::clock(),
+      );
+      for time in 11..30 {
+        let reconciled = runner.reconcile_flow(h.run, h.claim, at(time)).await;
+        let snapshot = h.store.factory_run_snapshot(h.run).await.unwrap();
+        if let Some(input) = snapshot
+          .flow
+          .data
+          .inputs
+          .iter()
+          .find(|input| input.node() == &key("freeze_independent_checks"))
+        {
+          let planner = FactoryReviewPlanningAction::new(
+            planner_identity(&h.profile),
+            h.store.clone(),
+            h.profile.clone(),
+            crate::factory_node_test_support::clock(),
+          );
+          assert!(
+            planner
+              .execute(crate::factory_node_test_support::retained_action_request(
+                &snapshot,
+                input,
+                at(31)
+              ))
+              .await
+              .is_err(),
+            "the planning action itself must refuse another candidate's Evidence, before journal validation"
+          );
+          break;
+        }
+        reconciled.unwrap();
+        assert!(time < 29, "the real runner must retain a planning input");
+      }
+    }
+  });
+}
+
 #[test]
 fn review_planning_retains_one_complete_plan_and_replays_it_after_owner_restart() {
   crate::factory_admission_tests::run_ready(async {
@@ -1162,7 +1345,28 @@ pub(crate) async fn prepared_review_invocation(
   FlowNodeInput,
   ImmutableReference,
 ) {
-  let h = fixture_with_review_probe(true, 10_000, true, 2000, Some(full), false);
+  prepared_review_invocation_with_source(full, ReviewFixtureSource::Work).await
+}
+pub(crate) async fn prepared_review_invocation_with_source(
+  full: bool,
+  source: ReviewFixtureSource,
+) -> (
+  Arc<store_testing::InMemoryFactoryConfigurationStore>,
+  FlowNodeInput,
+  ImmutableReference,
+) {
+  let h = fixture_with_execution(
+    true,
+    10_000,
+    true,
+    2000,
+    Some(full),
+    false,
+    ReviewFixtureExecution {
+      plan_elapsed: 1000,
+      source,
+    },
+  );
   let runner = FactoryFlowRunner::new(
     h.store.clone(),
     executor(&h, true),
@@ -1188,6 +1392,51 @@ pub(crate) async fn prepared_review_invocation(
   }
   panic!("qualified planning must yield its actual owner-prepared consumer input");
 }
+#[test]
+fn planning_preserves_selected_evidence_alongside_independent_candidate_resource_provenance() {
+  crate::factory_admission_tests::run_ready(async {
+    let h = fixture_with_execution(
+      true,
+      10_000,
+      true,
+      2000,
+      None,
+      false,
+      ReviewFixtureExecution {
+        plan_elapsed: 1000,
+        source: ReviewFixtureSource::AcceptedCandidate,
+      },
+    );
+    let runner = FactoryFlowRunner::new(
+      h.store.clone(),
+      executor(&h, true),
+      Arc::new(Inputs),
+      crate::factory_node_test_support::clock(),
+    );
+    for time in 11..30 {
+      runner.reconcile_flow(h.run, h.claim, at(time)).await.unwrap();
+      let snapshot = h.store.factory_run_snapshot(h.run).await.unwrap();
+      if let Some(record) = snapshot.flow.data.records.iter().find(|record| {
+        record
+          .discovery()
+          .is_some_and(|facts| facts.kind() == FlowDiscoveryKind::ReviewPlan)
+      }) {
+        let plan: EvaluationPlan = serde_json::from_value(record.payload().value().clone()).unwrap();
+        assert_eq!(plan.subject(), h.manifest.subject());
+        assert_eq!(plan.evidence_id(), h.manifest.id());
+        assert_eq!(
+          record.input().sources().len(),
+          2,
+          "the resource publication and selected evidence retain independent owner references"
+        );
+        assert!(record.input().subject().repository().is_err());
+        return;
+      }
+    }
+    panic!("the qualified evidence must produce its retained plan");
+  });
+}
+
 #[test]
 fn review_fixture_retains_both_explicit_sources_without_fabricating_an_evaluator_result() {
   crate::factory_admission_tests::run_ready(async {
@@ -1363,7 +1612,18 @@ pub(crate) fn capture_review_contract() -> (
   FactoryReviewPlanningProfile,
   FactoryCodexBuildProfile,
 ) {
-  let fixture = fixture_with_review_elapsed(true, 10_000, true, 2000, Some(true), true, 2000);
+  let fixture = fixture_with_execution(
+    true,
+    10_000,
+    true,
+    2000,
+    Some(true),
+    true,
+    ReviewFixtureExecution {
+      plan_elapsed: 2000,
+      source: ReviewFixtureSource::Work,
+    },
+  );
   let snapshot = crate::factory_admission_tests::run_ready(fixture.store.factory_run_snapshot(fixture.run)).unwrap();
   (snapshot, fixture.profile, fixture.reviewer.unwrap())
 }

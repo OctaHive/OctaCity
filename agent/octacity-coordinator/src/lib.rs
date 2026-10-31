@@ -354,25 +354,30 @@ pub(crate) fn verify_assignment(
       spec.protocol_version()
     )));
   }
-  match &spec {
-    VerifiedJobSpec::V3(value) => {
+  let protected_inputs = match &spec {
+    VerifiedJobSpec::V3(value) => Some(&value.protected_inputs),
+    VerifiedJobSpec::V4(value) => Some(&value.protected_inputs),
+    VerifiedJobSpec::V1(_) | VerifiedJobSpec::V2(_) => None,
+  };
+  match protected_inputs {
+    Some(manifest) => {
       let transferred = lease
         .protected_inputs
         .iter()
         .map(|transfer| transfer.input.clone())
         .collect::<Vec<_>>();
-      if transferred != value.protected_inputs.inputs {
+      if transferred != manifest.inputs {
         return Err(invalid(
-          "lease protected-input transfers differ from signed JobSpec v3 intent",
+          "lease protected-input transfers differ from signed managed JobSpec intent",
         ));
       }
     }
-    VerifiedJobSpec::V1(_) | VerifiedJobSpec::V2(_) if !lease.protected_inputs.is_empty() => {
+    None if !lease.protected_inputs.is_empty() => {
       return Err(invalid(
         "ordinary JobSpec lease must not carry protected-input transfers",
       ));
     }
-    VerifiedJobSpec::V1(_) | VerifiedJobSpec::V2(_) => {}
+    None => {}
   }
   Ok(VerifiedLease { lease, spec })
 }

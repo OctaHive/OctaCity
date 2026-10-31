@@ -123,8 +123,8 @@ pub use source_predicate::{
 };
 mod subject;
 pub use source_input::{
-  WorkSourceBinding, WorkSourceCapability, WorkSourceCapabilityRole, WorkSourceConnectionRef, WorkSourceInput,
-  WorkSourceInputContext, WorkSourceInputDraft, WorkSourceRepositoryRef,
+  FactoryRepositoryRef, WorkSourceBinding, WorkSourceCapability, WorkSourceCapabilityRole, WorkSourceConnectionRef,
+  WorkSourceInput, WorkSourceInputContext, WorkSourceInputDraft, WorkSourceRepositoryRef,
 };
 #[cfg(test)]
 mod source_input_tests;
@@ -140,7 +140,7 @@ pub use assessment::{
   AssessmentProvenance, MAX_ASSESSMENT_EVIDENCE_REFERENCES, MAX_ASSESSMENT_FINDINGS,
 };
 pub use budget::{
-  BudgetLimit, BudgetResource, BudgetUsage, MAX_FACTORY_ATTEMPTS, MAX_FACTORY_COST_MICRO_UNITS,
+  BudgetCeilingViolation, BudgetLimit, BudgetResource, BudgetUsage, MAX_FACTORY_ATTEMPTS, MAX_FACTORY_COST_MICRO_UNITS,
   MAX_FACTORY_ELAPSED_MILLIS, MAX_FACTORY_OUTPUT_BYTES, MAX_FACTORY_TOKENS,
 };
 pub use configuration::{
@@ -171,7 +171,10 @@ pub use enum_value::{
   DecisionSignalState, DeliveryState, DeterministicGateOutcome, FactoryRunState, FindingSeverity, FlowNodeKind,
   IndeterminatePolicy, MountMode, PermissionCategory, ReportingState, RiskClass,
 };
-pub use error::{FactoryChoiceKind, FactoryEntityKind, FactoryEnumKind, FactoryError, FactoryTextKind, TextRejection};
+pub use error::{
+  FactoryChoiceKind, FactoryEntityKind, FactoryEnumKind, FactoryError, FactoryTextKind, FlowBudgetCeiling,
+  FlowBudgetCeilingViolation, TextRejection,
+};
 pub use evaluation::{Decision, DecisionReason, MAX_DECISION_ASSESSMENTS, MAX_DECISION_REASONS};
 pub use evaluation_progress::{
   EvaluationBranch, EvaluationBranchResult, EvaluationBranchState, EvaluationProgress, EvaluationState,
@@ -183,27 +186,29 @@ pub use evidence::{
 pub use execution::{DecisionSignalDigests, DecisionSignalRequest, FactoryClaimOwnership};
 pub use flow::{
   AdmittedFlow, FlowActionBinding, FlowAdmissionLimits, FlowBuildBinding, FlowBuildExecution, FlowBuildIntent,
-  FlowBuildProfile, FlowBuildProvenance, FlowComparison, FlowContextBinding, FlowContextProjection,
-  FlowContextSelection, FlowContextSourceObservation, FlowDataHistory, FlowDataMapping, FlowDataProjection,
-  FlowDataSchema, FlowDefinition, FlowDefinitionInput, FlowDefinitionRef, FlowDefinitionTemplate, FlowDirective,
-  FlowDirectiveInputs, FlowDiscoveryFacts, FlowDiscoveryKind, FlowExecutionPolicy, FlowFieldSchema, FlowGateBinding,
-  FlowGateProgram, FlowGateRule, FlowHumanDisposition, FlowHumanGateBinding, FlowHumanOperation, FlowIncomingData,
-  FlowInputBinding, FlowInputPreparation, FlowInputSource, FlowInterpreter, FlowNodeDefinition,
-  FlowNodeDefinitionInput, FlowNodeInput, FlowNodeRecord, FlowNodeStop, FlowNodeStopReason, FlowOperand,
-  FlowOutcomeDefinition, FlowOutcomeKind, FlowPayload, FlowPredicate, FlowPredicateFailure, FlowProfileCandidate,
-  FlowProfileRuleOutcome, FlowProfileSelectionBinding, FlowProfileSelectionError, FlowProfileSelectionFailure,
-  FlowProfileSelectionPolicy, FlowProfileSelectionRecord, FlowProfileSelectionRecovery, FlowProfileSelectionRule,
-  FlowProfileSelectionSignal, FlowProgress, FlowQuantifier, FlowRecordObservation, FlowRecordReference, FlowRecordView,
-  FlowRun, FlowRunParent, FlowRuntimeHistory, FlowTemplateDeliverableBinding, FlowTemplateDeliverablePolicy,
-  FlowTemplateNode, FlowTemplateOutcome, FlowTemplateSchema, FlowTerminalDefinition, FlowTransition,
-  FlowTransitionTarget, FlowValueMapping, FlowValueSchema, FlowVerifiedBuildData, FlowVerifiedBuildOutput,
-  MAX_FLOW_ACTION_PARAMETER_BYTES, MAX_FLOW_CONTEXT_SELECTIONS, MAX_FLOW_DATA_BYTES, MAX_FLOW_DEFINITION_CLOSURE,
-  MAX_FLOW_DEFINITION_EDGES, MAX_FLOW_DEFINITION_NODES, MAX_FLOW_EXPANDED_NODES, MAX_FLOW_FAN_OUT,
-  MAX_FLOW_GATE_PARAMETER_BYTES, MAX_FLOW_INPUT_BINDING_BYTES, MAX_FLOW_MAPPING_BYTES, MAX_FLOW_NESTING_DEPTH,
-  MAX_FLOW_POINTER_BYTES, MAX_FLOW_REPEAT_COUNT, MAX_FLOW_SCHEMA_BYTES, MAX_FLOW_SCHEMA_DEPTH, MAX_FLOW_SCHEMA_ENTRIES,
-  MAX_FLOW_SCHEMA_ITEMS, MAX_FLOW_VARIANT_NAME_BYTES, NodeAttempt, NodeAttemptCompletion, NodeAttemptCompletionInput,
-  NodeAttemptInput, NodeExecutionIdentity, PinnedFlowDefinitionClosure, PublishedFlowTemplate,
-  ValidatedFlowDefinitionClosure, WorkflowCycle, validate_flow_runtime_history,
+  FlowBuildProfile, FlowBuildProvenance, FlowCodeBinding, FlowCodePin, FlowCodeRevision, FlowCodeScope,
+  FlowCodeSelection, FlowCodeSource, FlowCodeSources, FlowCodeViolation, FlowComparison, FlowContextBinding,
+  FlowContextProjection, FlowContextSelection, FlowContextSourceObservation, FlowDataHistory, FlowDataMapping,
+  FlowDataProjection, FlowDataSchema, FlowDefinition, FlowDefinitionInput, FlowDefinitionRef, FlowDefinitionTemplate,
+  FlowDirective, FlowDirectiveInputs, FlowDiscoveryFacts, FlowDiscoveryKind, FlowExecutionPolicy, FlowFieldSchema,
+  FlowGateBinding, FlowGateProgram, FlowGateRule, FlowHumanDisposition, FlowHumanGateBinding, FlowHumanOperation,
+  FlowIncomingData, FlowInputBinding, FlowInputPreparation, FlowInputSource, FlowInterpreter, FlowNodeCode,
+  FlowNodeDefinition, FlowNodeDefinitionInput, FlowNodeInput, FlowNodeRecord, FlowNodeStop, FlowNodeStopReason,
+  FlowOperand, FlowOutcomeDefinition, FlowOutcomeKind, FlowPayload, FlowPredicate, FlowPredicateFailure,
+  FlowProcessDocument, FlowProcessInputs, FlowProfileCandidate, FlowProfileRuleOutcome, FlowProfileSelectionBinding,
+  FlowProfileSelectionError, FlowProfileSelectionFailure, FlowProfileSelectionPolicy, FlowProfileSelectionRecord,
+  FlowProfileSelectionRecovery, FlowProfileSelectionRule, FlowProfileSelectionSignal, FlowProgress, FlowQuantifier,
+  FlowRecordObservation, FlowRecordReference, FlowRecordView, FlowRun, FlowRunParent, FlowRuntimeHistory,
+  FlowTemplateDeliverableBinding, FlowTemplateDeliverablePolicy, FlowTemplateNode, FlowTemplateOutcome,
+  FlowTemplateSchema, FlowTerminalDefinition, FlowTransition, FlowTransitionTarget, FlowValueMapping, FlowValueSchema,
+  FlowVerifiedBuildData, FlowVerifiedBuildOutput, MAX_FLOW_ACTION_PARAMETER_BYTES, MAX_FLOW_CODE_SOURCES,
+  MAX_FLOW_CONTEXT_SELECTIONS, MAX_FLOW_DATA_BYTES, MAX_FLOW_DEFINITION_CLOSURE, MAX_FLOW_DEFINITION_EDGES,
+  MAX_FLOW_DEFINITION_NODES, MAX_FLOW_EXPANDED_NODES, MAX_FLOW_FAN_OUT, MAX_FLOW_GATE_PARAMETER_BYTES,
+  MAX_FLOW_INPUT_BINDING_BYTES, MAX_FLOW_MAPPING_BYTES, MAX_FLOW_NESTING_DEPTH, MAX_FLOW_POINTER_BYTES,
+  MAX_FLOW_REPEAT_COUNT, MAX_FLOW_SCHEMA_BYTES, MAX_FLOW_SCHEMA_DEPTH, MAX_FLOW_SCHEMA_ENTRIES, MAX_FLOW_SCHEMA_ITEMS,
+  MAX_FLOW_VARIANT_NAME_BYTES, NodeAttempt, NodeAttemptCompletion, NodeAttemptCompletionInput, NodeAttemptInput,
+  NodeExecutionIdentity, PinnedFlowDefinitionClosure, PublishedFlowTemplate, ValidatedFlowDefinitionClosure,
+  WorkflowCycle, validate_flow_runtime_history,
 };
 pub(crate) use flow_graph::{FactoryFlowEdge, analyze_factory_flow_graph};
 pub use identity::{
@@ -243,18 +248,18 @@ pub use role_profile::{
   FactoryRoleRef, MAX_FACTORY_ROLE_DEFINITION_BYTES, MAX_FACTORY_ROLE_INSTRUCTION_BYTES,
   MAX_FACTORY_ROLE_PROFILE_ENTRIES,
 };
-pub use subject::{CandidateSubject, ExactSubject};
+pub use subject::{CandidateSubject, ExactSubject, ProjectInputSubject, WorkSubject};
 pub use task_contract::{
   BoundedSummary, ContextManifest, ContextManifestEntry, ContextSourceKind, EvaluationResult, EvaluationResultFinding,
   FACTORY_TASK_CONTRACT_VERSION, FactoryArtifactReference, FactoryContextReference, FactoryProducedDeliverable,
-  FactoryRepositoryFragmentReference, FactoryRepositoryPath, FactoryRepositoryRange, FactoryRoleExecutionPackage,
-  FactoryRoleExecutionPackageInput, FactoryRoleProjectRule, FactoryRoleSkillBundle, FactoryTaskControlDigests,
-  FactoryTaskDeclaration, FactoryTaskDefinition, FactoryTaskDeliverable, FactoryTaskDigests, FactoryTaskEnvelope,
-  FactoryTaskMode, FactoryTaskResultSchema, FactoryTaskSubject, FactoryTaskToolchain, ImplementationOutcome,
-  ImplementationResult, MAX_CONTEXT_ENTRY_BYTES, MAX_CONTEXT_MANIFEST_BYTES, MAX_CONTEXT_MANIFEST_ENTRIES,
-  MAX_FACTORY_REPOSITORY_PATH_BYTES, MAX_RETRIEVAL_FRAGMENTS, MAX_TASK_ARTIFACTS, MAX_TASK_DELIVERABLES,
-  MAX_TASK_EVALUATION_FINDINGS, MAX_TASK_PRIOR_FINDINGS, RETRIEVAL_RECEIPT_VERSION, RepositoryFragment,
-  RetrievalReceipt,
+  FactoryRepositoryFragmentReference, FactoryRepositoryLineRange, FactoryRepositoryPath, FactoryRepositoryRange,
+  FactoryRoleExecutionPackage, FactoryRoleExecutionPackageInput, FactoryRoleProjectRule, FactoryRoleSkillBundle,
+  FactoryTaskControlDigests, FactoryTaskDeclaration, FactoryTaskDefinition, FactoryTaskDeliverable, FactoryTaskDigests,
+  FactoryTaskEnvelope, FactoryTaskMode, FactoryTaskResultSchema, FactoryTaskSubject, FactoryTaskToolchain,
+  ImplementationOutcome, ImplementationResult, MAX_CONTEXT_ENTRY_BYTES, MAX_CONTEXT_MANIFEST_BYTES,
+  MAX_CONTEXT_MANIFEST_ENTRIES, MAX_FACTORY_REPOSITORY_PATH_BYTES, MAX_RETRIEVAL_FRAGMENTS, MAX_TASK_ARTIFACTS,
+  MAX_TASK_DELIVERABLES, MAX_TASK_EVALUATION_FINDINGS, MAX_TASK_PRIOR_FINDINGS, RETRIEVAL_RECEIPT_VERSION,
+  RepositoryFragment, RetrievalReceipt,
 };
 pub use value::{
   DecisionPolicyVersion, DeliveryAttemptNumber, ExternalWorkIdentity, FactoryConfigurationVersion, FactoryDigest,

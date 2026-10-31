@@ -625,7 +625,7 @@ fn issue_execution_association_rejects_foreign_or_retargeted_work_without_partia
       WorkEnvelopeId::generate(),
       admission.work.configuration().clone(),
       admission.work.external_identity().clone(),
-      admission.work.subject().clone(),
+      admission.work.subject().repository().unwrap().clone(),
       admission.work.artifacts().clone(),
       octacity_server_factory::WorkClassification::new(
         admission.work.priority(),
@@ -856,8 +856,9 @@ fn issue_execution_rejects_a_local_action_for_another_workflow_before_reserving_
         project_id: issue.project_id,
         configuration_id: target.configuration_id,
         configuration_version: target.configuration_version,
-        repository_id: target.repository_id,
-        repository_version: target.repository_version,
+        repository_id: Some(target.repository_id),
+
+        repository_version: Some(target.repository_version),
       })
       .await
       .unwrap();
@@ -883,7 +884,7 @@ fn issue_execution_rejects_a_local_action_for_another_workflow_before_reserving_
         published_at: at(1),
       })
       .unwrap();
-    factory.seed_repository_version(selected.repository).unwrap();
+    factory.seed_repository_version(selected.repository.unwrap()).unwrap();
     let before = store.mutation_evidence_counts().await;
     let commands = AuthorizedCommandHandler::new(
       Arc::new(TrustedNetworkManagementPolicy),

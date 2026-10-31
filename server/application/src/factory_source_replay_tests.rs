@@ -176,7 +176,8 @@ fn native_container_ids_are_opaque_and_independent_of_operator_resource_referenc
         project_id: project,
         configuration_id: configuration,
         configuration_version: intent.configuration_version,
-        repository_id,
+        repository_id: Some(repository_id),
+
         repository_version: intent.repository_version,
       })
       .await

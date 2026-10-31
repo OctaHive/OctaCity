@@ -35,7 +35,7 @@ export type ManagementApiFailureCode =
 
 export interface ManagementValidationIssue {
   readonly field: string;
-  readonly code: 'invalid_contract' | 'unavailable_reference';
+  readonly code: components['schemas']['FactoryValidationDiagnostics']['errors'][number]['code'];
 }
 
 interface ManagementApiErrorOptions {
@@ -239,7 +239,10 @@ function publicValidationIssues(value: unknown): readonly ManagementValidationIs
       !('code' in issue) ||
       typeof issue.field !== 'string' ||
       !/^\/[a-zA-Z0-9_.~/-]{1,512}$/u.test(issue.field) ||
-      (issue.code !== 'invalid_contract' && issue.code !== 'unavailable_reference')
+      (issue.code !== 'invalid_contract' &&
+        issue.code !== 'unavailable_reference' &&
+        issue.code !== 'budget_exceeds_ceiling' &&
+        issue.code !== 'concurrency_exceeds_ceiling')
     )
       return [];
     return [{ field: issue.field, code: issue.code }];

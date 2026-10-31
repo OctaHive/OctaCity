@@ -207,9 +207,9 @@ struct BuildRow {
   build_configuration_version: i64,
   pipeline_id: Uuid,
   pipeline_version: i64,
-  repository_id: Uuid,
-  repository_version: i64,
-  immutable_revision: String,
+  repository_id: Option<Uuid>,
+  repository_version: Option<i64>,
+  immutable_revision: Option<String>,
   input_snapshot: Json<Value>,
   effective_policy_snapshot: Json<Value>,
   metadata_retention_millis: i64,
@@ -279,7 +279,18 @@ impl TryFrom<BuildRow> for BuildRecord {
       }
       _ => return Err(StoreError::Unavailable),
     };
-    Ok(Self {
+    let source = row
+      .input_snapshot
+      .0
+      .get("source")
+      .map(|source| {
+        serde_json::from_value::<octacity_server_domain::BuildSourceSelection>(source.clone())
+          .map(|selection| selection.mode())
+          .map_err(|_| StoreError::Unavailable)
+      })
+      .transpose()?
+      .flatten();
+    let record = Self {
       build: ImmutableBuildInput {
         id: id!(BuildId, row.id)?,
         project_id: id!(ProjectId, row.project_id)?,
@@ -287,9 +298,17 @@ impl TryFrom<BuildRow> for BuildRecord {
         configuration_version: positive!(BuildConfigurationVersion, row.build_configuration_version)?,
         pipeline_id: id!(PipelineId, row.pipeline_id)?,
         pipeline_version: positive!(PipelineVersion, row.pipeline_version)?,
-        repository_id: id!(RepositoryId, row.repository_id)?,
-        repository_version: positive!(RepositoryVersion, row.repository_version)?,
-        immutable_revision: ImmutableRevision::new(row.immutable_revision).map_err(|_| StoreError::Unavailable)?,
+        repository_id: row.repository_id.map(|value| id!(RepositoryId, value)).transpose()?,
+        repository_version: row
+          .repository_version
+          .map(|value| positive!(RepositoryVersion, value))
+          .transpose()?,
+        immutable_revision: row
+          .immutable_revision
+          .map(ImmutableRevision::new)
+          .transpose()
+          .map_err(|_| StoreError::Unavailable)?,
+        source,
         input_snapshot: row.input_snapshot.0,
         effective_policy_snapshot: row.effective_policy_snapshot.0,
         retention: BuildRetentionDeadlines {
@@ -307,7 +326,9 @@ impl TryFrom<BuildRow> for BuildRecord {
       origin,
       created_at: timestamp(row.created_at_millis)?,
       updated_at: timestamp(row.updated_at_millis)?,
-    })
+    };
+    record.build.validate().map_err(|_| StoreError::Unavailable)?;
+    Ok(record)
   }
 }
 

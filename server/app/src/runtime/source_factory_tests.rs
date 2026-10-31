@@ -473,8 +473,9 @@ async fn assert_legacy_target_is_not_routed(
       project_id: template.project_id(),
       configuration_id: definition.target.id(),
       configuration_version: definition.target.version(),
-      repository_id: definition.repository.id,
-      repository_version: definition.repository.version,
+      repository_id: Some(definition.repository.id),
+
+      repository_version: Some(definition.repository.version),
     })
     .await
     .unwrap();

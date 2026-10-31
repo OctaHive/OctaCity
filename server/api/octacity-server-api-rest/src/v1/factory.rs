@@ -211,9 +211,11 @@ pub struct AdmitManualFactoryWorkRequest {
   /// Immutable configuration version.
   pub configuration_version: u64,
   /// Visible exact Repository.
-  pub repository_id: String,
+  #[serde(default, skip_serializing_if = "Option::is_none")]
+  pub repository_id: Option<String>,
   /// Immutable Repository version.
-  pub repository_version: u64,
+  #[serde(default, skip_serializing_if = "Option::is_none")]
+  pub repository_version: Option<u64>,
   /// Source-scoped stable external Work identity.
   pub external_identity: String,
   /// Closed source selection shared with ordinary CI/CD.
@@ -265,7 +267,8 @@ pub struct FactoryAdmissionResponse {
   /// Durable Factory Run identity.
   pub factory_run_id: String,
   /// Exact originally resolved subject revision.
-  pub base_revision: String,
+  #[serde(default, skip_serializing_if = "Option::is_none")]
+  pub base_revision: Option<String>,
   /// Technical Run state, independent of logical phases.
   pub state: String,
   /// Original admission time.
@@ -418,6 +421,26 @@ pub struct ImportProjectSkillFile {
   pub sha256: String,
   /// Exact reviewed bytes, never echoed in responses.
   pub bytes: Vec<u8>,
+}
+
+/// Read-only request for an installed compiler binding, without client-derived digests.
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(deny_unknown_fields)]
+pub struct ResolveFactoryExecutionBindingRequest {
+  /// Exact published profile reference, checked by the application owner.
+  pub profile: serde_json::Value,
+  /// Installed runtime/profile capability alias.
+  pub capability: String,
+  /// Explicit logical observation outcome, independent of step names.
+  pub result_outcome: String,
+}
+
+/// Operator-owned finite rules; the common evaluator supplies its exact identity.
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(deny_unknown_fields)]
+pub struct ValidateFactoryGateProgramRequest {
+  /// Bounded typed predicates, explicit fallback and optional output projections.
+  pub program: serde_json::Value,
 }
 
 /// Side-effect-free qualification of a complete profile against one authorized installed ceiling.

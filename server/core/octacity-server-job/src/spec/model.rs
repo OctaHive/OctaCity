@@ -1,12 +1,13 @@
 use std::{collections::BTreeMap, num::NonZeroU64};
 
 use octacity_protocol::{
-  CachePolicy, EXECUTION_CONTRACT_V1, EXECUTION_CONTRACT_V2, EXECUTION_CONTRACT_V3, FactoryCausalityV3,
-  FactoryEnforcementCapabilityV3, FactoryPermissionSetV3, FactoryToolControlV3, ManagedOctaExecutionV3, OctaSpec,
-  OutputLimits, ProtectedInputManifestV3, RuntimeSpec, RuntimeSpecV2, SignedEnvelope,
+  CachePolicy, EXECUTION_CONTRACT_V1, EXECUTION_CONTRACT_V2, EXECUTION_CONTRACT_V3, EXECUTION_CONTRACT_V4,
+  FactoryCausalityV3, FactoryEnforcementCapabilityV3, FactoryPermissionSetV3, FactoryToolControlV3,
+  ManagedOctaExecutionV3, OctaSpec, OutputLimits, ProtectedInputManifestV3, RuntimeSpec, RuntimeSpecV2, SignedEnvelope,
 };
 use octacity_server_domain::{
-  BuildId, ImmutableRevision, MAX_TIMESTAMP_MILLIS, PipelineNodeId, RepositoryLocator, SourceReference, Timestamp,
+  BuildId, BuildSourceMode, ImmutableRevision, MAX_TIMESTAMP_MILLIS, PipelineNodeId, RepositoryLocator,
+  SourceReference, Timestamp,
 };
 use octacity_server_secrets::SecretProfileName;
 use serde::{Deserialize, Deserializer, Serialize, Serializer, de::Error as _};
@@ -173,9 +174,11 @@ impl JobSpecPolicySnapshot {
   /// Borrows the same policy facts used by ordinary placement, without constructing a Job.
   pub fn placement_policy(&self, minimum_execution_contract: u16) -> JobPlacementPolicy<'_> {
     JobPlacementPolicy {
-      source_provider: &self.source.provider,
-      source_plugin_version: &self.source.plugin_version,
-      source_plugin_sha256: &self.source.plugin_sha256,
+      source: Some(JobSourcePluginRequirement {
+        provider: &self.source.provider,
+        version: &self.source.plugin_version,
+        sha256: &self.source.plugin_sha256,
+      }),
       octa: &self.octa,
       runtime: &self.runtime,
       requires_cache: self.cache.is_some(),
@@ -214,13 +217,27 @@ impl JobSpecPolicySnapshot {
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct JobSpecBuildSnapshot {
   pub(super) build_id: BuildId,
-  pub(super) immutable_revision: ImmutableRevision,
+  pub(super) immutable_revision: Option<ImmutableRevision>,
   pub(super) source_reference: Option<SourceReference>,
-  pub(super) repository_locator: RepositoryLocator,
+  pub(super) repository_locator: Option<RepositoryLocator>,
+  pub(super) source: Option<BuildSourceMode>,
   pub(super) parameters: BTreeMap<String, Value>,
 }
 
 impl JobSpecBuildSnapshot {
+  /// Captures a Build that deliberately supplies no VCS resource.
+  #[must_use]
+  pub fn source_free(build_id: BuildId, parameters: BTreeMap<String, Value>) -> Self {
+    Self {
+      build_id,
+      immutable_revision: None,
+      source_reference: None,
+      repository_locator: None,
+      source: Some(BuildSourceMode::SourceFreeV1),
+      parameters,
+    }
+  }
+
   /// Captures source and parameter facts already validated during Build acceptance.
   pub fn new(
     build_id: BuildId,
@@ -231,9 +248,10 @@ impl JobSpecBuildSnapshot {
   ) -> Result<Self, JobSpecDerivationError> {
     Ok(Self {
       build_id,
-      immutable_revision,
+      immutable_revision: Some(immutable_revision),
       source_reference,
-      repository_locator,
+      repository_locator: Some(repository_locator),
+      source: None,
       parameters,
     })
   }
@@ -250,9 +268,13 @@ impl JobSpecBuildSnapshot {
 pub struct JobSpecTemplate {
   build_id: BuildId,
   pipeline_node_id: PipelineNodeId,
-  immutable_revision: ImmutableRevision,
+  #[serde(default, skip_serializing_if = "Option::is_none")]
+  immutable_revision: Option<ImmutableRevision>,
   source_reference: Option<SourceReference>,
-  repository_locator: RepositoryLocator,
+  #[serde(default, skip_serializing_if = "Option::is_none")]
+  repository_locator: Option<RepositoryLocator>,
+  #[serde(default, skip_serializing_if = "Option::is_none")]
+  source: Option<BuildSourceMode>,
   parameters: BTreeMap<String, Value>,
   execution: JobExecutionIntent,
   policy: JobSpecPolicySnapshot,
@@ -260,7 +282,7 @@ pub struct JobSpecTemplate {
   execution_deadline: Option<Timestamp>,
 }
 
-/// Server-owned protected execution facts embedded in a stable v3 template.
+/// Server-owned protected execution facts embedded in stable v3 or v4 intent.
 ///
 /// The type deliberately has no transfer URL, credential, lease, or fence
 /// field. Those short-lived capabilities belong to lease acquisition rather
@@ -269,7 +291,8 @@ pub struct JobSpecTemplate {
 #[serde(deny_unknown_fields)]
 pub struct ManagedJobSpecIntent {
   pub(super) execution: ManagedOctaExecutionV3,
-  pub(super) factory: FactoryCausalityV3,
+  #[serde(default, skip_serializing_if = "Option::is_none")]
+  pub(super) factory: Option<FactoryCausalityV3>,
   pub(super) protected_inputs: ProtectedInputManifestV3,
   pub(super) permissions: FactoryPermissionSetV3,
   pub(super) required_enforcement: Vec<FactoryEnforcementCapabilityV3>,
@@ -286,10 +309,10 @@ impl ManagedJobSpecIntent {
   pub const fn protected_inputs(&self) -> &ProtectedInputManifestV3 {
     &self.protected_inputs
   }
-  /// Borrows the immutable common node causality signed with the Job.
+  /// Borrows common node causality; ordinary managed Jobs have no Factory origin.
   #[must_use]
-  pub const fn factory(&self) -> &FactoryCausalityV3 {
-    &self.factory
+  pub const fn factory(&self) -> Option<&FactoryCausalityV3> {
+    self.factory.as_ref()
   }
   /// Borrows the exact authority supplied to protected execution.
   #[must_use]
@@ -297,7 +320,7 @@ impl ManagedJobSpecIntent {
     &self.permissions
   }
   /// Captures exact generated tasks, immutable input metadata, narrowed
-  /// permissions, and the semantic enforcement requirements for JobSpec v3.
+  /// permissions, and semantic enforcement requirements for managed JobSpecs.
   #[must_use]
   pub fn new(
     execution: ManagedOctaExecutionV3,
@@ -308,7 +331,7 @@ impl ManagedJobSpecIntent {
   ) -> Self {
     Self {
       execution,
-      factory,
+      factory: Some(factory),
       protected_inputs,
       permissions,
       required_enforcement,
@@ -316,7 +339,7 @@ impl ManagedJobSpecIntent {
   }
 }
 
-/// Ordinary repository-owned execution or protected server-managed execution.
+/// Repository-controlled execution or protected server-managed execution.
 ///
 /// Untagged serialization keeps the existing ordinary template bytes and
 /// persisted JSON shape unchanged. The two strict variants have disjoint
@@ -328,6 +351,17 @@ pub(super) enum JobExecutionIntent {
   Managed(Box<ManagedJobSpecIntent>),
 }
 
+/// Exact executable source identity required by repository-backed placement.
+#[derive(Clone, Copy, Debug)]
+pub struct JobSourcePluginRequirement<'a> {
+  /// Logical source provider.
+  pub provider: &'a str,
+  /// Exact installed package version.
+  pub version: &'a str,
+  /// Exact executable digest.
+  pub sha256: &'a str,
+}
+
 /// Immutable toolchain and runtime facts used before a ready Job is leased.
 ///
 /// The view deliberately omits repository parameters and other execution
@@ -335,12 +369,8 @@ pub(super) enum JobExecutionIntent {
 /// versioned JobSpec remains the execution authority.
 #[derive(Clone, Copy, Debug)]
 pub struct JobPlacementPolicy<'a> {
-  /// Logical source-plugin identity.
-  pub source_provider: &'a str,
-  /// Exact source-plugin package version.
-  pub source_plugin_version: &'a str,
-  /// Exact source-plugin executable digest.
-  pub source_plugin_sha256: &'a str,
+  /// Exact installed source requirement; absent when no source will be materialized.
+  pub source: Option<JobSourcePluginRequirement<'a>>,
   /// Exact Octa and task-plugin requirements.
   pub octa: &'a octacity_protocol::OctaSpec,
   /// Exact runtime, isolation, platform, and resource policy.
@@ -364,6 +394,7 @@ impl JobSpecTemplate {
       immutable_revision: build.immutable_revision.clone(),
       source_reference: build.source_reference.clone(),
       repository_locator: build.repository_locator.clone(),
+      source: build.source,
       parameters: build.parameters.clone(),
       execution: JobExecutionIntent::Ordinary(execution),
       policy: policy.clone(),
@@ -385,6 +416,7 @@ impl JobSpecTemplate {
       immutable_revision: build.immutable_revision.clone(),
       source_reference: build.source_reference.clone(),
       repository_locator: build.repository_locator.clone(),
+      source: build.source,
       parameters: build.parameters.clone(),
       execution: JobExecutionIntent::Managed(Box::new(execution)),
       policy: policy.clone(),
@@ -423,7 +455,7 @@ impl JobSpecTemplate {
     self.execution_deadline
   }
 
-  /// Borrows protected execution intent, when this template signs as JobSpec v3.
+  /// Borrows protected execution intent for managed v3 or v4 signing.
   #[must_use]
   pub fn managed_intent(&self) -> Option<&ManagedJobSpecIntent> {
     match &self.execution {
@@ -432,14 +464,20 @@ impl JobSpecTemplate {
     }
   }
 
-  /// Returns the exact source revision frozen into every signed Attempt.
+  /// Returns the frozen revision when a Repository is explicitly attached.
   #[must_use]
-  pub fn source_revision(&self) -> &ImmutableRevision {
-    &self.immutable_revision
+  pub fn source_revision(&self) -> Option<&ImmutableRevision> {
+    self.immutable_revision.as_ref()
   }
 
   /// Revalidates a template decoded at a persistence or API boundary.
   pub fn validate(&self) -> Result<(), JobSpecDerivationError> {
+    match (self.source, &self.immutable_revision, &self.repository_locator) {
+      (None, Some(_), Some(_)) => {}
+      (Some(BuildSourceMode::SourceFreeV1), None, None)
+        if self.source_reference.is_none() && matches!(self.execution, JobExecutionIntent::Managed(_)) => {}
+      _ => return Err(JobSpecDerivationError::InvalidPolicy),
+    }
     if self.execution_deadline.is_some_and(|deadline| {
       deadline.unix_millis() < 1_000 || !matches!(self.execution, JobExecutionIntent::Managed(_))
     }) {
@@ -472,20 +510,25 @@ impl JobSpecTemplate {
   /// Borrows the exact facts required for scheduler compatibility checks.
   #[must_use]
   pub fn placement_policy(&self) -> JobPlacementPolicy<'_> {
-    self
+    let mut policy = self
       .policy
       .placement_policy(match (&self.execution, &self.policy.runtime) {
+        (JobExecutionIntent::Managed(_), _) if self.source.is_some() => EXECUTION_CONTRACT_V4,
         (JobExecutionIntent::Managed(_), _) => EXECUTION_CONTRACT_V3,
         (JobExecutionIntent::Ordinary(_), JobRuntimePolicy::Current(_)) => EXECUTION_CONTRACT_V2,
         (JobExecutionIntent::Ordinary(_), JobRuntimePolicy::Legacy(_)) => EXECUTION_CONTRACT_V1,
-      })
+      });
+    if self.source.is_some() {
+      policy.source = None;
+    }
+    policy
   }
 
   /// Borrows the semantic controls an execution route must enforce for this Job.
   ///
-  /// Ordinary Jobs do not require the protected Factory execution contract.
+  /// Repository-controlled v1/v2 Jobs require no managed execution controls.
   /// Provider identities are deliberately absent: scheduling is based on the
-  /// guarantees expressed by the signed v3 intent.
+  /// guarantees expressed by signed managed v3/v4 intent.
   #[must_use]
   pub fn required_factory_enforcement(&self) -> Option<&[FactoryEnforcementCapabilityV3]> {
     match &self.execution {
@@ -506,7 +549,7 @@ impl JobSpecTemplate {
 
   /// Borrows the blocking harness capability required by a managed tool-using task.
   ///
-  /// Ordinary CI/CD templates and managed tasks without tool authority return
+  /// Repository-controlled templates and managed tasks without tool authority return
   /// `None`, so Factory bounded control cannot reduce their eligible capacity.
   #[must_use]
   pub fn required_tool_control(&self) -> Option<&FactoryToolControlV3> {
@@ -528,7 +571,7 @@ impl JobSpecTemplate {
     &self.policy.outputs
   }
 
-  /// Borrows the immutable protected-input manifest for managed v3 execution.
+  /// Borrows the immutable protected-input manifest for managed v3/v4 execution.
   ///
   /// Transfer credentials deliberately remain outside this stable template and
   /// are minted only after a Lease has committed.
@@ -540,6 +583,12 @@ impl JobSpecTemplate {
     }
   }
 
+  /// Returns explicit source absence; legacy templates retain repository facts instead.
+  #[must_use]
+  pub const fn source_mode(&self) -> Option<BuildSourceMode> {
+    self.source
+  }
+
   pub(super) const fn execution(&self) -> &JobExecutionIntent {
     &self.execution
   }
@@ -548,16 +597,16 @@ impl JobSpecTemplate {
     &self.policy
   }
 
-  pub(super) fn immutable_revision(&self) -> &ImmutableRevision {
-    &self.immutable_revision
+  pub(super) fn immutable_revision(&self) -> Option<&ImmutableRevision> {
+    self.immutable_revision.as_ref()
   }
 
   pub(super) fn source_reference(&self) -> Option<&SourceReference> {
     self.source_reference.as_ref()
   }
 
-  pub(super) fn repository_locator(&self) -> &str {
-    self.repository_locator.as_str()
+  pub(super) fn repository_locator(&self) -> Option<&str> {
+    self.repository_locator.as_ref().map(RepositoryLocator::as_str)
   }
 
   pub(super) fn parameters(&self) -> &BTreeMap<String, Value> {

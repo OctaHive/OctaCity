@@ -43,7 +43,14 @@ mod input;
 pub use incoming::FlowIncomingData;
 mod journal;
 pub use journal::FlowDataHistory;
+mod code;
 mod context_binding;
+pub use code::{
+  FlowCodeBinding, FlowCodePin, FlowCodeRevision, FlowCodeScope, FlowCodeSelection, FlowCodeSource, FlowCodeSources,
+  FlowCodeViolation, MAX_FLOW_CODE_SOURCES,
+};
+mod process;
+pub use process::{FlowProcessDocument, FlowProcessInputs};
 mod input_binding;
 pub use context_binding::{FlowContextBinding, FlowContextSelection, FlowContextSourceObservation};
 pub use input_binding::{FlowInputBinding, FlowInputSource, FlowRecordView, MAX_FLOW_INPUT_BINDING_BYTES};
@@ -57,7 +64,7 @@ pub use data::{
   MAX_FLOW_SCHEMA_DEPTH, MAX_FLOW_SCHEMA_ENTRIES, MAX_FLOW_SCHEMA_ITEMS, MAX_FLOW_VARIANT_NAME_BYTES,
 };
 pub use gate::{FlowGateBinding, MAX_FLOW_GATE_PARAMETER_BYTES};
-pub use input::{FlowInputPreparation, FlowNodeInput, FlowRecordReference};
+pub use input::{FlowInputPreparation, FlowNodeCode, FlowNodeInput, FlowRecordReference};
 pub use record::{FlowNodeRecord, FlowRecordObservation};
 mod contract;
 mod definition;

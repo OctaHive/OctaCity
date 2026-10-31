@@ -494,6 +494,9 @@ pub enum StoreInputError {
   /// A Build Configuration definition is malformed or exceeds its encoded bound.
   #[error("an immutable build configuration is invalid")]
   InvalidBuildConfiguration,
+  /// Source mode and immutable Repository/revision facts are inconsistent.
+  #[error("immutable Build source facts are inconsistent")]
+  InvalidBuildSource,
   /// A Factory Configuration mutation intent does not match its resolved version.
   #[error("an immutable Factory Configuration mutation is invalid")]
   InvalidFactoryConfiguration,

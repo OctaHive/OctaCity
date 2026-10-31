@@ -405,8 +405,8 @@ fn generic_node_record_rejects_substituted_attempts_schemas_and_retained_bytes()
   assert_eq!(record.input(), &input);
   assert_eq!(record.payload().value()["count"], 1);
   let candidate = CandidateSubject::new(
-    work.subject().clone(),
-    work.subject().base_revision().clone(),
+    work.subject().repository().unwrap().clone(),
+    work.subject().repository().unwrap().base_revision().clone(),
     FactoryDigest::from_bytes([91; 32]),
   );
   let record = record
@@ -593,7 +593,7 @@ fn generic_node_input_freezes_subject_bound_context_without_forwarding_all_work_
     FlowPayload::new(&schema, serde_json::json!({"count": 3})).unwrap(),
   )
   .unwrap();
-  let context = context_for(work.subject().clone());
+  let context = context_for(work.subject().repository().unwrap().clone());
   let selected = input.clone().with_context(context.clone(), vec![]).unwrap();
   assert_eq!(selected.context(), Some(&context));
   assert_ne!(selected.digest().unwrap(), input.digest().unwrap());
@@ -625,7 +625,7 @@ fn generic_node_input_freezes_subject_bound_context_without_forwarding_all_work_
   );
   let foreign = ExactSubject::new(
     work.subject().project_id(),
-    work.subject().repository_id(),
+    work.subject().repository().unwrap().repository_id(),
     octacity_server_domain::ImmutableRevision::new("other-base").unwrap(),
   );
   assert!(input.with_context(context_for(foreign), vec![]).is_err());
@@ -634,11 +634,11 @@ fn generic_node_input_freezes_subject_bound_context_without_forwarding_all_work_
 #[test]
 fn generic_node_context_requires_exact_receipts_for_selected_repository_fragments() {
   let (work, admitted, schema) = node_fixture();
-  let subject = FactoryTaskSubject::Exact(work.subject().clone());
+  let subject = FactoryTaskSubject::Exact(work.subject().repository().unwrap().clone());
   let reference = |name| ImmutableReference::new(key(name), key("v1"), FactoryDigest::from_bytes([90; 32]));
   let range = FactoryRepositoryRange::new(
-    work.subject().repository_id(),
-    work.subject().base_revision().clone(),
+    work.subject().repository().unwrap().repository_id(),
+    work.subject().repository().unwrap().base_revision().clone(),
     FactoryRepositoryPath::new("src/lib.rs").unwrap(),
     1,
     2,
@@ -654,7 +654,7 @@ fn generic_node_context_requires_exact_receipts_for_selected_repository_fragment
     RetrievalReceipt::new(
       id,
       subject.clone(),
-      work.subject().base_revision().clone(),
+      work.subject().repository().unwrap().base_revision().clone(),
       reference("index"),
       reference("embedding"),
       FactorySafeText::new("node context").unwrap(),

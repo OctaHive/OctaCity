@@ -132,6 +132,59 @@ fn compiler_debug_omits_protected_document_bytes() {
 }
 
 #[test]
+fn source_free_reasoning_compiles_selected_inputs_without_inventing_codex_revision_provenance() {
+  use crate::factory_node_test_support::{fixtures, repository_free_work};
+  use octacity_server_factory::{FactoryCredentialConsumer, FlowBuildIntent, FlowNodeKind};
+  let work = repository_free_work(&fixtures::work());
+  let plugin = reference("codex", 10);
+  let executable = reference("codex-cli", 11);
+  let grants = permissions(FactoryTaskMode::Evaluate, plugin.clone(), executable.clone(), true);
+  let mut wire = serde_json::to_value(grants).unwrap();
+  wire["mounts"]
+    .as_array_mut()
+    .unwrap()
+    .retain(|mount| mount["root"] != "/workspace/source");
+  let grants: FactoryPermissionSet = serde_json::from_value(wire).unwrap();
+  let mut binding = fixtures::binding(work.subject().project_id());
+  binding.plugin = plugin;
+  binding.tool = executable;
+  binding.model_or_tool = reference("an-exact-model", 12);
+  binding.result_output = key("codex-run-result");
+  let instructions =
+    octacity_server_factory::FactoryText::new("Assess only the explicitly selected documents.").unwrap();
+  binding.task_digest = crate::codex_flow_task_digest(
+    &instructions,
+    credential_profiles().profile(FactoryCredentialConsumer::ReadOnlyReview.purpose()),
+    FactoryCredentialConsumer::ReadOnlyReview,
+    &crate::FactoryCodexUsagePolicy::ReportedCost,
+  );
+  let (_, admitted, _, input, attempt) =
+    fixtures::execution_fixture_without_code(FlowNodeKind::Reasoning, work, binding, grants);
+  let intent = FlowBuildIntent::new(input, &admitted, attempt, Default::default(), 0).unwrap();
+  let compiled = crate::compile_codex_flow_task(
+    &intent,
+    &admitted,
+    &instructions,
+    &credential_profiles(),
+    FactoryCredentialConsumer::ReadOnlyReview,
+    &crate::FactoryCodexUsagePolicy::ReportedCost,
+  );
+  assert!(
+    compiled.is_ok(),
+    "source-free model task must retain source absence: {compiled:?}"
+  );
+  let compiled = compiled.unwrap();
+  let octafile: Value =
+    serde_json::from_slice(compiled.document(FactoryProtectedDocumentKind::Octafile).bytes()).unwrap();
+  let task = &octafile["tasks"].as_object().unwrap().values().next().unwrap()["cmds"][0]["codex"];
+  assert!(task.get("source_revision").is_none());
+  assert_eq!(task["model"], "an-exact-model");
+  let envelope: Value =
+    serde_json::from_slice(compiled.document(FactoryProtectedDocumentKind::TaskEnvelope).bytes()).unwrap();
+  assert_eq!(envelope["input"]["code"], serde_json::json!({"kind": "none"}));
+}
+
+#[test]
 fn a_read_only_codex_flow_task_uses_the_declared_schema_and_frozen_input_without_stage_names() {
   use crate::factory_node_test_support::fixtures;
   use octacity_server_factory::{FactoryCredentialConsumer, FlowBuildIntent, FlowNodeKind};

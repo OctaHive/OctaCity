@@ -72,7 +72,7 @@ pub(super) fn materialize_jobs(
   context: &ManualTriggerContext,
   identities: &ManualBuildIdentities,
   prepared: &PreparedManualTrigger,
-  immutable_revision: &ImmutableRevision,
+  immutable_revision: Option<&ImmutableRevision>,
 ) -> Result<Vec<MaterializedJob>, ManualTriggerError> {
   let definition = &context.configuration.definition;
   let job_specs = JobSpecTemplateDeriver::new(context, identities.build_id, prepared, immutable_revision)?;

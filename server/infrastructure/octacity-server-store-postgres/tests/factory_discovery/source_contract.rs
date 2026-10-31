@@ -393,12 +393,14 @@ async fn regrouped_preparation_contract(
     project_id: input.project_id(),
     configuration_id: configuration.reference().id(),
     configuration_version: configuration.reference().version(),
-    repository_id: repository.id,
-    repository_version: repository.version,
+    repository_id: Some(repository.id),
+
+    repository_version: Some(repository.version),
+
     external_identity: reserved
       .admission_identity(octacity_server_store::ManagementSecurityScope::trusted_network())
       .external_identity,
-    source: octacity_server_store::RepositorySourceSelection::DefaultReference,
+    source: octacity_server_store::RepositorySourceSelection::DefaultReference.into(),
     artifacts: original.work.artifacts().clone(),
     classification: WorkClassification::new(
       original.work.priority(),
@@ -846,12 +848,14 @@ async fn source_artifact_contract(
     project_id: input.project_id(),
     configuration_id: configuration.reference().id(),
     configuration_version: configuration.reference().version(),
-    repository_id: input.definition().repository.id,
-    repository_version: input.definition().repository.version,
+    repository_id: Some(input.definition().repository.id),
+
+    repository_version: Some(input.definition().repository.version),
+
     external_identity: preparation
       .admission_identity(octacity_server_store::ManagementSecurityScope::trusted_network())
       .external_identity,
-    source: octacity_server_store::RepositorySourceSelection::ExactRevision("frozen-base".parse().unwrap()),
+    source: octacity_server_store::RepositorySourceSelection::ExactRevision("frozen-base".parse().unwrap()).into(),
     artifacts: published.work_artifacts().unwrap(),
     classification: WorkClassification::new(WorkPriority::new(20).unwrap(), RiskClass::Medium, Default::default()),
     idempotency_key: idempotency(&format!("mapped-{}", preparation.id)),
@@ -1272,12 +1276,14 @@ async fn retained_intent_contract(
     project_id: input.project_id(),
     configuration_id: configuration.reference().id(),
     configuration_version: configuration.reference().version(),
-    repository_id: repository.id,
-    repository_version: repository.version,
+    repository_id: Some(repository.id),
+
+    repository_version: Some(repository.version),
+
     external_identity: preparation
       .admission_identity(octacity_server_store::ManagementSecurityScope::trusted_network())
       .external_identity,
-    source: octacity_server_store::RepositorySourceSelection::DefaultReference,
+    source: octacity_server_store::RepositorySourceSelection::DefaultReference.into(),
     artifacts: admission.work.artifacts().clone(),
     classification: WorkClassification::new(
       admission.work.priority(),
@@ -2138,7 +2144,7 @@ fn prepared_admission(
     intent.external_identity.clone(),
     ExactSubject::new(
       intent.project_id,
-      intent.repository_id,
+      intent.repository_id.unwrap(),
       ImmutableRevision::new("frozen-base").unwrap(),
     ),
     intent.artifacts.clone(),

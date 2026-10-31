@@ -178,11 +178,25 @@ impl<R: FactoryRunStore, Q: BuildQueryStore, A: FactoryBuildAcceptanceStore, L: 
     if octacity_server_store::FactoryBuildOrigin::from_intent(&intent).map_err(|_| AgentToolActionError::Unavailable)?
       != *origin
       || build.build.project_id != intent.input().subject().project_id()
-      || build.build.repository_id != intent.input().subject().repository_id()
+      || build.build.repository_id
+        != Some(
+          intent
+            .input()
+            .exact_resource()
+            .map_err(|_| AgentToolActionError::Unavailable)?
+            .repository_id(),
+        )
       || build.build.configuration_id != intent.profile().build_configuration.id()
       || build.build.configuration_version != intent.profile().build_configuration.version()
-      || build.build.immutable_revision != *intent.input().subject().base_revision()
-      || job.job.job_spec_template.source_revision() != &build.build.immutable_revision
+      || build.build.immutable_revision.as_ref()
+        != Some(
+          intent
+            .input()
+            .exact_resource()
+            .map_err(|_| AgentToolActionError::Unavailable)?
+            .base_revision(),
+        )
+      || job.job.job_spec_template.source_revision() != build.build.immutable_revision.as_ref()
       || job.job.job_spec_template.execution_deadline() != Some(intent.node().deadline())
     {
       return Err(AgentToolActionError::Unavailable);
@@ -242,7 +256,7 @@ impl<R: FactoryRunStore, Q: BuildQueryStore, A: FactoryBuildAcceptanceStore, L: 
       .as_ref()
       .ok_or(AgentToolActionError::Unavailable)?;
     let input = intent.input();
-    let causality = managed.factory();
+    let causality = managed.factory().ok_or(AgentToolActionError::Unavailable)?;
     if control.mode != FactoryToolControlModeV3::ToolRisk
       || control.plugin != intent.profile().plugin.identity().as_str()
       || causality.factory_run_id != input.factory_run_id().to_string()

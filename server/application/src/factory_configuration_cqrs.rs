@@ -224,6 +224,9 @@ pub struct FactoryConfigurationProjection {
 /// Safe validation diagnostics shared by previews and rejected publications.
 #[derive(Clone, Debug, Default, Eq, PartialEq, serde::Serialize)]
 pub struct FactoryValidationDiagnostics {
+  /// Existing owner scopes and ceilings; absent when the submitted graph is not valid.
+  #[serde(skip_serializing_if = "Option::is_none")]
+  pub constraints: Option<crate::FactoryEffectiveConstraints>,
   /// Normalized field errors; values and hidden catalogue identities are omitted.
   pub errors: Vec<FactoryValidationIssue>,
   /// Fields whose references cannot be selected under the current grant.
@@ -248,10 +251,40 @@ pub struct FactoryEffectiveNodePermissions {
   pub node: octacity_server_factory::FactoryKey,
   /// Effective Flow/definition/node permission intersection.
   pub permissions: octacity_server_factory::FactoryPermissionSet,
+  /// Original operator request, without silent clamping.
+  pub requested: octacity_server_factory::FactoryPermissionSet,
+  /// Existing immutable owners contributing this authoring ceiling.
+  pub sources: Vec<&'static str>,
+  /// Candidate-specific execution ceilings; selection does not grant an Agent or backend.
+  pub profiles: Vec<FactoryEffectiveProfilePermissions>,
+  /// Current placement/local enforcement cannot be inferred from an editable Flow.
+  pub unresolved_sources: Vec<&'static str>,
+}
+/// Exact candidate execution policy, projected by the same helper as ordinary dispatch.
+#[derive(Clone, Debug, Eq, PartialEq, serde::Serialize)]
+pub struct FactoryEffectiveProfilePermissions {
+  /// Exact selected declaration, never an inferred latest profile.
+  pub profile: octacity_server_factory::FactoryRoleProfileRef,
+  /// Profile request narrowed by its immutable watchdog.
+  pub permissions: octacity_server_factory::FactoryPermissionSet,
+  /// Policy lineage; this is a ceiling explanation, not an execution grant.
+  pub sources: Vec<&'static str>,
 }
 /// One stable field-associated validation failure.
-#[derive(Clone, Debug, Eq, PartialEq, serde::Serialize)]
+#[derive(Clone, Debug, Default, Eq, PartialEq, serde::Serialize)]
 pub struct FactoryValidationIssue {
+  /// Offending budget dimension, omitted on unrelated historical diagnostics.
+  #[serde(skip_serializing_if = "Option::is_none")]
+  pub resource: Option<&'static str>,
+  /// Exact request in the offending dimension's unit.
+  #[serde(skip_serializing_if = "Option::is_none")]
+  pub requested: Option<u64>,
+  /// Existing owner's maximum; never a silently substituted request.
+  #[serde(skip_serializing_if = "Option::is_none")]
+  pub maximum: Option<u64>,
+  /// Existing owner that limits this field; never an inferred permission grant.
+  #[serde(skip_serializing_if = "Option::is_none")]
+  pub ceiling: Option<&'static str>,
   /// JSON pointer into the submitted draft, or relative to the exact binding below.
   pub field: String,
   /// Stable safe classification, without provider errors or submitted values.
@@ -263,7 +296,88 @@ pub struct FactoryValidationIssue {
   #[serde(skip_serializing_if = "Option::is_none")]
   pub node: Option<octacity_server_factory::FactoryKey>,
 }
+impl FactoryValidationIssue {
+  fn exceeded(
+    field: &'static str,
+    code: &'static str,
+    ceiling: &'static str,
+    resource: &'static str,
+    requested: u64,
+    maximum: u64,
+  ) -> Self {
+    Self {
+      field: field.into(),
+      code,
+      ceiling: Some(ceiling),
+      resource: Some(resource),
+      requested: Some(requested),
+      maximum: Some(maximum),
+      ..Self::default()
+    }
+  }
+}
 impl FactoryValidationDiagnostics {
+  pub(crate) fn constraint_ceiling_error(error: &octacity_server_factory::FactoryError) -> Option<ApplicationError> {
+    use octacity_server_factory::{FactoryError, FlowBudgetCeiling};
+    let issue = match error {
+      FactoryError::ConfigurationNodeCapacityExceeded { requested, maximum } => FactoryValidationIssue::exceeded(
+        "/flow/limits/max_wip",
+        "concurrency_exceeds_ceiling",
+        "configuration_wip",
+        "active_nodes",
+        (*requested).into(),
+        (*maximum).into(),
+      ),
+      FactoryError::FlowNodeCapacityExceeded {
+        definition,
+        requested,
+        maximum,
+      } => {
+        let mut issue = FactoryValidationIssue::exceeded(
+          "/execution/max_active_nodes",
+          "concurrency_exceeds_ceiling",
+          "flow_admission",
+          "active_nodes",
+          (*requested).into(),
+          (*maximum).into(),
+        );
+        issue.definition = Some(*definition);
+        issue
+      }
+      FactoryError::BudgetCeilingExceeded { context } => {
+        let field = match context.ceiling {
+          FlowBudgetCeiling::Definition => "/budget",
+          FlowBudgetCeiling::Admission => "/execution/budget",
+          FlowBudgetCeiling::Configuration => "/flow/limits/budget",
+        };
+        let mut issue = FactoryValidationIssue::exceeded(
+          field,
+          "budget_exceeds_ceiling",
+          context.ceiling.as_str(),
+          context.violation.resource.as_str(),
+          context.violation.requested,
+          context.violation.maximum,
+        );
+        issue.definition = (context.ceiling != FlowBudgetCeiling::Configuration).then_some(context.definition);
+        issue.node = context.node.clone();
+        issue
+      }
+      _ => return None,
+    };
+    Some(ApplicationError::FactoryValidation(Box::new(Self {
+      errors: vec![issue],
+      ..Self::default()
+    })))
+  }
+  /// Explains the distinct Configuration-wide and admitted-Run ceilings after validation.
+  #[must_use]
+  pub fn for_configuration(configuration: &FactoryConfiguration) -> Self {
+    let mut diagnostics = Self::for_flow(configuration.flow());
+    if let Some(constraints) = &mut diagnostics.constraints {
+      constraints.include_configuration(configuration);
+    }
+    diagnostics
+  }
   /// Builds safe diagnostics from an already resolved and validated graph.
   #[must_use]
   pub fn for_flow(flow: &octacity_server_factory::FactoryFlowConfiguration) -> Self {
@@ -280,6 +394,34 @@ impl FactoryValidationDiagnostics {
           definition: definition.reference(),
           node: node.key().clone(),
           permissions: ceiling.intersection(node.permissions()),
+          requested: node.permissions().clone(),
+          sources: vec!["flow_admission", "flow_definition", "node"],
+          profiles: node
+            .profile_selection()
+            .into_iter()
+            .flat_map(|selection| selection.candidates.values())
+            .map(|candidate| FactoryEffectiveProfilePermissions {
+              profile: candidate.profile.reference().clone(),
+              permissions: candidate.profile.definition().execution_permissions(),
+              sources: vec![
+                "role_profile",
+                "profile_budget",
+                "node",
+                "flow_definition",
+                "flow_admission",
+              ],
+            })
+            .collect(),
+          unresolved_sources: if node.build_bindings().next().is_some() {
+            vec![
+              "project_policy",
+              "installed_runtime_policy",
+              "agent_local",
+              "backend_placement",
+            ]
+          } else {
+            vec![]
+          },
         });
         nodes.extend(
           node
@@ -303,6 +445,7 @@ impl FactoryValidationDiagnostics {
     }
     nodes.extend(agents.iter().cloned());
     Self {
+      constraints: Some(crate::FactoryEffectiveConstraints::for_flow(flow)),
       required_node_capabilities: nodes.into_iter().collect(),
       required_agent_capabilities: agents.into_iter().collect(),
       required_backend_capabilities: octacity_server_factory::PermissionCategory::ALL.to_vec(),
@@ -314,6 +457,10 @@ impl FactoryValidationDiagnostics {
   pub(crate) fn invalid(field: impl Into<String>) -> ApplicationError {
     ApplicationError::FactoryValidation(Box::new(Self {
       errors: vec![FactoryValidationIssue {
+        resource: None,
+        requested: None,
+        maximum: None,
+        ceiling: None,
         field: field.into(),
         code: "invalid_contract",
         definition: None,
@@ -338,6 +485,10 @@ impl FactoryValidationDiagnostics {
     let field = field.into();
     ApplicationError::FactoryValidation(Box::new(Self {
       errors: vec![FactoryValidationIssue {
+        resource: None,
+        requested: None,
+        maximum: None,
+        ceiling: None,
         field: field.clone(),
         code: "unavailable_reference",
         definition: None,
@@ -348,6 +499,9 @@ impl FactoryValidationDiagnostics {
     }))
   }
   pub(crate) fn from_factory_error(error: octacity_server_factory::FactoryError) -> ApplicationError {
+    if let Some(diagnostics) = Self::constraint_ceiling_error(&error) {
+      return diagnostics;
+    }
     use octacity_server_factory::{FactoryChoiceKind, FactoryError};
     if let FactoryError::UnknownChoiceAlias { kind } = error {
       let field = match kind {
@@ -359,6 +513,10 @@ impl FactoryValidationDiagnostics {
     }
     ApplicationError::FactoryValidation(Box::new(Self {
       errors: vec![FactoryValidationIssue {
+        resource: None,
+        requested: None,
+        maximum: None,
+        ceiling: None,
         field: "/flow".to_owned(),
         code: "invalid_contract",
         definition: None,
@@ -390,6 +548,7 @@ pub struct FactoryConfigurationCommandOutcome {
 /// Typed Factory Configuration command and query handlers backed by one narrow port.
 pub struct FactoryConfigurationHandlers<S> {
   store: Arc<S>,
+  repositories: Option<Arc<dyn octacity_server_store::ConfigurationStore>>,
   policy: Arc<dyn crate::ManagementAuthorizationPolicy>,
   source_actions: Option<Arc<dyn crate::FactoryStageSourceAuthorizer>>,
   issue_status_actions: Option<Arc<dyn crate::FactoryIssueStatusAuthorizer>>,
@@ -401,10 +560,18 @@ impl<S> FactoryConfigurationHandlers<S> {
   pub fn with_policy(store: Arc<S>, policy: Arc<dyn crate::ManagementAuthorizationPolicy>) -> Self {
     Self {
       store,
+      repositories: None,
       policy,
       source_actions: None,
       issue_status_actions: None,
     }
+  }
+
+  /// Revalidates exact code declarations through the existing Project Repository owner.
+  #[must_use]
+  pub fn with_repositories(mut self, repositories: Arc<dyn octacity_server_store::ConfigurationStore>) -> Self {
+    self.repositories = Some(repositories);
+    self
   }
 
   /// Creates handlers from a backend-neutral Factory Configuration port.
@@ -477,6 +644,14 @@ where
     .await?;
     if let Some(flow) = &draft.flow {
       crate::factory_configuration_choices::validate_flow_choices(flow, &choices, "/flow")?;
+      crate::factory_code_sources::validate_sources(
+        &flow.closure,
+        project_id,
+        self.repositories.as_deref(),
+        self.policy.as_ref(),
+        context,
+      )
+      .await?;
       crate::factory_stage_source_update::validate_flow_source_updates(
         flow,
         self.source_actions.as_deref(),
@@ -783,7 +958,7 @@ where
         query.draft,
       )
       .await?;
-    let diagnostics = FactoryValidationDiagnostics::for_flow(configuration.flow());
+    let diagnostics = FactoryValidationDiagnostics::for_configuration(&configuration);
     Ok(FactoryConfigurationValidation {
       configuration,
       diagnostics,

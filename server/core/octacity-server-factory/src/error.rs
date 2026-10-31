@@ -216,6 +216,39 @@ impl FactoryChoiceKind {
   }
 }
 
+/// Existing enclosing owner whose hard budget rejected a Flow request.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum FlowBudgetCeiling {
+  /// Budget of the definition containing a node.
+  Definition,
+  /// Aggregate budget of the admitted root and nested Flow closure.
+  Admission,
+  /// Per-Run hard budget of the enclosing Factory Configuration.
+  Configuration,
+}
+impl FlowBudgetCeiling {
+  /// Stable owner name used by safe application diagnostics.
+  #[must_use]
+  pub const fn as_str(self) -> &'static str {
+    match self {
+      Self::Definition => "flow_definition",
+      Self::Admission => "flow_admission",
+      Self::Configuration => "configuration",
+    }
+  }
+}
+/// Exact graph location and amounts for a rejected budget request.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct FlowBudgetCeilingViolation {
+  /// Prospective or retained definition containing the offending request.
+  pub definition: crate::FlowDefinitionRef,
+  /// Node request, absent when the definition's aggregate budget is invalid.
+  pub node: Option<crate::FactoryKey>,
+  /// Existing owner whose comparison rejected the request.
+  pub ceiling: FlowBudgetCeiling,
+  /// Authoritative offending dimension and amounts.
+  pub violation: crate::BudgetCeilingViolation,
+}
 /// Validation failure returned while constructing Factory domain values.
 #[derive(Clone, Debug, Eq, Error, PartialEq)]
 pub enum FactoryError {
@@ -265,6 +298,36 @@ pub enum FactoryError {
   BudgetExceeded {
     /// Budget category whose usage exceeded its limit.
     resource: crate::BudgetResource,
+  },
+  /// A requested allowance exceeds an existing Flow ceiling; boxing keeps ordinary errors small.
+  #[error("factory budget request exceeds its enclosing Flow ceiling")]
+  BudgetCeilingExceeded {
+    /// Exact immutable location, owner and rejected numeric dimension.
+    context: Box<FlowBudgetCeilingViolation>,
+  },
+  /// A step's selected code resource is unavailable or wider than its declaration.
+  #[error("invalid factory Flow code binding")]
+  InvalidCodeBinding {
+    /// Exact safe draft location; no private source or credential content.
+    context: Box<crate::FlowCodeViolation>,
+  },
+  /// A Run's requested node capacity exceeds its enclosing Configuration-wide capacity.
+  #[error("factory Flow capacity exceeds Configuration node capacity")]
+  ConfigurationNodeCapacityExceeded {
+    /// Requested concurrent nodes for one admitted root Run.
+    requested: u32,
+    /// Configuration-wide concurrent node maximum.
+    maximum: u32,
+  },
+  /// A definition's requested node capacity exceeds its admitted Run's ceiling.
+  #[error("factory definition capacity exceeds admitted Run node capacity")]
+  FlowNodeCapacityExceeded {
+    /// Exact prospective or retained definition whose request is oversized.
+    definition: crate::FlowDefinitionRef,
+    /// Requested active nodes in that Flow execution.
+    requested: u16,
+    /// Maximum active nodes admitted for the owning Run.
+    maximum: u16,
   },
   /// A related immutable record is absent, duplicated, or incompatible.
   #[error("factory record contains an invalid {relationship} reference")]

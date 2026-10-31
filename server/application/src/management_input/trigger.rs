@@ -284,7 +284,7 @@ impl ManagementInputFactory {
           )?,
         },
         deduplication_identity: parse::<TriggerIdentity>(&input.deduplication_identity, "deduplication identity")?,
-        source: decode::<ManualSourceSelection>(input.source, "manual source")?,
+        source: decode::<crate::BuildSourceSelection>(input.source, "manual source")?,
         parameters: input.parameters,
         priority: input.priority,
         observed_at: now,

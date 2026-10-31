@@ -322,7 +322,7 @@ fn configuration_commands_and_queries_use_only_backend_neutral_ports() {
     .unwrap();
 
     assert_eq!(outcome.configuration, queried);
-    assert_eq!(queried.repository_id, repository_id);
+    assert_eq!(queried.repository_id, Some(repository_id));
     assert_eq!(
       repository.repository_locator.as_str(),
       "https://example.test/source.git"
@@ -502,8 +502,9 @@ fn configuration_definition(
   BuildConfigurationDefinition {
     enabled: true,
     job_concurrency_limit: 2,
-    repository_id,
-    repository_version: RepositoryVersion::INITIAL,
+    repository_id: Some(repository_id),
+    repository_version: Some(RepositoryVersion::INITIAL),
+    source: None,
     pipeline_id,
     pipeline_version: PipelineVersion::INITIAL,
     parameters: ParameterSchema {

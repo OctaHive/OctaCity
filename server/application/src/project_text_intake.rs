@@ -71,8 +71,11 @@ impl<S: ProjectTextInputStore + 'static, B: ArtifactBytePublisher + ArtifactByte
     }
     let selected = self.store.factory_admission_context(submission.intent.target).await?;
     crate::factory_admission::validate_admission_project(&selected, submission.intent.target.project_id)?;
-    let source = crate::manual_trigger::select_source(&submission.intent.source, &selected.repository)
-      .map_err(|_| ApplicationError::InvalidInput)?;
+    let source = crate::manual_trigger::select_source(
+      &submission.intent.source,
+      selected.repository.as_ref().ok_or_else(ApplicationError::invalid)?,
+    )
+    .map_err(|_| ApplicationError::InvalidInput)?;
     let documents = submission.documents.clone();
     let record = self
       .store
@@ -105,7 +108,7 @@ impl<S: ProjectTextInputStore + 'static, B: ArtifactBytePublisher + ArtifactByte
       let revision = self
         .revisions
         .resolve(RevisionResolutionRequest {
-          repository: selected.repository.clone(),
+          repository: selected.repository.clone().ok_or_else(ApplicationError::invalid)?,
           selection: source,
         })
         .await
@@ -185,7 +188,7 @@ pub(crate) async fn authorize_project_text(
     policy,
     context,
     ManagementResourceKind::Repository,
-    target.repository_id,
+    target.repository_id.ok_or_else(ApplicationError::invalid)?,
   )
   .await?;
   Ok(())

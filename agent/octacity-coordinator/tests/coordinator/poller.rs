@@ -147,6 +147,46 @@ fn unix_now() -> u64 {
 }
 
 #[tokio::test]
+async fn source_free_lease_requires_v4_negotiation_and_exact_signed_input_transfers() {
+  let signing_key = SigningKey::from_bytes(&[7; 32]);
+  let now = unix_now();
+  let mut wire: serde_json::Value = serde_json::from_str(include_str!("../../../../shared/protocol-fixtures/job-spec/job-spec-v3.json")).unwrap();
+  wire["protocol_version"] = json!(4);
+  wire["source"] = json!({"kind":"source_free_v1"});
+  wire["issued_at"] = json!(now - 1);
+  wire["expires_at"] = json!(now + 300);
+  wire["execution_deadline_unix_ms"] = json!((now + 300) * 1000);
+  wire.as_object_mut().unwrap().remove("factory");
+  wire["permissions"]["mounts"].as_array_mut().unwrap().retain(|mount| mount["root"] != "/workspace/source");
+  let spec: octacity_protocol::JobSpecV4 = serde_json::from_value(wire.clone()).unwrap();
+  let payload = serde_json::to_vec(&wire).unwrap();
+  for (version, omit_input, allowed) in [(3, false, false), (4, false, true), (4, true, false)] {
+    let mut lease = signed_lease(&signing_key, now);
+    lease.signed_job_spec.payload = BASE64.encode(&payload);
+    lease.signed_job_spec.signature = BASE64.encode(signing_key.sign(&payload).to_bytes());
+    lease.protected_inputs = spec.protected_inputs.inputs.iter().cloned().map(|input| octacity_protocol::ProtectedInputTransferV3 {
+      input, capability: octacity_protocol::ArtifactTransferCapability {
+        url: "https://objects.example/exact-input".into(), required_headers: BTreeMap::new(), expires_at_unix_ms: (now + 120) * 1000,
+      },
+    }).collect();
+    if omit_input { lease.protected_inputs.pop(); }
+    let client = Arc::new(ScriptedClient {
+      leases: Mutex::new(VecDeque::from([Ok(AcquireLeaseResponse::Lease {
+        protocol_version: 1, request_id: "source-free-lease".into(), lease: Box::new(lease),
+      })])), heartbeats: Mutex::new(VecDeque::new()),
+    });
+    let mut registration = registration();
+    registration.execution_contract_version = version;
+    let poller = LeasePoller::new(client, registration,
+      Arc::new(BTreeMap::from([("primary".to_owned(), signing_key.verifying_key())])),
+      Duration::from_secs(1), Duration::from_secs(10)).unwrap();
+    let result = poller.next(true, &snapshot(), CancellationToken::new()).await;
+    assert_eq!(matches!(result, Ok(LeasePollOutcome::Lease(_))), allowed,
+      "negotiated v{version}, omitted input {omit_input}: {:?}", result.err());
+  }
+}
+
+#[tokio::test]
 async fn poller_exposes_no_work_then_a_verified_lease() {
   let signing_key = SigningKey::from_bytes(&[7; 32]);
   let lease = signed_lease(&signing_key, unix_now());

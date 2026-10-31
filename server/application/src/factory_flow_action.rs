@@ -17,7 +17,7 @@ pub struct FactoryFlowActionRequest<'a> {
   /// Provider-neutral source identity used by the selected connector.
   pub external_identity: &'a ExternalWorkIdentity,
   /// Exact admitted source subject.
-  pub subject: &'a ExactSubject,
+  pub subject: &'a WorkSubject,
   /// Exact action and operator-published parameters.
   pub binding: &'a FlowActionBinding,
   /// Exact explicitly projected input; plugins receive no other node data.
@@ -226,7 +226,7 @@ pub struct FactoryWorkStatusRequest {
   /// Source identity understood only by the selected connector.
   pub external_identity: ExternalWorkIdentity,
   /// Exact admitted Project, Repository and revision.
-  pub subject: ExactSubject,
+  pub subject: WorkSubject,
   /// Operator-chosen status; no research-outcome vocabulary is imposed.
   pub status: FactorySafeText,
   /// Exact frozen authority; the connector checks hosts and credential profiles before effects.

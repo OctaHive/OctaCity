@@ -284,7 +284,7 @@ fn validate_context_source(
     }
     FactoryContextReference::RepositoryRange(reference) => {
       if source_kind != ContextSourceKind::RepositoryRange
-        || reference.repository_id() != subject.exact().repository_id()
+        || reference.repository_id() != subject.exact()?.repository_id()
         || !subject.permits_revision(reference.revision())
       {
         return Err(FactoryError::InconsistentSubject);
@@ -298,7 +298,7 @@ fn validate_context_source(
         return Err(invalid("context repository fragment"));
       }
       if reference.subject() != subject
-        || reference.range().repository_id() != subject.exact().repository_id()
+        || reference.range().repository_id() != subject.exact()?.repository_id()
         || !subject.permits_revision(reference.range().revision())
       {
         return Err(FactoryError::InconsistentSubject);

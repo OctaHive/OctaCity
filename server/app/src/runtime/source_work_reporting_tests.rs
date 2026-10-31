@@ -141,8 +141,9 @@ async fn normal_work_actions_deliver_intermediate_and_terminal_effects_with_orig
       project_id: fixture.input.project_id(),
       configuration_id: definition.target.id(),
       configuration_version: definition.target.version(),
-      repository_id: definition.repository.id,
-      repository_version: definition.repository.version,
+      repository_id: Some(definition.repository.id),
+
+      repository_version: Some(definition.repository.version),
     })
     .await
     .unwrap();

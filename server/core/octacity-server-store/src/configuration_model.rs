@@ -508,9 +508,14 @@ pub struct BuildConfigurationDefinition {
   /// Maximum active Jobs across Builds of this Configuration version.
   pub job_concurrency_limit: u32,
   /// Exact immutable Repository version selected by this version.
-  pub repository_id: RepositoryId,
+  #[serde(default, skip_serializing_if = "Option::is_none")]
+  pub repository_id: Option<RepositoryId>,
   /// Exact immutable Repository version number.
-  pub repository_version: RepositoryVersion,
+  #[serde(default, skip_serializing_if = "Option::is_none")]
+  pub repository_version: Option<RepositoryVersion>,
+  /// Explicit versioned source absence; omission preserves the released repository-backed form.
+  #[serde(default, skip_serializing_if = "Option::is_none")]
+  pub source: Option<octacity_server_domain::BuildSourceMode>,
   /// Exact immutable Pipeline selected by this version.
   pub pipeline_id: PipelineId,
   /// Exact immutable Pipeline version number.
@@ -539,6 +544,12 @@ pub struct BuildConfigurationDefinition {
 impl BuildConfigurationDefinition {
   /// Revalidates the complete immutable definition at an adapter seam.
   pub fn validate(&self) -> Result<(), StoreInputError> {
+    if !matches!(
+      (self.source, self.repository_id, self.repository_version),
+      (None, Some(_), Some(_)) | (Some(octacity_server_domain::BuildSourceMode::SourceFreeV1), None, None)
+    ) {
+      return Err(StoreInputError::InvalidBuildConfiguration);
+    }
     if self.job_concurrency_limit == 0 || self.job_concurrency_limit > MAX_BUILD_CONFIGURATION_JOB_CONCURRENCY {
       return Err(StoreInputError::InvalidBuildConfiguration);
     }

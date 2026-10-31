@@ -135,7 +135,7 @@ fn triage_goal_context_reports_the_unavailable_selection_without_disclosing_fore
         documents: Default::default(),
       };
       draft.bind(project).unwrap(); // Pure compilation confers no publication ownership.
-      let subject = FactoryTaskSubject::Exact(fixture.input.subject().clone());
+      let subject = FactoryTaskSubject::Exact(fixture.input.subject().repository().unwrap().clone());
       let context = ContextManifest::new(
         ContextManifestId::generate(),
         subject.clone(),
@@ -417,7 +417,7 @@ fn configured_context_uses_only_declared_verified_artifacts_for_arbitrary_nodes(
       let manifest = prepared.context().unwrap();
       assert_eq!(
         manifest.subject(),
-        &FactoryTaskSubject::Exact(snapshot.work.subject().clone())
+        &FactoryTaskSubject::Exact(snapshot.work.subject().repository().unwrap().clone())
       );
       assert_eq!(
         manifest.entries().len(),
@@ -519,7 +519,7 @@ fn candidate_context_requires_selected_verified_publication_ancestry() {
         .definition(fixture.admission.flow.closure().root())
         .unwrap();
       let candidate = CandidateSubject::new(
-        fixture.admission.work.subject().clone(),
+        fixture.admission.work.subject().repository().unwrap().clone(),
         ImmutableRevision::new("exact-candidate-r7").unwrap(),
         FactoryDigest::from_bytes([29; 32]),
       );

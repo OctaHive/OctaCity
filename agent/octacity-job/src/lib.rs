@@ -86,7 +86,7 @@ pub struct ExecuteJobRequest {
 /// Successful terminal data from source acquisition and `octa-runner`.
 #[derive(Debug)]
 pub struct JobCompletion {
-  source: MaterializedSource,
+  source: Option<MaterializedSource>,
   runner: RunnerCompletion,
   output_limits: octacity_protocol::OutputLimits,
   workspace: PathBuf,
@@ -191,9 +191,9 @@ impl JobCompletion {
     ))
   }
 
-  /// Returns verified provenance from source materialization.
-  pub fn source(&self) -> &MaterializedSource {
-    &self.source
+  /// Returns verified source provenance, absent for explicit source-free execution.
+  pub fn source(&self) -> Option<&MaterializedSource> {
+    self.source.as_ref()
   }
 
   /// Returns the terminal runner result and final resource usage.
@@ -212,12 +212,12 @@ impl JobCompletion {
   }
 
   /// Retained directory authorized for runner-declared output publication.
-  /// Anchored managed execution selects only Output; ordinary Jobs use Source.
+  /// Anchored or source-free managed execution selects only Output; repository Jobs retain Source.
   pub fn publication_workspace(&self) -> &Path {
     self.publication_workspace.as_deref().unwrap_or(&self.workspace)
   }
 
-  /// Exact guest-relative namespace for an anchored Output directory.
+  /// Exact guest-relative namespace for the managed Output directory.
   pub fn publication_prefix(&self) -> Option<&Path> {
     self.publication_workspace.as_ref().map(|_| {
       Path::new(FACTORY_OUTPUT_ROOT)
@@ -552,6 +552,9 @@ impl JobExecutor {
     events: &mpsc::Sender<RunnerStreamItem>,
   ) -> Result<JobCompletion, JobFailure> {
     let spec = ExecutableJobSpec::try_from(request.spec).map_err(JobFailure::from)?;
+    if spec.source.is_none() && !request.source_credentials.is_empty() {
+      return Err(JobError::Invalid("source-free execution cannot consume source credentials".to_owned()).into());
+    }
     let managed_deadline = spec
       .execution_deadline
       .map(|deadline| {
@@ -579,10 +582,12 @@ impl JobExecutor {
       .runner
       .verify(&spec.octa)
       .map_err(|error| JobError::RunnerInstallation(Box::new(error)))?;
-    self
-      .source
-      .verify(&spec.source)
-      .map_err(|error| JobError::Source(Box::new(error)))?;
+    if let Some(source) = &spec.source {
+      self
+        .source
+        .verify(source)
+        .map_err(|error| JobError::Source(Box::new(error)))?;
+    }
     let mut selected = self.select_backend(&spec.runtime)?;
     if spec.runtime.workload_identity_profile().is_some()
       && selected
@@ -701,41 +706,49 @@ impl JobExecutor {
       let deadline = managed_deadline.map_or(runtime_deadline, |deadline| deadline.min(runtime_deadline));
       info!(job_id = %spec.job_id, attempt = spec.attempt, runtime = ?spec.runtime.label(), "starting job");
 
-      let source = self
-        .source
-        .materialize(
-          &spec.source,
-          SourceMaterializationRequest {
-            request_id: execution_id.clone(),
-            destination: workspace.clone(),
-            revision: spec.source.revision.clone(),
-            reference: spec.source.reference.clone(),
-            parameters: spec.source.parameters.clone(),
-            credential_files: request.source_credentials,
-            max_workspace_bytes: spec.runtime.writable_disk_bytes(),
-          },
-          remaining(deadline)?,
-          self.cancellation_grace,
-          cancellation.clone(),
+      let source = if let Some(requirement) = &spec.source {
+        Some(
+          self
+            .source
+            .materialize(
+              requirement,
+              SourceMaterializationRequest {
+                request_id: execution_id.clone(),
+                destination: workspace.clone(),
+                revision: requirement.revision.clone(),
+                reference: requirement.reference.clone(),
+                parameters: requirement.parameters.clone(),
+                credential_files: request.source_credentials,
+                max_workspace_bytes: spec.runtime.writable_disk_bytes(),
+              },
+              remaining(deadline)?,
+              self.cancellation_grace,
+              cancellation.clone(),
+            )
+            .await
+            .map_err(|error| JobError::Source(Box::new(error)))?,
         )
-        .await
-        .map_err(|error| JobError::Source(Box::new(error)))?;
+      } else {
+        None
+      };
 
-      let materialization_cancellation = cancellation.child_token();
-      deadline_operation(
-        deadline,
-        self.cancellation_grace,
-        &materialization_cancellation,
-        self.materialize_change_set(
-          managed.as_ref(),
-          staged.as_ref(),
-          &source.revision,
-          &workspace,
-          scratch.as_deref(),
+      if let Some(source) = &source {
+        let materialization_cancellation = cancellation.child_token();
+        deadline_operation(
+          deadline,
+          self.cancellation_grace,
           &materialization_cancellation,
-        ),
-      )
-      .await?;
+          self.materialize_change_set(
+            managed.as_ref(),
+            staged.as_ref(),
+            &source.revision,
+            &workspace,
+            scratch.as_deref(),
+            &materialization_cancellation,
+          ),
+        )
+        .await?;
+      }
 
       if let Some(materialization) = managed
         .as_ref()
@@ -917,27 +930,30 @@ impl JobExecutor {
       let operation = finish_identity(operation, identity).await;
       let runner = finish_cache_session(operation, cache).await?;
 
-      let capture_cancellation = cancellation.child_token();
-      let change_set = deadline_operation(
-        deadline,
-        self.cancellation_grace,
-        &capture_cancellation,
-        self.capture_change_set(
-          managed.as_ref(),
-          &source.revision,
-          &runner,
-          &workspace,
-          &job_root,
+      let change_set = if let Some(source) = &source {
+        let capture_cancellation = cancellation.child_token();
+        deadline_operation(
+          deadline,
+          self.cancellation_grace,
           &capture_cancellation,
-        ),
-      )
-      .await?;
+          self.capture_change_set(
+            managed.as_ref(),
+            &source.revision,
+            &runner,
+            &workspace,
+            &job_root,
+            &capture_cancellation,
+          ),
+        )
+        .await?
+      } else {
+        None
+      };
 
       info!(job_id = %spec.job_id, attempt = spec.attempt, status = ?runner.status, "finished job");
-      let publication_workspace = if managed
-        .as_ref()
-        .is_some_and(|intent| intent.execution.workspace_root.as_deref() == Some(FACTORY_WORKSPACE_ROOT))
-      {
+      let publication_workspace = if managed.as_ref().is_some_and(|intent| {
+        source.is_none() || intent.execution.workspace_root.as_deref() == Some(FACTORY_WORKSPACE_ROOT)
+      }) {
         output
       } else {
         None

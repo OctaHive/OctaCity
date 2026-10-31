@@ -52,6 +52,14 @@ function fixture(shape?: components['schemas']['FactoryFlowValueSchema']) {
   writer.reporting.action = {
     plugin: writer.binding.capability,
     action: 'set_status',
+    parameters: {
+      contract: 'work_status_v1',
+      max_status_bytes: 4096,
+      source_update_required: true,
+      outbox_required: true,
+      max_attempts: 1024,
+      max_retry_delay_millis: 3_600_000,
+    },
     output: schema,
     outcome: node.outcomes[0]!,
   };

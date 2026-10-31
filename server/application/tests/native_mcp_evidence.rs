@@ -100,7 +100,7 @@ fn actual_native_mcp_results_resolve_by_exact_retained_artifact_record_and_diges
         model: &model,
         model_identifier: None,
         prompt_digest: codex_prompt_provenance_digest("Use the declared finite tools, then return true."),
-        source_revision: &"a".repeat(40),
+        source_revision: Some(&"a".repeat(40)),
       },
       execution_window: started..=finished,
     },

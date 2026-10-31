@@ -273,7 +273,7 @@ where
               trigger: claim.schedule.trigger,
               target: claim.schedule.target,
               deduplication_identity: identity,
-              source: build.source.clone(),
+              source: build.source.clone().into(),
               parameters: build.parameters.clone(),
               priority: build.priority,
               observed_at: occurrence_at,

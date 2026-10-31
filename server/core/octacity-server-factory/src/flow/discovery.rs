@@ -55,7 +55,7 @@ pub struct FlowDiscoveryFacts(DiscoveryFact);
 #[serde(tag = "kind", rename_all = "snake_case", deny_unknown_fields)]
 enum DiscoveryFact {
   Reporting {
-    subject: ExactSubject,
+    subject: crate::WorkSubject,
     id: ReportingAttemptId,
     number: ReportingAttemptNumber,
     state: ReportingState,
@@ -103,7 +103,7 @@ enum DiscoveryFact {
     outcome: AssessmentOutcome,
   },
   DecisionSignal {
-    subject: ExactSubject,
+    subject: WorkSubject,
     id: DecisionSignalReceiptId,
     request_id: DecisionSignalRequestId,
     receipt_digest: FactoryDigest,
@@ -147,7 +147,7 @@ enum DiscoveryFact {
     state: DeliveryState,
   },
   Escalation {
-    subject: ExactSubject,
+    subject: crate::WorkSubject,
     id: EscalationId,
   },
 }
@@ -181,6 +181,23 @@ where
   Ok(values)
 }
 impl FlowDiscoveryFacts {
+  /// Work dispositions retain correlation; candidate facts require the selected code resource.
+  pub(super) fn matches_input(&self, input: &super::FlowNodeInput) -> bool {
+    match &self.0 {
+      DiscoveryFact::Escalation { subject, .. }
+      | DiscoveryFact::Reporting { subject, .. }
+      | DiscoveryFact::DecisionSignal { subject, .. } => subject == input.subject(),
+      // Trusted capture/publication may produce a new candidate from the selected
+      // base. Consumer facts below must instead describe the exact selected candidate.
+      DiscoveryFact::Candidate { subject } | DiscoveryFact::ChangeSet { subject, .. } => {
+        input.exact_resource().is_ok_and(|resource| resource == subject.exact())
+      }
+      _ => self
+        .candidate_subject()
+        .is_some_and(|subject| input.matches_candidate_resource(subject)),
+    }
+  }
+
   /// Returns a code-owned observation family without inspecting arbitrary payload JSON.
   pub const fn kind(&self) -> FlowDiscoveryKind {
     match self.0 {
@@ -354,13 +371,13 @@ impl FlowDiscoveryFacts {
       .or(context)
       .or_else(|| self.candidate_subject())
   }
-  /// Returns the exact base to which the owner must bind the retained observation.
+  /// Returns repository provenance when present; Project/input facts have no VCS base.
   #[must_use]
-  pub fn exact_subject(&self) -> &ExactSubject {
+  pub fn exact_subject(&self) -> Option<&ExactSubject> {
     match &self.0 {
       DiscoveryFact::Escalation { subject, .. }
-      | DiscoveryFact::DecisionSignal { subject, .. }
-      | DiscoveryFact::Reporting { subject, .. } => subject,
+      | DiscoveryFact::Reporting { subject, .. }
+      | DiscoveryFact::DecisionSignal { subject, .. } => subject.repository().ok(),
       DiscoveryFact::Candidate { subject }
       | DiscoveryFact::ChangeSet { subject, .. }
       | DiscoveryFact::Evidence { subject, .. }
@@ -368,7 +385,7 @@ impl FlowDiscoveryFacts {
       | DiscoveryFact::Assessment { subject, .. }
       | DiscoveryFact::Promotion { subject, .. }
       | DiscoveryFact::Decision { subject, .. }
-      | DiscoveryFact::Delivery { subject, .. } => subject.exact(),
+      | DiscoveryFact::Delivery { subject, .. } => Some(subject.exact()),
     }
   }
   /// Returns the candidate when the verified domain result has one.

@@ -79,7 +79,7 @@ fn check_composition(own_evidence: bool) {
       .with_data_schemas(published.schemas)
       .unwrap();
       let subject = CandidateSubject::new(
-        work.subject().clone(),
+        work.subject().repository().unwrap().clone(),
         ImmutableRevision::new("candidate").unwrap(),
         FactoryDigest::from_bytes([95; 32]),
       );

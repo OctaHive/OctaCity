@@ -177,7 +177,20 @@ pub(super) async fn read_admitted_flow(
       .map_err(unavailable)?;
   let admitted_root = FlowRun::root(&locked.run, closure.root()).map_err(|_| StoreError::Unavailable)?;
   let admitted_cycle = WorkflowCycle::initial(&admitted_root).map_err(|_| StoreError::Unavailable)?;
-  let admitted = AdmittedFlow::from_configuration(&configuration, &locked.run).map_err(|_| StoreError::Unavailable)?;
+  let pins: Option<Json<Vec<octacity_server_factory::FlowCodePin>>> =
+    sqlx::query_scalar("SELECT flow_code_pins FROM factory_runs WHERE id = $1")
+      .bind(locked.run.id().as_uuid())
+      .fetch_one(&mut **transaction)
+      .await
+      .map_err(unavailable)?;
+  let admitted = AdmittedFlow::from_configuration(&configuration, &locked.run)
+    .and_then(|flow| {
+      flow.with_code_pins(
+        pins.map_or_else(Vec::new, |pins| pins.0),
+        locked.run.subject().project_id(),
+      )
+    })
+    .map_err(|_| StoreError::Unavailable)?;
   if admitted.closure() != &closure
     || admitted.limits() != &limits
     || admitted.root_run() != &admitted_root

@@ -48,6 +48,139 @@ fn node_observation_fixture() -> (
 }
 
 #[test]
+fn document_guided_classification_retains_bounded_assessments_and_missing_values_without_a_vocabulary_registry() {
+  use octacity_server_factory::{
+    FlowComparison, FlowDataSchema, FlowFieldSchema, FlowGateProgram, FlowGateRule, FlowOperand, FlowPredicate,
+    FlowValueSchema,
+  };
+  let (mut fixture, profile, _) = node_observation_fixture();
+  let key = |value| FactoryKey::new(value).unwrap();
+  let schema = FlowDataSchema::new(
+    key("operator.assessment"),
+    key("v1"),
+    FlowValueSchema::Object {
+      fields: [
+        (
+          key("component"),
+          FlowFieldSchema::optional(FlowValueSchema::String {
+            min_bytes: 1,
+            max_bytes: 128,
+          }),
+        ),
+        (
+          key("priority"),
+          FlowFieldSchema::optional(FlowValueSchema::String {
+            min_bytes: 1,
+            max_bytes: 128,
+          }),
+        ),
+        (key("uncertain"), FlowFieldSchema::required(FlowValueSchema::Boolean)),
+      ]
+      .into(),
+    },
+  )
+  .unwrap();
+  let envelope = fixture.envelope.clone();
+  let route = FlowGateProgram::new(
+    vec![FlowGateRule {
+      when: FlowPredicate::All {
+        predicates: vec![
+          FlowPredicate::Compare {
+            left: FlowOperand::Path {
+              path: "/uncertain".into(),
+            },
+            comparison: FlowComparison::Equal,
+            right: FlowOperand::Literal { value: json!(false) },
+          },
+          FlowPredicate::Exists {
+            operand: FlowOperand::Path {
+              path: "/component".into(),
+            },
+          },
+          FlowPredicate::Exists {
+            operand: FlowOperand::Path {
+              path: "/priority".into(),
+            },
+          },
+        ],
+      },
+      outcome: key("classified"),
+    }],
+    key("needs_input"),
+  )
+  .unwrap();
+  let contract = || crate::FactoryCodexNodeRunContract {
+    model_identifier: None,
+    usage_policy: &crate::FactoryCodexUsagePolicy::ReportedCost,
+    profile: &profile,
+    schema: &schema,
+    prompt_digest: envelope.digests().prompt_provenance,
+    source_revision: Some(envelope.subject().exact().unwrap().base_revision()),
+    budget: envelope.budget(),
+    execution_window: Timestamp::from_unix_millis(1000).unwrap()..=Timestamp::from_unix_millis(1010).unwrap(),
+  };
+  let mut result: Value = serde_json::from_slice(&fixture.documents[0].bytes).unwrap();
+  for (transport, retained, outcome) in [
+    (
+      json!({"component":"mobile-console","priority":"expedite","uncertain":false}),
+      json!({"component":"mobile-console","priority":"expedite","uncertain":false}),
+      "classified",
+    ),
+    (
+      json!({"component":null,"priority":null,"uncertain":true}),
+      json!({"uncertain":true}),
+      "needs_input",
+    ),
+  ] {
+    result["structured_result"] = transport;
+    fixture.replace_document("codex-run-result", result.clone());
+    let observed = crate::verify_codex_node_run(contract(), &fixture.documents).unwrap();
+    let data = observed.data.unwrap();
+    assert_eq!(data.payload().value(), &retained);
+    assert_eq!(route.select(data.payload()).unwrap(), key(outcome));
+  }
+  result["structured_result"] =
+    json!({"component":"unlisted-assessment","priority":"unlisted-assessment","uncertain":true});
+  fixture.replace_document("codex-run-result", result.clone());
+  assert!(
+    crate::verify_codex_node_run(contract(), &fixture.documents).is_ok(),
+    "structural validity does not certify semantic compliance with document prose"
+  );
+  result["structured_result"]["priority"] = json!("p".repeat(129));
+  fixture.replace_document("codex-run-result", result);
+  assert!(crate::verify_codex_node_run(contract(), &fixture.documents).is_err());
+}
+
+#[test]
+fn source_free_codex_node_results_require_absent_revision_provenance() {
+  let (mut fixture, profile, schema) = node_observation_fixture();
+  let envelope = fixture.envelope.clone();
+  let expected = || crate::FactoryCodexNodeRunContract {
+    model_identifier: None,
+    usage_policy: &crate::FactoryCodexUsagePolicy::ReportedCost,
+    profile: &profile,
+    schema: &schema,
+    prompt_digest: envelope.digests().prompt_provenance,
+    source_revision: None,
+    budget: envelope.budget(),
+    execution_window: Timestamp::from_unix_millis(1000).unwrap()..=Timestamp::from_unix_millis(1010).unwrap(),
+  };
+  assert!(
+    crate::verify_codex_node_run(expected(), &fixture.documents).is_err(),
+    "a source-free Job cannot claim the Work's repository revision"
+  );
+  let mut provenance: Value = serde_json::from_slice(&fixture.documents[2].bytes).unwrap();
+  provenance.as_object_mut().unwrap().remove("source_revision");
+  fixture.replace_document("codex-run-provenance", provenance.clone());
+  let verified = crate::verify_codex_node_run(expected(), &fixture.documents)
+    .expect("a source-free invocation needs no invented VCS provenance");
+  assert_eq!(verified.data.unwrap().payload().value(), &json!({"count":9}));
+  provenance["source_revision"] = json!("invented-revision");
+  fixture.replace_document("codex-run-provenance", provenance);
+  assert!(crate::verify_codex_node_run(expected(), &fixture.documents).is_err());
+}
+
+#[test]
 fn codex_nullable_transport_preserves_optional_flow_fields_and_required_validation() {
   use crate::{FactoryCodexNodeRunContract, verify_codex_node_run};
   use octacity_server_factory::{FlowDataSchema, FlowFieldSchema, FlowValueSchema};
@@ -98,7 +231,7 @@ fn codex_nullable_transport_preserves_optional_flow_fields_and_required_validati
     profile: &profile,
     schema: &schema,
     prompt_digest: envelope.digests().prompt_provenance,
-    source_revision: envelope.subject().exact().base_revision(),
+    source_revision: Some(envelope.subject().exact().unwrap().base_revision()),
     budget: envelope.budget(),
     execution_window: Timestamp::from_unix_millis(1000).unwrap()..=Timestamp::from_unix_millis(1010).unwrap(),
   };
@@ -148,7 +281,7 @@ fn codex_node_usage_prices_reported_tokens_under_the_frozen_exact_model_policy()
       profile: &profile,
       schema: &schema,
       prompt_digest: fixture.envelope.digests().prompt_provenance,
-      source_revision: fixture.envelope.subject().exact().base_revision(),
+      source_revision: Some(fixture.envelope.subject().exact().unwrap().base_revision()),
       budget: fixture.envelope.budget(),
       usage_policy: &policy,
       execution_window: Timestamp::from_unix_millis(1000).unwrap()..=Timestamp::from_unix_millis(1010).unwrap(),
@@ -170,7 +303,7 @@ fn codex_node_observation_verifies_exact_execution_provenance_and_projects_only_
     profile: &profile,
     schema: &schema,
     prompt_digest: fixture.envelope.digests().prompt_provenance,
-    source_revision: fixture.envelope.subject().exact().base_revision(),
+    source_revision: Some(fixture.envelope.subject().exact().unwrap().base_revision()),
     budget: fixture.envelope.budget(),
     execution_window: Timestamp::from_unix_millis(1000).unwrap()..=Timestamp::from_unix_millis(1010).unwrap(),
   };
@@ -201,7 +334,7 @@ fn codex_node_budget_overrun_retains_actual_usage_without_a_semantic_result() {
       profile: &profile,
       schema: &schema,
       prompt_digest: fixture.envelope.digests().prompt_provenance,
-      source_revision: fixture.envelope.subject().exact().base_revision(),
+      source_revision: Some(fixture.envelope.subject().exact().unwrap().base_revision()),
       budget: BudgetLimit::new(
         1,
         ceiling.max_elapsed_millis(),
@@ -242,7 +375,7 @@ fn codex_node_execution_failure_keeps_measured_usage_without_a_semantic_result()
       profile: &profile,
       schema: &schema,
       prompt_digest: fixture.envelope.digests().prompt_provenance,
-      source_revision: fixture.envelope.subject().exact().base_revision(),
+      source_revision: Some(fixture.envelope.subject().exact().unwrap().base_revision()),
       budget: fixture.envelope.budget(),
       execution_window: Timestamp::from_unix_millis(1000).unwrap()..=Timestamp::from_unix_millis(1010).unwrap(),
     },
@@ -828,7 +961,7 @@ fn native_capture_contract<'a>(
       executable: &profile.tool,
       model: &profile.model_or_tool,
       prompt_digest: fixture.envelope.digests().prompt_provenance,
-      source_revision: fixture.envelope.subject().exact().base_revision().as_str(),
+      source_revision: Some(fixture.envelope.subject().exact().unwrap().base_revision().as_str()),
     },
     maximum_bytes: fixture.envelope.budget().max_output_bytes(),
     execution_window: Timestamp::from_unix_millis(1000).unwrap()..=Timestamp::from_unix_millis(1010).unwrap(),
@@ -1237,7 +1370,7 @@ fn codex_node_accepts_the_released_report_media_without_weakening_its_record_con
     profile: &profile,
     schema: &schema,
     prompt_digest: envelope.digests().prompt_provenance,
-    source_revision: envelope.subject().exact().base_revision(),
+    source_revision: Some(envelope.subject().exact().unwrap().base_revision()),
     budget: envelope.budget(),
     execution_window: Timestamp::from_unix_millis(1000).unwrap()..=Timestamp::from_unix_millis(1010).unwrap(),
   };
@@ -1323,7 +1456,7 @@ fn qualified_common_reviewer_records_produce_server_owned_assessment_and_reject_
       profile: intent.profile(),
       schema,
       prompt_digest: crate::codex_prompt_provenance_digest(prompt),
-      source_revision: invocation.plan().subject().candidate_revision(),
+      source_revision: Some(invocation.plan().subject().candidate_revision()),
       budget: intent.budget(),
       usage_policy: &profile.usage_policy,
       execution_window: Timestamp::from_unix_millis(32).unwrap()..=Timestamp::from_unix_millis(40).unwrap(),
@@ -1378,7 +1511,7 @@ fn manual_model_provenance_must_match_the_retained_plugin_identifier() {
     profile: &profile,
     schema: &schema,
     prompt_digest: fixture.envelope.digests().prompt_provenance,
-    source_revision: fixture.envelope.subject().exact().base_revision(),
+    source_revision: Some(fixture.envelope.subject().exact().unwrap().base_revision()),
     budget: fixture.envelope.budget(),
     usage_policy: &crate::FactoryCodexUsagePolicy::ReportedCost,
     execution_window: Timestamp::from_unix_millis(0).unwrap()..=Timestamp::from_unix_millis(10_000).unwrap(),
@@ -1409,7 +1542,7 @@ fn manual_model_cannot_reuse_another_models_exact_token_prices() {
     profile: &profile,
     schema: &schema,
     prompt_digest: fixture.envelope.digests().prompt_provenance,
-    source_revision: fixture.envelope.subject().exact().base_revision(),
+    source_revision: Some(fixture.envelope.subject().exact().unwrap().base_revision()),
     budget: fixture.envelope.budget(),
     usage_policy: &pricing,
     execution_window: Timestamp::from_unix_millis(1000).unwrap()..=Timestamp::from_unix_millis(1010).unwrap(),

@@ -99,7 +99,10 @@ fn manual_trigger_resolves_source_and_materializes_the_complete_dag() {
     };
     let request = store.one_request();
     assert_eq!(disposition, ApplicationDisposition::Applied);
-    assert_eq!(request.build.immutable_revision.as_str(), "0123456789abcdef");
+    assert_eq!(
+      request.build.immutable_revision.as_ref().unwrap().as_str(),
+      "0123456789abcdef"
+    );
     assert_eq!(request.attempt_number.get(), 1);
     assert_eq!(request.jobs.len(), 2);
     assert_eq!(ready_job_ids.len(), 1);
@@ -235,7 +238,7 @@ mod command;
 fn invalid_source_is_rejected_before_vcs_or_store_side_effects() {
   run(async {
     let mut fixture = fixture();
-    fixture.command.source = ManualSourceSelection::Reference(SourceReference::new("refs/heads/other").unwrap());
+    fixture.command.source = ManualSourceSelection::Reference(SourceReference::new("refs/heads/other").unwrap()).into();
     let store = Arc::new(RecordingStore::default());
     let resolver = Arc::new(RecordingResolver::succeed("unused"));
     let service = ManualTriggerService::new(
@@ -556,7 +559,7 @@ fn fixture() -> Fixture {
         configuration_version: context.configuration.version,
       },
       deduplication_identity: TriggerIdentity::new("manual:request-1").unwrap(),
-      source: ManualSourceSelection::DefaultReference,
+      source: ManualSourceSelection::DefaultReference.into(),
       parameters: BTreeMap::from([("required".to_owned(), json!("caller"))]),
       priority: 10,
       observed_at: time(100),
@@ -569,7 +572,122 @@ fn fixture() -> Fixture {
 const DIGEST: &str = "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef";
 
 #[test]
+fn ordinary_source_free_manual_build_materializes_without_vcs_or_factory_causality() {
+  run(async {
+    let mut fixture = fixture();
+    let (technical, _, _, _) = factory_materialization_fixture();
+    fixture.context = technical.context;
+    fixture.context.repository = None;
+    let definition = &mut fixture.context.configuration.definition;
+    definition.repository_id = None;
+    definition.repository_version = None;
+    definition.source = Some(BuildSourceMode::SourceFreeV1);
+    definition.parameters.parameters.clear();
+    definition.secrets_profile = None;
+    fixture.command.source = BuildSourceMode::SourceFreeV1.into();
+    fixture.command.parameters.clear();
+    let mut canonical = managed_fixture::canonical_v3_spec();
+    canonical.execution.credential_profile = None;
+    canonical.permissions.secret_profiles.clear();
+    canonical.permissions.resources.elapsed_millis = 1_000;
+    canonical
+      .permissions
+      .mounts
+      .retain(|mount| mount.root != "/workspace/source");
+    fixture.context.job_spec_toolchain.octa = canonical.octa.clone();
+    let program = json!({
+      "execution": canonical.execution,
+      "protected_inputs": canonical.protected_inputs,
+      "permissions": canonical.permissions,
+      "required_enforcement": canonical.required_enforcement,
+    });
+    let nodes = fixture
+      .context
+      .pipeline
+      .dag
+      .nodes()
+      .iter()
+      .map(|node| {
+        octacity_server_pipeline::PipelineNode::new(
+          node.id().clone(),
+          node.name().clone(),
+          node.dependency_policy(),
+          vec![],
+          program.clone(),
+        )
+        .unwrap()
+      })
+      .collect();
+    fixture.context.pipeline.dag = PublishablePipelineDag::new(
+      nodes,
+      fixture.context.pipeline.dag.edges().to_vec(),
+      &CapabilityCatalog::new([]),
+    )
+    .unwrap()
+    .into_dag();
+    let store = Arc::new(RecordingStore::default());
+    let resolver = Arc::new(RecordingResolver::succeed("must-not-be-resolved"));
+    let service = ManualTriggerService::new(
+      store.clone(),
+      Arc::new(StaticContext(fixture.context)),
+      resolver.clone(),
+    );
+    let result = service
+      .accept_management(fixture.command, time(200), management_audit())
+      .await;
+    assert!(result.is_ok(), "ordinary source-free acceptance: {result:?}");
+    assert!(resolver.requests.lock().unwrap().is_empty());
+    let request = store.one_request();
+    request.validate().unwrap();
+    assert!(request.build.repository_id.is_none());
+    assert!(request.build.repository_version.is_none());
+    assert!(request.build.immutable_revision.is_none());
+    assert_eq!(request.build.source, Some(BuildSourceMode::SourceFreeV1));
+    assert_eq!(
+      request.build.input_snapshot["source"],
+      json!({"kind": "source_free_v1"})
+    );
+    assert_eq!(request.jobs.len(), 2);
+    for job in request.jobs {
+      assert!(job.job_spec_template.source_revision().is_none());
+      assert!(job.job_spec_template.managed_intent().unwrap().factory().is_none());
+      assert_eq!(job.job_spec_template.placement_policy().minimum_execution_contract, 4);
+    }
+  });
+}
+
+#[test]
+fn ordinary_manual_build_intent_retains_explicit_source_absence_without_factory_causality() {
+  let original = fixture().command;
+  let mut wire = serde_json::to_value(&original).unwrap();
+  assert_eq!(wire["source"], json!({"kind":"default_reference"}));
+  wire["source"] = json!({"kind":"source_free_v1"});
+  let decoded = serde_json::from_value::<ManualTriggerCommand>(wire.clone());
+  assert!(
+    decoded.is_ok(),
+    "ordinary Build intent has an explicit source-free form: {decoded:?}"
+  );
+  let decoded = decoded.unwrap();
+  assert_eq!(decoded.trigger, original.trigger);
+  assert_eq!(decoded.target, original.target);
+  assert_eq!(decoded.deduplication_identity, original.deduplication_identity);
+  assert_eq!(serde_json::to_value(decoded).unwrap(), wire);
+  assert!(wire.get("factory").is_none());
+  wire["source"]["revision"] = json!("invented");
+  assert!(serde_json::from_value::<ManualTriggerCommand>(wire).is_err());
+}
+
+#[test]
 fn build_context_loads_exact_versions_without_a_trigger_and_rejects_another_project() {
+  build_context_case(false);
+}
+
+#[test]
+fn source_free_build_context_loads_without_a_repository_or_trigger() {
+  build_context_case(true);
+}
+
+fn build_context_case(source_free: bool) {
   run(async {
     use octacity_server_application::{
       EffectiveProjectPolicySource, EffectiveProjectPolicySourceError, StoreBackedBuildExecutionContext,
@@ -588,7 +706,13 @@ fn build_context_loads_exact_versions_without_a_trigger_and_rejects_another_proj
         Ok(self.0.clone())
       }
     }
-    let expected = fixture().context;
+    let mut expected = fixture().context;
+    if source_free {
+      expected.configuration.definition.repository_id = None;
+      expected.configuration.definition.repository_version = None;
+      expected.configuration.definition.source = Some(octacity_server_domain::BuildSourceMode::SourceFreeV1);
+      expected.repository = None;
+    }
     let configurations = Arc::new(InMemoryConfigurationStore::new());
     let pipelines = Arc::new(InMemoryPipelineStore::new());
     let project = expected.configuration.project_id;
@@ -616,17 +740,20 @@ fn build_context_loads_exact_versions_without_a_trigger_and_rejects_another_proj
       }))
       .await
       .unwrap();
-    configurations
-      .create_repository(management_mutation(CreateRepository {
-        id: expected.repository.id,
-        project_id: project,
-        name: expected.repository.name.clone(),
-        definition: expected.repository.definition.clone(),
-        idempotency_key: IdempotencyKey::new("build-context-repository").unwrap(),
-        published_at: expected.repository.published_at,
-      }))
-      .await
-      .unwrap();
+    if !source_free {
+      let repository = expected.repository.as_ref().unwrap();
+      configurations
+        .create_repository(management_mutation(CreateRepository {
+          id: repository.id,
+          project_id: project,
+          name: repository.name.clone(),
+          definition: repository.definition.clone(),
+          idempotency_key: IdempotencyKey::new("build-context-repository").unwrap(),
+          published_at: repository.published_at,
+        }))
+        .await
+        .unwrap();
+    }
     configurations
       .create_build_configuration(management_mutation(CreateBuildConfiguration {
         id: expected.configuration.id,
@@ -648,6 +775,9 @@ fn build_context_loads_exact_versions_without_a_trigger_and_rejects_another_proj
       .load(project, expected.configuration.id, expected.configuration.version)
       .await
       .unwrap();
+    assert_eq!(actual.configuration, expected.configuration);
+    assert_eq!(actual.pipeline, expected.pipeline);
+    assert_eq!(actual.effective_policy, expected.effective_policy);
     assert_eq!(actual, expected);
     assert!(
       loader
@@ -684,6 +814,17 @@ use factory_node_test_support::fixtures as flow_fixture;
 mod managed_fixture;
 
 fn factory_materialization_fixture() -> (
+  octacity_server_application::FactoryManagedBuildInput,
+  factory::AdmittedFlow,
+  factory::WorkEnvelope,
+  factory::FlowBuildBinding,
+) {
+  factory_materialization_fixture_for_source(false)
+}
+
+fn factory_materialization_fixture_for_source(
+  source_free: bool,
+) -> (
   octacity_server_application::FactoryManagedBuildInput,
   factory::AdmittedFlow,
   factory::WorkEnvelope,
@@ -742,7 +883,7 @@ fn factory_materialization_fixture() -> (
   let previous = flow_fixture::work();
   let subject = ExactSubject::new(
     context.configuration.project_id,
-    context.repository.id,
+    context.repository.as_ref().unwrap().id,
     ImmutableRevision::new("base").unwrap(),
   );
   let work = WorkEnvelope::new(
@@ -754,13 +895,27 @@ fn factory_materialization_fixture() -> (
       FactoryDigest::from_bytes([3; 32]),
     ),
     previous.external_identity().clone(),
-    subject,
+    if source_free {
+      WorkSubject::project_input(subject.project_id(), previous.artifacts()).unwrap()
+    } else {
+      subject.into()
+    },
     previous.artifacts().clone(),
     WorkClassification::new(previous.priority(), previous.risk(), previous.metadata().clone()),
   )
   .unwrap();
   let mut grants = serde_json::to_value(managed_fixture::permissions(false)).unwrap();
   grants["resources"]["elapsed_millis"] = json!(1000);
+  if source_free {
+    grants["mounts"]
+      .as_array_mut()
+      .unwrap()
+      .retain(|mount| mount["root"] != "/workspace/source");
+    context.repository = None;
+    context.configuration.definition.repository_id = None;
+    context.configuration.definition.repository_version = None;
+    context.configuration.definition.source = Some(BuildSourceMode::SourceFreeV1);
+  }
   let grants: FactoryPermissionSet = serde_json::from_value(grants).unwrap();
   let mut binding = flow_fixture::binding(work.subject().project_id());
   binding.tool = managed_fixture::reference("codex-cli", "0.116.0");
@@ -771,13 +926,22 @@ fn factory_materialization_fixture() -> (
     context.configuration.project_id,
     FactoryDigest::from_bytes([62; 32]),
   );
-  let (_, admitted, _, input, attempt) = flow_fixture::execution_fixture_with_permissions(
-    FlowNodeKind::BuildCommand,
-    work.clone(),
-    binding.clone(),
-    None,
-    grants.clone(),
-  );
+  let (_, admitted, _, input, attempt) = if source_free {
+    flow_fixture::execution_fixture_without_code(
+      FlowNodeKind::BuildCommand,
+      work.clone(),
+      binding.clone(),
+      grants.clone(),
+    )
+  } else {
+    flow_fixture::execution_fixture_with_permissions(
+      FlowNodeKind::BuildCommand,
+      work.clone(),
+      binding.clone(),
+      None,
+      grants.clone(),
+    )
+  };
   let ownership = FactoryClaimOwnership::new(
     flow_fixture::key("worker"),
     FactoryClaim::new(
@@ -840,12 +1004,86 @@ fn factory_materialization_fixture() -> (
 }
 
 #[test]
+fn no_code_flow_step_dispatches_through_the_common_ordinary_build_adapter() {
+  run(async {
+    let (request, admitted, _, _) = factory_materialization_fixture_for_source(true);
+    let intent = &request.intent;
+    let node = admitted
+      .closure()
+      .definition(intent.input().definition())
+      .unwrap()
+      .node(intent.input().node())
+      .unwrap();
+    let schema = admitted.data_schema(node.outcomes()[0].schema()).unwrap();
+    let mut peer = factory_node_test_support::Builds::new();
+    peer.acceptance.effective_policy_digest = intent.permissions().digest();
+    let builds = Arc::new(peer);
+    let adapter = FactoryNodeBuildAdapter::new(builds.clone(), Arc::new(factory_node_test_support::Outputs(None)));
+    let step = adapter
+      .observe_or_dispatch(intent, &admitted, schema, request.ownership.clone(), time(30))
+      .await;
+    assert!(
+      step.is_ok(),
+      "explicit no-code input must reach the ordinary Build owner: {step:?}"
+    );
+    assert!(matches!(step.unwrap(), FactoryNodeBuildStep::Waiting(_)));
+    {
+      let recorded = builds.requests.lock().unwrap();
+      assert_eq!(recorded.len(), 1);
+      assert_eq!(recorded[0].causality.input_digest, intent.input().digest().unwrap());
+      assert_eq!(
+        recorded[0].causality.context.subject(),
+        &intent.input().task_subject().unwrap()
+      );
+      assert_eq!(recorded[0].subject, intent.input().task_subject().unwrap());
+    }
+    let observed = adapter
+      .observe_or_dispatch(intent, &admitted, schema, request.ownership.clone(), time(31))
+      .await;
+    assert!(
+      observed.is_ok(),
+      "ordinary Build reads must preserve source absence: {observed:?}"
+    );
+  });
+}
+
+#[test]
+fn no_code_flow_step_materializes_a_source_free_build_without_inheriting_work_code() {
+  let (request, _, work, _) = factory_materialization_fixture_for_source(true);
+  assert!(work.subject().repository().is_err());
+  assert!(matches!(
+    request.intent.input().code(),
+    Some(factory::FlowNodeCode::None)
+  ));
+  let expected_digest = request.intent.input().digest().unwrap();
+  let result = materialize_factory_managed_build(request);
+  assert!(
+    result.is_ok(),
+    "no-code Flow step must use ordinary source-free execution: {result:?}"
+  );
+  let accepted = result.unwrap();
+  accepted.validate().unwrap();
+  assert_eq!(accepted.build.source, Some(BuildSourceMode::SourceFreeV1));
+  assert!(accepted.build.repository_id.is_none());
+  assert!(accepted.build.immutable_revision.is_none());
+  for job in accepted.jobs {
+    let template = job.job_spec_template;
+    assert!(template.source_revision().is_none());
+    assert_eq!(template.placement_policy().minimum_execution_contract, 4);
+    assert_eq!(
+      template.managed_intent().unwrap().factory().unwrap().input_digest,
+      expected_digest.to_string()
+    );
+  }
+}
+
+#[test]
 fn factory_materialization_rejects_candidate_context_without_verified_materialization() {
   use factory::*;
   use octacity_server_application::materialize_factory_managed_build;
   let (mut request, admitted, work, _) = factory_materialization_fixture();
   let candidate = FactoryTaskSubject::Candidate(CandidateSubject::new(
-    work.subject().clone(),
+    work.subject().repository().unwrap().clone(),
     ImmutableRevision::new("selected-candidate").unwrap(),
     FactoryDigest::from_bytes([91; 32]),
   ));
@@ -911,7 +1149,7 @@ fn factory_materialization_compiles_the_published_dag_without_trigger_causality(
   assert_eq!(child.dependencies, [root.id]);
   assert_eq!(root.allowed_pools, [fixture().shared_pool]);
   assert_eq!(first.build.priority, 17);
-  assert_eq!(first.build.immutable_revision.as_str(), "base");
+  assert_eq!(first.build.immutable_revision.as_ref().unwrap().as_str(), "base");
   assert_eq!(
     first.build.input_snapshot["parameters"]["required"],
     json!("factory caller")
@@ -923,6 +1161,7 @@ fn factory_materialization_compiles_the_published_dag_without_trigger_causality(
       .managed_intent()
       .unwrap()
       .factory()
+      .unwrap()
       .node_attempt_id,
     intent.node().id().to_string()
   );
@@ -1193,7 +1432,7 @@ fn installed_codex_materializer_publishes_selected_context_and_prepares_an_ordin
     let candidate_context = ContextManifest::new(
       ContextManifestId::generate(),
       FactoryTaskSubject::Candidate(CandidateSubject::new(
-        intent.input().subject().clone(),
+        intent.input().exact_resource().unwrap().clone(),
         ImmutableRevision::new("unmaterialized-candidate").unwrap(),
         FactoryDigest::from_bytes([91; 32]),
       )),
@@ -1560,7 +1799,7 @@ fn factory_candidate_materialization_fixture() -> (
   };
   let (mut request, admitted, work, _) = factory_materialization_fixture();
   let candidate_subject = CandidateSubject::new(
-    work.subject().clone(),
+    work.subject().repository().unwrap().clone(),
     ImmutableRevision::new("0123456789abcdef0123456789abcdef0123456789").unwrap(),
     FactoryDigest::from_bytes([91; 32]),
   );
@@ -1689,12 +1928,12 @@ fn factory_materialization_signs_only_explicit_retained_candidate_inputs() {
     request,
     materialize_factory_managed_build_with_source(input.clone(), plan.clone()).unwrap()
   );
-  assert_eq!(request.build.immutable_revision.as_str(), "base");
+  assert_eq!(request.build.immutable_revision.as_ref().unwrap().as_str(), "base");
   assert_eq!(request.jobs.len(), 2);
   for job in &request.jobs {
-    assert_eq!(job.job_spec_template.source_revision().as_str(), "base");
+    assert_eq!(job.job_spec_template.source_revision().unwrap().as_str(), "base");
     let managed = job.job_spec_template.managed_intent().unwrap();
-    let materialization = managed.factory().change_set_materialization.as_ref().unwrap();
+    let materialization = managed.factory().unwrap().change_set_materialization.as_ref().unwrap();
     assert_eq!(
       materialization.candidate_revision,
       candidate.subject().candidate_revision().as_str()
@@ -1704,8 +1943,8 @@ fn factory_materialization_signs_only_explicit_retained_candidate_inputs() {
       materialization.manifest_input,
       manifest.identity().artifact_id.to_string()
     );
-    assert!(managed.factory().change_set_capture.is_none());
-    assert!(managed.factory().source_write_paths.is_none());
+    assert!(managed.factory().unwrap().change_set_capture.is_none());
+    assert!(managed.factory().unwrap().source_write_paths.is_none());
     let compiler = &input.programs[job.job_spec_template.pipeline_node_id()].protected_inputs;
     assert_eq!(managed.protected_inputs().inputs.len(), compiler.inputs.len() + 2);
     for original in &compiler.inputs {
@@ -1806,12 +2045,12 @@ fn factory_materialization_signs_capture_only_inside_the_frozen_profile_scope() 
   materialized.validate_fresh().unwrap();
   for job in &materialized.jobs {
     let managed = job.job_spec_template.managed_intent().unwrap();
-    assert_eq!(managed.factory().change_set_capture.as_ref(), Some(&capture));
+    assert_eq!(managed.factory().unwrap().change_set_capture.as_ref(), Some(&capture));
     assert_eq!(
-      managed.factory().source_write_paths.as_ref().unwrap(),
+      managed.factory().unwrap().source_write_paths.as_ref().unwrap(),
       &["specifications/approved"]
     );
-    assert!(managed.factory().change_set_materialization.is_none());
+    assert!(managed.factory().unwrap().change_set_materialization.is_none());
     assert_eq!(
       managed.protected_inputs(),
       &request.programs[job.job_spec_template.pipeline_node_id()].protected_inputs
@@ -2051,9 +2290,9 @@ fn installed_readonly_codex_materializer_uses_verified_candidate_source_without_
     assert_eq!(accepted.intent, fixture.intent);
     assert_eq!(accepted.jobs.len(), 1);
     let spec = &accepted.jobs[0].job_spec_template;
-    assert_eq!(spec.source_revision().as_str(), "base");
+    assert_eq!(spec.source_revision().unwrap().as_str(), "base");
     let managed = spec.managed_intent().unwrap();
-    let factory = managed.factory();
+    let factory = managed.factory().unwrap();
     let candidate = factory.change_set_materialization.as_ref().unwrap();
     assert_eq!(
       candidate.candidate_revision,

@@ -1203,7 +1203,7 @@ fn publication_schema() -> FlowDataSchema {
 }
 fn attach_candidate(h: &mut Harness) -> CandidateSubject {
   let candidate = CandidateSubject::new(
-    h.input.subject().clone(),
+    h.input.exact_resource().unwrap().clone(),
     octacity_server_domain::ImmutableRevision::new("reviewed-candidate").unwrap(),
     FactoryDigest::from_bytes([77; 32]),
   );

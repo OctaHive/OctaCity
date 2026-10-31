@@ -160,9 +160,15 @@ function BuildHeading({
         />
         <Definition
           label={t('diagnostics.repository')}
-          value={`${build.repository_id} v${build.repository_version}`}
+          value={
+            build.repository_id == null
+              ? t('manualBuild.sourceFree')
+              : `${build.repository_id} v${build.repository_version}`
+          }
         />
-        <Definition label={t('diagnostics.revision')} value={build.immutable_revision} />
+        {build.immutable_revision == null ? null : (
+          <Definition label={t('diagnostics.revision')} value={build.immutable_revision} />
+        )}
       </dl>
       {command === null ? null : command.kind === 'cancel' ? (
         <ConfirmedCommand

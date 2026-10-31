@@ -91,7 +91,7 @@ where
               trigger: matched.trigger,
               target: matched.target,
               deduplication_identity,
-              source: downstream_source(definition.source, &claim.source_revision),
+              source: downstream_source(definition.source, &claim.source_revision).into(),
               parameters: definition.parameters,
               priority: definition.priority,
               observed_at: claim.occurred_at,

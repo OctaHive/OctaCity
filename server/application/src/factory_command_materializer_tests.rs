@@ -112,9 +112,9 @@ pub(crate) fn managed_context(
 ) -> BuildExecutionContext {
   let (mut context, _) = ordinary_context::context();
   let project = intent.input().subject().project_id();
-  let repository = intent.input().subject().repository_id();
-  context.repository.id = repository;
-  context.repository.project_id = project;
+  let repository = intent.input().exact_resource().unwrap().repository_id();
+  context.repository.as_mut().unwrap().id = repository;
+  context.repository.as_mut().unwrap().project_id = project;
   context.pipeline.project_id = project;
   let node = PipelineNode::new(
     pipeline_node.clone(),
@@ -132,7 +132,7 @@ pub(crate) fn managed_context(
   context.configuration.project_id = project;
   let canonical = crate::factory_job_test_support::canonical_v3_spec();
   let definition = &mut context.configuration.definition;
-  definition.repository_id = repository;
+  definition.repository_id = Some(repository);
   definition.pipeline_id = context.pipeline.id;
   definition.pipeline_version = context.pipeline.version;
   definition.parameters = ParameterSchema {
@@ -248,8 +248,8 @@ fn validation_materializer_publishes_the_invocation_contract_and_signs_every_ori
         1
       );
     }
-    assert!(managed.factory().change_set_materialization.is_some());
-    assert!(managed.factory().change_set_capture.is_none());
+    assert!(managed.factory().unwrap().change_set_materialization.is_some());
+    assert!(managed.factory().unwrap().change_set_capture.is_none());
     assert!(managed.permissions().secret_profiles.is_empty());
   });
 }

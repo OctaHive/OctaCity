@@ -217,7 +217,7 @@ pub struct FactoryWorkProjection {
   /// Scoped public Work identity.
   pub external_identity: octacity_server_factory::ExternalWorkIdentity,
   /// Exact Project, Repository and admitted base.
-  pub subject: octacity_server_factory::ExactSubject,
+  pub subject: octacity_server_factory::WorkSubject,
   /// Bounded admitted priority.
   pub priority: octacity_server_factory::WorkPriority,
   /// Admitted risk classification.
@@ -667,7 +667,7 @@ mod tests {
       use octacity_server_store::testing::*;
       let mut fixture = factory_node_journal_contract_fixture();
       fixture.discovery = Some(serde_json::from_value(serde_json::json!({"kind":"decision",
-        "subject":octacity_server_factory::CandidateSubject::new(fixture.admission.work.subject().clone(),
+        "subject":octacity_server_factory::CandidateSubject::new(fixture.admission.work.subject().repository().unwrap().clone(),
           octacity_server_domain::ImmutableRevision::new("verified-candidate").unwrap(), octacity_server_factory::FactoryDigest::from_bytes([91;32])),
         "id":"88888888-8888-4888-8888-888888888888", "outcome":"accept"})).unwrap());
       let store = Arc::new(InMemoryFactoryConfigurationStore::new());

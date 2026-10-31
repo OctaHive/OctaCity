@@ -377,13 +377,25 @@ where
   }
   let repository = store
     .repository_version(
-      downstream.definition.repository_id,
-      downstream.definition.repository_version,
+      downstream
+        .definition
+        .repository_id
+        .ok_or_else(ApplicationError::invalid)?,
+      downstream
+        .definition
+        .repository_version
+        .ok_or_else(ApplicationError::invalid)?,
     )
     .await?;
   let source_is_valid = source_strategy_is_valid(
-    upstream.definition.repository_id,
-    downstream.definition.repository_id,
+    upstream
+      .definition
+      .repository_id
+      .ok_or_else(ApplicationError::invalid)?,
+    downstream
+      .definition
+      .repository_id
+      .ok_or_else(ApplicationError::invalid)?,
     &repository.definition.selection,
     &definition.source,
   );

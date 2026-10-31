@@ -79,7 +79,7 @@ async fn default_native_profiles_create_one_ordinary_build_and_recover_its_prote
   assert!(matches!(ordinary.origin, BuildOrigin::Factory(_)));
   assert_eq!(
     ordinary.build.immutable_revision,
-    admission.work.subject().base_revision().clone()
+    Some(admission.work.subject().repository().unwrap().base_revision().clone())
   );
   let job = store.job(accepted.job_ids[0]).await.unwrap();
   assert_eq!(job.job.pipeline_node_id, profile.pipeline_node);

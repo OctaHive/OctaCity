@@ -442,6 +442,12 @@ pub(super) fn insert_trigger_schemas(schemas: &mut Map<String, Value>) {
     }),
   );
   schemas.insert(
+    "BuildSourceSelection".to_owned(),
+    json!({"oneOf": [
+      schema_ref("ManualSource"), schema_ref("BuildSourceMode")
+    ]}),
+  );
+  schemas.insert(
     "AcceptManualTriggerRequest".to_owned(),
     object(
       [
@@ -450,7 +456,7 @@ pub(super) fn insert_trigger_schemas(schemas: &mut Map<String, Value>) {
         ("configuration_id", non_empty_string()),
         ("configuration_version", positive_integer()),
         ("deduplication_identity", non_empty_string()),
-        ("source", schema_ref("ManualSource")),
+        ("source", schema_ref("BuildSourceSelection")),
         (
           "parameters",
           json!({

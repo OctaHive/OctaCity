@@ -134,8 +134,9 @@ impl Fixture {
         project_id: project,
         configuration_id: configuration,
         configuration_version: FactoryConfigurationVersion::INITIAL,
-        repository_id,
-        repository_version: RepositoryVersion::INITIAL,
+        repository_id: Some(repository_id),
+
+        repository_version: Some(RepositoryVersion::INITIAL),
       })
       .await
       .unwrap();
@@ -153,7 +154,7 @@ impl Fixture {
             id: repository_id,
             version: RepositoryVersion::INITIAL,
             definition_digest: FactoryDigest::content_sha256(
-              &serde_json::to_vec(&selected.repository.definition).unwrap(),
+              &serde_json::to_vec(&selected.repository.as_ref().unwrap().definition).unwrap(),
             ),
           },
           source: capability.binding.clone(),
@@ -1159,8 +1160,9 @@ fn source_input_cannot_enable_a_pipeline_requiring_an_issue_association_it_canno
         project_id: project,
         configuration_id: input.target.id(),
         configuration_version: input.target.version(),
-        repository_id: input.repository.id,
-        repository_version: input.repository.version,
+        repository_id: Some(input.repository.id),
+
+        repository_version: Some(input.repository.version),
       })
       .await
       .unwrap();

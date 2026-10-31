@@ -45,6 +45,8 @@ pub(super) fn ordinary_draft(
 ) -> FactoryFlowDefinitionDraft {
   FactoryFlowDefinitionDraft {
     root: FactoryFlowRootDraft {
+      code_sources: root.code_sources().cloned(),
+      process: root.process().cloned(),
       input_schema: root.input_schema().cloned(),
       entry: root.entry().clone(),
       nodes: root.nodes().to_vec(),

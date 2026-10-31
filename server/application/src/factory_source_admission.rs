@@ -157,8 +157,8 @@ impl<S: FactoryAdmissionStore + 'static> FactorySourceAdmissionHandlers<S> {
     if command.intent.project_id != authorized.input.project_id()
       || command.intent.configuration_id != definition.target.id()
       || command.intent.configuration_version != definition.target.version()
-      || command.intent.repository_id != definition.repository.id
-      || command.intent.repository_version != definition.repository.version
+      || command.intent.repository_id != Some(definition.repository.id)
+      || command.intent.repository_version != Some(definition.repository.version)
     {
       return Err(ApplicationError::invalid());
     }

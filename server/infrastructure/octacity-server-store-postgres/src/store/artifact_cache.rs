@@ -89,6 +89,15 @@ impl ArtifactRecordStore for PostgresStore {
     PublishedExecutionInput::from_artifact(&upload)
   }
 
+  async fn published_execution_input_for_job(
+    &self,
+    job_id: octacity_server_domain::JobId,
+    artifact_id: octacity_server_domain::ArtifactId,
+  ) -> Result<PublishedExecutionInput, StoreError> {
+    crate::artifact_execution_input_scope::require_for_job(&self.pool, job_id, artifact_id).await?;
+    self.published_execution_input(artifact_id).await
+  }
+
   async fn list_published_artifacts(
     &self,
     query: ListPublishedArtifacts,

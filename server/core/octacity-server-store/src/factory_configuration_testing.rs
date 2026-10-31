@@ -513,12 +513,18 @@ impl FactoryAdmissionStore for InMemoryFactoryConfigurationStore {
       .filter(|published| published.configuration.reference().project_id() == request.project_id)
       .cloned()
       .ok_or_else(|| not_found(EntityKind::FactoryConfiguration))?;
-    let repository = state
-      .repositories
-      .get(&(request.repository_id, request.repository_version))
-      .filter(|published| published.project_id == request.project_id)
-      .cloned()
-      .ok_or_else(|| not_found(EntityKind::Repository))?;
+    let repository = match (request.repository_id, request.repository_version) {
+      (Some(id), Some(version)) => Some(
+        state
+          .repositories
+          .get(&(id, version))
+          .filter(|published| published.project_id == request.project_id)
+          .cloned()
+          .ok_or_else(|| not_found(EntityKind::Repository))?,
+      ),
+      (None, None) => None,
+      _ => return Err(conflict()),
+    };
     Ok(FactoryAdmissionContext {
       configuration,
       repository,
@@ -866,13 +872,17 @@ pub(super) fn admit_factory_work_locked(
       request.work.configuration().version(),
     ))
     .ok_or_else(|| not_found(EntityKind::FactoryConfiguration))?;
-  let repository = state
-    .repositories
-    .get(&(request.work.subject().repository_id(), request.repository_version))
-    .ok_or_else(|| not_found(EntityKind::Repository))?;
+  if let (Ok(subject), Some(version)) = (request.work.subject().repository(), request.repository_version) {
+    let repository = state
+      .repositories
+      .get(&(subject.repository_id(), version))
+      .ok_or_else(|| not_found(EntityKind::Repository))?;
+    if repository.project_id != request.work.subject().project_id() {
+      return Err(conflict());
+    }
+  }
   if !configuration.configuration.is_enabled()
     || configuration.configuration.reference() != request.work.configuration()
-    || repository.project_id != request.work.subject().project_id()
   {
     return Err(StoreError::invalid(
       StoreOperation::AdmitFactoryWork,

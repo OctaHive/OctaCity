@@ -25,7 +25,7 @@ impl EvidenceFixture {
           prompt_digest: codex_prompt_provenance_digest(
             std::str::from_utf8(self.compiled.document(FactoryProtectedDocumentKind::Prompt).bytes()).unwrap(),
           ),
-          source_revision: task.subject().exact().base_revision().as_str(),
+          source_revision: Some(task.subject().exact().unwrap().base_revision().as_str()),
         },
         maximum_bytes: 16 * 1024 * 1024,
         execution_window: Timestamp::from_unix_millis(1000).unwrap()..=Timestamp::from_unix_millis(1010).unwrap(),
@@ -105,7 +105,7 @@ fn fixture_with_tools(result_text: &str, enabled_tools: Vec<String>) -> Evidence
   let mut native = native_capture_fixture(result_text);
   let mut provenance: Value = serde_json::from_slice(&native.documents[2].bytes).unwrap();
   provenance["settings"]["model"] = json!(role.package().inputs().task.model().identity());
-  provenance["source_revision"] = json!(role.package().inputs().task.subject().exact().base_revision());
+  provenance["source_revision"] = json!(role.package().inputs().task.subject().exact().unwrap().base_revision());
   provenance["prompt_digest"]["value"] = json!(codex_prompt_provenance_digest(
     std::str::from_utf8(compiled.document(FactoryProtectedDocumentKind::Prompt).bytes()).unwrap()
   ));

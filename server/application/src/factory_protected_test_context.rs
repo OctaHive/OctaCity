@@ -128,7 +128,9 @@ impl<
       return Err(invalid());
     }
     let plan = self.plans.frozen_plan(intent).await?;
-    if plan.subject().exact() != input.subject() || required_until > plan.retain_until() {
+    if plan.subject().exact().map_err(|_| invalid())? != input.exact_resource().map_err(|_| invalid())?
+      || required_until > plan.retain_until()
+    {
       return Err(invalid());
     }
     let read = |artifact: FactoryArtifactReference| ReadFactoryArtifact {

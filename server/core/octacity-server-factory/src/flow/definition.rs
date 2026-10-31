@@ -83,6 +83,10 @@ pub struct FlowNodeDefinition {
   required: bool,
   subflow: Option<FlowDefinitionRef>,
   #[serde(default, skip_serializing_if = "Option::is_none")]
+  task: Option<crate::FactoryInstructions>,
+  #[serde(default, skip_serializing_if = "Option::is_none")]
+  code: Option<super::FlowCodeBinding>,
+  #[serde(default, skip_serializing_if = "Option::is_none")]
   action: Option<crate::FlowActionBinding>,
   #[serde(default, skip_serializing_if = "Option::is_none")]
   phase_pool: Option<FactoryKey>,
@@ -116,6 +120,10 @@ struct FlowNodeDefinitionWire {
   required: bool,
   subflow: Option<FlowDefinitionRef>,
   #[serde(default, skip_serializing_if = "Option::is_none")]
+  task: Option<crate::FactoryInstructions>,
+  #[serde(default, skip_serializing_if = "Option::is_none")]
+  code: Option<super::FlowCodeBinding>,
+  #[serde(default, skip_serializing_if = "Option::is_none")]
   action: Option<crate::FlowActionBinding>,
   #[serde(default, skip_serializing_if = "Option::is_none")]
   phase_pool: Option<FactoryKey>,
@@ -148,6 +156,14 @@ impl<'de> Deserialize<'de> for FlowNodeDefinition {
 
 impl FlowNodeDefinition {
   fn validate_declaration(&self) -> Result<(), FactoryError> {
+    if let Some(task) = &self.task {
+      task.validate()?;
+      if self.kind != FlowNodeKind::Reasoning || task.entries().is_empty() {
+        return Err(FactoryError::InvalidConfiguration {
+          field: "Flow step task",
+        });
+      }
+    }
     if let Some(binding) = &self.profile_selection {
       binding.validate_node(self)?;
     }
@@ -178,6 +194,8 @@ impl FlowNodeDefinition {
       permissions: input.permissions,
       required: input.required,
       subflow: input.subflow,
+      task: None,
+      code: None,
       action: None,
       phase_pool: None,
       gate: None,
@@ -193,6 +211,18 @@ impl FlowNodeDefinition {
     Ok(node)
   }
 
+  /// Sets an operator-reviewed assignment, separately from reusable agent settings and Work data.
+  /// Its canonical identity belongs to this immutable Flow version.
+  pub fn with_task(mut self, task: crate::FactoryInstructions) -> Result<Self, FactoryError> {
+    self.task = Some(task);
+    self.validate_declaration()?;
+    Ok(self)
+  }
+  /// Reviewed reasoning assignment; absent on retained legacy nodes.
+  #[must_use]
+  pub const fn task(&self) -> Option<&crate::FactoryInstructions> {
+    self.task.as_ref()
+  }
   /// Permits bounded, explicitly confirmed retries after technical failure.
   /// Each retry owns a new attempt; observing an existing operation is not a retry.
   pub fn with_execution_retries(mut self, maximum: u16) -> Result<Self, FactoryError> {
@@ -307,13 +337,19 @@ impl FlowNodeDefinition {
   }
 
   /// Freezes a closed exact context contract independent of business node names.
-  pub fn with_context_binding(mut self, binding: crate::FlowContextBinding) -> Result<Self, FactoryError> {
-    if self.input_schema.is_none() {
+  pub fn with_context_binding(self, binding: crate::FlowContextBinding) -> Result<Self, FactoryError> {
+    self.with_optional_context_binding(Some(binding))
+  }
+  pub(super) fn with_optional_context_binding(
+    mut self,
+    binding: Option<crate::FlowContextBinding>,
+  ) -> Result<Self, FactoryError> {
+    if binding.is_some() && self.input_schema.is_none() {
       return Err(FactoryError::InvalidConfiguration {
         field: "Flow context binding schema",
       });
     }
-    self.context_binding = Some(binding);
+    self.context_binding = binding;
     self.validate_declaration()?;
     Ok(self)
   }
@@ -363,6 +399,12 @@ impl FlowNodeDefinition {
     }
     self.action = Some(binding);
     Ok(self)
+  }
+
+  /// Returns the reviewed code selection, independently of agent documents and Work identity.
+  #[must_use]
+  pub const fn code(&self) -> Option<&super::FlowCodeBinding> {
+    self.code.as_ref()
   }
 
   /// Returns the exact installed operation for a trusted action or Decision Signal.
@@ -469,6 +511,10 @@ struct FlowDefinitionContent<'a> {
   context_projections: &'a [FlowContextProjection],
   data_projections: &'a [FlowDataProjection],
   execution: &'a FlowExecutionPolicy,
+  #[serde(skip_serializing_if = "Option::is_none")]
+  process: Option<&'a super::FlowProcessInputs>,
+  #[serde(skip_serializing_if = "Option::is_none")]
+  code_sources: Option<&'a super::FlowCodeSources>,
 }
 
 /// Canonically ordered immutable semantics of one Factory Flow version.
@@ -484,6 +530,10 @@ pub struct FlowDefinition {
   context_projections: Vec<FlowContextProjection>,
   data_projections: Vec<FlowDataProjection>,
   execution: FlowExecutionPolicy,
+  #[serde(default, skip_serializing_if = "Option::is_none")]
+  process: Option<super::FlowProcessInputs>,
+  #[serde(default, skip_serializing_if = "Option::is_none")]
+  code_sources: Option<super::FlowCodeSources>,
 }
 
 impl FlowDefinition {
@@ -538,6 +588,8 @@ impl FlowDefinition {
       context_projections: &input.context_projections,
       data_projections: &input.data_projections,
       execution: &input.execution,
+      process: None,
+      code_sources: None,
     };
     let digest = definition_digest(&content)?;
     let definition = Self {
@@ -550,11 +602,51 @@ impl FlowDefinition {
       context_projections: input.context_projections,
       data_projections: input.data_projections,
       execution: input.execution,
+      process: None,
+      code_sources: None,
     };
     if let Some(policy) = definition.execution.verification() {
       policy.validate_definition(&definition)?;
     }
     Ok(definition)
+  }
+
+  /// Freezes explicit available sources; an empty inventory requires reviewed no-code steps.
+  pub fn with_code_sources(mut self, sources: super::FlowCodeSources) -> Result<Self, FactoryError> {
+    super::code::validate(Some(&sources), &self.nodes)?;
+    self.code_sources = Some(sources);
+    self.reference = FlowDefinitionRef::new(
+      self.reference.id(),
+      self.reference.version(),
+      definition_digest(&self.content())?,
+    );
+    self.validate_canonical_form()?;
+    Ok(self)
+  }
+
+  /// Available code declarations, absent only in historical Flow content.
+  #[must_use]
+  pub const fn code_sources(&self) -> Option<&super::FlowCodeSources> {
+    self.code_sources.as_ref()
+  }
+
+  /// Freezes exact process inputs and explicitly selected recipients in this definition's identity.
+  pub fn with_process(mut self, process: super::FlowProcessInputs) -> Result<Self, FactoryError> {
+    self.nodes = process.bind(&self.nodes)?;
+    self.process = Some(process);
+    self.reference = FlowDefinitionRef::new(
+      self.reference.id(),
+      self.reference.version(),
+      definition_digest(&self.content())?,
+    );
+    self.validate_canonical_form()?;
+    Ok(self)
+  }
+
+  /// Returns the reviewed process inputs; no implicit recipient or provider authority is supplied.
+  #[must_use]
+  pub const fn process(&self) -> Option<&super::FlowProcessInputs> {
+    self.process.as_ref()
   }
 
   /// Returns the exact immutable reference.
@@ -610,21 +702,19 @@ impl FlowDefinition {
 
   pub(crate) fn validate_canonical_form(&self) -> Result<(), FactoryError> {
     validate_bindings(&self.nodes)?;
+    super::code::validate(self.code_sources.as_ref(), &self.nodes)?;
+
     if let Some(policy) = self.execution.verification() {
       policy.validate_definition(self)?;
     }
-    let content = FlowDefinitionContent {
-      id: self.reference.id(),
-      version: self.reference.version(),
-      input_schema: &self.input_schema,
-      entry: &self.entry,
-      nodes: &self.nodes,
-      transitions: &self.transitions,
-      terminals: &self.terminals,
-      context_projections: &self.context_projections,
-      data_projections: &self.data_projections,
-      execution: &self.execution,
-    };
+    if let Some(process) = &self.process
+      && process.bind(&self.nodes)? != self.nodes
+    {
+      return Err(FactoryError::InvalidReference {
+        relationship: "Flow process recipients",
+      });
+    }
+    let content = self.content();
     let canonical = self.nodes.windows(2).all(|pair| pair[0].key() < pair[1].key())
       && self.transitions.windows(2).all(|pair| pair[0] < pair[1])
       && self.terminals.windows(2).all(|pair| pair[0].key() < pair[1].key())
@@ -636,6 +726,23 @@ impl FlowDefinition {
       });
     }
     Ok(())
+  }
+
+  fn content(&self) -> FlowDefinitionContent<'_> {
+    FlowDefinitionContent {
+      id: self.reference.id(),
+      version: self.reference.version(),
+      input_schema: &self.input_schema,
+      entry: &self.entry,
+      nodes: &self.nodes,
+      transitions: &self.transitions,
+      terminals: &self.terminals,
+      context_projections: &self.context_projections,
+      data_projections: &self.data_projections,
+      execution: &self.execution,
+      process: self.process.as_ref(),
+      code_sources: self.code_sources.as_ref(),
+    }
   }
 
   pub(crate) fn structural_edges(&self) -> Vec<FactoryFlowEdge> {

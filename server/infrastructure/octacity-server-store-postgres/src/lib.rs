@@ -17,6 +17,7 @@ mod agent_registration;
 mod agent_resources;
 mod agent_row;
 mod artifact;
+mod artifact_execution_input_scope;
 mod attempt_materialization;
 mod audit_query;
 mod build_configuration_mutation;

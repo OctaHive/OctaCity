@@ -78,8 +78,8 @@ mod external_trigger_model;
 mod external_trigger_port;
 mod factory_admission_intent;
 pub use factory_admission_intent::{
-  FactoryWorkAdmissionIntent, RepositorySourceSelection, factory_admission_intent_digest,
-  factory_source_admission_probe,
+  FactoryAdmissionSource, FactoryWorkAdmissionIntent, ProjectInputSource, RepositorySourceSelection,
+  factory_admission_intent_digest, factory_source_admission_probe,
 };
 mod factory_admission_model;
 mod factory_admission_port;
@@ -575,6 +575,62 @@ mod tests {
         StoreOperation::AcceptTrigger,
         StoreInputError::TooManyJobs,
       )),
+    );
+  }
+
+  #[test]
+  fn ordinary_build_acceptance_rejects_job_source_mode_and_revision_substitution() {
+    let free = super::testing::source_free_store_contract_fixture().request;
+    let repository = authoritative_store_contract_fixture().request;
+    free.validate().unwrap();
+    repository.validate().unwrap();
+    let mut free_with_checkout = free.clone();
+    free_with_checkout.jobs = repository.jobs.clone();
+    let mut repository_without_checkout = repository.clone();
+    repository_without_checkout.jobs = free.jobs;
+    let mut changed_revision = repository;
+    changed_revision.build.immutable_revision =
+      Some(octacity_server_domain::ImmutableRevision::new("another-revision").unwrap());
+    for request in [free_with_checkout, repository_without_checkout, changed_revision] {
+      assert!(
+        request.validate().is_err(),
+        "Job source authority must match the retained Build intent"
+      );
+    }
+  }
+
+  #[test]
+  fn immutable_build_input_retains_explicit_source_absence_and_rejects_mixed_vcs_facts() {
+    let mut build = authoritative_store_contract_fixture().request.build;
+    let historical = serde_json::to_value(&build).unwrap();
+    assert!(historical.get("source").is_none());
+    let mut conflicting = build.clone();
+    conflicting.input_snapshot = json!({"parameters": {}, "source": {"kind": "source_free_v1"}});
+    assert!(
+      conflicting.validate().is_err(),
+      "repository facts must agree with retained source intent"
+    );
+    build.repository_id = None;
+    build.repository_version = None;
+    build.immutable_revision = None;
+    build.source = Some(octacity_server_domain::BuildSourceMode::SourceFreeV1);
+    build.input_snapshot = json!({"parameters": {}, "source": {"kind": "source_free_v1"}});
+    build.validate().unwrap();
+    let retained = serde_json::to_value(&build).unwrap();
+    assert_eq!(retained["source"], json!({"kind": "source_free_v1"}));
+    for field in ["repository_id", "repository_version", "immutable_revision"] {
+      assert!(retained.get(field).is_none(), "source-free input must omit {field}");
+    }
+    build.repository_id = Some(super::test_support::id(34));
+    assert!(
+      build.validate().is_err(),
+      "source-free mode must reject a repository identity"
+    );
+    build.repository_id = None;
+    build.source = None;
+    assert!(
+      build.validate().is_err(),
+      "source absence must be explicit and versioned"
     );
   }
 

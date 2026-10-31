@@ -1,23 +1,49 @@
 //! Original normalized intake intent retained before mutable VCS resolution.
 use crate::IdempotencyKey;
-use octacity_server_domain::{
-  ImmutableRevision, ProjectId, RepositoryId, RepositoryVersion, SourceReference, Timestamp,
-};
+pub use octacity_server_domain::RepositorySourceSelection;
+use octacity_server_domain::{ProjectId, RepositoryId, RepositoryVersion, Timestamp};
 use octacity_server_factory::{
   ExternalWorkIdentity, FactoryConfigurationId, FactoryConfigurationVersion, FactoryDigest, WorkArtifacts,
   WorkClassification,
 };
 use serde::{Deserialize, Serialize};
-/// Provider-neutral source expression used by manual and installed-source admission.
+
+/// Work admission source, distinct from ordinary repository/VCS selection.
+/// Repository forms keep their original transport and replay representation.
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
-#[serde(tag = "kind", content = "value", rename_all = "snake_case", deny_unknown_fields)]
-pub enum RepositorySourceSelection {
-  /// Resolve the immutable Repository version's configured default reference.
-  DefaultReference,
-  /// Resolve one explicitly allowed mutable branch or tag.
-  Reference(SourceReference),
-  /// Verify and use an explicitly supplied immutable revision.
-  ExactRevision(ImmutableRevision),
+#[serde(untagged)]
+pub enum FactoryAdmissionSource {
+  /// Existing repository reference or revision selection.
+  Repository(RepositorySourceSelection),
+  /// Explicit versioned Project/input admission without VCS.
+  ProjectInput(ProjectInputSource),
+}
+
+/// Version discriminator for repository-free Work admission.
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(tag = "kind", deny_unknown_fields)]
+pub enum ProjectInputSource {
+  /// Version one has no repository selection fields.
+  #[serde(rename = "project_input_v1")]
+  V1,
+}
+
+impl From<RepositorySourceSelection> for FactoryAdmissionSource {
+  fn from(source: RepositorySourceSelection) -> Self {
+    Self::Repository(source)
+  }
+}
+impl FactoryAdmissionSource {
+  /// Requires a real VCS selection at repository-only preparation boundaries.
+  pub fn repository(&self) -> Result<&RepositorySourceSelection, crate::StoreError> {
+    match self {
+      Self::Repository(source) => Ok(source),
+      Self::ProjectInput(_) => Err(crate::StoreError::invalid(
+        crate::StoreOperation::AdmitFactoryWork,
+        crate::StoreInputError::InvalidFactoryAdmission,
+      )),
+    }
+  }
 }
 
 /// Provider-neutral intent to admit one immutable Work Envelope.
@@ -30,14 +56,16 @@ pub struct FactoryWorkAdmissionIntent {
   pub configuration_id: FactoryConfigurationId,
   /// Exact immutable Factory Configuration version selected for the run.
   pub configuration_version: FactoryConfigurationVersion,
-  /// Exact Repository identity selected as the Work subject.
-  pub repository_id: RepositoryId,
-  /// Exact immutable Repository definition version used for source resolution.
-  pub repository_version: RepositoryVersion,
+  /// Repository identity for repository selection; absent only for Project/input mode.
+  #[serde(default, skip_serializing_if = "Option::is_none")]
+  pub repository_id: Option<RepositoryId>,
+  /// Exact Repository definition version; paired with `repository_id`.
+  #[serde(default, skip_serializing_if = "Option::is_none")]
+  pub repository_version: Option<RepositoryVersion>,
   /// Stable Work Source identity within the accepted management security scope.
   pub external_identity: ExternalWorkIdentity,
-  /// Allowed mutable reference, configured default, or permitted exact revision.
-  pub source: RepositorySourceSelection,
+  /// Versioned Project/input mode or an allowed repository source selection.
+  pub source: FactoryAdmissionSource,
   /// Immutable task, acceptance, and optional specification Artifact references.
   pub artifacts: WorkArtifacts,
   /// Bounded priority, risk, and source metadata.
@@ -54,26 +82,50 @@ pub struct FactoryWorkAdmissionIntent {
   pub admitted_at: Timestamp,
 }
 
+impl FactoryWorkAdmissionIntent {
+  /// Validates the explicit source form before authorization, store or VCS lookup.
+  /// Optional wire fields retain the historical repository encoding unchanged.
+  pub fn validate_source(&self) -> Result<(), crate::StoreError> {
+    let valid = match self.source {
+      FactoryAdmissionSource::ProjectInput(_) => self.repository_id.is_none() && self.repository_version.is_none(),
+      _ => self.repository_id.is_some() && self.repository_version.is_some(),
+    };
+    valid.then_some(()).ok_or_else(|| {
+      crate::StoreError::invalid(
+        crate::StoreOperation::AdmitFactoryWork,
+        crate::StoreInputError::InvalidFactoryAdmission,
+      )
+    })
+  }
+}
+
 /// Hashes the original normalized intent independently of mutable VCS resolution.
 pub fn factory_admission_intent_digest(command: &FactoryWorkAdmissionIntent, domain: &str) -> FactoryDigest {
   let mut fields = vec![
     command.project_id.to_string().into_bytes(),
     command.configuration_id.to_string().into_bytes(),
     command.configuration_version.get().to_string().into_bytes(),
-    command.repository_id.to_string().into_bytes(),
-    command.repository_version.get().to_string().into_bytes(),
-    command.external_identity.as_str().as_bytes().to_vec(),
   ];
+  if let Some(repository) = command.repository_id {
+    fields.push(repository.to_string().into_bytes());
+  }
+  if let Some(version) = command.repository_version {
+    fields.push(version.get().to_string().into_bytes());
+  }
+  fields.push(command.external_identity.as_str().as_bytes().to_vec());
   match &command.source {
-    RepositorySourceSelection::DefaultReference => fields.push(b"default_reference".to_vec()),
-    RepositorySourceSelection::Reference(reference) => {
-      fields.push(b"reference".to_vec());
-      fields.push(reference.as_str().as_bytes().to_vec());
-    }
-    RepositorySourceSelection::ExactRevision(revision) => {
-      fields.push(b"exact_revision".to_vec());
-      fields.push(revision.as_str().as_bytes().to_vec());
-    }
+    FactoryAdmissionSource::ProjectInput(_) => fields.push(b"project_input.v1".to_vec()),
+    FactoryAdmissionSource::Repository(source) => match source {
+      RepositorySourceSelection::DefaultReference => fields.push(b"default_reference".to_vec()),
+      RepositorySourceSelection::Reference(reference) => {
+        fields.push(b"reference".to_vec());
+        fields.push(reference.as_str().as_bytes().to_vec());
+      }
+      RepositorySourceSelection::ExactRevision(revision) => {
+        fields.push(b"exact_revision".to_vec());
+        fields.push(revision.as_str().as_bytes().to_vec());
+      }
+    },
   }
   append_artifact_identity(&mut fields, command.artifacts.task());
   append_artifact_identity(&mut fields, command.artifacts.acceptance());

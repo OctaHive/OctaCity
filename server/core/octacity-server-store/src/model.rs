@@ -1,8 +1,9 @@
 use std::{collections::BTreeSet, fmt, num::NonZeroU64};
 
 use octacity_server_domain::{
-  AttemptId, AttemptNumber, BuildConfigurationId, BuildConfigurationVersion, BuildId, ImmutableRevision, JobId,
-  PipelineId, PipelineNodeId, PipelineVersion, PoolId, ProjectId, RepositoryId, RepositoryVersion, Timestamp,
+  AttemptId, AttemptNumber, BuildConfigurationId, BuildConfigurationVersion, BuildId, BuildSourceMode,
+  ImmutableRevision, JobId, PipelineId, PipelineNodeId, PipelineVersion, PoolId, ProjectId, RepositoryId,
+  RepositoryVersion, Timestamp,
 };
 use octacity_server_job::{JobRequirements, JobSpecTemplate, JobState};
 use octacity_server_orchestrator::{JobGraphNode, validate_job_graph};
@@ -249,11 +250,17 @@ pub struct ImmutableBuildInput {
   /// Immutable Pipeline version.
   pub pipeline_version: PipelineVersion,
   /// Repository referenced by the Build.
-  pub repository_id: RepositoryId,
+  #[serde(skip_serializing_if = "Option::is_none")]
+  pub repository_id: Option<RepositoryId>,
   /// Immutable Repository version.
-  pub repository_version: RepositoryVersion,
+  #[serde(skip_serializing_if = "Option::is_none")]
+  pub repository_version: Option<RepositoryVersion>,
   /// Exact immutable revision selected before acceptance.
-  pub immutable_revision: ImmutableRevision,
+  #[serde(skip_serializing_if = "Option::is_none")]
+  pub immutable_revision: Option<ImmutableRevision>,
+  /// Explicit source absence; omitted for historical repository-backed Builds.
+  #[serde(skip_serializing_if = "Option::is_none")]
+  pub source: Option<BuildSourceMode>,
   /// Validated parameters and initiating input.
   pub input_snapshot: Value,
   /// Effective inherited policy frozen for this Build.
@@ -294,6 +301,18 @@ impl BuildRetentionDeadlines {
 impl ImmutableBuildInput {
   /// Validates immutable source and JSON snapshot shape.
   pub fn validate(&self) -> Result<(), StoreInputError> {
+    match (
+      self.source,
+      self.repository_id,
+      self.repository_version,
+      &self.immutable_revision,
+    ) {
+      (None, Some(_), Some(_), Some(_))
+        if self.input_snapshot.pointer("/source/kind").and_then(Value::as_str) != Some("source_free_v1") => {}
+      (Some(BuildSourceMode::SourceFreeV1), None, None, None)
+        if self.input_snapshot.get("source") == Some(&serde_json::json!({"kind": "source_free_v1"})) => {}
+      _ => return Err(StoreInputError::InvalidBuildSource),
+    }
     require_bounded_json_object(&self.input_snapshot)?;
     require_bounded_json_object(&self.effective_policy_snapshot)?;
     if self.project_job_concurrency_limit == 0 {
@@ -469,6 +488,15 @@ impl AcceptTrigger {
       ));
     }
     validate_materialized_jobs(StoreOperation::AcceptTrigger, self.build.id, &self.jobs)?;
+    if self.jobs.iter().any(|job| {
+      job.job_spec_template.source_mode() != self.build.source
+        || job.job_spec_template.source_revision() != self.build.immutable_revision.as_ref()
+    }) {
+      return Err(StoreError::invalid(
+        StoreOperation::AcceptTrigger,
+        StoreInputError::JobSpecTemplateBindingMismatch,
+      ));
+    }
     let encoded_bytes = serde_json::to_vec(&self.trigger)
       .ok()
       .zip(serde_json::to_vec(&self.build).ok())

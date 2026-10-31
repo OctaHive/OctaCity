@@ -28,7 +28,12 @@ impl VerifiedFactoryCandidateDeliverables {
   /// The caller supplies only the already qualified bundle explicitly selected by validation.
   pub fn verify_protected(&self, tests: &ProtectedTestBundle) -> Result<(), crate::ApplicationError> {
     if self.contract.accepted_contract() != tests.plan().accepted_contract()
-      || self.candidate.subject().exact() != tests.plan().subject().exact()
+      || self.candidate.subject().exact()
+        != tests
+          .plan()
+          .subject()
+          .exact()
+          .map_err(|_| crate::ApplicationError::invalid())?
     {
       return Err(crate::ApplicationError::invalid());
     }
@@ -155,7 +160,14 @@ fn cumulative_files(
     .cumulative_changes
     .as_ref()
     .ok_or(FactoryChangeSetError::InvalidEvidence)?;
-  if changes.base_revision != intent.input().subject().base_revision().as_str() {
+  if changes.base_revision
+    != intent
+      .input()
+      .exact_resource()
+      .map_err(|_| FactoryChangeSetError::InvalidEvidence)?
+      .base_revision()
+      .as_str()
+  {
     return Err(FactoryChangeSetError::InvalidEvidence);
   }
   candidate_files(&changes.changed_paths)

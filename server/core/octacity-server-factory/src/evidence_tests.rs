@@ -10,7 +10,7 @@ fn digest(byte: u8) -> FactoryDigest {
 fn a_candidate_binds_to_a_frozen_arbitrary_node_without_a_stage_role() {
   let (work, _, _, input, node) = crate::flow_test_support::execution_fixture(crate::FlowNodeKind::BuildCommand);
   let subject = CandidateSubject::new(
-    work.subject().clone(),
+    work.subject().repository().unwrap().clone(),
     ImmutableRevision::new("candidate").unwrap(),
     digest(3),
   );

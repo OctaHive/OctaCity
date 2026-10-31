@@ -100,7 +100,10 @@ fn accepted_work_is_frozen_by_a_configured_deterministic_outcome_with_exact_work
   assert_eq!(contract.work(), &work);
   assert_eq!(contract.source_record(), attempt.id());
   assert_eq!(contract.records(), &[record]);
-  assert_eq!(contract.work().subject().base_revision().as_str(), "base");
+  assert_eq!(
+    contract.work().subject().repository().unwrap().base_revision().as_str(),
+    "base"
+  );
   let bytes = serde_json::to_vec(&contract).unwrap();
   assert_eq!(
     AcceptedWorkContract::restore(

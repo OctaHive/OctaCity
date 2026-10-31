@@ -58,6 +58,12 @@ pub struct FactoryFlowRootDraft {
   pub data_projections: Vec<FlowDataProjection>,
   /// Root resource and authority ceilings.
   pub execution: FlowExecutionPolicy,
+  /// Exact process goals/criteria and explicit recipients, backed by ordinary Project inputs.
+  #[serde(default, skip_serializing_if = "Option::is_none")]
+  pub process: Option<octacity_server_factory::FlowProcessInputs>,
+  /// Explicit code inventory; empty means no repository availability or implicit Work attachment.
+  #[serde(default, skip_serializing_if = "Option::is_none")]
+  pub code_sources: Option<octacity_server_factory::FlowCodeSources>,
 }
 /// Root content and bounded executable contracts; subflows resolve from published exact references.
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
@@ -137,7 +143,19 @@ impl FactoryFlowDefinitionDraft {
       data_projections: root.data_projections.clone(),
       execution: root.execution.clone(),
     })
-    .map_err(|_| crate::FactoryValidationDiagnostics::invalid("/root"))
+    .and_then(|definition| match root.code_sources.clone() {
+      Some(sources) => definition.with_code_sources(sources),
+      None => Ok(definition),
+    })
+    .and_then(|definition| match root.process.clone() {
+      Some(process) => definition.with_process(process),
+      None => Ok(definition),
+    })
+    .map_err(|error| {
+      crate::factory_code_sources::validation_error(&error)
+        .or_else(|| crate::FactoryValidationDiagnostics::constraint_ceiling_error(&error))
+        .unwrap_or_else(|| crate::FactoryValidationDiagnostics::invalid("/root"))
+    })
   }
 }
 /// Non-mutating authoritative graph and exact closure validation.
@@ -172,6 +190,7 @@ pub struct FactoryFlowDefinitionHandlers<S> {
   store: Arc<S>,
   policy: Arc<dyn crate::ManagementAuthorizationPolicy>,
   source_actions: Option<Arc<dyn crate::FactoryStageSourceAuthorizer>>,
+  repositories: Option<Arc<dyn octacity_server_store::ConfigurationStore>>,
   issue_status_actions: Option<Arc<dyn crate::FactoryIssueStatusAuthorizer>>,
 }
 impl<S> FactoryFlowDefinitionHandlers<S> {
@@ -182,9 +201,18 @@ impl<S> FactoryFlowDefinitionHandlers<S> {
       store,
       policy,
       source_actions: None,
+      repositories: None,
       issue_status_actions: None,
     }
   }
+  /// Reads exact source definitions from the existing Project Repository owner.
+  /// Legacy and empty inventories require no Repository dependency.
+  #[must_use]
+  pub fn with_repositories(mut self, repositories: Arc<dyn octacity_server_store::ConfigurationStore>) -> Self {
+    self.repositories = Some(repositories);
+    self
+  }
+
   /// Shares installed source authorization with Factory Configuration publication.
   #[must_use]
   pub fn with_source_actions(mut self, authorizer: Arc<dyn crate::FactoryStageSourceAuthorizer>) -> Self {
@@ -266,8 +294,19 @@ impl<S: FactoryFlowDefinitionStore + octacity_server_store::FactoryConfiguration
       draft.data_schemas,
       draft.pools,
     )
-    .map_err(|_| ApplicationError::invalid())?;
+    .map_err(|error| {
+      crate::FactoryValidationDiagnostics::constraint_ceiling_error(&error).unwrap_or_else(ApplicationError::invalid)
+    })?;
     crate::factory_configuration_choices::validate_flow_choices(&flow, &choices, "")?;
+    crate::factory_code_sources::validate_sources(
+      &flow.closure,
+      project,
+      self.repositories.as_deref(),
+      self.policy.as_ref(),
+      context,
+    )
+    .await?;
+
     crate::factory_stage_source_update::validate_flow_source_updates(
       &flow,
       self.source_actions.as_deref(),

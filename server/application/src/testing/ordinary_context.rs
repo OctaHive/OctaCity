@@ -61,8 +61,9 @@ pub(crate) fn context() -> (BuildExecutionContext, PoolId) {
     definition: BuildConfigurationDefinition {
       enabled: true,
       job_concurrency_limit: 2,
-      repository_id,
-      repository_version: RepositoryVersion::INITIAL,
+      repository_id: Some(repository_id),
+      repository_version: Some(RepositoryVersion::INITIAL),
+      source: None,
       pipeline_id,
       pipeline_version: PipelineVersion::INITIAL,
       parameters: ParameterSchema {
@@ -184,7 +185,7 @@ pub(crate) fn context() -> (BuildExecutionContext, PoolId) {
   (
     BuildExecutionContext {
       configuration,
-      repository,
+      repository: Some(repository),
       pipeline,
       effective_policy,
       job_spec_toolchain: JobSpecToolchainPolicy {

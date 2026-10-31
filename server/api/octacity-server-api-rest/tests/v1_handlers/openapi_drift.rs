@@ -2,6 +2,58 @@ use super::*;
 use octacity_server_application::{ManagementAuthorizationMapping, ManagementResourceKind};
 
 #[test]
+fn ordinary_manual_http_contract_accepts_source_free_intent_without_relaxing_repository_selectors() {
+  let document = openapi_document();
+  let mut request: serde_json::Value =
+    serde_json::from_str(include_str!("../../fixtures/v1/accept-manual-trigger-request.json")).unwrap();
+  assert_json_matches_component(&document, "AcceptManualTriggerRequest", &request);
+  request["source"] = serde_json::json!({"kind": "source_free_v1"});
+  let decoded = serde_json::from_value::<octacity_server_api_rest::v1::AcceptManualTriggerRequest>(request.clone());
+  assert!(
+    decoded.is_ok(),
+    "ordinary HTTP request must preserve source absence: {decoded:?}"
+  );
+  assert_json_matches_component(&document, "AcceptManualTriggerRequest", &request);
+  assert!(
+    serde_json::from_value::<octacity_server_api_rest::v1::ManualSource>(request["source"].clone()).is_err(),
+    "repository-only selectors must not become source-free"
+  );
+  for field in ["repository_id", "repository_version", "immutable_revision"] {
+    assert!(
+      !document["components"]["schemas"]["BuildResource"]["required"]
+        .as_array()
+        .unwrap()
+        .contains(&serde_json::json!(field)),
+      "source-free Build reads must omit {field}"
+    );
+  }
+  request["source"]["revision"] = serde_json::json!("invented");
+  assert!(serde_json::from_value::<octacity_server_api_rest::v1::AcceptManualTriggerRequest>(request).is_err());
+}
+
+#[test]
+fn ordinary_configuration_contract_documents_explicit_source_absence_and_legacy_repository_input() {
+  let document = openapi_document();
+  let mut request: serde_json::Value = serde_json::from_str(include_str!(
+    "../../fixtures/v1/create-build-configuration-request.json"
+  ))
+  .unwrap();
+  assert_json_matches_component(&document, "CreateBuildConfigurationRequest", &request);
+  let definition = request["definition"].as_object_mut().unwrap();
+  definition.remove("repository_id");
+  definition.remove("repository_version");
+  definition.insert("source".into(), serde_json::json!({"kind":"source_free_v1"}));
+  assert_json_matches_component(&document, "CreateBuildConfigurationRequest", &request);
+  let decoded: octacity_server_api_rest::v1::CreateBuildConfigurationRequest = serde_json::from_value(request).unwrap();
+  assert!(decoded.definition.repository_id.is_none());
+  assert!(decoded.definition.repository_version.is_none());
+  assert_eq!(
+    serde_json::to_value(decoded.definition.source).unwrap(),
+    serde_json::json!({"kind":"source_free_v1"})
+  );
+}
+
+#[test]
 fn effect_delivery_contract_exposes_only_safe_receipts_in_the_existing_diagnostic_page() {
   let document = openapi_document();
   assert_component_exists(&document, "FactoryEffectDeliveryDiagnostic");

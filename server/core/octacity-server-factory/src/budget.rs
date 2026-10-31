@@ -42,6 +42,17 @@ impl BudgetResource {
   }
 }
 
+/// A requested resource allowance rejected by its enclosing hard budget.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct BudgetCeilingViolation {
+  /// First independently enforced dimension above its enclosing ceiling.
+  pub resource: BudgetResource,
+  /// Operator-requested amount in that dimension's native unit.
+  pub requested: u64,
+  /// Applicable enclosing maximum, without normalization.
+  pub maximum: u64,
+}
+
 /// Immutable hard limits for one bounded Factory scope.
 #[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq, Serialize)]
 #[serde(try_from = "BudgetLimitWire")]
@@ -142,11 +153,47 @@ impl BudgetLimit {
   /// Reports whether every limit fits within an enclosing hard budget.
   #[must_use]
   pub const fn fits_within(self, enclosing: Self) -> bool {
-    self.max_attempts <= enclosing.max_attempts
-      && self.max_elapsed_millis <= enclosing.max_elapsed_millis
-      && self.max_tokens <= enclosing.max_tokens
-      && self.max_cost_micro_units <= enclosing.max_cost_micro_units
-      && self.max_output_bytes <= enclosing.max_output_bytes
+    self.first_excess(enclosing).is_none()
+  }
+  /// Uses the same comparison as enforcement to explain an oversized request.
+  #[must_use]
+  pub const fn first_excess(self, enclosing: Self) -> Option<BudgetCeilingViolation> {
+    let dimensions = [
+      (
+        BudgetResource::Attempts,
+        self.max_attempts as u64,
+        enclosing.max_attempts as u64,
+      ),
+      (
+        BudgetResource::ElapsedTime,
+        self.max_elapsed_millis,
+        enclosing.max_elapsed_millis,
+      ),
+      (BudgetResource::Tokens, self.max_tokens, enclosing.max_tokens),
+      (
+        BudgetResource::Cost,
+        self.max_cost_micro_units,
+        enclosing.max_cost_micro_units,
+      ),
+      (
+        BudgetResource::OutputBytes,
+        self.max_output_bytes,
+        enclosing.max_output_bytes,
+      ),
+    ];
+    let mut index = 0;
+    while index < dimensions.len() {
+      let (resource, requested, maximum) = dimensions[index];
+      if requested > maximum {
+        return Some(BudgetCeilingViolation {
+          resource,
+          requested,
+          maximum,
+        });
+      }
+      index += 1;
+    }
+    None
   }
 }
 

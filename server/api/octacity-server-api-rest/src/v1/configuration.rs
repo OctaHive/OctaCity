@@ -302,9 +302,14 @@ pub struct BuildConfigurationDefinition {
   /// Maximum active Jobs across Builds of this Configuration version.
   pub job_concurrency_limit: u32,
   /// Exact Repository identity.
-  pub repository_id: String,
+  #[serde(default, skip_serializing_if = "Option::is_none")]
+  pub repository_id: Option<String>,
   /// Exact immutable Repository version.
-  pub repository_version: u64,
+  #[serde(default, skip_serializing_if = "Option::is_none")]
+  pub repository_version: Option<u64>,
+  /// Explicit versioned source absence; repository-backed versions omit it.
+  #[serde(default, skip_serializing_if = "Option::is_none")]
+  pub source: Option<octacity_server_application::BuildSourceMode>,
   /// Exact Pipeline identity.
   pub pipeline_id: String,
   /// Exact immutable Pipeline version.

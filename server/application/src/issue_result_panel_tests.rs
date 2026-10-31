@@ -3,60 +3,66 @@ use super::*;
 #[test]
 fn issue_checks_are_bound_to_the_original_visible_candidate_without_execution_effects() {
   run_ready(async {
-    let (store, factory, issue, mut fixture) = associated_journal().await;
-    let subject = octacity_server_factory::CandidateSubject::new(
-      fixture.admission.work.subject().clone(),
-      octacity_server_domain::ImmutableRevision::new("original-head").unwrap(),
-      FactoryDigest::from_bytes([91; 32]),
-    );
-    fixture.discovery = Some(
-      serde_json::from_value(serde_json::json!({
-        "kind":"candidate", "subject":subject
-      }))
-      .unwrap(),
-    );
-    testing::verify_factory_node_journal_contract(&*factory, &*factory, &fixture).await;
-    let snapshot = factory.factory_run_snapshot(fixture.admission.run.id()).await.unwrap();
-    let record = snapshot
-      .flow
-      .data
-      .records
-      .iter()
-      .find(|r| r.discovery().is_some_and(|d| d.published_candidate().is_some()))
-      .unwrap()
-      .digest()
-      .unwrap();
-    let policy = Arc::new(TrustedNetworkManagementPolicy);
-    let queries = AuthorizedQueryHandler::new(
-      policy.clone(),
-      Arc::new(IssueExecutionHandlers::new(store.clone(), factory.clone(), policy)),
-    );
-    let page = queries
-      .handle_query(
-        &context(),
-        ListIssueChecksQuery::try_new(
-          GetIssueWorkExecutionQuery {
-            project_id: issue.project_id,
-            issue_id: issue.id,
-            work_id: fixture.admission.work.id(),
-          },
-          record,
-          None,
-          1,
-        )
+    for independent_resource in [false, true] {
+      let (store, factory, issue, mut fixture) = if independent_resource {
+        associated_journal_for(independent_resource_journal_fixture()).await
+      } else {
+        associated_journal().await
+      };
+      let subject = octacity_server_factory::CandidateSubject::new(
+        fixture.input.exact_resource().unwrap().clone(),
+        octacity_server_domain::ImmutableRevision::new("original-head").unwrap(),
+        FactoryDigest::from_bytes([91; 32]),
+      );
+      fixture.discovery = Some(
+        serde_json::from_value(serde_json::json!({
+          "kind":"candidate", "subject":subject
+        }))
         .unwrap(),
-      )
-      .await
-      .unwrap();
-    assert_eq!(page.subject, subject);
-    assert_eq!(page.association.run_id, snapshot.run.id());
-    assert_eq!(page.coverage, IssueResultCoverage::Partial);
-    assert!(
-      page.items.is_empty(),
-      "no check facts are invented without a declared check"
-    );
-    assert_eq!(factory.factory_run_snapshot(snapshot.run.id()).await.unwrap(), snapshot);
-    assert_eq!(store.issue(issue.project_id, issue.id, None).await.unwrap(), issue);
+      );
+      testing::verify_factory_node_journal_contract(&*factory, &*factory, &fixture).await;
+      let snapshot = factory.factory_run_snapshot(fixture.admission.run.id()).await.unwrap();
+      let record = snapshot
+        .flow
+        .data
+        .records
+        .iter()
+        .find(|r| r.discovery().is_some_and(|d| d.published_candidate().is_some()))
+        .unwrap()
+        .digest()
+        .unwrap();
+      let policy = Arc::new(TrustedNetworkManagementPolicy);
+      let queries = AuthorizedQueryHandler::new(
+        policy.clone(),
+        Arc::new(IssueExecutionHandlers::new(store.clone(), factory.clone(), policy)),
+      );
+      let page = queries
+        .handle_query(
+          &context(),
+          ListIssueChecksQuery::try_new(
+            GetIssueWorkExecutionQuery {
+              project_id: issue.project_id,
+              issue_id: issue.id,
+              work_id: fixture.admission.work.id(),
+            },
+            record,
+            None,
+            1,
+          )
+          .unwrap(),
+        )
+        .await
+        .unwrap();
+      assert_eq!(page.subject, subject);
+      assert_eq!(page.association.run_id, snapshot.run.id());
+      assert_eq!(page.coverage, IssueResultCoverage::Partial);
+      assert!(
+        page.items.is_empty(),
+        "no check facts are invented without a declared check"
+      );
+      assert_eq!(factory.factory_run_snapshot(snapshot.run.id()).await.unwrap(), snapshot);
+      assert_eq!(store.issue(issue.project_id, issue.id, None).await.unwrap(), issue);
+    }
   });
 }
 
@@ -66,7 +72,7 @@ fn issue_checks_show_required_unproven_checks_without_using_completion_as_a_pass
     let fixture = testing::factory_verification_journal_contract_fixture();
     let (store, factory, issue, mut fixture) = associated_journal_for(fixture).await;
     let subject = octacity_server_factory::CandidateSubject::new(
-      fixture.admission.work.subject().clone(),
+      fixture.admission.work.subject().repository().unwrap().clone(),
       octacity_server_domain::ImmutableRevision::new("candidate").unwrap(),
       FactoryDigest::from_bytes([95; 32]),
     );
@@ -478,7 +484,7 @@ fn issue_checks_qualify_typed_outcomes_and_preserve_original_producer_and_head()
       let (store, factory, issue, mut fixture) =
         associated_journal_for(testing::factory_verified_check_journal_fixture(outcome)).await;
       let subject = octacity_server_factory::CandidateSubject::new(
-        fixture.admission.work.subject().clone(),
+        fixture.admission.work.subject().repository().unwrap().clone(),
         octacity_server_domain::ImmutableRevision::new("candidate").unwrap(),
         FactoryDigest::from_bytes([95; 32]),
       );
@@ -967,7 +973,7 @@ fn issue_candidate_choices_include_capture_and_changeset_publications_without_ch
     for kind in ["candidate", "changeset"] {
       let (store, factory, issue, mut fixture) = associated_journal().await;
       let subject = octacity_server_factory::CandidateSubject::new(
-        fixture.admission.work.subject().clone(),
+        fixture.admission.work.subject().repository().unwrap().clone(),
         octacity_server_domain::ImmutableRevision::new("original-published-head").unwrap(),
         FactoryDigest::from_bytes([91; 32]),
       );

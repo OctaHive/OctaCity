@@ -167,8 +167,9 @@ async fn input_owned_reporting_keeps_original_effects_after_input_replacement_fo
         project_id: fixture.input.project_id(),
         configuration_id: original.target.id(),
         configuration_version: original.target.version(),
-        repository_id: original.repository.id,
-        repository_version: original.repository.version,
+        repository_id: Some(original.repository.id),
+
+        repository_version: Some(original.repository.version),
       })
       .await
       .unwrap();
@@ -326,8 +327,9 @@ async fn disabling_or_replacing_the_current_input_never_redirects_an_accepted_pr
       project_id: fixture.input.project_id(),
       configuration_id: fixture.input.definition().target.id(),
       configuration_version: fixture.input.definition().target.version(),
-      repository_id: fixture.input.definition().repository.id,
-      repository_version: fixture.input.definition().repository.version,
+      repository_id: Some(fixture.input.definition().repository.id),
+
+      repository_version: Some(fixture.input.definition().repository.version),
     })
     .await
     .unwrap();

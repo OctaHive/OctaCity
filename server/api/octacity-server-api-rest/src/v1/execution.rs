@@ -138,11 +138,14 @@ pub struct BuildResource {
   /// Exact Pipeline version.
   pub pipeline_version: u64,
   /// Exact Repository identity and version.
-  pub repository_id: String,
+  #[serde(default, skip_serializing_if = "Option::is_none")]
+  pub repository_id: Option<String>,
   /// Exact Repository version.
-  pub repository_version: u64,
+  #[serde(default, skip_serializing_if = "Option::is_none")]
+  pub repository_version: Option<u64>,
   /// Immutable provider-native source revision.
-  pub immutable_revision: String,
+  #[serde(default, skip_serializing_if = "Option::is_none")]
+  pub immutable_revision: Option<String>,
   /// Safe primitive Build parameters.
   pub parameters: Value,
   /// Source expression retained for diagnosis.

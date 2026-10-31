@@ -3,6 +3,26 @@ use super::*;
 pub(super) fn insert(schemas: &mut Map<String, Value>) {
   let bounds = octacity_server_application::factory_configuration_document_bounds();
   schemas.insert(
+    "FactoryFlowProcessDocument".to_owned(),
+    object(
+      [
+        ("artifact", schema_ref("FactoryArtifactReference")),
+        ("recipients", bounded_array(key(), bounds.nodes)),
+      ],
+      &["artifact", "recipients"],
+    ),
+  );
+  schemas.insert(
+    "FactoryFlowProcessInputs".to_owned(),
+    object(
+      [
+        ("goals", nullable(schema_ref("FactoryFlowProcessDocument"))),
+        ("criteria", nullable(schema_ref("FactoryFlowProcessDocument"))),
+      ],
+      &[],
+    ),
+  );
+  schemas.insert(
     "FactoryFlowNodeKind".to_owned(),
     json!({"type":"string","enum":octacity_server_application::factory_flow_node_kinds().collect::<Vec<_>>()}),
   );
@@ -112,6 +132,8 @@ pub(super) fn insert(schemas: &mut Map<String, Value>) {
       [
         ("key", key()),
         ("kind", schema_ref("FactoryFlowNodeKind")),
+        ("task", nullable(schema_ref("FactoryInstructions"))),
+        ("code", nullable(schema_ref("FactoryFlowCodeBinding"))),
         (
           "input_schema",
           nullable(schema_ref("FactoryImmutableReferenceResource")),
@@ -181,6 +203,11 @@ pub(super) fn insert(schemas: &mut Map<String, Value>) {
           bounded_array(schema_ref("FactoryFlowDataProjection"), bounds.transitions),
         ),
         ("execution", schema_ref("FactoryFlowExecutionPolicy")),
+        ("process", nullable(schema_ref("FactoryFlowProcessInputs"))),
+        (
+          "code_sources",
+          nullable(bounded_map(schema_ref("FactoryFlowCodeSource"), bounds.code_sources)),
+        ),
       ],
       &[
         "reference",

@@ -282,12 +282,14 @@ impl<S: WorkSourceArtifactStore, B: ArtifactBytePublisher> FactoryWorkSourcePrep
       project_id: preparation.input.project_id(),
       configuration_id: preparation.input.definition().target.id(),
       configuration_version: preparation.input.definition().target.version(),
-      repository_id: preparation.input.definition().repository.id,
-      repository_version: preparation.input.definition().repository.version,
+      repository_id: Some(preparation.input.definition().repository.id),
+
+      repository_version: Some(preparation.input.definition().repository.version),
+
       external_identity: preparation
         .admission_identity(octacity_server_store::ManagementSecurityScope::trusted_network())
         .external_identity,
-      source: settings.source,
+      source: settings.source.into(),
       artifacts: reserved.work_artifacts()?,
       classification: settings.classification,
       idempotency_key: IdempotencyKey::new(format!("source-preparation.{id}"))

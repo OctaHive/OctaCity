@@ -9,28 +9,30 @@ pub async fn seed_authoritative_prerequisites(
   let build = &fixture.request.build;
   sqlx::query(
     "INSERT INTO projects (id, parent_id, name, version, created_at, updated_at) \
-     VALUES ($1, NULL, 'contract-project', 1, now(), now())",
+     VALUES ($1, NULL, 'contract-project', 1, now(), now()) ON CONFLICT (id) DO NOTHING",
   )
   .bind(build.project_id.as_uuid())
   .execute(pool)
   .await?;
-  sqlx::query(
-    "INSERT INTO repositories (id, project_id, name, created_at) VALUES ($1, $2, 'contract-repository', now())",
-  )
-  .bind(build.repository_id.as_uuid())
-  .bind(build.project_id.as_uuid())
-  .execute(pool)
-  .await?;
-  sqlx::query(
-    "INSERT INTO repository_versions \
+  if let (Some(repository), Some(version)) = (build.repository_id, build.repository_version) {
+    sqlx::query(
+      "INSERT INTO repositories (id, project_id, name, created_at) VALUES ($1, $2, 'contract-repository', now())",
+    )
+    .bind(repository.as_uuid())
+    .bind(build.project_id.as_uuid())
+    .execute(pool)
+    .await?;
+    sqlx::query(
+      "INSERT INTO repository_versions \
        (repository_id, version, vcs_integration_id, repository_locator, selection_policy, published_at) \
      VALUES ($1, $2, $3, 'contract/repository', '{}', now())",
-  )
-  .bind(build.repository_id.as_uuid())
-  .bind(i64::try_from(build.repository_version.get()).unwrap())
-  .bind(uuid::Uuid::from_u128(600))
-  .execute(pool)
-  .await?;
+    )
+    .bind(repository.as_uuid())
+    .bind(i64::try_from(version.get()).unwrap())
+    .bind(uuid::Uuid::from_u128(600))
+    .execute(pool)
+    .await?;
+  }
   sqlx::query("INSERT INTO pipelines (id, project_id, name, created_at) VALUES ($1, $2, 'contract-pipeline', now())")
     .bind(build.pipeline_id.as_uuid())
     .bind(build.project_id.as_uuid())
@@ -60,11 +62,18 @@ pub async fn seed_authoritative_prerequisites(
   )
   .bind(build.configuration_id.as_uuid())
   .bind(i64::try_from(build.configuration_version.get()).unwrap())
-  .bind(build.repository_id.as_uuid())
-  .bind(i64::try_from(build.repository_version.get()).unwrap())
+  .bind(build.repository_id.map(|id| id.as_uuid()))
+  .bind(
+    build
+      .repository_version
+      .map(|version| i64::try_from(version.get()).unwrap()),
+  )
   .bind(build.pipeline_id.as_uuid())
   .bind(i64::try_from(build.pipeline_version.get()).unwrap())
-  .bind(sqlx::types::Json(serde_json::json!({"job_concurrency_limit": 4})))
+  .bind(sqlx::types::Json(match build.source {
+    Some(mode) => serde_json::json!({"job_concurrency_limit": 4, "source": mode}),
+    None => serde_json::json!({"job_concurrency_limit": 4}),
+  }))
   .bind(vec![fixture.allowed_pool.as_uuid()])
   .execute(pool)
   .await?;

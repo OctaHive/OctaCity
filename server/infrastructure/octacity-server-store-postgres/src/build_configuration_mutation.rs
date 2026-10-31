@@ -205,16 +205,18 @@ async fn require_references(
   definition: &BuildConfigurationDefinition,
   operation: StoreOperation,
 ) -> Result<(), StoreError> {
-  let repository_version = number(definition.repository_version.get(), operation)?;
-  let repository_exists: bool =
-    sqlx::query_scalar("SELECT EXISTS (SELECT 1 FROM repository_versions WHERE repository_id = $1 AND version = $2)")
-      .bind(definition.repository_id.as_uuid())
-      .bind(repository_version)
-      .fetch_one(&mut **transaction)
-      .await
-      .map_err(unavailable)?;
-  if !repository_exists {
-    return Err(not_found(EntityKind::Repository));
+  if let (Some(repository_id), Some(repository_version)) = (definition.repository_id, definition.repository_version) {
+    let repository_version = number(repository_version.get(), operation)?;
+    let repository_exists: bool =
+      sqlx::query_scalar("SELECT EXISTS (SELECT 1 FROM repository_versions WHERE repository_id = $1 AND version = $2)")
+        .bind(repository_id.as_uuid())
+        .bind(repository_version)
+        .fetch_one(&mut **transaction)
+        .await
+        .map_err(unavailable)?;
+    if !repository_exists {
+      return Err(not_found(EntityKind::Repository));
+    }
   }
 
   let pipeline_version = number(definition.pipeline_version.get(), operation)?;
@@ -280,7 +282,10 @@ async fn insert_version(
   operation: StoreOperation,
 ) -> Result<(), StoreError> {
   let version = number(version.get(), operation)?;
-  let repository_version = number(definition.repository_version.get(), operation)?;
+  let repository_version = definition
+    .repository_version
+    .map(|version| number(version.get(), operation))
+    .transpose()?;
   let pipeline_version = number(definition.pipeline_version.get(), operation)?;
   let job_concurrency_limit = i64::from(definition.job_concurrency_limit);
   let allowed_pool_ids: Vec<_> = definition.allowed_pools.iter().map(|pool| pool.as_uuid()).collect();
@@ -298,7 +303,7 @@ async fn insert_version(
   .bind(configuration_id.as_uuid())
   .bind(version)
   .bind(definition.enabled)
-  .bind(definition.repository_id.as_uuid())
+  .bind(definition.repository_id.map(|id| id.as_uuid()))
   .bind(repository_version)
   .bind(definition.pipeline_id.as_uuid())
   .bind(pipeline_version)
@@ -334,7 +339,7 @@ fn facts(
       "pipeline_version": configuration.definition.pipeline_version.get(),
       "project_id": configuration.project_id,
       "repository_id": configuration.definition.repository_id,
-      "repository_version": configuration.definition.repository_version.get(),
+      "repository_version": configuration.definition.repository_version.map(|version| version.get()),
       "version": configuration.version.get(),
     }),
     json!({

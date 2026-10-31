@@ -241,3 +241,22 @@ it('retains only bounded public validation field codes from an error without exp
   expect(error.validationIssues).toEqual([{ field: '/root/entry', code: 'invalid_contract' }]);
   expect(JSON.stringify(error.validationIssues)).not.toContain('private');
 });
+
+it.each(['budget_exceeds_ceiling', 'concurrency_exceeds_ceiling'])(
+  'retains the authoritative %s validation code',
+  async (code) => {
+    const client = createManagementApiClient(async () =>
+      jsonResponse(
+        {
+          code: 'invalid_request',
+          message: 'Requested limit exceeds its ceiling.',
+          request_id: REQUEST_ID,
+          diagnostics: { errors: [{ field: '/execution/budget', code }] },
+        },
+        400,
+      ),
+    );
+    const error = await captureApiError(client.GET(OPENAPI_PATH));
+    expect(error.validationIssues).toEqual([{ field: '/execution/budget', code }]);
+  },
+);

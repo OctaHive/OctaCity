@@ -160,8 +160,9 @@ pub(super) async fn fixture_with_flow(
       project_id: fixture.input.project_id(),
       configuration_id: fixture.input.definition().target.id(),
       configuration_version: fixture.input.definition().target.version(),
-      repository_id: fixture.input.definition().repository.id,
-      repository_version: fixture.input.definition().repository.version,
+      repository_id: Some(fixture.input.definition().repository.id),
+
+      repository_version: Some(fixture.input.definition().repository.version),
     })
     .await
     .unwrap();

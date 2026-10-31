@@ -12,10 +12,12 @@ pub const EXECUTION_CONTRACT_V1: u16 = 1;
 pub const EXECUTION_CONTRACT_V2: u16 = 2;
 /// Protected managed-execution contract understood by [`crate::JobSpecV3`].
 pub const EXECUTION_CONTRACT_V3: u16 = 3;
+/// Explicit signed source modes; execution advertisement requires qualified backend support.
+pub const EXECUTION_CONTRACT_V4: u16 = 4;
 /// Execution-contract revisions implemented by this protocol release.
 pub const SUPPORTED_EXECUTION_CONTRACTS: ExecutionContractRange = ExecutionContractRange {
   min: EXECUTION_CONTRACT_V1,
-  max: EXECUTION_CONTRACT_V3,
+  max: EXECUTION_CONTRACT_V4,
 };
 /// Maximum UTF-8 bytes in one execution provider or environment identity.
 pub const MAX_EXECUTION_IDENTITY_BYTES: usize = 256;

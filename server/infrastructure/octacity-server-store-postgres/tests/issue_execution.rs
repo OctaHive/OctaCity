@@ -167,8 +167,9 @@ fn submission(issue: &IssueRevision, replay: &str) -> ProjectTextSubmission {
         project_id: issue.project_id,
         configuration_id: r.intent.target.configuration_id,
         configuration_version: r.intent.target.configuration_version,
-        repository_id: r.intent.target.repository_id,
-        repository_version: r.intent.target.repository_version,
+        repository_id: Some(r.intent.target.repository_id),
+
+        repository_version: Some(r.intent.target.repository_version),
       },
       external_identity: ExternalWorkIdentity::new("manual-project-text").unwrap(),
       source: RepositorySourceSelection::DefaultReference,

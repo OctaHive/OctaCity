@@ -24,11 +24,11 @@ use serde::{Deserialize, Serialize};
 mod spec;
 
 pub use spec::{
-  DerivedJobSpec, JobExecutionTemplate, JobPlacementPolicy, JobRuntimePolicy, JobSpecBuildSnapshot,
-  JobSpecDerivationError, JobSpecPolicySnapshot, JobSpecSigner, JobSpecSigningError, JobSpecTemplate,
-  JobSpecToolchainPolicy, JobSpecValidity, MAX_JOB_SPEC_TOOLCHAIN_POLICY_BYTES, MAX_JOB_SPEC_VALIDITY_SECONDS,
-  ManagedJobSpecIntent, SourcePluginPolicy, derive_job_spec_template, derive_managed_job_spec_template,
-  sign_ready_job_spec,
+  DerivedJobSpec, JobExecutionTemplate, JobPlacementPolicy, JobRuntimePolicy, JobSourcePluginRequirement,
+  JobSpecBuildSnapshot, JobSpecDerivationError, JobSpecPolicySnapshot, JobSpecSigner, JobSpecSigningError,
+  JobSpecTemplate, JobSpecToolchainPolicy, JobSpecValidity, MAX_JOB_SPEC_TOOLCHAIN_POLICY_BYTES,
+  MAX_JOB_SPEC_VALIDITY_SECONDS, ManagedJobSpecIntent, SourcePluginPolicy, derive_job_spec_template,
+  derive_managed_job_spec_template, sign_ready_job_spec,
 };
 
 /// Durable scheduling and execution state of one materialized DAG Job.

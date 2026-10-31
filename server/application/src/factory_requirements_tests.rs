@@ -89,7 +89,9 @@ impl FactoryTestOutputBuilder for QualifiedOutputs {
         .context
         .subject()
         .candidate()
-        .map_or(&request.immutable_revision, |s| s.candidate_revision());
+        .map_or(request.subject.exact().unwrap().base_revision(), |s| {
+          s.candidate_revision()
+        });
       let candidate = format!("candidate-{}", c.node_attempt_id);
       let status = if c.context.subject().candidate().is_some() {
         "M"
@@ -100,7 +102,7 @@ impl FactoryTestOutputBuilder for QualifiedOutputs {
         "capture_tool":{"identity":p.result_tool().identity(),"version":p.result_tool().version(),"sha256":p.result_tool().digest()},
         "changed_paths":[{"status":status,"path":"openspec/specs/api/spec.md","old_mode":"100644","new_mode":"100644"},{"status":status,"path":"openspec/changes/api/proposal.md","old_mode":"100644","new_mode":"100644"}],
         "bundle":{"name":"change-set.bundle","size_bytes":size,"sha256":digest}});
-      let handoff = json!({"work_id":wire["work_id"],"original_base":request.immutable_revision,"predecessor_revision":predecessor,"candidate_revision":candidate,"input_digest":c.input_digest,
+      let handoff = json!({"work_id":wire["work_id"],"original_base":request.subject.exact().unwrap().base_revision(),"predecessor_revision":predecessor,"candidate_revision":candidate,"input_digest":c.input_digest,
         "work_kind":input["accepted_input"]["work_kind"],"contract_path":"openspec/specs/api/spec.md","change_path":"openspec/changes/api/proposal.md",
         "acceptance_criteria":["Specified behavior preserves all original acceptance checks"],"regression_criteria":if input["accepted_input"]["work_kind"]=="defect" {json!(["The defect has a reproducible regression check"])}else{json!([])},"declared_requirements":input["declared_requirements"]});
       let requirement = requirements
@@ -173,7 +175,7 @@ impl FactoryTestOutputBuilder for QualifiedOutputs {
         } else if requirement.kind() == &key("specification_review_facts") {
           json!({"accepted":true,"input_digest":c.input_digest,"report_digest":report_digest,"fresh_until":500})
         } else {
-          json!({"outcome":if report.get("requirements_defect").is_some(){"requirements_defect"}else{"observed"},"candidate_revision":if p.node==key("implementation") || report.get("specification").is_none() {json!(c.context.subject().candidate().map_or(&request.immutable_revision,|candidate|candidate.candidate_revision()))} else {report["specification"]["manifest"]["candidate_revision"].clone()},"input_digest":c.input_digest,"report_digest":report_digest,"fresh_until":10000,"requirements_evidence":report["requirements_defect"].get("evidence").cloned().unwrap_or_else(||json!([]))})
+          json!({"outcome":if report.get("requirements_defect").is_some(){"requirements_defect"}else{"observed"},"candidate_revision":if p.node==key("implementation") || report.get("specification").is_none() {json!(c.context.subject().candidate().map_or(request.subject.exact().unwrap().base_revision(),|candidate|candidate.candidate_revision()))} else {report["specification"]["manifest"]["candidate_revision"].clone()},"input_digest":c.input_digest,"report_digest":report_digest,"fresh_until":10000,"requirements_evidence":report["requirements_defect"].get("evidence").cloned().unwrap_or_else(||json!([]))})
         };
         let mut doc = document_kind(
           builds,

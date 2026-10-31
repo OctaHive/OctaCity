@@ -243,6 +243,190 @@ async fn microsandbox_backend_satisfies_the_real_runner_contract() {
   .await;
 }
 
+/// A source-free Job must never even query the installed VCS owner.
+struct NoVcsAccess;
+
+#[async_trait]
+impl SourceMaterializer for NoVcsAccess {
+  fn verify(&self, _: &SourceSpec) -> Result<(), SourceError> {
+    panic!("source-free execution must not verify a source plugin");
+  }
+  async fn materialize(
+    &self,
+    _: &SourceSpec,
+    _: SourceMaterializationRequest,
+    _: Duration,
+    _: Duration,
+    _: CancellationToken,
+  ) -> Result<MaterializedSource, SourceError> {
+    panic!("source-free execution must not materialize a repository");
+  }
+}
+
+/// Leaves host-only data in the unused source directory to qualify the real guest boundary.
+struct HiddenSourceProbe(Arc<dyn ExecutionBackend>);
+#[async_trait]
+impl ExecutionBackend for HiddenSourceProbe {
+  async fn start(
+    &self,
+    runner: &octacity_execution::RunnerProgram,
+    request: octacity_execution::StartExecution,
+    cancellation: CancellationToken,
+  ) -> Result<Box<dyn octacity_execution::RunningExecution>, octacity_execution::ExecutionError> {
+    assert!(!request.factory.as_ref().unwrap().source_visible);
+    std::fs::write(request.workspace.join("source-canary"), b"host-only-fixture").unwrap();
+    self.0.start(runner, request, cancellation).await
+  }
+  async fn cleanup_orphans(&self) -> Result<(), octacity_execution::ExecutionError> {
+    self.0.cleanup_orphans().await
+  }
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+#[ignore = "requires an isolated Microsandbox state/work root and a released Linux Octa bundle"]
+async fn source_free_ordinary_job_runs_retries_and_cancels_on_microsandbox() {
+  let work_root = required_path("OCTACITY_CONTRACT_MICROSANDBOX_WORK_ROOT");
+  let bytes = required_u64("OCTACITY_CONTRACT_WORKSPACE_BYTES");
+  let runner = RunnerInstallation::load(&required_path("OCTACITY_CONTRACT_OCTA_RELEASE_ROOT")).unwrap();
+  let engine: Arc<dyn OciEngine> = Arc::new(
+    MicrosandboxEngine::new(MicrosandboxEngineConfig {
+      agent_id: "source-free-contract".to_owned(),
+      state_root: required_path("OCTACITY_CONTRACT_MICROSANDBOX_STATE_ROOT"),
+      work_root: work_root.clone(),
+      runner_platform: expected_microsandbox_runner_platform().to_owned(),
+      executable: required_absolute_path("OCTACITY_CONTRACT_MICROSANDBOX_EXECUTABLE"),
+      libkrunfw: required_absolute_path("OCTACITY_CONTRACT_MICROSANDBOX_LIBKRUNFW"),
+      cleanup_timeout: Duration::from_secs(10),
+      metrics_sample_interval: Duration::from_secs(1),
+    })
+    .unwrap(),
+  );
+  let ordinary = oci_v2_specification(
+    ExecutionMode::Virtualization,
+    host_platform(),
+    linux_platform(),
+    required_string("OCTACITY_CONTRACT_MICROSANDBOX_IMAGE"),
+    bytes,
+    unix_now(),
+    &runner,
+  );
+  let body = b"version: 1\ntasks:\n  contract:\n    shell: |\n      set -eu\n      test ! -e /workspace/source/source-canary\n      test ! -e /workspace/source/.git\n      test ! -e /workspace/.git\n      test -r /octacity/protected/Octafile.yml\n      ! printf tamper >> /octacity/protected/Octafile.yml || exit 1\n      printf selected-input > /workspace/output/result\n      echo source-free-contract\n  wait:\n    shell: sleep 60\n".to_vec();
+  let mut managed = oci_v3_specification(&ordinary, &runner, &body);
+  managed
+    .permissions
+    .mounts
+    .retain(|mount| mount.root != "/workspace/source");
+  let mut wire = serde_json::to_value(managed).unwrap();
+  wire["protocol_version"] = serde_json::json!(4);
+  wire["source"] = serde_json::json!({"kind": "source_free_v1"});
+  let spec: octacity_protocol::JobSpecV4 = serde_json::from_value(wire).unwrap();
+  spec
+    .validate(&octacity_protocol::JobBinding {
+      job_id: &spec.job_id,
+      attempt: 1,
+      now: spec.issued_at,
+    })
+    .unwrap();
+  assert!(spec.factory.is_none());
+  let mut configuration = executor_config(work_root, bytes, false, vec![]);
+  configuration.factory_permissions = Some(spec.permissions.clone());
+  let capability = ExecutionCapabilityV2 {
+    provider: ExecutionProviderId::new(MICROSANDBOX_ENGINE_NAME).unwrap(),
+    mode: ExecutionMode::Virtualization,
+    host_platform: host_platform(),
+    target_platform: linux_platform(),
+    guarantees: guarantees_for(ExecutionMode::Virtualization),
+    immutable_images: true,
+  };
+  let route = ExecutionBackendRoute::new(
+    capability,
+    ExecutionEnvironmentId::new("source-free-microsandbox-contract").unwrap(),
+    Arc::new(HiddenSourceProbe(Arc::new(OciBackend::new(vec![engine]).unwrap()))),
+  )
+  .unwrap()
+  .with_factory_enforcement(FactoryEnforcementCapabilityV3::ALL)
+  .unwrap();
+  let mut executor = JobExecutor::new(
+    runner,
+    Arc::new(NoVcsAccess),
+    Arc::new(FileWorkloadIdentityProvider::new(BTreeMap::new())),
+    BTreeMap::new(),
+    configuration,
+  )
+  .unwrap()
+  .with_execution_backends([route])
+  .unwrap();
+  executor.cleanup_orphans().await.unwrap();
+  for attempt in 1..=3 {
+    let (origin, server) = protected_input_server(body.clone()).await;
+    let stager = ProtectedInputStager::new(ProtectedInputStagerConfig {
+      root_certificates: vec![],
+      allowed_origins: vec![origin.clone()],
+      download_timeout: Duration::from_secs(10),
+    })
+    .unwrap();
+    // Each fresh executor view uses the same private-workspace and cleanup owner.
+    executor = executor.with_protected_input_stager(stager);
+    let mut next = spec.clone();
+    next.job_id = format!("source-free-attempt-{attempt}");
+    next.attempt = attempt;
+    let cancelling = attempt == 3;
+    if cancelling {
+      next.execution.tasks = vec!["wait".to_owned()];
+    }
+    let cancellation = CancellationToken::new();
+    let (sender, mut receiver) = mpsc::channel(128);
+    let execute = executor.execute(
+      ExecuteJobRequest {
+        spec: next.into(),
+        source_credentials: BTreeMap::new(),
+        cache_grant: None,
+        protected_inputs: vec![protected_transfer(&body, &origin)],
+      },
+      cancellation.clone(),
+      &sender,
+    );
+    tokio::pin!(execute);
+    if cancelling {
+      loop {
+        tokio::select! {
+          result = &mut execute => panic!("cancellation must reach the real runner first: {result:?}"),
+          item = receiver.recv() => if matches!(item, Some(RunnerStreamItem::Event(_))) { cancellation.cancel(); break; },
+        }
+      }
+    }
+    let completed = execute.await.expect("source-free real execution must complete");
+    server.await.unwrap();
+    assert_eq!(
+      completed.runner().status,
+      if cancelling {
+        RunStatus::Cancelled
+      } else {
+        RunStatus::Succeeded
+      },
+      "{:?}",
+      completed.runner()
+    );
+    assert!(completed.source().is_none());
+    assert!(completed.change_set().is_none());
+    assert_eq!(
+      completed.execution().unwrap().provider.as_str(),
+      MICROSANDBOX_ENGINE_NAME
+    );
+    assert!(!completed.workspace().join(".git").exists());
+    assert_eq!(
+      std::fs::read(completed.workspace().join("source-canary")).unwrap(),
+      b"host-only-fixture"
+    );
+    let root = completed.workspace().parent().unwrap().to_owned();
+    if !cancelling {
+      assert_eq!(std::fs::read(root.join("output/result")).unwrap(), b"selected-input");
+    }
+    completed.cleanup().await.unwrap();
+    assert!(!root.exists());
+  }
+}
+
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 #[ignore = "requires Linux containerd, runc/crun, cgroup v2, and a quota-mounted work root; see docs/testing/backend-contracts.md"]
 async fn containerd_isolation_provider_satisfies_the_real_runner_contract() {
@@ -1245,6 +1429,11 @@ fn cancellation_spec(mut spec: VerifiedJobSpec) -> VerifiedJobSpec {
       spec.cache = None;
     }
     VerifiedJobSpec::V3(spec) => {
+      spec.job_id.push_str("-cancel");
+      spec.execution.tasks = vec!["wait".to_owned()];
+      spec.cache = None;
+    }
+    VerifiedJobSpec::V4(spec) => {
       spec.job_id.push_str("-cancel");
       spec.execution.tasks = vec!["wait".to_owned()];
       spec.cache = None;

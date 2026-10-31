@@ -246,7 +246,10 @@ impl FactoryTaskEnvelope {
   pub fn verify_build_intent(&self, intent: &crate::FlowBuildIntent) -> Result<(), FactoryError> {
     let context = intent.input().context().ok_or_else(|| invalid("task node Context"))?;
     if self.node_attempt_id != intent.node().id()
-      || self.subject.exact() != intent.input().subject()
+      || match &self.subject {
+        FactoryTaskSubject::WorkInputV1(_) => self.subject != intent.input().task_subject()?,
+        _ => self.subject.exact()? != intent.input().exact_resource()?,
+      }
       || context.subject() != &self.subject
       || self.context_manifest_id != context.id()
       || self.context_manifest_digest != context.digest()?

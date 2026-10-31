@@ -66,6 +66,29 @@ impl TryFrom<BindingWire> for FlowContextBinding {
   }
 }
 impl FlowContextBinding {
+  pub(super) fn replace_owned_entries(
+    original: Option<&Self>,
+    owned: &[FactoryKey],
+    entries: BTreeMap<FactoryKey, FlowContextSelection>,
+  ) -> Result<Option<Self>, FactoryError> {
+    let mut binding = original.cloned().unwrap_or(Self {
+      candidate_revision: None,
+      candidate_when_present: None,
+      entries: BTreeMap::new(),
+      artifact_collections: BTreeMap::new(),
+    });
+    binding.entries.retain(|key, _| !owned.contains(key));
+    binding.entries.extend(entries);
+    if binding.entries.is_empty()
+      && binding.artifact_collections.is_empty()
+      && binding.candidate_revision.is_none()
+      && binding.candidate_when_present.is_none()
+    {
+      return Ok(None);
+    }
+    binding.validate()?;
+    Ok(Some(binding))
+  }
   /// Freezes required context sources and a selected candidate revision.
   /// Absence of a candidate mapping requires the original exact Work subject.
   pub fn new(
@@ -200,12 +223,17 @@ impl FlowContextBinding {
   }
   pub(super) fn verify(&self, input: &FlowNodeInput) -> Result<(), FactoryError> {
     let context = input.context().ok_or_else(invalid)?;
-    if self.candidate_revision(input.payload())?.as_ref()
-      != context
-        .subject()
-        .candidate()
-        .map(|candidate| candidate.candidate_revision())
-    {
+    let requested = self.candidate_revision(input.payload())?;
+    let actual = context
+      .subject()
+      .candidate()
+      .map(|candidate| candidate.candidate_revision());
+    let matches = if input.code().is_some() {
+      context.subject() == &input.task_subject()? && requested.as_ref().is_none_or(|revision| Some(revision) == actual)
+    } else {
+      requested.as_ref() == actual
+    };
+    if !matches {
       return Err(invalid());
     }
     let selected = self.selected_sources(input.payload())?;

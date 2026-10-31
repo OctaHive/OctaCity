@@ -309,3 +309,76 @@ fn has_windows_drive_prefix(value: &str) -> bool {
   let bytes = value.as_bytes();
   bytes.len() >= 2 && bytes[0].is_ascii_alphabetic() && bytes[1] == b':'
 }
+
+/// Provider-neutral source expression used by manual and installed-source admission.
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(tag = "kind", content = "value", rename_all = "snake_case", deny_unknown_fields)]
+pub enum RepositorySourceSelection {
+  /// Resolve the immutable Repository version's configured default reference.
+  DefaultReference,
+  /// Resolve one explicitly allowed mutable branch or tag.
+  Reference(SourceReference),
+  /// Verify and use an explicitly supplied immutable revision.
+  ExactRevision(ImmutableRevision),
+}
+
+/// Explicit versioned source absence for ordinary Builds; omitted in historical repository-backed input.
+#[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize)]
+#[serde(tag = "kind", rename_all = "snake_case", deny_unknown_fields)]
+pub enum BuildSourceMode {
+  /// A private execution workspace with no Repository, revision or VCS operation.
+  SourceFreeV1,
+}
+
+// An empty struct variant rejects fields that serde ignores on tagged unit variants.
+#[derive(Deserialize)]
+#[serde(tag = "kind", rename_all = "snake_case", deny_unknown_fields)]
+enum BuildSourceModeWire {
+  SourceFreeV1 {},
+}
+impl<'de> Deserialize<'de> for BuildSourceMode {
+  fn deserialize<D: serde::Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
+    match BuildSourceModeWire::deserialize(deserializer)? {
+      BuildSourceModeWire::SourceFreeV1 {} => Ok(Self::SourceFreeV1),
+    }
+  }
+}
+
+/// Explicit ordinary Build source intent; repository expressions keep their released wire shape.
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(untagged)]
+pub enum BuildSourceSelection {
+  /// A repository expression, resolved only through the existing VCS policy boundary.
+  Repository(RepositorySourceSelection),
+  /// Versioned source absence, never a VCS expression or synthetic Repository.
+  SourceFree(BuildSourceMode),
+}
+
+impl BuildSourceSelection {
+  /// Borrows a VCS expression only when the operator explicitly selected one.
+  #[must_use]
+  pub const fn repository(&self) -> Option<&RepositorySourceSelection> {
+    match self {
+      Self::Repository(selection) => Some(selection),
+      Self::SourceFree(_) => None,
+    }
+  }
+  /// Returns the explicit non-repository mode; legacy repository intent has none.
+  #[must_use]
+  pub const fn mode(&self) -> Option<BuildSourceMode> {
+    match self {
+      Self::Repository(_) => None,
+      Self::SourceFree(mode) => Some(*mode),
+    }
+  }
+}
+impl From<RepositorySourceSelection> for BuildSourceSelection {
+  fn from(selection: RepositorySourceSelection) -> Self {
+    Self::Repository(selection)
+  }
+}
+impl From<BuildSourceMode> for BuildSourceSelection {
+  fn from(mode: BuildSourceMode) -> Self {
+    Self::SourceFree(mode)
+  }
+}

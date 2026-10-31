@@ -181,13 +181,18 @@ impl<R: FactoryRunStore, Q: BuildQueryStore, A: ArtifactRecordStore, B: Artifact
       .input()
       .context()
       .is_some_and(|context| context.subject().candidate().is_some());
+    let resource = intent.input().exact_resource().ok();
+    let source_mode = matches!(intent.input().code(), Some(octacity_server_factory::FlowNodeCode::None))
+      .then_some(octacity_server_domain::BuildSourceMode::SourceFreeV1);
     if intents.next().is_some()
+      || build.build.validate().is_err()
+      || build.build.source != source_mode
       || FactoryBuildOrigin::from_intent(intent).map_err(|_| Invalid)? != *origin
       || build.build.project_id != intent.input().subject().project_id()
-      || build.build.repository_id != intent.input().subject().repository_id()
+      || build.build.repository_id != resource.map(|resource| resource.repository_id())
       || build.build.configuration_id != intent.profile().build_configuration.id()
       || build.build.configuration_version != intent.profile().build_configuration.version()
-      || build.build.immutable_revision != *intent.input().subject().base_revision()
+      || build.build.immutable_revision.as_ref() != resource.map(|resource| resource.base_revision())
       || (has_candidate && self.candidate_context.is_none())
     {
       return Err(Invalid);
@@ -254,14 +259,15 @@ impl<R: FactoryRunStore, Q: BuildQueryStore, A: ArtifactRecordStore, B: Artifact
     let template = &job.job.job_spec_template;
     let managed = template.managed_intent().ok_or(Invalid)?;
     let terminal = job.terminal.as_ref().ok_or(Invalid)?;
-    let causality = managed.factory();
+    let causality = managed.factory().ok_or(Invalid)?;
     if job.attempt_id != attempt_id
       || !job.state.is_terminal()
       || job.assignment.is_none()
       || job.updated_at > now
       || terminal.state != job.state
       || terminal.completed_at > now
-      || template.source_revision() != &build.build.immutable_revision
+      || template.source_mode() != build.build.source
+      || template.source_revision() != build.build.immutable_revision.as_ref()
       || template.execution_deadline() != Some(intent.node().deadline())
       || template.pipeline_node_id() != &profile.pipeline_node
       || managed.permissions() != &factory_job_permissions(&permissions).map_err(|_| Invalid)?
@@ -496,7 +502,8 @@ impl<R: FactoryRunStore, Q: BuildQueryStore, A: ArtifactRecordStore, B: Artifact
       prompt_digest: codex_prompt_provenance_digest(prompt),
       source_revision: materialization
         .as_ref()
-        .map_or(template.source_revision(), |source| &source.candidate_revision),
+        .map(|source| &source.candidate_revision)
+        .or_else(|| template.source_revision()),
       budget: intent.budget(),
       execution_window: job.created_at..=terminal.completed_at.min(intent.node().deadline()),
     };

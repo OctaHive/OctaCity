@@ -377,7 +377,10 @@ pub fn compile_codex_task(
               public: &public_environment,
               secret: &secret_environment,
             },
-            source_revision: selected_revision(envelope),
+            source_revision: envelope
+              .subject()
+              .execution_revision()
+              .map(|revision| revision.as_str()),
             deliverables: codex_deliverables(envelope),
             tool_authorization: envelope
               .permissions()
@@ -700,17 +703,6 @@ fn task_name(mode: FactoryTaskMode) -> &'static str {
   }
 }
 
-fn selected_revision(envelope: &FactoryTaskEnvelope) -> &str {
-  envelope
-    .subject()
-    .candidate()
-    .map_or_else(
-      || envelope.subject().exact().base_revision(),
-      |subject| subject.candidate_revision(),
-    )
-    .as_str()
-}
-
 fn public_environment() -> BTreeMap<String, String> {
   BTreeMap::from([
     (FACTORY_PROMPT_VARIABLE.to_owned(), FACTORY_PROMPT_VARIABLE.to_owned()),
@@ -902,7 +894,8 @@ struct CodexTask<'a> {
   result_schema: &'a Value,
   run_records: &'static str,
   environment: CodexEnvironment<'a>,
-  source_revision: &'a str,
+  #[serde(skip_serializing_if = "Option::is_none")]
+  source_revision: Option<&'a str>,
   deliverables: Vec<CodexDeliverable<'a>>,
   #[serde(skip_serializing_if = "Option::is_none")]
   tool_authorization: Option<ToolAuthorization>,

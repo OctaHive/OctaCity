@@ -94,11 +94,12 @@ fn submission(
         project_id: project,
         configuration_id: configuration,
         configuration_version: ordinary.configuration_version,
-        repository_id: repository,
+        repository_id: Some(repository),
+
         repository_version: ordinary.repository_version,
       },
       external_identity: ordinary.external_identity,
-      source: ordinary.source,
+      source: ordinary.source.repository().unwrap().clone(),
       classification: ordinary.classification,
       mapping: FactoryKey::new("plain-text.v1").unwrap(),
       idempotency_key: "submit".parse().unwrap(),
@@ -150,7 +151,10 @@ fn project_text_intake_publishes_exact_owned_inputs_and_uses_ordinary_admission(
       .unwrap();
     assert_eq!(pending.admission, Some(admitted.admission.clone()));
     let work = &admitted.admission.work;
-    assert_eq!(work.subject().base_revision().as_str(), "0123456789abcdef");
+    assert_eq!(
+      work.subject().repository().unwrap().base_revision().as_str(),
+      "0123456789abcdef"
+    );
     assert_eq!(
       work.artifacts().task().content_digest(),
       FactoryDigest::content_sha256("Задача\r\nс точными байтами\n".as_bytes())
@@ -330,7 +334,9 @@ fn project_text_intake_requires_reviewed_authority_and_exact_replay_before_effec
           invalid.intent.target.configuration_version =
             octacity_server_factory::FactoryConfigurationVersion::new(2).unwrap()
         }
-        1 => invalid.intent.target.repository_version = octacity_server_domain::RepositoryVersion::new(2).unwrap(),
+        1 => {
+          invalid.intent.target.repository_version = Some(octacity_server_domain::RepositoryVersion::new(2).unwrap())
+        }
         2 => invalid.intent.source = RepositorySourceSelection::Reference("refs/heads/not-reviewed".parse().unwrap()),
         _ => invalid.intent.target.project_id = ProjectId::generate(),
       }
@@ -443,7 +449,14 @@ fn project_text_intake_recovers_unknown_writes_without_republishing_or_resolving
     );
     assert_eq!(completed.admission.work.artifacts(), &pending.work_artifacts().unwrap());
     assert_eq!(
-      completed.admission.work.subject().base_revision().as_str(),
+      completed
+        .admission
+        .work
+        .subject()
+        .repository()
+        .unwrap()
+        .base_revision()
+        .as_str(),
       "0123456789abcdef"
     );
     assert_eq!(
@@ -726,8 +739,8 @@ fn project_text_intake_issue_publication_recovers_original_revision_and_associat
             target: IssueExecutionTarget {
               configuration_id: generic.intent.target.configuration_id,
               configuration_version: generic.intent.target.configuration_version,
-              repository_id: generic.intent.target.repository_id,
-              repository_version: generic.intent.target.repository_version,
+              repository_id: generic.intent.target.repository_id.unwrap(),
+              repository_version: generic.intent.target.repository_version.unwrap(),
               source: generic.intent.source.clone(),
               mapping: IssueExecutionMapping::TitleDescriptionAcceptanceV1,
             },

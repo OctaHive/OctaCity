@@ -78,7 +78,7 @@ fn fixture() -> Fixture {
   )
   .expect("fixture work");
   let subject = CandidateSubject::new(
-    work.subject().clone(),
+    work.subject().repository().unwrap().clone(),
     ImmutableRevision::new("candidate").expect("fixture candidate"),
     digest(4),
   );

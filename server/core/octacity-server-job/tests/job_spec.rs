@@ -206,6 +206,69 @@ fn derives_and_signs_stable_managed_v3_intent_without_transfer_capabilities() {
 }
 
 #[test]
+fn retained_source_free_template_signs_ordinary_v4_jobs_without_repository_or_factory_fields() {
+  let canonical = canonical_v3_spec();
+  let build = JobSpecBuildSnapshot::new(
+    build_id(),
+    ImmutableRevision::new("base").unwrap(),
+    None,
+    RepositoryLocator::new("https://example.test/source.git").unwrap(),
+    BTreeMap::new(),
+  )
+  .unwrap();
+  let intent = ManagedJobSpecIntent::new(
+    canonical.execution.clone(),
+    canonical.factory.clone().unwrap(),
+    canonical.protected_inputs.clone(),
+    canonical.permissions.clone(),
+    canonical.required_enforcement.clone(),
+  );
+  let template = derive_managed_job_spec_template(&build, node_id(), intent, &managed_policy(&canonical)).unwrap();
+  let mut wire = serde_json::to_value(template).unwrap();
+  wire.as_object_mut().unwrap().remove("immutable_revision");
+  wire.as_object_mut().unwrap().remove("repository_locator");
+  wire["source"] = json!({"kind":"source_free_v1"});
+  wire["execution"].as_object_mut().unwrap().remove("factory");
+  wire["execution"]["permissions"]["mounts"]
+    .as_array_mut()
+    .unwrap()
+    .retain(|mount| mount["root"] != "/workspace/source");
+  let restored = serde_json::from_value::<JobSpecTemplate>(wire.clone());
+  assert!(
+    restored.is_ok(),
+    "source-free intent retains no synthetic VCS fields: {restored:?}"
+  );
+  let restored = restored.unwrap();
+  restored.validate().unwrap();
+  assert!(
+    restored.placement_policy().source.is_none(),
+    "source-free placement must not require a source plugin"
+  );
+  assert_eq!(serde_json::to_value(&restored).unwrap(), wire);
+  let signer = JobSpecSigner::new("source-free", [21; 32]).unwrap();
+  let signed = sign_ready_job_spec(&restored, AttemptNumber::FIRST, job_id(), issued_at(), &signer).unwrap();
+  let verified = verify_compatible_job_spec(
+    signed.envelope(),
+    &BTreeMap::from([(signer.key_id().to_owned(), signer.verifying_key())]),
+    JobBinding {
+      job_id: &job_id().to_string(),
+      attempt: 1,
+      now: 100,
+    },
+  )
+  .unwrap();
+  let VerifiedJobSpec::V4(spec) = verified else {
+    panic!("source-free intent must select v4");
+  };
+  assert!(spec.factory.is_none());
+  assert_eq!(
+    serde_json::to_value(&spec.source).unwrap(),
+    json!({"kind":"source_free_v1"})
+  );
+  assert_eq!(spec.protected_inputs, canonical.protected_inputs);
+}
+
+#[test]
 fn managed_v3_rejects_legacy_runtime_and_discarded_ordinary_inputs() {
   let canonical = canonical_v3_spec();
   let intent = || {

@@ -188,10 +188,11 @@ impl<R: FactoryRunStore, Q: BuildQueryStore, A: ArtifactRecordStore, B: Artifact
     if intents.next().is_some()
       || FactoryBuildOrigin::from_intent(&intent).map_err(|_| Invalid)? != *origin
       || build.build.project_id != intent.input().subject().project_id()
-      || build.build.repository_id != intent.input().subject().repository_id()
+      || build.build.repository_id != Some(intent.input().exact_resource().map_err(|_| Invalid)?.repository_id())
       || build.build.configuration_id != intent.profile().build_configuration.id()
       || build.build.configuration_version != intent.profile().build_configuration.version()
-      || build.build.immutable_revision != *intent.input().subject().base_revision()
+      || build.build.immutable_revision.as_ref()
+        != Some(intent.input().exact_resource().map_err(|_| Invalid)?.base_revision())
     {
       return Err(Invalid);
     }
@@ -278,7 +279,11 @@ impl<R: FactoryRunStore, Q: BuildQueryStore, A: ArtifactRecordStore, B: Artifact
       snapshot,
       observed_at: now,
       program,
-      candidate_instruction: managed.factory().change_set_materialization.clone(),
+      candidate_instruction: managed
+        .factory()
+        .ok_or(OrdinaryBuildApplicationError::Invalid)?
+        .change_set_materialization
+        .clone(),
     })
   }
 
@@ -610,10 +615,10 @@ fn verify_compiled_command_job(
   }
   let template = &job.job.job_spec_template;
   let managed = template.managed_intent().ok_or(Invalid)?;
-  let causality = managed.factory();
+  let causality = managed.factory().ok_or(Invalid)?;
   let origin = FactoryBuildOrigin::from_intent(intent).map_err(|_| Invalid)?;
   if template.build_id() != build_id
-    || template.source_revision() != intent.input().subject().base_revision()
+    || template.source_revision() != Some(intent.input().exact_resource().map_err(|_| Invalid)?.base_revision())
     || template.execution_deadline() != Some(intent.node().deadline())
     || template.pipeline_node_id() != &profile.pipeline_node
     || managed.permissions() != &factory_job_permissions(&permissions).map_err(|_| Invalid)?

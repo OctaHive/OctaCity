@@ -25,12 +25,12 @@ use crate::{
   GetRepositoryQuery, GetScheduleQuery, InternalTriggerDefinition, InternalTriggerSourceStrategy,
   IssueAgentEnrollmentCommand, ListAgentPoolsQuery, ListAgentsQuery, ListInternalTriggersQuery,
   ListProjectBuildConfigurationsQuery, ListProjectBuildsQuery, ListProjectPipelinesQuery, ListProjectRepositoriesQuery,
-  ListProjectTriggerDefinitionsQuery, ListProjectsQuery, MAX_JOB_EVENT_WAIT, ManualSourceSelection,
-  ManualTriggerCommand, MoveProjectCommand, ObserveManagedWebhookRegistrationCommand, ProjectPolicyDefinition,
-  PublishAgentPoolVersionCommand, PublishBuildConfigurationVersionCommand, PublishInternalTriggerVersionCommand,
-  PublishPipelineVersionCommand, PublishProjectPolicyCommand, PublishRepositoryVersionCommand, ReadJobEventsQuery,
-  ReassignAgentPoolCommand, RenameProjectCommand, RetryBuildCommand, RotateManagedWebhookRegistrationCommand,
-  ScheduledBuildDefinition, SetAgentEnabledCommand,
+  ListProjectTriggerDefinitionsQuery, ListProjectsQuery, MAX_JOB_EVENT_WAIT, ManualTriggerCommand, MoveProjectCommand,
+  ObserveManagedWebhookRegistrationCommand, ProjectPolicyDefinition, PublishAgentPoolVersionCommand,
+  PublishBuildConfigurationVersionCommand, PublishInternalTriggerVersionCommand, PublishPipelineVersionCommand,
+  PublishProjectPolicyCommand, PublishRepositoryVersionCommand, ReadJobEventsQuery, ReassignAgentPoolCommand,
+  RenameProjectCommand, RetryBuildCommand, RotateManagedWebhookRegistrationCommand, ScheduledBuildDefinition,
+  SetAgentEnabledCommand,
 };
 
 mod agent;

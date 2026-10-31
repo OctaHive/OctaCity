@@ -905,6 +905,88 @@ async fn source_free_job_preserves_absent_source_authority_through_the_backend_r
   completion.cleanup().await.unwrap();
 }
 
+#[tokio::test]
+async fn explicit_source_free_job_runs_with_selected_inputs_without_source_lookup_or_checkout() {
+  let (completion, _, _root) =
+    captured_factory_job_with_observation(None, false, &[], None, FixtureSource::Absent, false).await;
+  let completion = completion.expect("explicit source-free execution must not need a bootstrap repository");
+  assert!(completion.source().is_none());
+  assert!(completion.change_set().is_none());
+  assert_eq!(
+    completion.publication_workspace(),
+    completion.workspace().parent().unwrap().join("output")
+  );
+  assert_eq!(completion.publication_prefix(), Some(std::path::Path::new("output")));
+  assert!(!completion.workspace().join(".git").exists());
+  completion.cleanup().await.unwrap();
+}
+
+#[tokio::test]
+async fn source_free_job_rejects_source_credentials_before_workspace_or_backend_access() {
+  let root = tempfile::tempdir().unwrap();
+  let source_calls = Arc::new(AtomicUsize::new(0));
+  let starts = Arc::new(AtomicUsize::new(0));
+  let spec = factory_spec();
+  let mut executor = factory_executor(
+    root.path(),
+    source_calls.clone(),
+    starts.clone(),
+    &spec,
+    FactoryEnforcementCapabilityV3::ALL,
+  );
+  executor.source = Arc::new(NoSourceAccess);
+  let mut wire = serde_json::to_value(&spec).unwrap();
+  wire["protocol_version"] = serde_json::json!(4);
+  wire["source"] = serde_json::json!({"kind":"source_free_v1"});
+  wire["factory"] = serde_json::Value::Null;
+  wire["permissions"]["mounts"]
+    .as_array_mut()
+    .unwrap()
+    .retain(|mount| mount["root"] != FACTORY_SOURCE_ROOT);
+  let source_free: octacity_protocol::JobSpecV4 = serde_json::from_value(wire).unwrap();
+  let credential = tempfile::NamedTempFile::new().unwrap();
+  std::fs::write(credential.path(), b"private-source-credential").unwrap();
+  let before = std::fs::read_dir(root.path()).unwrap().count();
+  let (events, _) = mpsc::channel(1);
+  let failure = executor
+    .execute(
+      ExecuteJobRequest {
+        spec: source_free.into(),
+        protected_inputs: transfers(&spec.protected_inputs),
+        source_credentials: BTreeMap::from([("TOKEN".to_owned(), credential.path().to_path_buf())]),
+        cache_grant: None,
+      },
+      CancellationToken::new(),
+      &events,
+    )
+    .await
+    .unwrap_err();
+  assert!(matches!(failure.error(), JobError::Invalid(message)
+    if message == "source-free execution cannot consume source credentials"));
+  assert_eq!(source_calls.load(Ordering::SeqCst), 0);
+  assert_eq!(starts.load(Ordering::SeqCst), 0);
+  assert_eq!(std::fs::read_dir(root.path()).unwrap().count(), before);
+  assert!(!format!("{failure:?}").contains("private-source-credential"));
+}
+
+struct NoSourceAccess;
+#[async_trait]
+impl SourceMaterializer for NoSourceAccess {
+  fn verify(&self, _: &SourceSpec) -> Result<(), SourceError> {
+    panic!("source-free execution must not look up a source plugin")
+  }
+  async fn materialize(
+    &self,
+    _: &SourceSpec,
+    _: SourceMaterializationRequest,
+    _: Duration,
+    _: Duration,
+    _: CancellationToken,
+  ) -> Result<MaterializedSource, SourceError> {
+    panic!("source-free execution must not checkout a repository")
+  }
+}
+
 struct SourceFreeBackend(Arc<dyn ExecutionBackend>);
 #[async_trait]
 impl ExecutionBackend for SourceFreeBackend {
@@ -1080,10 +1162,21 @@ async fn captured_factory_job_with_visibility(
     materialization,
     write_paths,
     source_write_paths,
-    source_visible,
+    if source_visible {
+      FixtureSource::Visible
+    } else {
+      FixtureSource::HiddenLegacy
+    },
     false,
   )
   .await
+}
+
+#[derive(Clone, Copy)]
+enum FixtureSource {
+  Visible,
+  HiddenLegacy,
+  Absent,
 }
 
 async fn captured_factory_job_with_observation(
@@ -1091,12 +1184,14 @@ async fn captured_factory_job_with_observation(
   materialization: bool,
   write_paths: &[&str],
   source_write_paths: Option<&[&str]>,
-  source_visible: bool,
+  source_mode: FixtureSource,
   observation: bool,
 ) -> (Result<JobCompletion, JobFailure>, Arc<AtomicBool>, tempfile::TempDir) {
   use sha2::Digest as _;
   use std::time::SystemTime;
   use tokio::io::{AsyncReadExt as _, AsyncWriteExt as _};
+  let source_visible = matches!(source_mode, FixtureSource::Visible);
+  let source_free = matches!(source_mode, FixtureSource::Absent);
 
   let octafile = b"version: 1\n\ntasks:\n  implement:\n    shell: echo managed\n";
   let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
@@ -1231,6 +1326,9 @@ async fn captured_factory_job_with_observation(
     FactoryEnforcementCapabilityV3::ALL,
   );
   install_revalidatable_runner(&mut executor, work_root.path());
+  if source_free {
+    executor.source = Arc::new(NoSourceAccess);
+  }
   if materialization && deadline.is_none() {
     for route in executor.execution_backends.values_mut() {
       route.backend = Arc::new(CandidateProjectionBackend(route.backend.clone()));
@@ -1282,11 +1380,22 @@ async fn captured_factory_job_with_observation(
   }
   let (events, _receiver) = mpsc::channel(8);
 
+  let spec: VerifiedJobSpec = if source_free {
+    let mut wire = serde_json::to_value(spec).unwrap();
+    wire["protocol_version"] = serde_json::json!(4);
+    wire["source"] = serde_json::json!({"kind":"source_free_v1"});
+    serde_json::from_value::<octacity_protocol::JobSpecV4>(wire)
+      .unwrap()
+      .into()
+  } else {
+    spec.into()
+  };
+
   let completion = executor
     .execute(
       ExecuteJobRequest {
         protected_inputs,
-        spec: spec.into(),
+        spec,
         source_credentials: BTreeMap::new(),
         cache_grant: None,
       },
@@ -1294,6 +1403,10 @@ async fn captured_factory_job_with_observation(
       &events,
     )
     .await;
+  if source_free && completion.is_err() {
+    server.abort();
+    return (completion, cancelled, work_root);
+  }
   if let Err(failure) = &completion {
     assert!(
       !matches!(
@@ -1305,7 +1418,7 @@ async fn captured_factory_job_with_observation(
   }
   server.await.unwrap();
 
-  assert_eq!(source_calls.load(Ordering::SeqCst), 1);
+  assert_eq!(source_calls.load(Ordering::SeqCst), if source_free { 0 } else { 1 });
   if !materialization {
     assert_eq!(starts.load(Ordering::SeqCst), 1);
     assert_eq!(captured.load(Ordering::SeqCst), source_visible);
@@ -1945,7 +2058,8 @@ async fn explicit_tool_execution_owner_is_bound_before_any_input_source_or_crede
 
 #[tokio::test]
 async fn managed_capture_binds_observations_to_signed_input_and_original_deadline() {
-  let (completion, _, _root) = captured_factory_job_with_observation(None, false, &[], None, true, true).await;
+  let (completion, _, _root) =
+    captured_factory_job_with_observation(None, false, &[], None, FixtureSource::Visible, true).await;
   completion
     .expect("an opted-in capture can retain its independently signed observation context")
     .cleanup()

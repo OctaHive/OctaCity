@@ -58,7 +58,8 @@ where
   );
 
   let mut missing_reference = request.clone();
-  missing_reference.build.repository_version = missing_reference.build.repository_version.next().unwrap();
+  missing_reference.build.repository_version =
+    Some(missing_reference.build.repository_version.unwrap().next().unwrap());
   assert_eq!(
     store.accept_trigger(missing_reference).await.unwrap_err(),
     StoreError::NotFound {

@@ -205,6 +205,48 @@ pub(super) const OPERATIONS: &[ManagementOperation] = &[
   )
   .with_no_store_response(),
   operation!(
+    octacity_server_application::ResolveFactoryExecutionBindingQuery,
+    "POST",
+    "/api/v1/projects/{project_id}/factory-execution-bindings/resolve",
+    "resolveFactoryExecutionBinding",
+    "Factory",
+    "Resolve exact installed execution/result bindings without an existing Flow or execution side effects",
+    Some("ResolveFactoryExecutionBindingRequest"),
+    "FactoryExecutionBindingResolution",
+    "200",
+    false,
+    false
+  )
+  .with_no_store_response(),
+  operation!(
+    octacity_server_application::GetFactoryAuthoringCapabilitiesQuery,
+    "GET",
+    "/api/v1/projects/{project_id}/factory-authoring-capabilities",
+    "getFactoryAuthoringCapabilities",
+    "Factory",
+    "Read common bounded gate contracts without saved nodes or execution side effects",
+    None,
+    "FactoryAuthoringCapabilities",
+    "200",
+    false,
+    false
+  )
+  .with_no_store_response(),
+  operation!(
+    octacity_server_application::ValidateFactoryGateProgramQuery,
+    "POST",
+    "/api/v1/projects/{project_id}/factory-gate-programs/validate",
+    "validateFactoryGateProgram",
+    "Factory",
+    "Normalize a bounded deterministic program without client policy hashes or publication",
+    Some("ValidateFactoryGateProgramRequest"),
+    "FactoryFlowGate",
+    "200",
+    false,
+    false
+  )
+  .with_no_store_response(),
+  operation!(
     octacity_server_application::ValidateFactoryRoleProfileQuery,
     "POST",
     "/api/v1/projects/{project_id}/factory-role-profiles/validate",

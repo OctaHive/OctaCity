@@ -132,7 +132,7 @@ impl FactoryRoleExecutionPackage {
     let task = &inputs.task;
     let context = &inputs.context;
     if inputs.profile.role() != inputs.role.reference()
-      || inputs.role.reference().project_id != task.subject().exact().project_id()
+      || inputs.role.reference().project_id != task.subject().project_id()
       || context.subject() != task.subject()
       || context.id() != task.context_manifest_id()
       || context.digest()? != task.context_manifest_digest()

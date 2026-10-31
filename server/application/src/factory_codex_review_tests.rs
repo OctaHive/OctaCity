@@ -455,9 +455,9 @@ fn reviewer_materialization_qualifies_the_same_plan_before_publishing_and_signin
     assert_eq!(accepted.jobs.len(), 1);
     let managed = accepted.jobs[0].job_spec_template.managed_intent().unwrap();
     assert_eq!(managed.protected_inputs().inputs.len(), 6);
-    assert!(managed.factory().change_set_materialization.is_some());
-    assert!(managed.factory().source_write_paths.is_none());
-    assert!(managed.factory().change_set_capture.is_none());
+    assert!(managed.factory().unwrap().change_set_materialization.is_some());
+    assert!(managed.factory().unwrap().source_write_paths.is_none());
+    assert!(managed.factory().unwrap().change_set_capture.is_none());
     assert!(managed.permissions().tools.is_empty());
     assert_eq!(managed.execution().credential_profile.as_deref(), Some("model-coding"));
     assert_eq!(inputs.0.lock().unwrap().len(), 1);

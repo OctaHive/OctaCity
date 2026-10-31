@@ -13,6 +13,8 @@ use crate::{
 #[serde(deny_unknown_fields)]
 pub struct AdmittedFlow {
   closure: PinnedFlowDefinitionClosure,
+  #[serde(default, skip_serializing_if = "Vec::is_empty")]
+  code_pins: Vec<super::FlowCodePin>,
   limits: FlowAdmissionLimits,
   wip_limits: crate::FactoryWipLimits,
   root_run: FlowRun,
@@ -36,6 +38,7 @@ impl AdmittedFlow {
     closure.clone().validate(limits.clone())?;
     let admitted = Self {
       closure,
+      code_pins: vec![],
       limits,
       wip_limits,
       root_run,
@@ -76,6 +79,23 @@ impl AdmittedFlow {
     Ok(admitted)
   }
 
+  /// Freezes exactly the used resources; their identity does not grant execution access.
+  pub fn with_code_pins(
+    mut self,
+    mut pins: Vec<super::FlowCodePin>,
+    project: octacity_server_domain::ProjectId,
+  ) -> Result<Self, FactoryError> {
+    pins.sort_by(|left, right| (left.definition, &left.source).cmp(&(right.definition, &right.source)));
+    super::code::validate_pins(&self.closure, &pins, Some(project))?;
+    self.code_pins = pins;
+    Ok(self)
+  }
+  /// Exact admitted resource pins, preserved across retries and restart.
+  #[must_use]
+  pub fn code_pins(&self) -> &[super::FlowCodePin] {
+    &self.code_pins
+  }
+
   /// Returns the exact reachable definition closure.
   #[must_use]
   pub const fn closure(&self) -> &PinnedFlowDefinitionClosure {
@@ -98,6 +118,11 @@ impl AdmittedFlow {
   /// the original admission limits.
   pub fn validated(&self) -> Result<crate::ValidatedFlowDefinitionClosure, FactoryError> {
     self.validate_root_bindings()?;
+    super::code::validate_pins(
+      &self.closure,
+      &self.code_pins,
+      self.code_pins.first().map(|pin| pin.subject.project_id()),
+    )?;
     validate_wip_limits(&self.limits, self.wip_limits)?;
     self.validate_data_schemas()?;
     crate::phase_pool::validate_pool_settings(&self.closure, &self.limits, &self.pools)?;

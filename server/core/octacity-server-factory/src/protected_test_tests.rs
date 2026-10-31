@@ -10,7 +10,7 @@ fn at(n: i64) -> Timestamp {
 fn protected_bundles_require_every_declared_class_and_restore_only_a_bounded_public_handoff() {
   let plan = ProtectedTestPlan::new(
     FactoryDigest::from_bytes([1; 32]),
-    FactoryTaskSubject::Exact(work().subject().clone()),
+    FactoryTaskSubject::Exact(work().subject().repository().unwrap().clone()),
     ProtectedTestCoverage::new(vec![key("integration"), key("project.contract")], 4, 4096, 4).unwrap(),
     at(1000),
   )
@@ -71,7 +71,7 @@ fn protected_bundles_require_every_declared_class_and_restore_only_a_bounded_pub
 fn protected_files_cannot_alias_one_artifact_as_two_independent_test_inputs() {
   let plan = ProtectedTestPlan::new(
     FactoryDigest::from_bytes([1; 32]),
-    FactoryTaskSubject::Exact(work().subject().clone()),
+    FactoryTaskSubject::Exact(work().subject().repository().unwrap().clone()),
     ProtectedTestCoverage::new(vec![key("integration"), key("security")], 4, 4096, 4).unwrap(),
     at(1000),
   )
@@ -112,7 +112,7 @@ fn protected_files_cannot_alias_one_artifact_as_two_independent_test_inputs() {
 fn protected_byte_limit_covers_inventory_and_sources_together() {
   let plan = ProtectedTestPlan::new(
     FactoryDigest::from_bytes([1; 32]),
-    FactoryTaskSubject::Exact(work().subject().clone()),
+    FactoryTaskSubject::Exact(work().subject().repository().unwrap().clone()),
     ProtectedTestCoverage::new(vec![key("custom")], 2, 100, 4).unwrap(),
     at(1000),
   )

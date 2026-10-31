@@ -38,7 +38,7 @@ fn issue_execution_result_collections_retain_original_candidate_evidence_and_dec
     ] {
       let (store, factory, issue, mut fixture) = associated_journal().await;
       let subject = octacity_server_factory::CandidateSubject::new(
-        fixture.admission.work.subject().clone(),
+        fixture.admission.work.subject().repository().unwrap().clone(),
         octacity_server_domain::ImmutableRevision::new("original-candidate").unwrap(),
         FactoryDigest::from_bytes([91; 32]),
       );
@@ -172,7 +172,7 @@ fn issue_execution_records_keep_exact_indeterminate_subjects_missing_evidence_an
   run_ready(async {
     let (store, factory, issue, mut fixture) = associated_journal().await;
     let subject = octacity_server_factory::CandidateSubject::new(
-      fixture.admission.work.subject().clone(),
+      fixture.admission.work.subject().repository().unwrap().clone(),
       octacity_server_domain::ImmutableRevision::new("historical-head").unwrap(),
       FactoryDigest::from_bytes([91; 32]),
     );
@@ -257,6 +257,108 @@ fn issue_execution_records_keep_exact_indeterminate_subjects_missing_evidence_an
     }
     assert_eq!(store.mutation_evidence_counts().await, before);
   });
+}
+
+// Keep Work correlation repository-free while the producing step retains an exact resource.
+fn independent_resource_journal_fixture() -> testing::FactoryNodeJournalContractFixture {
+  use octacity_server_domain::{AttemptId, BuildId, JobId};
+  use octacity_server_factory::*;
+  use octacity_server_store::testing as journal_testing;
+  let old = journal_testing::factory_node_journal_contract_fixture();
+  let resource = old.input.exact_resource().unwrap().clone();
+  let work = crate::factory_node_test_support::repository_free_work(&old.admission.work);
+  let previous = old
+    .admission
+    .flow
+    .closure()
+    .definition(old.admission.flow.closure().root())
+    .unwrap();
+  let definition = crate::factory_node_test_support::flow_with_explicit_resource(
+    FlowDefinitionInput {
+      id: previous.reference().id(),
+      version: previous.reference().version(),
+      input_schema: previous.input_schema().cloned(),
+      entry: previous.entry().clone(),
+      nodes: previous.nodes().to_vec(),
+      transitions: previous.transitions().to_vec(),
+      terminals: previous.terminals().to_vec(),
+      context_projections: previous.context_projections().to_vec(),
+      data_projections: previous.data_projections().to_vec(),
+      execution: previous.execution().clone(),
+    },
+    &resource,
+  );
+  let run = FactoryRun::admitted(old.admission.run.id(), &work);
+  let root = FlowRun::root(&run, definition.reference()).unwrap();
+  let cycle = WorkflowCycle::initial(&root).unwrap();
+  let admitted = AdmittedFlow::new(
+    PinnedFlowDefinitionClosure::new(definition.reference(), vec![definition]).unwrap(),
+    old.admission.flow.limits().clone(),
+    root,
+    cycle,
+    old.admission.flow.wip_limits(),
+  )
+  .unwrap()
+  .with_data_schemas(old.admission.flow.data_schemas().to_vec())
+  .unwrap();
+  let input = FlowNodeInput::new(
+    &work,
+    &admitted,
+    admitted.root_run(),
+    admitted.initial_cycle(),
+    old.input.node().clone(),
+    old.input.payload().clone(),
+  )
+  .unwrap()
+  .with_context(old.input.context().unwrap().clone(), vec![])
+  .unwrap();
+  let definition = admitted.closure().definition(admitted.closure().root()).unwrap();
+  let attempt = NodeAttempt::new(
+    admitted.root_run(),
+    admitted.initial_cycle(),
+    definition,
+    NodeAttemptInput {
+      id: old.attempt.id(),
+      node_key: input.node().clone(),
+      node_kind: old.attempt.node_kind(),
+      number: old.attempt.number(),
+      input_digest: input.digest().unwrap(),
+      budget: old.attempt.budget(),
+      started_at: old.attempt.started_at(),
+      deadline: old.attempt.deadline(),
+      execution: old.attempt.execution().clone(),
+      ownership: FactoryClaimOwnership::new(old.attempt.owner().clone(), old.attempt.claim()),
+    },
+  )
+  .unwrap();
+  let intent = FlowBuildIntent::new(
+    input.clone(),
+    &admitted,
+    attempt.clone(),
+    Default::default(),
+    i64::from(work.priority().get()),
+  )
+  .unwrap();
+  journal_testing::FactoryNodeJournalContractFixture {
+    discovery: None,
+    observation: None,
+    execution: FlowBuildExecution::new(
+      &intent,
+      BuildId::generate(),
+      AttemptId::generate(),
+      vec![JobId::generate()],
+    )
+    .unwrap(),
+    admission: PublishedFactoryAdmission {
+      work,
+      run,
+      flow: admitted,
+      admitted_at: old.admission.admitted_at,
+    },
+    schema: old.schema,
+    input,
+    attempt,
+  }
 }
 
 async fn associated_journal() -> (

@@ -107,17 +107,21 @@ impl<S: IssueExecutionStore + IssueStore, F: FactoryDiscoveryStore + FactoryRunS
     let association = self.visible_issue_work(grant, execution).await?;
     self.visible_execution_run(context, &association).await?;
     let snapshot = self.factory.factory_run_snapshot(association.run_id).await?;
-    let subject = snapshot
+    let record = snapshot
       .flow
       .data
       .records
       .iter()
       .find(|r| r.digest().ok() == Some(record))
-      .and_then(|r| r.discovery())
+      .ok_or_else(ApplicationError::invalid)?;
+    let subject = record
+      .discovery()
       .and_then(|d| d.published_candidate())
       .cloned()
       .ok_or_else(ApplicationError::invalid)?;
-    if subject.exact() != snapshot.work.subject() {
+    if record.input().subject() != snapshot.work.subject()
+      || record.input().exact_resource().ok() != Some(subject.exact())
+    {
       return Err(ApplicationError::invalid());
     }
     crate::factory_configuration_choices::require_visible_reference(

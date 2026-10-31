@@ -228,8 +228,8 @@ pub const MAX_FACTORY_RUN_SUMMARY_NODES: usize = 32;
 #[derive(Clone, Debug, Eq, PartialEq, serde::Deserialize, serde::Serialize)]
 #[serde(deny_unknown_fields)]
 pub struct FactoryRunSummaryDiagnostics {
-  /// Exact admitted repository base.
-  pub base_revision: octacity_server_domain::ImmutableRevision,
+  /// Exact admitted repository base, or no VCS base for Project/input Work.
+  pub base_revision: Option<octacity_server_domain::ImmutableRevision>,
   /// Latest exact candidate; no subject is inferred from prose or logical node names.
   pub candidate: Option<octacity_server_factory::CandidateSubject>,
   /// Bounded active attempts in stable Flow/cycle/node/attempt order.
@@ -393,7 +393,12 @@ impl FactoryRunSummaryDiagnostics {
       .ok_or(StoreError::Unavailable)?
       .usage;
     Ok(Self {
-      base_revision: snapshot.work.subject().base_revision().clone(),
+      base_revision: snapshot
+        .work
+        .subject()
+        .repository()
+        .ok()
+        .map(|subject| subject.base_revision().clone()),
       candidate,
       current_nodes: active,
       active_node_count,

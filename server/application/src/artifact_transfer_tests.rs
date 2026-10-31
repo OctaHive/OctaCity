@@ -190,6 +190,78 @@ fn published_metadata_is_not_returned_after_its_object_fails_verification() {
 }
 
 #[test]
+fn protected_downloads_require_the_authoritative_consuming_job_before_minting_a_capability() {
+  let (store, service, _, bytes) = service_with_bytes(false);
+  let begun = run_ready(service.begin_upload(begin_input("scoped-input"))).unwrap();
+  run_ready(service.complete_upload(complete_input("scoped-input-complete", &begun.upload_id))).unwrap();
+  let upload = run_ready(store.artifact_upload(begun.upload_id.parse().unwrap())).unwrap();
+  let identity = upload.artifact.identity();
+  let manifest = ProtectedInputManifestV3 {
+    inputs: vec![ProtectedInputV3 {
+      artifact_id: identity.artifact_id.to_string(),
+      size_bytes: identity.size_bytes,
+      sha256: identity.digest.to_string(),
+      media_type: identity.media_type.as_str().to_owned(),
+      destination: "/octacity/protected/selected.xml".to_owned(),
+    }],
+  };
+  let before = bytes.authorized.lock().unwrap().len();
+  let denied = run_ready(service.authorize_protected_inputs(AuthorizeProtectedInputsInput {
+    job_id: id(999),
+    manifest: manifest.clone(),
+    observed_at_unix_ms: 3_000,
+    lease_expires_at: time(8_000),
+  }));
+  assert!(
+    denied.is_err(),
+    "knowing immutable input metadata cannot authorize another Job"
+  );
+  assert_eq!(bytes.authorized.lock().unwrap().len(), before);
+  let allowed = run_ready(service.authorize_protected_inputs(AuthorizeProtectedInputsInput {
+    job_id: id(4),
+    manifest,
+    observed_at_unix_ms: 3_000,
+    lease_expires_at: time(8_000),
+  }))
+  .unwrap();
+  assert_eq!(allowed.len(), 1);
+}
+
+#[test]
+fn protected_manifest_is_fully_authorized_before_any_download_is_minted() {
+  let (store, service, _, bytes) = service_with_bytes(false);
+  let begun = run_ready(service.begin_upload(begin_input("preflight-input"))).unwrap();
+  run_ready(service.complete_upload(complete_input("preflight-input-complete", &begun.upload_id))).unwrap();
+  let upload = run_ready(store.artifact_upload(begun.upload_id.parse().unwrap())).unwrap();
+  let identity = upload.artifact.identity();
+  let selected = ProtectedInputV3 {
+    artifact_id: identity.artifact_id.to_string(),
+    size_bytes: identity.size_bytes,
+    sha256: identity.digest.to_string(),
+    media_type: identity.media_type.as_str().to_owned(),
+    destination: "/octacity/protected/selected.xml".to_owned(),
+  };
+  let mut unavailable = selected.clone();
+  unavailable.artifact_id = "ffffffff-ffff-4fff-bfff-ffffffffffff".to_owned();
+  unavailable.destination = "/octacity/protected/unavailable.xml".to_owned();
+  let before = bytes.authorized.lock().unwrap().len();
+  let denied = run_ready(service.authorize_protected_inputs(AuthorizeProtectedInputsInput {
+    job_id: id(4),
+    manifest: ProtectedInputManifestV3 {
+      inputs: vec![selected, unavailable],
+    },
+    observed_at_unix_ms: 3_000,
+    lease_expires_at: time(8_000),
+  }));
+  assert!(denied.is_err());
+  assert_eq!(
+    bytes.authorized.lock().unwrap().len(),
+    before,
+    "a later unauthorized input must prevent every download capability"
+  );
+}
+
+#[test]
 fn protected_downloads_match_published_identity_and_never_outlive_the_lease() {
   let (store, service) = service(false);
   let begun = run_ready(service.begin_upload(begin_input("request-1"))).unwrap();
@@ -207,6 +279,7 @@ fn protected_downloads_match_published_identity_and_never_outlive_the_lease() {
   };
 
   let transfers = run_ready(service.authorize_protected_inputs(AuthorizeProtectedInputsInput {
+    job_id: id(4),
     manifest: manifest.clone(),
     observed_at_unix_ms: 3_000,
     lease_expires_at: time(8_000),
@@ -221,6 +294,7 @@ fn protected_downloads_match_published_identity_and_never_outlive_the_lease() {
   mismatched.inputs[0].sha256 = "0".repeat(64);
   assert_eq!(
     run_ready(service.authorize_protected_inputs(AuthorizeProtectedInputsInput {
+      job_id: id(4),
       manifest: mismatched,
       observed_at_unix_ms: 3_000,
       lease_expires_at: time(8_000),
@@ -252,6 +326,7 @@ fn protected_download_preserves_signed_logical_media_over_generic_upload_transpo
   };
   let authorize = |manifest| {
     run_ready(service.authorize_protected_inputs(AuthorizeProtectedInputsInput {
+      job_id: id(4),
       manifest,
       observed_at_unix_ms: 3000,
       lease_expires_at: time(8000),
@@ -295,6 +370,7 @@ fn protected_grants_do_not_include_an_unselected_published_author_artifact() {
   let public = run_ready(store.artifact_upload(public.upload_id.parse().unwrap())).unwrap();
   let identity = public.artifact.identity();
   let transfers = run_ready(service.authorize_protected_inputs(AuthorizeProtectedInputsInput {
+    job_id: id(4),
     manifest: ProtectedInputManifestV3 {
       inputs: vec![ProtectedInputV3 {
         artifact_id: identity.artifact_id.to_string(),

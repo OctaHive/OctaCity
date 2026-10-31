@@ -425,7 +425,7 @@ async fn evaluate_event(
         trigger: integration.trigger,
         target: integration.target,
         deduplication_identity,
-        source,
+        source: source.into(),
         parameters: integration.definition.parameters,
         priority: integration.definition.priority,
         observed_at: source_time,

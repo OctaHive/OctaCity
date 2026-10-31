@@ -5,10 +5,9 @@ use serde::{Deserialize, Serialize};
 
 use crate::{
   CandidateSubject, Decision, DecisionId, DecisionOutcome, DeliveryAttemptId, DeliveryAttemptNumber, DeliveryState,
-  EscalationId, ExactSubject, ExternalWorkIdentity, FactoryArtifactReference, FactoryConfigurationId,
-  FactoryConfigurationVersion, FactoryDigest, FactoryError, FactoryKey, FactoryMetadata, FactoryRunId, FactoryRunState,
-  FactoryRunVersion, FactoryText, ReportingAttemptId, ReportingAttemptNumber, ReportingState, RiskClass,
-  WorkEnvelopeId, WorkPriority,
+  EscalationId, ExternalWorkIdentity, FactoryArtifactReference, FactoryConfigurationId, FactoryConfigurationVersion,
+  FactoryDigest, FactoryError, FactoryKey, FactoryMetadata, FactoryRunId, FactoryRunState, FactoryRunVersion,
+  FactoryText, ReportingAttemptId, ReportingAttemptNumber, ReportingState, RiskClass, WorkEnvelopeId, WorkPriority,
 };
 
 /// Maximum specification references carried by one Work Envelope.
@@ -165,13 +164,13 @@ impl WorkArtifacts {
 }
 
 /// Immutable normalized Work admitted to the Factory lifecycle.
-#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[derive(Clone, Debug, Eq, PartialEq, Serialize)]
 #[serde(deny_unknown_fields)]
 pub struct WorkEnvelope {
   id: WorkEnvelopeId,
   configuration: FactoryConfigurationRef,
   external_identity: ExternalWorkIdentity,
-  subject: ExactSubject,
+  subject: crate::WorkSubject,
   artifacts: WorkArtifacts,
   priority: WorkPriority,
   risk: RiskClass,
@@ -180,17 +179,52 @@ pub struct WorkEnvelope {
   profile_overrides: crate::FlowProfileAdmissionOverrides,
 }
 
+// A remote decoding shape keeps the historical field order and validates new
+// Project/input identities at every restore boundary, before replay or dispatch.
+#[derive(Deserialize)]
+#[serde(remote = "WorkEnvelope", deny_unknown_fields)]
+struct WorkEnvelopeWire {
+  id: WorkEnvelopeId,
+  configuration: FactoryConfigurationRef,
+  external_identity: ExternalWorkIdentity,
+  subject: crate::WorkSubject,
+  artifacts: WorkArtifacts,
+  priority: WorkPriority,
+  risk: RiskClass,
+  metadata: FactoryMetadata,
+  #[serde(default, skip_serializing_if = "crate::FlowProfileAdmissionOverrides::is_empty")]
+  profile_overrides: crate::FlowProfileAdmissionOverrides,
+}
+
+impl<'de> Deserialize<'de> for WorkEnvelope {
+  fn deserialize<D: serde::Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
+    let work = WorkEnvelopeWire::deserialize(deserializer)?;
+    if matches!(&work.subject, crate::WorkSubject::ProjectInput(_)) {
+      let expected = crate::WorkSubject::project_input(work.configuration.project_id(), &work.artifacts)
+        .map_err(serde::de::Error::custom)?;
+      if work.subject != expected {
+        return Err(serde::de::Error::custom(FactoryError::InconsistentSubject));
+      }
+    }
+    Ok(work)
+  }
+}
+
 impl WorkEnvelope {
   /// Constructs one bounded Work Envelope owned by its configuration Project.
   pub fn new(
     id: WorkEnvelopeId,
     configuration: FactoryConfigurationRef,
     external_identity: ExternalWorkIdentity,
-    subject: ExactSubject,
+    subject: impl Into<crate::WorkSubject>,
     artifacts: WorkArtifacts,
     classification: WorkClassification,
   ) -> Result<Self, FactoryError> {
-    if configuration.project_id != subject.project_id() {
+    let subject = subject.into();
+    if configuration.project_id != subject.project_id()
+      || matches!(&subject, crate::WorkSubject::ProjectInput(_))
+        && subject != crate::WorkSubject::project_input(configuration.project_id, &artifacts)?
+    {
       return Err(FactoryError::InconsistentSubject);
     }
     Ok(Self {
@@ -224,9 +258,9 @@ impl WorkEnvelope {
     &self.external_identity
   }
 
-  /// Returns the exact source subject.
+  /// Returns the admitted Work identity; this alone grants no code access.
   #[must_use]
-  pub const fn subject(&self) -> &ExactSubject {
+  pub const fn subject(&self) -> &crate::WorkSubject {
     &self.subject
   }
 
@@ -277,7 +311,7 @@ pub struct FactoryRun {
   id: FactoryRunId,
   configuration: FactoryConfigurationRef,
   work_id: WorkEnvelopeId,
-  subject: ExactSubject,
+  subject: crate::WorkSubject,
   state: FactoryRunState,
   version: FactoryRunVersion,
 }
@@ -301,10 +335,11 @@ impl FactoryRun {
     id: FactoryRunId,
     configuration: FactoryConfigurationRef,
     work: &WorkEnvelope,
-    subject: ExactSubject,
+    subject: impl Into<crate::WorkSubject>,
     state: FactoryRunState,
     version: FactoryRunVersion,
   ) -> Result<Self, FactoryError> {
+    let subject = subject.into();
     if configuration != work.configuration || subject != work.subject {
       return Err(FactoryError::InconsistentSubject);
     }
@@ -336,9 +371,9 @@ impl FactoryRun {
     self.work_id
   }
 
-  /// Returns the immutable base subject.
+  /// Returns immutable Work correlation; node resources are bound separately.
   #[must_use]
-  pub const fn subject(&self) -> &ExactSubject {
+  pub const fn subject(&self) -> &crate::WorkSubject {
     &self.subject
   }
 
@@ -360,7 +395,7 @@ impl FactoryRun {
 pub struct Escalation {
   id: EscalationId,
   run_id: FactoryRunId,
-  subject: ExactSubject,
+  subject: crate::WorkSubject,
   decision_id: Option<DecisionId>,
   reason: FactoryText,
 }
@@ -404,7 +439,7 @@ impl Escalation {
 
   /// Returns the exact Run subject.
   #[must_use]
-  pub const fn subject(&self) -> &ExactSubject {
+  pub const fn subject(&self) -> &crate::WorkSubject {
     &self.subject
   }
 
@@ -498,7 +533,7 @@ impl DeliveryAttempt {
 pub struct ReportingAttempt {
   id: ReportingAttemptId,
   run_id: FactoryRunId,
-  subject: ExactSubject,
+  subject: crate::WorkSubject,
   number: ReportingAttemptNumber,
   state: ReportingState,
   reporter: FactoryKey,
@@ -538,7 +573,7 @@ impl ReportingAttempt {
 
   /// Returns the immutable Run subject.
   #[must_use]
-  pub const fn subject(&self) -> &ExactSubject {
+  pub const fn subject(&self) -> &crate::WorkSubject {
     &self.subject
   }
 
@@ -588,6 +623,7 @@ mod tests {
   use octacity_server_domain::{ArtifactId, ImmutableRevision, RepositoryId};
 
   use super::*;
+  use crate::ExactSubject;
 
   fn digest(byte: u8) -> FactoryDigest {
     FactoryDigest::from_bytes([byte; 32])
@@ -625,6 +661,63 @@ mod tests {
       ),
     )
     .expect("fixture work")
+  }
+
+  #[test]
+  fn repository_free_work_restores_explicit_versioned_project_input_subject() {
+    let original = work(subject());
+    let mut encoded = serde_json::to_value(&original).unwrap();
+    encoded["subject"] = serde_json::json!({
+      "kind": "project_input_v1",
+      "project_id": original.configuration().project_id(),
+      "input_digest": FactoryDigest::content_sha256(&serde_json::to_vec(original.artifacts()).unwrap()),
+    });
+    let restored = serde_json::from_value::<WorkEnvelope>(encoded.clone());
+    assert!(
+      restored.is_ok(),
+      "versioned Project/input Work must restore without a Repository: {restored:?}"
+    );
+    let restored = restored.unwrap();
+    assert_eq!(serde_json::to_value(&restored).unwrap(), encoded);
+    let run = FactoryRun::admitted(FactoryRunId::generate(), &restored);
+    assert_eq!(serde_json::to_value(run).unwrap()["subject"], encoded["subject"]);
+    assert!(encoded["subject"].get("repository_id").is_none());
+    assert!(encoded["subject"].get("base_revision").is_none());
+  }
+
+  #[test]
+  fn repository_free_work_rejects_substituted_manifest_on_restore() {
+    let original = work(subject());
+    let mut encoded = serde_json::to_value(&original).unwrap();
+    encoded["subject"] = serde_json::to_value(
+      crate::WorkSubject::project_input(original.configuration().project_id(), original.artifacts()).unwrap(),
+    )
+    .unwrap();
+    encoded["artifacts"]["task"] = serde_json::to_value(artifact(92)).unwrap();
+    assert!(serde_json::from_value::<WorkEnvelope>(encoded).is_err());
+  }
+
+  #[test]
+  fn historical_repository_subject_retains_its_exact_bytes_and_identity() {
+    let retained = r#"{"project_id":"00000000-0000-0000-0000-000000000001","repository_id":"00000000-0000-0000-0000-000000000002","base_revision":"retained-base"}"#;
+    let subject: crate::WorkSubject = serde_json::from_str(retained).unwrap();
+    assert_eq!(serde_json::to_string(&subject).unwrap(), retained);
+    assert_eq!(subject.digest(), subject.repository().unwrap().digest());
+  }
+
+  #[test]
+  fn project_input_subject_rejects_replacing_admitted_artifacts() {
+    let original = work(subject());
+    let pinned = crate::WorkSubject::project_input(original.subject().project_id(), original.artifacts()).unwrap();
+    let substituted = WorkEnvelope::new(
+      WorkEnvelopeId::generate(),
+      original.configuration().clone(),
+      original.external_identity().clone(),
+      pinned,
+      WorkArtifacts::new(artifact(92), artifact(93), vec![]).unwrap(),
+      WorkClassification::new(original.priority(), original.risk(), original.metadata().clone()),
+    );
+    assert_eq!(substituted, Err(FactoryError::InconsistentSubject));
   }
 
   #[test]

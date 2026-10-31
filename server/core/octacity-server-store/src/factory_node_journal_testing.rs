@@ -642,7 +642,7 @@ fn maximum_signal_provenance_survives_completion_and_diagnostic_reads() {
 fn frozen_node_data_and_completions_are_committed_atomically_and_survive_snapshot_reads() {
   let mut fixture = factory_node_journal_contract_fixture();
   fixture.discovery = Some(FlowDiscoveryFacts::candidate(CandidateSubject::new(
-    fixture.admission.work.subject().clone(),
+    fixture.admission.work.subject().repository().unwrap().clone(),
     octacity_server_domain::ImmutableRevision::new("safe-candidate").unwrap(),
     FactoryDigest::from_bytes([91; 32]),
   )));

@@ -77,11 +77,16 @@ impl ManualTriggerService {
       return Ok(None);
     }
     let prepared = prepare_validated(command, &context).map_err(ManualTriggerError::Invalid)?;
+    let Some(selection) = prepared.source.repository() else {
+      return Ok(None);
+    };
     self
       .revisions
       .resolve(RevisionResolutionRequest {
-        repository: context.repository,
-        selection: prepared.source,
+        repository: context.repository.ok_or(ManualTriggerError::Invalid(
+          super::model::ManualTriggerInputError::ContextMismatch,
+        ))?,
+        selection: selection.clone(),
       })
       .await
       .map(Some)
@@ -347,23 +352,27 @@ impl ManualTriggerService {
     }
     let prepared = prepare_validated(&command, &context).map_err(ManualTriggerError::Invalid)?;
     let identities = ManualBuildIdentities::derive(occurrence_id, &context.pipeline);
-    let immutable_revision = match revision_mode {
-      RevisionMode::Resolve => self
-        .revisions
-        .resolve(RevisionResolutionRequest {
-          repository: context.repository.clone(),
-          selection: prepared.source.clone(),
-        })
-        .await
-        .map_err(ManualTriggerError::Revision)?,
-      RevisionMode::Resolved(Some(revision)) => revision,
-      RevisionMode::Resolved(None) => {
+    let repository = context.repository.as_ref();
+    let immutable_revision = match (prepared.source.repository(), repository, revision_mode) {
+      (Some(selection), Some(repository), RevisionMode::Resolve) => Some(
+        self
+          .revisions
+          .resolve(RevisionResolutionRequest {
+            repository: repository.clone(),
+            selection: selection.clone(),
+          })
+          .await
+          .map_err(ManualTriggerError::Revision)?,
+      ),
+      (Some(_), Some(_), RevisionMode::Resolved(Some(revision))) => Some(revision),
+      (None, None, RevisionMode::Resolve | RevisionMode::Resolved(None)) => None,
+      _ => {
         return Err(ManualTriggerError::Invalid(
           super::model::ManualTriggerInputError::ContextMismatch,
         ));
       }
     };
-    let jobs = materialize_jobs(&context, &identities, &prepared, &immutable_revision)?;
+    let jobs = materialize_jobs(&context, &identities, &prepared, immutable_revision.as_ref())?;
     let build = ImmutableBuildInput {
       id: identities.build_id,
       project_id: context.configuration.project_id,
@@ -371,9 +380,10 @@ impl ManualTriggerService {
       configuration_version: context.configuration.version,
       pipeline_id: context.pipeline.id,
       pipeline_version: context.pipeline.version,
-      repository_id: context.repository.id,
-      repository_version: context.repository.version,
+      repository_id: repository.map(|repository| repository.id),
+      repository_version: repository.map(|repository| repository.version),
       immutable_revision,
+      source: prepared.source.mode(),
       input_snapshot: input_snapshot(&prepared)?,
       effective_policy_snapshot: effective_policy_snapshot(&context)?,
       retention: retention_deadlines(&context, accepted_at)?,
@@ -457,7 +467,7 @@ struct ManualTriggerIntent<'a> {
   trigger: octacity_server_store::TriggerDefinitionRef,
   target: octacity_server_store::TriggerTarget,
   deduplication_identity: &'a octacity_server_domain::TriggerIdentity,
-  source: &'a super::model::ManualSourceSelection,
+  source: &'a octacity_server_domain::BuildSourceSelection,
   parameters: &'a std::collections::BTreeMap<String, serde_json::Value>,
   priority: i64,
   source_time: Option<Timestamp>,
@@ -483,7 +493,7 @@ fn trigger_intent_digest(
 #[derive(Serialize)]
 struct DerivedTriggerIntent<'a> {
   occurrence: octacity_server_store::TriggerOccurrenceIntent,
-  source: &'a super::model::ManualSourceSelection,
+  source: &'a octacity_server_domain::BuildSourceSelection,
   parameters: &'a std::collections::BTreeMap<String, serde_json::Value>,
   priority: i64,
 }

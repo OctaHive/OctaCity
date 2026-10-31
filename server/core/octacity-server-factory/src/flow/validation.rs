@@ -79,9 +79,24 @@ fn validate_definition(
   limits: &FlowAdmissionLimits,
 ) -> Result<(), FactoryError> {
   definition.validate_canonical_form()?;
+  if let Some(violation) = definition.execution().budget().first_excess(limits.budget()) {
+    return Err(FactoryError::BudgetCeilingExceeded {
+      context: Box::new(crate::FlowBudgetCeilingViolation {
+        definition: definition.reference(),
+        node: None,
+        ceiling: crate::FlowBudgetCeiling::Admission,
+        violation,
+      }),
+    });
+  }
+  if definition.execution().max_active_nodes() > limits.max_wip() {
+    return Err(FactoryError::FlowNodeCapacityExceeded {
+      definition: definition.reference(),
+      requested: definition.execution().max_active_nodes(),
+      maximum: limits.max_wip(),
+    });
+  }
   if definition.terminals().is_empty()
-    || definition.execution().max_active_nodes() > limits.max_wip()
-    || !definition.execution().budget().fits_within(limits.budget())
     || !definition
       .execution()
       .permissions()
@@ -226,10 +241,19 @@ fn validate_definition(
   }
   validate_projections(definition)?;
   for node in definition.nodes() {
-    if !node.budget().fits_within(definition.execution().budget())
-      || !node
-        .permissions()
-        .is_no_broader_than(definition.execution().permissions())
+    if let Some(violation) = node.budget().first_excess(definition.execution().budget()) {
+      return Err(FactoryError::BudgetCeilingExceeded {
+        context: Box::new(crate::FlowBudgetCeilingViolation {
+          definition: definition.reference(),
+          node: Some(node.key().clone()),
+          ceiling: crate::FlowBudgetCeiling::Definition,
+          violation,
+        }),
+      });
+    }
+    if !node
+      .permissions()
+      .is_no_broader_than(definition.execution().permissions())
     {
       return Err(invalid("Flow node authority"));
     }

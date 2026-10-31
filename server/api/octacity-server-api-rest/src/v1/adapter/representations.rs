@@ -725,8 +725,9 @@ pub(super) fn configuration_resource(projection: BuildConfigurationProjection) -
   let definition = BuildConfigurationDefinition {
     enabled: projection.enabled,
     job_concurrency_limit: projection.job_concurrency_limit,
-    repository_id: projection.repository_id.to_string(),
-    repository_version: projection.repository_version.get(),
+    repository_id: projection.repository_id.map(|id| id.to_string()),
+    repository_version: projection.repository_version.map(|version| version.get()),
+    source: projection.source,
     pipeline_id: projection.pipeline_id.to_string(),
     pipeline_version: projection.pipeline_version.get(),
     parameters,

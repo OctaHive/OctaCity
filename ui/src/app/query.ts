@@ -243,6 +243,8 @@ export const queryKeys = {
     agentIds: readonly string[],
     poolIds: readonly string[],
   ) => ['operator-attention', [...buildIds], [...agentIds], [...poolIds]] as const,
+  buildConfigurationRepository: (configurationId: string, version: number) =>
+    ['build-configuration-repository', configurationId, version] as const,
   repository: (repositoryId: string, version: number) =>
     ['repositories', repositoryId, version] as const,
   resourceSearchRoot: ['resource-search'] as const,

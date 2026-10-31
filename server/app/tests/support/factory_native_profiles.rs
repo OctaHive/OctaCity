@@ -93,7 +93,7 @@ pub(super) async fn publish_ordinary_configuration(
 ) -> FactoryCodexBuildProfile {
   use octacity_server_store::testing::management_mutation as mutation;
   let project = work.subject().project_id();
-  let repository = work.subject().repository_id();
+  let repository = work.subject().repository().unwrap().repository_id();
   let pool = PoolId::generate();
   let pipeline = PipelineId::generate();
   let canonical = managed::canonical_v3_spec();
@@ -405,7 +405,8 @@ pub(super) async fn admit_flow(
         intent_digest: FactoryDigest::from_bytes([7; 32]),
         idempotency_key: replay("admission"),
       },
-      repository_version: RepositoryVersion::INITIAL,
+      repository_version: Some(RepositoryVersion::INITIAL),
+
       work: work.clone(),
       run: run.clone(),
       flow: flow.clone(),

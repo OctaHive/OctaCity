@@ -6,11 +6,13 @@
 //!
 //! The language-neutral wire specification is documented in
 //! [Signed JobSpec protocol v1], its negotiated [execution contract v2], and
-//! the protected managed-execution [execution contract v3].
+//! protected managed execution [v3][execution contract v3], and explicit
+//! source-free execution [v4][execution contract v4].
 //!
 //! [Signed JobSpec protocol v1]: https://github.com/OctaHive/OctaCity/blob/main/docs/reference/protocols/signed-job-spec-v1.md
 //! [execution contract v2]: https://github.com/OctaHive/OctaCity/blob/main/docs/reference/protocols/signed-job-spec-v2.md
 //! [execution contract v3]: https://github.com/OctaHive/OctaCity/blob/main/docs/reference/protocols/signed-job-spec-v3.md
+//! [execution contract v4]: https://github.com/OctaHive/OctaCity/blob/main/docs/reference/protocols/signed-job-spec-v4.md
 
 #![warn(missing_docs)]
 
@@ -133,14 +135,13 @@ pub struct JobSpecV2 {
   pub outputs: OutputLimits,
 }
 
-/// Protected provider-neutral managed execution introduced by contract v3.
-///
-/// Revision three deliberately has a distinct strict shape: repository-owned
-/// v1/v2 execution fields cannot be reinterpreted as protected Factory input.
+/// Shared protected managed intent with a version-specific signed source representation.
+/// The v3 alias retains historical repository bytes; v4 declares source absence explicitly.
+/// Repository-owned v1/v2 execution fields cannot be decoded as this strict managed shape.
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
 #[serde(deny_unknown_fields)]
-pub struct JobSpecV3 {
-  /// Wire version; must equal [`EXECUTION_CONTRACT_V3`].
+pub struct ManagedJobSpec<S> {
+  /// Exact managed contract revision selected by the source representation.
   pub protocol_version: u16,
   /// Stable identity of the job bound to the surrounding lease.
   pub job_id: String,
@@ -152,8 +153,8 @@ pub struct JobSpecV3 {
   pub expires_at: u64,
   /// Exclusive execution ceiling in Unix milliseconds, independent of signature validity.
   pub execution_deadline_unix_ms: u64,
-  /// Exact source provider and immutable revision to materialize.
-  pub source: SourceSpec,
+  /// Authenticated source intent; source-free modes carry no VCS identity.
+  pub source: S,
   /// Exact Octa release and plugin set authorized to run.
   pub octa: OctaSpec,
   /// Server-owned Octafile and exact protected tasks to execute.
@@ -176,6 +177,20 @@ pub struct JobSpecV3 {
   pub required_enforcement: Vec<FactoryEnforcementCapabilityV3>,
 }
 
+/// Historical protected managed intent with its unchanged mandatory repository source.
+pub type JobSpecV3 = ManagedJobSpec<SourceSpec>;
+
+/// Version-four signed source intent; source absence carries no VCS identity or parameters.
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(tag = "kind", rename_all = "snake_case", deny_unknown_fields)]
+pub enum JobSourceV4 {
+  /// A private workspace with no source lookup, checkout or source mount.
+  SourceFreeV1 {},
+}
+
+/// Managed execution with explicit signed source mode, independent of Factory causality.
+pub type JobSpecV4 = ManagedJobSpec<JobSourceV4>;
+
 /// Authenticated JobSpec from any revision supported during the compatibility window.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub enum VerifiedJobSpec {
@@ -186,6 +201,8 @@ pub enum VerifiedJobSpec {
   /// Protected managed-execution intent. Agents must not execute it until they
   /// advertise and enforce the complete v3 capability vocabulary.
   V3(Box<JobSpecV3>),
+  /// Explicit source intent; runtime support must be negotiated before execution.
+  V4(Box<JobSpecV4>),
 }
 
 impl VerifiedJobSpec {
@@ -196,6 +213,7 @@ impl VerifiedJobSpec {
       Self::V1(spec) => spec.cache.as_ref(),
       Self::V2(spec) => spec.cache.as_ref(),
       Self::V3(spec) => spec.cache.as_ref(),
+      Self::V4(spec) => spec.cache.as_ref(),
     }
   }
 
@@ -206,6 +224,7 @@ impl VerifiedJobSpec {
       Self::V1(spec) => &spec.job_id,
       Self::V2(spec) => &spec.job_id,
       Self::V3(spec) => &spec.job_id,
+      Self::V4(spec) => &spec.job_id,
     }
   }
 }
@@ -228,6 +247,12 @@ impl From<JobSpecV3> for VerifiedJobSpec {
   }
 }
 
+impl From<JobSpecV4> for VerifiedJobSpec {
+  fn from(spec: JobSpecV4) -> Self {
+    Self::V4(Box::new(spec))
+  }
+}
+
 impl VerifiedJobSpec {
   /// Returns the exact execution-contract revision carried by the signed payload.
   #[must_use]
@@ -236,6 +261,7 @@ impl VerifiedJobSpec {
       Self::V1(_) => EXECUTION_CONTRACT_V1,
       Self::V2(_) => EXECUTION_CONTRACT_V2,
       Self::V3(_) => EXECUTION_CONTRACT_V3,
+      Self::V4(_) => EXECUTION_CONTRACT_V4,
     }
   }
 }
@@ -632,6 +658,11 @@ pub fn verify_compatible_job_spec(
       spec.validate(&binding).map_err(JobSpecError::Validation)?;
       Ok(VerifiedJobSpec::V3(Box::new(spec)))
     }
+    EXECUTION_CONTRACT_V4 => {
+      let spec: JobSpecV4 = serde_json::from_slice(&payload).map_err(JobSpecError::Json)?;
+      spec.validate(&binding).map_err(JobSpecError::Validation)?;
+      Ok(VerifiedJobSpec::V4(Box::new(spec)))
+    }
     version => Err(JobSpecError::Validation(format!(
       "unsupported protocol version {version}"
     ))),
@@ -710,39 +741,72 @@ impl JobSpecV2 {
 }
 
 impl JobSpecV3 {
-  /// Validates protected managed intent against its lease and signed limits.
+  /// Validates historical protected managed intent without changing its source semantics.
   pub fn validate(&self, binding: &JobBinding<'_>) -> Result<(), String> {
-    validate_job_identity(
-      self.protocol_version,
-      EXECUTION_CONTRACT_V3,
-      &self.job_id,
-      self.attempt,
-      self.issued_at,
-      self.expires_at,
-      binding,
-    )?;
-    let now_millis = binding.now.checked_mul(1_000).ok_or("current time is out of range")?;
-    if self.execution_deadline_unix_ms <= now_millis {
-      return Err("managed execution deadline has expired".to_owned());
-    }
-    self.runtime.validate()?;
-    validate_job_payload(&self.source, &self.octa, self.cache.as_ref(), &self.outputs)?;
-    self.protected_inputs.validate()?;
-    self.execution.validate(&self.protected_inputs)?;
-    self.permissions.validate()?;
-    validate_factory_toolchain(&self.octa, &self.execution, &self.permissions)?;
-    if let Some(factory) = &self.factory {
-      factory.validate(&self.protected_inputs)?;
-    }
-    validate_factory_execution(
-      &self.runtime,
-      &self.outputs,
-      &self.execution,
-      self.factory.as_ref(),
-      &self.permissions,
-      &self.required_enforcement,
-    )
+    validate_managed_job(self, binding, EXECUTION_CONTRACT_V3, Some(&self.source))
   }
+}
+impl JobSpecV4 {
+  /// Validates explicit source absence before transfer, materialization or execution.
+  pub fn validate(&self, binding: &JobBinding<'_>) -> Result<(), String> {
+    if self
+      .permissions
+      .mounts
+      .iter()
+      .any(|mount| mount.root == FACTORY_SOURCE_ROOT)
+    {
+      return Err("a source-free Job cannot grant a source mount".to_owned());
+    }
+    validate_managed_job(self, binding, EXECUTION_CONTRACT_V4, None)
+  }
+}
+fn validate_managed_job<S>(
+  specification: &ManagedJobSpec<S>,
+  binding: &JobBinding<'_>,
+  expected_version: u16,
+  source: Option<&SourceSpec>,
+) -> Result<(), String> {
+  validate_job_identity(
+    specification.protocol_version,
+    expected_version,
+    &specification.job_id,
+    specification.attempt,
+    specification.issued_at,
+    specification.expires_at,
+    binding,
+  )?;
+  let now_millis = binding.now.checked_mul(1_000).ok_or("current time is out of range")?;
+  if specification.execution_deadline_unix_ms <= now_millis {
+    return Err("managed execution deadline has expired".to_owned());
+  }
+  specification.runtime.validate()?;
+  if let Some(source) = source {
+    source.validate()?;
+  }
+  validate_execution_payload(
+    &specification.octa,
+    specification.cache.as_ref(),
+    &specification.outputs,
+  )?;
+  specification.protected_inputs.validate()?;
+  specification.execution.validate(&specification.protected_inputs)?;
+  specification.permissions.validate()?;
+  validate_factory_toolchain(
+    &specification.octa,
+    &specification.execution,
+    &specification.permissions,
+  )?;
+  if let Some(factory) = &specification.factory {
+    factory.validate(&specification.protected_inputs)?;
+  }
+  validate_factory_execution(
+    &specification.runtime,
+    &specification.outputs,
+    &specification.execution,
+    specification.factory.as_ref(),
+    &specification.permissions,
+    &specification.required_enforcement,
+  )
 }
 
 fn validate_job_payload(
@@ -752,6 +816,13 @@ fn validate_job_payload(
   outputs: &OutputLimits,
 ) -> Result<(), String> {
   source.validate()?;
+  validate_execution_payload(octa, cache, outputs)
+}
+fn validate_execution_payload(
+  octa: &OctaSpec,
+  cache: Option<&CachePolicy>,
+  outputs: &OutputLimits,
+) -> Result<(), String> {
   octa.validate()?;
   if let Some(cache) = cache {
     cache.validate()?;

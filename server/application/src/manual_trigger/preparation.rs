@@ -8,7 +8,7 @@ use super::model::{ManualSourceSelection, ManualTriggerCommand, ManualTriggerCon
 pub(super) struct PreparedManualTrigger {
   pub(super) parameters: BTreeMap<String, Value>,
   pub(super) allowed_pools: Vec<octacity_server_domain::PoolId>,
-  pub(super) source: ManualSourceSelection,
+  pub(super) source: octacity_server_domain::BuildSourceSelection,
 }
 
 pub(super) fn prepare_validated(
@@ -23,7 +23,19 @@ pub(super) fn prepare_validated(
       .resolve(&command.parameters)
       .map_err(map_parameter_error)?,
     allowed_pools: effective_pools(context)?,
-    source: select_source(&command.source, &context.repository)?,
+    source: match (
+      &command.source,
+      context.configuration.definition.source,
+      context.repository.as_ref(),
+    ) {
+      (octacity_server_domain::BuildSourceSelection::Repository(selection), None, Some(repository)) => {
+        select_source(selection, repository)?.into()
+      }
+      (octacity_server_domain::BuildSourceSelection::SourceFree(mode), Some(expected), None) if *mode == expected => {
+        (*mode).into()
+      }
+      _ => return Err(ManualTriggerInputError::ContextMismatch),
+    },
   })
 }
 
@@ -42,8 +54,8 @@ pub(super) fn validate_context_for(
   let definition = &context.configuration.definition;
   if context.configuration.id != command.target.configuration_id
     || context.configuration.version != command.target.configuration_version
-    || context.repository.id != definition.repository_id
-    || context.repository.version != definition.repository_version
+    || context.repository.as_ref().map(|repository| repository.id) != definition.repository_id
+    || context.repository.as_ref().map(|repository| repository.version) != definition.repository_version
     || context.pipeline.id != definition.pipeline_id
     || context.pipeline.version != definition.pipeline_version
     || context

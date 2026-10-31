@@ -43,7 +43,7 @@ impl FlowNodeRecord {
   /// Adds a verified domain projection to the same content-bound completion.
   /// It grants no permission and cannot change interpretation or readiness.
   pub fn with_discovery(mut self, facts: crate::FlowDiscoveryFacts) -> Result<Self, FactoryError> {
-    if facts.exact_subject() != self.input.subject() {
+    if !facts.matches_input(&self.input) {
       return Err(invalid());
     }
     self.discovery = Some(facts);
@@ -70,7 +70,8 @@ impl FlowNodeRecord {
     struct Metadata<'a> {
       record_digest: FactoryDigest,
       input_digest: FactoryDigest,
-      execution_revision: &'a octacity_server_domain::ImmutableRevision,
+      #[serde(skip_serializing_if = "Option::is_none")]
+      execution_revision: Option<&'a octacity_server_domain::ImmutableRevision>,
       observed_at: Timestamp,
       outcome: &'a FactoryKey,
       schema: &'a ImmutableReference,
@@ -80,6 +81,7 @@ impl FlowNodeRecord {
       profile: build.profile(),
       outputs: build.outputs().iter().map(|output| (&output.name, output)).collect(),
     });
+    let subject = self.input.task_subject()?;
     serde_json::to_value(Metadata {
       record_digest: self.digest()?,
       input_digest: self.input.digest()?,
@@ -87,10 +89,8 @@ impl FlowNodeRecord {
         .input
         .context()
         .and_then(|context| context.subject().candidate())
-        .map_or_else(
-          || self.input.subject().base_revision(),
-          |candidate| candidate.candidate_revision(),
-        ),
+        .map(|candidate| candidate.candidate_revision())
+        .or_else(|| subject.execution_revision()),
       observed_at: self.observed_at,
       outcome: &self.outcome,
       schema: self.payload.schema(),

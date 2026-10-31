@@ -390,7 +390,10 @@ fn triage_stage_packages_materialize_only_their_declared_context_and_mcp_connect
         .unwrap();
       accepted.validate_fresh().unwrap();
       let managed = accepted.jobs[0].job_spec_template.managed_intent().unwrap();
-      assert_eq!(managed.factory().node_attempt_id, intent.node().id().to_string());
+      assert_eq!(
+        managed.factory().unwrap().node_attempt_id,
+        intent.node().id().to_string()
+      );
       assert!(
         managed.execution().mcp_credentials.is_empty(),
         "no anonymous selection borrows a model/Reporter credential"

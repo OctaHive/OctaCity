@@ -17,7 +17,7 @@ async fn installed_completion_document_has_postgres_publication_and_admission_pa
       .await,
   )
   .await;
-  signed_input_transfer(&fixture, &artifacts).await;
+  signed_input_transfer(&database.pool, &fixture, &artifacts).await;
   database.cleanup().await;
 }
 async fn install_completion<S>(fixture: &mut Fixture<S>) -> FactoryRunId
@@ -40,8 +40,9 @@ where
           project_id: project,
           configuration_id: fixture.input.definition().target.id(),
           configuration_version: fixture.input.definition().target.version(),
-          repository_id: fixture.input.definition().repository.id,
-          repository_version: fixture.input.definition().repository.version,
+          repository_id: Some(fixture.input.definition().repository.id),
+
+          repository_version: Some(fixture.input.definition().repository.version),
         },
         external_identity: ExternalWorkIdentity::new("reviewed-process").unwrap(),
         source: fixture.profile.preparation.source.clone(),
@@ -135,7 +136,6 @@ where
   (fixture, artifacts)
 }
 
-use crate::runtime::factory_tests::managed as job_fixture;
 #[allow(dead_code)]
 #[path = "../../tests/support/protected_input_transfer.rs"]
 mod transfer;
@@ -188,11 +188,11 @@ impl octacity_artifact_store::ArtifactStore for TransferBytes {
   }
 }
 async fn signed_input_transfer(
+  pool: &sqlx::PgPool,
   fixture: &Fixture<octacity_server_store_postgres::PostgresStore>,
   artifacts: &WorkArtifacts,
 ) {
   use octacity_protocol::{JobBinding, ProtectedInputV3, VerifiedJobSpec, verify_compatible_job_spec};
-  let mut canonical = job_fixture::canonical_v3_spec();
   let mut source_inputs = vec![];
   for (artifact, name) in [(artifacts.task(), "task"), (artifacts.acceptance(), "acceptance")] {
     let published = fixture
@@ -210,33 +210,11 @@ async fn signed_input_transfer(
       destination: format!("/octacity/protected/source-{name}.json"),
     });
   }
-  canonical.protected_inputs.inputs.extend(source_inputs.clone());
-  canonical
-    .protected_inputs
-    .inputs
-    .sort_by(|a, b| a.artifact_id.cmp(&b.artifact_id));
-  let permissions = job_fixture::permissions(false);
-  let template = derive_factory_managed_job_spec_template(FactoryManagedJobSpecInput {
-    build: job_fixture::build(&canonical),
-    pipeline_node_id: PipelineNodeId::new("triage-input-contract").unwrap(),
-    execution: canonical.execution.clone(),
-    causality: canonical.factory.clone().unwrap(),
-    protected_inputs: canonical.protected_inputs.clone(),
-    policy_layers: FactoryBuildPolicyLayers {
-      project: permissions.clone(),
-      configuration: permissions.clone(),
-      task: permissions.clone(),
-      local: LocalPermissionCeiling::fully_enforced(permissions),
-    },
-    required_enforcement: canonical.required_enforcement.clone(),
-    policy: job_fixture::policy(&canonical),
-  })
-  .unwrap();
+  let (job, template) = database::protected_input_job::accept(pool, fixture.input.project_id(), &source_inputs).await;
   let signer = octacity_server_job::JobSpecSigner::new("triage-input-contract", [9; 32]).unwrap();
-  let job = JobId::generate();
   let signed =
     octacity_server_job::sign_ready_job_spec(&template, AttemptNumber::FIRST, job, time(100_000), &signer).unwrap();
-  let VerifiedJobSpec::V3(verified) = verify_compatible_job_spec(
+  let VerifiedJobSpec::V4(verified) = verify_compatible_job_spec(
     signed.envelope(),
     &std::collections::BTreeMap::from([(signer.key_id().to_owned(), signer.verifying_key())]),
     JobBinding {
@@ -246,7 +224,7 @@ async fn signed_input_transfer(
     },
   )
   .unwrap() else {
-    panic!("managed v3 expected")
+    panic!("source-free v4 expected")
   };
   for input in &source_inputs {
     assert!(verified.protected_inputs.inputs.contains(input));
@@ -262,6 +240,7 @@ async fn signed_input_transfer(
   };
   let grants = service
     .authorize_protected_inputs(AuthorizeProtectedInputsInput {
+      job_id: job,
       manifest: manifest.clone(),
       observed_at_unix_ms: 100_001,
       lease_expires_at: time(110_000),
@@ -278,6 +257,7 @@ async fn signed_input_transfer(
   assert!(
     service
       .authorize_protected_inputs(AuthorizeProtectedInputsInput {
+        job_id: job,
         manifest: substituted,
         observed_at_unix_ms: 100_001,
         lease_expires_at: time(110_000),
@@ -295,6 +275,7 @@ async fn signed_input_transfer(
   assert!(
     service
       .authorize_protected_inputs(AuthorizeProtectedInputsInput {
+        job_id: job,
         manifest,
         observed_at_unix_ms: expires.unix_millis(),
         lease_expires_at: time(expires.unix_millis() + 1000),

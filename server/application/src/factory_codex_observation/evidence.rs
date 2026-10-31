@@ -90,6 +90,9 @@ pub(super) fn valid_provenance<T>(
   result: &CodexResultRecord<T>,
   provenance: &CodexProvenanceRecord,
 ) -> bool {
+  let Some(source_revision) = expected_revision(envelope) else {
+    return false;
+  };
   valid_provenance_for(
     CodexProvenanceExpectation {
       plugin: envelope.plugin(),
@@ -97,7 +100,7 @@ pub(super) fn valid_provenance<T>(
       model: envelope.model(),
       model_identifier: None,
       prompt_digest: envelope.digests().prompt_provenance,
-      source_revision: expected_revision(envelope),
+      source_revision: Some(source_revision),
     },
     result,
     provenance,
@@ -117,8 +120,8 @@ pub struct FactoryCodexProvenanceContract<'a> {
   pub model_identifier: Option<&'a str>,
   /// Digest of the actual protected prompt.
   pub prompt_digest: FactoryDigest,
-  /// Revision actually materialized for the Job.
-  pub source_revision: &'a str,
+  /// Materialized revision, or explicit absence established from source-free Job intent.
+  pub source_revision: Option<&'a str>,
 }
 pub(super) type CodexProvenanceExpectation<'a> = FactoryCodexProvenanceContract<'a>;
 
@@ -167,7 +170,7 @@ pub(super) fn valid_provenance_identity(
       .is_none_or(|value| matches!(value, "low" | "medium" | "high" | "xhigh"))
     && provenance.prompt_digest.algorithm == "blake3"
     && provenance.prompt_digest.value == expected.prompt_digest.to_string()
-    && provenance.source_revision.as_deref() == Some(expected.source_revision)
+    && provenance.source_revision.as_deref() == expected.source_revision
     && provenance.timing.finished_unix_millis >= provenance.timing.started_unix_millis
     && provenance.timing.finished_unix_millis - provenance.timing.started_unix_millis
       == provenance.timing.duration_millis
@@ -190,15 +193,13 @@ pub(super) fn valid_provenance_window(
   })
 }
 
-fn expected_revision(envelope: &FactoryTaskEnvelope) -> &str {
+fn expected_revision(envelope: &FactoryTaskEnvelope) -> Option<&str> {
   envelope
     .subject()
     .candidate()
-    .map_or_else(
-      || envelope.subject().exact().base_revision(),
-      |candidate| candidate.candidate_revision(),
-    )
-    .as_str()
+    .map(|candidate| candidate.candidate_revision())
+    .or_else(|| envelope.subject().exact().ok().map(|subject| subject.base_revision()))
+    .map(|revision| revision.as_str())
 }
 
 fn valid_identifiers(values: &BTreeMap<String, String>) -> bool {

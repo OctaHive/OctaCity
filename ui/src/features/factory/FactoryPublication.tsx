@@ -3,7 +3,7 @@ import { useRef, useState } from 'react';
 import { useQueryClient } from '@tanstack/react-query';
 import { Link } from 'react-router-dom';
 import type { components } from '../../../.generated/api/schema';
-import { ManagementApiError } from '../../api/client';
+import { ManagementApiError, type ManagementValidationIssue } from '../../api/client';
 import { queryKeys } from '../../app/query';
 import { usePresentation } from '../../app/presentation/PresentationProvider';
 import type { MessageKey } from '../../app/presentation/messages';
@@ -38,7 +38,9 @@ const ISSUE_LABELS = {
   unreachable_node: 'factory.unreachableNode',
   incompatible_schema: 'factory.incompatibleSchema',
   budget_exceeded: 'factory.budgetExceeded',
-} satisfies Record<DraftIssue['code'], MessageKey>;
+  budget_exceeds_ceiling: 'factory.budgetExceeded',
+  concurrency_exceeds_ceiling: 'factory.concurrencyExceeded',
+} satisfies Record<DraftIssue['code'] | ManagementValidationIssue['code'], MessageKey>;
 
 /** A validation proof belongs to one exact in-memory draft; the shared helper owns confirmed replay. */
 export function FactoryPublication({

@@ -1,6 +1,6 @@
 use crate::{
-  BudgetLimit, DecisionSignalPurpose, DecisionSignalRequestId, ExactSubject, FactoryClaim, FactoryDigest, FactoryError,
-  FactoryKey, FactoryRunId,
+  BudgetLimit, DecisionSignalPurpose, DecisionSignalRequestId, FactoryClaim, FactoryDigest, FactoryError, FactoryKey,
+  FactoryRunId,
 };
 use serde::{Deserialize, Serialize};
 
@@ -71,7 +71,7 @@ pub struct DecisionSignalRequest {
   node_attempt_id: crate::NodeAttemptId,
   frozen_input_digest: FactoryDigest,
   run_id: FactoryRunId,
-  subject: ExactSubject,
+  subject: crate::WorkSubject,
   purpose: DecisionSignalPurpose,
   input_digest: FactoryDigest,
   policy_digest: FactoryDigest,
@@ -159,7 +159,7 @@ impl DecisionSignalRequest {
 
   /// Returns the exact subject.
   #[must_use]
-  pub const fn subject(&self) -> &ExactSubject {
+  pub const fn subject(&self) -> &crate::WorkSubject {
     &self.subject
   }
 

@@ -52,6 +52,8 @@ fn draft(subflow: Option<FlowDefinitionRef>) -> FactoryFlowDefinitionDraft {
   .unwrap();
   FactoryFlowDefinitionDraft {
     root: FactoryFlowRootDraft {
+      code_sources: None,
+      process: None,
       input_schema: None,
       entry: key("operator.selected-step"),
       nodes: vec![node],

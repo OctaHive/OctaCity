@@ -187,7 +187,7 @@ fn trusted_rework_preserves_cumulative_deliverables_without_requiring_repeated_u
   let (_, admitted, _, input, node) =
     execution_fixture_for_work_with_binding(FlowNodeKind::Reasoning, work, binding, None, None);
   let selected = CandidateSubject::new(
-    input.subject().clone(),
+    input.exact_resource().unwrap().clone(),
     octacity_server_domain::ImmutableRevision::new("previous-code").unwrap(),
     FactoryDigest::from_bytes([42; 32]),
   );
@@ -353,7 +353,11 @@ fn capture_accepts_an_arbitrary_node_through_its_frozen_input_and_actual_executi
     builds.acceptance.job_ids.clone(),
   )
   .unwrap();
-  let outputs = capture_outputs(&intent, &builds, intent.input().subject().base_revision().as_str());
+  let outputs = capture_outputs(
+    &intent,
+    &builds,
+    intent.input().exact_resource().unwrap().base_revision().as_str(),
+  );
   let candidate =
     verify_factory_node_change_set(&intent, &execution, &outputs, &reference("git.capture"), time(31)).unwrap();
   assert_eq!(candidate.node_attempt_id(), intent.node().id());
@@ -385,7 +389,11 @@ fn candidate_materialization_requires_the_explicit_frozen_context_and_retained_a
     builds.acceptance.job_ids.clone(),
   )
   .unwrap();
-  let outputs = capture_outputs(&intent, &builds, input.subject().base_revision().as_str());
+  let outputs = capture_outputs(
+    &intent,
+    &builds,
+    input.exact_resource().unwrap().base_revision().as_str(),
+  );
   let candidate =
     verify_factory_node_change_set(&intent, &execution, &outputs, &reference("git.capture"), time(31)).unwrap();
   let subject = FactoryTaskSubject::Candidate(candidate.subject().clone());
@@ -427,7 +435,10 @@ fn candidate_materialization_requires_the_explicit_frozen_context_and_retained_a
   let materialization =
     factory_node_candidate_materialization(&selected, &candidate, bundle, manifest, time(31)).unwrap();
   assert_eq!(materialization.change_set_id, candidate.id());
-  assert_eq!(materialization.base_revision, input.subject().base_revision().clone());
+  assert_eq!(
+    materialization.base_revision,
+    input.exact_resource().unwrap().base_revision().clone()
+  );
   let (instruction, inputs) = materialization.wire_inputs();
   assert_eq!(instruction.candidate_revision, "captured-revision");
   assert_eq!(instruction.bundle_input, bundle.identity().artifact_id.to_string());
@@ -468,7 +479,7 @@ fn candidate_materialization_requires_the_explicit_frozen_context_and_retained_a
 fn capture_uses_the_candidate_revision_explicitly_selected_in_frozen_context() {
   let (_, admitted, _, input, node) = execution_fixture(FlowNodeKind::BuildCommand);
   let selected = CandidateSubject::new(
-    input.subject().clone(),
+    input.exact_resource().unwrap().clone(),
     octacity_server_domain::ImmutableRevision::new("selected-predecessor").unwrap(),
     FactoryDigest::from_bytes([92; 32]),
   );
@@ -486,7 +497,11 @@ fn capture_uses_the_candidate_revision_explicitly_selected_in_frozen_context() {
   let candidate =
     verify_factory_node_change_set(&intent, &execution, &outputs, &reference("git.capture"), time(31)).unwrap();
   assert_eq!(candidate.subject().candidate_revision().as_str(), "captured-revision");
-  let original_base = capture_outputs(&intent, &builds, intent.input().subject().base_revision().as_str());
+  let original_base = capture_outputs(
+    &intent,
+    &builds,
+    intent.input().exact_resource().unwrap().base_revision().as_str(),
+  );
   assert!(
     verify_factory_node_change_set(&intent, &execution, &original_base, &reference("git.capture"), time(31)).is_err()
   );
@@ -608,7 +623,7 @@ fn configured_capture_executor_returns_the_verified_manifest_through_the_common_
       admitted = admitted.with_data_schemas(contracts).unwrap();
       let (input, node) = if kind == FlowNodeKind::Reasoning {
         let predecessor = CandidateSubject::new(
-          input.subject().clone(),
+          input.exact_resource().unwrap().clone(),
           octacity_server_domain::ImmutableRevision::new("research-candidate").unwrap(),
           FactoryDigest::from_bytes([92; 32]),
         );
@@ -619,7 +634,7 @@ fn configured_capture_executor_returns_the_verified_manifest_through_the_common_
       let capture_base = if kind == FlowNodeKind::Reasoning {
         "research-candidate"
       } else {
-        input.subject().base_revision().as_str()
+        input.exact_resource().unwrap().base_revision().as_str()
       };
       let intent = FlowBuildIntent::new(input.clone(), &admitted, node.clone(), BudgetUsage::default(), 7).unwrap();
       let builds = std::sync::Arc::new(Builds::new());
@@ -628,7 +643,7 @@ fn configured_capture_executor_returns_the_verified_manifest_through_the_common_
       let mut outputs = capture_outputs(&intent, &builds, capture_base);
       outputs.documents[1].schema = schema.reference().clone();
       if kind == FlowNodeKind::Reasoning {
-        let handoff = serde_json::json!({"work_id":work.id().to_string(), "original_base":input.subject().base_revision().as_str(), "predecessor_revision":capture_base, "candidate_revision":"captured-revision", "input_digest":input.digest().unwrap().to_string(), "work_kind":"feature_request", "contract_path":"openspec/specs/example/spec.md", "change_path":"openspec/changes/example/proposal.md", "acceptance_criteria":["new behavior has an exact contract"], "regression_criteria":[],"declared_requirements":[]});
+        let handoff = serde_json::json!({"work_id":work.id().to_string(), "original_base":input.exact_resource().unwrap().base_revision().as_str(), "predecessor_revision":capture_base, "candidate_revision":"captured-revision", "input_digest":input.digest().unwrap().to_string(), "work_kind":"feature_request", "contract_path":"openspec/specs/example/spec.md", "change_path":"openspec/changes/example/proposal.md", "acceptance_criteria":["new behavior has an exact contract"], "regression_criteria":[],"declared_requirements":[]});
         let mut document = crate::factory_node_test_support::document(
           &builds,
           &key("specification_handoff"),
@@ -985,7 +1000,11 @@ fn partial_capture_retry_uses_the_frozen_base_and_restores_the_candidate_from_th
       .find(|row| row.node().retry_of().is_some())
       .unwrap();
     assert_eq!(intent.input(), &input.retry().unwrap());
-    let mut outputs = capture_outputs(intent, &successful, input.subject().base_revision().as_str());
+    let mut outputs = capture_outputs(
+      intent,
+      &successful,
+      input.exact_resource().unwrap().base_revision().as_str(),
+    );
     outputs.documents[1].schema = schema.reference().clone();
     let recovered = FactoryNodeRunner::new(
       store.clone(),
@@ -1027,7 +1046,10 @@ fn partial_capture_retry_uses_the_frozen_base_and_restores_the_candidate_from_th
     for builds in [&failed_build, &successful] {
       let requests = builds.requests.lock().unwrap();
       assert_eq!(requests.len(), 1);
-      assert_eq!(requests[0].immutable_revision, input.subject().base_revision().clone());
+      assert_eq!(
+        requests[0].subject.exact().unwrap().base_revision(),
+        input.exact_resource().unwrap().base_revision()
+      );
     }
     assert!(matches!(
       recovered

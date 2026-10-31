@@ -388,7 +388,7 @@ mod test_support;
 mod transaction;
 mod webhook_delivery;
 
-pub use octacity_server_domain::{ProjectId, RetentionHoldVersion, Timestamp};
+pub use octacity_server_domain::{BuildSourceMode, BuildSourceSelection, ProjectId, RetentionHoldVersion, Timestamp};
 pub use octacity_server_orchestrator::{AttemptState, BuildState};
 pub use octacity_server_store::{
   AgentListVisibility, AgentPoolListVisibility, ArtifactListVisibility, AuditActorKind, AuditFactListVisibility,
@@ -516,9 +516,10 @@ pub use factory_configuration_choices::{
 pub use factory_configuration_cqrs::{
   CreateFactoryConfigurationCommand, FactoryConfigurationCommandOutcome, FactoryConfigurationHandlers,
   FactoryConfigurationPagePosition, FactoryConfigurationPageProjection, FactoryConfigurationProjection,
-  FactoryConfigurationValidation, FactoryEffectiveNodePermissions, FactoryValidationDiagnostics,
-  FactoryValidationIssue, GetCurrentFactoryConfigurationQuery, GetFactoryConfigurationQuery,
-  ListProjectFactoryConfigurationsQuery, ReplaceFactoryConfigurationCommand, ValidateFactoryConfigurationQuery,
+  FactoryConfigurationValidation, FactoryEffectiveNodePermissions, FactoryEffectiveProfilePermissions,
+  FactoryValidationDiagnostics, FactoryValidationIssue, GetCurrentFactoryConfigurationQuery,
+  GetFactoryConfigurationQuery, ListProjectFactoryConfigurationsQuery, ReplaceFactoryConfigurationCommand,
+  ValidateFactoryConfigurationQuery,
 };
 pub use factory_control::{
   CancelFactoryRunCommand, ConfirmFactoryNodeOperationCommand, FactoryControlHandlers, FactoryRunControlCommandOutcome,
@@ -729,6 +730,7 @@ mod factory_flow;
 #[cfg(test)]
 mod factory_job_test_support;
 
+mod factory_code_sources;
 mod factory_flow_definition;
 pub use factory_flow_definition::{
   FactoryFlowDefinitionDraft, FactoryFlowDefinitionHandlers, FactoryFlowDefinitionValidation, FactoryFlowRootDraft,
@@ -861,6 +863,15 @@ mod factory_role_profiles;
 #[cfg(test)]
 mod factory_role_profiles_tests;
 pub use factory_role_profiles::*;
+
+mod factory_authoring_capabilities;
+mod factory_constraints;
+pub use factory_constraints::*;
+mod factory_execution_bindings;
+pub use factory_authoring_capabilities::*;
+#[cfg(test)]
+mod factory_execution_bindings_tests;
+pub use factory_execution_bindings::*;
 
 mod factory_role_profile_catalog;
 pub use factory_role_profile_catalog::*;

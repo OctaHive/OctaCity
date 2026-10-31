@@ -109,14 +109,16 @@ pub fn matches_placement(
       &task_plugin_platform,
       required.tool_control,
     )
-    && inventory.source_plugins.iter().any(|source| {
-      source.name == policy.source_provider
-        && source.version == policy.source_plugin_version
-        && source.sha256 == policy.source_plugin_sha256
-        && source
-          .platforms
-          .iter()
-          .any(|candidate| candidate == &source_plugin_platform)
+    && policy.source.is_none_or(|required| {
+      inventory.source_plugins.iter().any(|source| {
+        source.name == required.provider
+          && source.version == required.version
+          && source.sha256 == required.sha256
+          && source
+            .platforms
+            .iter()
+            .any(|candidate| candidate == &source_plugin_platform)
+      })
     })
     && (!policy.requires_cache
       || inventory.cache.as_ref().is_some_and(|cache| {
@@ -670,6 +672,35 @@ mod tests {
     };
 
     assert!(is_compatible(&inventory, &snapshot, &requirements, &template));
+    let mut free_wire = serde_json::to_value(&template).unwrap();
+    free_wire.as_object_mut().unwrap().remove("immutable_revision");
+    free_wire.as_object_mut().unwrap().remove("repository_locator");
+    free_wire["source"] = json!({"kind": "source_free_v1"});
+    free_wire["execution"].as_object_mut().unwrap().remove("factory");
+    free_wire["execution"]["permissions"]["mounts"]
+      .as_array_mut()
+      .unwrap()
+      .retain(|mount| mount["root"] != "/workspace/source");
+    let free: JobSpecTemplate = serde_json::from_value(free_wire).unwrap();
+    let mut no_vcs = inventory.clone();
+    no_vcs.execution_contract.max = 4;
+    no_vcs.source_plugins.clear();
+    assert!(
+      is_compatible_with_contract(&no_vcs, &snapshot, &requirements, &free, 4),
+      "a qualified v4 Agent needs no source plugin for source-free intent"
+    );
+    assert!(!is_compatible_with_contract(
+      &no_vcs,
+      &snapshot,
+      &requirements,
+      &free,
+      3
+    ));
+    no_vcs.factory_executions.clear();
+    assert!(
+      !is_compatible_with_contract(&no_vcs, &snapshot, &requirements, &free, 4),
+      "v4 negotiation alone cannot supply missing backend enforcement"
+    );
     let mut anchored = canonical.clone();
     anchored.execution.workspace_root = Some(octacity_protocol::FACTORY_WORKSPACE_ROOT.to_owned());
     let anchored_template = managed_template(&anchored);

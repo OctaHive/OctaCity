@@ -56,17 +56,41 @@ pub struct FlowInputPreparation<'a> {
   pub incoming: Option<&'a crate::FlowIncomingData>,
 }
 
+/// Explicit node resource selection; absence retains the historical Work-backed wire form.
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(tag = "kind", rename_all = "snake_case", deny_unknown_fields)]
+pub enum FlowNodeCode {
+  /// Work correlation is retained, with no repository attachment or code authority.
+  None,
+  /// One exact selected resource; its permissions and scope remain in the pinned definition.
+  Source {
+    /// Explicit declaration key, never inferred from Work correlation.
+    source: FactoryKey,
+    /// Reviewed access request, still narrowed by independent execution policy.
+    access: crate::MountMode,
+    /// Exact node visibility retained for Context and downstream signed materialization.
+    scope: crate::FlowCodeScope,
+    /// Exact base or independently accepted candidate bound to this resource.
+    subject: Box<crate::FactoryTaskSubject>,
+    /// Independently retained producing result, present only for accepted candidate selection.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    accepted_result: Option<FlowRecordReference>,
+  },
+}
+
 /// Common immutable input for an arbitrary configured logical node.
 ///
-/// Only explicitly projected payload fields are exposed. Work identity and exact
-/// subject are retained without forwarding all Work Artifacts or parent transcripts.
+/// Only explicitly projected payload fields are exposed. Work correlation and explicit
+/// code resources are retained without forwarding all Work Artifacts or parent transcripts.
 /// The owner prepares this value before creating an attempt using its digest.
 #[derive(Clone, Debug, Eq, PartialEq, Serialize)]
 pub struct FlowNodeInput {
   schema_version: u16,
   work_id: WorkEnvelopeId,
   work_digest: FactoryDigest,
-  subject: ExactSubject,
+  subject: crate::WorkSubject,
+  #[serde(skip_serializing_if = "Option::is_none")]
+  code: Option<Box<FlowNodeCode>>,
   configuration: FactoryConfigurationRef,
   root_definition: FlowDefinitionRef,
   admission_limits: FlowAdmissionLimits,
@@ -129,13 +153,15 @@ impl FlowNodeInput {
       incoming_digest,
       caller_input_digest,
     } = binding.project(&context)?;
-    let mut expected = Self::new(
+    let candidate = Self::selected_candidate(&context)?;
+    let mut expected = Self::new_with_candidate(
       context.work,
       context.admitted,
       context.flow,
       context.cycle,
       context.node,
       payload,
+      candidate,
     )?
     .with_sources(sources)?
     .with_admission_profile(context.work, context.admitted, context.history)?;
@@ -171,13 +197,15 @@ impl FlowNodeInput {
       incoming_digest,
       caller_input_digest,
     } = binding.project(&context)?;
-    let mut input = Self::new(
+    let candidate = Self::selected_candidate(&context)?;
+    let mut input = Self::new_with_candidate(
       context.work,
       context.admitted,
       context.flow,
       context.cycle,
       context.node,
       payload,
+      candidate,
     )?
     .with_sources(sources)?
     .with_admission_profile(context.work, context.admitted, context.history)?;
@@ -189,6 +217,39 @@ impl FlowNodeInput {
     }
     Ok(input)
   }
+  fn selected_candidate(
+    context: &FlowInputPreparation<'_>,
+  ) -> Result<Option<(crate::CandidateSubject, FlowRecordReference)>, FactoryError> {
+    let definition = context
+      .admitted
+      .closure()
+      .definition(context.flow.definition())
+      .ok_or_else(invalid)?;
+    let Some(crate::FlowCodeBinding::Source {
+      source,
+      revision: crate::FlowCodeRevision::AcceptedCandidate { node, outcome },
+      ..
+    }) = definition.node(&context.node).and_then(crate::FlowNodeDefinition::code)
+    else {
+      return Ok(None);
+    };
+    let record = super::input_binding::select_record(context, node, outcome)?;
+    let candidate = record
+      .discovery()
+      .and_then(crate::FlowDiscoveryFacts::published_candidate)
+      .ok_or_else(invalid)?;
+    let declaration = definition
+      .code_sources()
+      .and_then(|sources| sources.get(source))
+      .ok_or_else(invalid)?;
+    if candidate.exact() != record.input().exact_resource()?
+      || candidate.exact().project_id() != context.work.subject().project_id()
+      || candidate.exact().repository_id() != declaration.repository.id
+    {
+      return Err(invalid());
+    }
+    Ok(Some((candidate.clone(), FlowRecordReference::from_record(record)?)))
+  }
   /// Freezes projected schema-validated data under exact retained execution identities.
   pub fn new(
     work: &WorkEnvelope,
@@ -197,6 +258,17 @@ impl FlowNodeInput {
     cycle: &WorkflowCycle,
     node: FactoryKey,
     payload: FlowPayload,
+  ) -> Result<Self, FactoryError> {
+    Self::new_with_candidate(work, admitted, flow, cycle, node, payload, None)
+  }
+  fn new_with_candidate(
+    work: &WorkEnvelope,
+    admitted: &AdmittedFlow,
+    flow: &FlowRun,
+    cycle: &WorkflowCycle,
+    node: FactoryKey,
+    payload: FlowPayload,
+    candidate: Option<(crate::CandidateSubject, FlowRecordReference)>,
   ) -> Result<Self, FactoryError> {
     let declared = admitted
       .closure()
@@ -212,6 +284,100 @@ impl FlowNodeInput {
     {
       return Err(invalid());
     }
+    let code = match declared.code() {
+      None => {
+        work.subject().repository()?;
+        None
+      }
+      Some(crate::FlowCodeBinding::None) => Some(FlowNodeCode::None),
+      Some(crate::FlowCodeBinding::Source {
+        source,
+        revision: crate::FlowCodeRevision::AdmittedBase,
+        access,
+        scope,
+      }) => {
+        super::code::validate_pins(
+          admitted.closure(),
+          admitted.code_pins(),
+          Some(work.subject().project_id()),
+        )?;
+        let pin = admitted
+          .code_pins()
+          .iter()
+          .find(|pin| pin.definition == flow.definition() && &pin.source == source)
+          .ok_or_else(invalid)?;
+        Some(FlowNodeCode::Source {
+          source: source.clone(),
+          access: *access,
+          scope: scope.clone(),
+          accepted_result: None,
+          subject: Box::new(crate::FactoryTaskSubject::Exact(pin.subject.clone())),
+        })
+      }
+      Some(crate::FlowCodeBinding::Source {
+        source,
+        revision: crate::FlowCodeRevision::ExactRevision { revision },
+        access,
+        scope,
+      }) => {
+        super::code::validate_pins(
+          admitted.closure(),
+          admitted.code_pins(),
+          Some(work.subject().project_id()),
+        )?;
+        let declaration = admitted
+          .closure()
+          .definition(flow.definition())
+          .and_then(|definition| definition.code_sources())
+          .and_then(|sources| sources.get(source))
+          .ok_or_else(invalid)?;
+        if declaration.repository.project_id != work.subject().project_id() {
+          return Err(invalid());
+        }
+        Some(FlowNodeCode::Source {
+          source: source.clone(),
+          access: *access,
+          scope: scope.clone(),
+          accepted_result: None,
+          subject: Box::new(crate::FactoryTaskSubject::Exact(ExactSubject::new(
+            declaration.repository.project_id,
+            declaration.repository.id,
+            revision.clone(),
+          ))),
+        })
+      }
+      Some(crate::FlowCodeBinding::Source {
+        source,
+        revision: crate::FlowCodeRevision::AcceptedCandidate { .. },
+        access,
+        scope,
+      }) => {
+        let (candidate, reference) = candidate.ok_or_else(invalid)?;
+        super::code::validate_pins(
+          admitted.closure(),
+          admitted.code_pins(),
+          Some(work.subject().project_id()),
+        )?;
+        let declaration = admitted
+          .closure()
+          .definition(flow.definition())
+          .and_then(|definition| definition.code_sources())
+          .and_then(|sources| sources.get(source))
+          .ok_or_else(invalid)?;
+        if candidate.exact().project_id() != work.subject().project_id()
+          || candidate.exact().repository_id() != declaration.repository.id
+        {
+          return Err(invalid());
+        }
+        Some(FlowNodeCode::Source {
+          source: source.clone(),
+          access: *access,
+          scope: scope.clone(),
+          subject: Box::new(crate::FactoryTaskSubject::Candidate(candidate)),
+          accepted_result: Some(reference),
+        })
+      }
+    };
     let profile_override = work
       .profile_overrides()
       .entries()
@@ -224,10 +390,11 @@ impl FlowNodeInput {
       })
       .cloned();
     let input = Self {
-      schema_version: 1,
+      schema_version: if code.is_some() { 2 } else { 1 },
       work_id: work.id(),
       work_digest: work_digest(work)?,
       subject: work.subject().clone(),
+      code: code.map(Box::new),
       configuration: work.configuration().clone(),
       root_definition: admitted.closure().root(),
       admission_limits: admitted.limits().clone(),
@@ -245,12 +412,14 @@ impl FlowNodeInput {
       caller_input_digest: None,
       profile_override,
     };
+    let input = input.with_sources(vec![])?;
     if input.bytes()?.len() > MAX_FLOW_DATA_BYTES {
       return Err(invalid());
     }
     Ok(input)
   }
-  /// Freezes only the selected context and receipts under the exact Work base.
+  /// Freezes selected context and receipts under the selected task subject.
+  /// Explicit code bindings retain their full subject; historical inputs retain Work-base compatibility.
   ///
   /// The Flow owner selects permitted context before persisting the input digest;
   /// the resulting manifest is not a provider-selected authority grant.
@@ -259,10 +428,32 @@ impl FlowNodeInput {
     context: ContextManifest,
     mut retrieval: Vec<RetrievalReceipt>,
   ) -> Result<Self, FactoryError> {
-    if context.subject().exact() != &self.subject
-      || retrieval.iter().any(|receipt| receipt.subject() != context.subject())
-    {
+    let subject_matches = if self.code.is_some() {
+      context.subject() == &self.task_subject()?
+    } else {
+      context.subject().exact()? == self.exact_resource()?
+    };
+    if !subject_matches || retrieval.iter().any(|receipt| receipt.subject() != context.subject()) {
       return Err(invalid());
+    }
+    if let Some(FlowNodeCode::Source { scope, .. }) = self.code.as_deref() {
+      for entry in context.entries() {
+        let range = match entry.source() {
+          FactoryContextReference::RepositoryRange(range) => range,
+          FactoryContextReference::RepositoryFragment(fragment) => fragment.range(),
+          _ => continue,
+        };
+        let requested = crate::FlowCodeScope::Selected {
+          entries: [crate::FlowCodeSelection::Range {
+            path: range.path().clone(),
+            lines: crate::FactoryRepositoryLineRange::new(range.first_line(), range.last_line())?,
+          }]
+          .into(),
+        };
+        if !requested.is_within(scope) {
+          return Err(invalid());
+        }
+      }
     }
     retrieval.sort_by_key(RetrievalReceipt::id);
     if retrieval.windows(2).any(|pair| pair[0].id() == pair[1].id()) {
@@ -293,6 +484,14 @@ impl FlowNodeInput {
     self.context.as_ref()
   }
   fn with_sources(mut self, mut sources: Vec<FlowRecordReference>) -> Result<Self, FactoryError> {
+    if let Some(FlowNodeCode::Source {
+      accepted_result: Some(reference),
+      ..
+    }) = self.code.as_deref()
+      && !sources.contains(reference)
+    {
+      sources.push(reference.clone());
+    }
     sources.sort_by_key(FlowRecordReference::node_attempt_id);
     if sources
       .windows(2)
@@ -428,13 +627,29 @@ impl FlowNodeInput {
     let wire: serde_json::Value = serde_json::from_slice(bytes).map_err(|_| invalid())?;
     let payload_bytes = serde_json::to_vec(wire.get("payload").ok_or_else(invalid)?).map_err(|_| invalid())?;
     let node = serde_json::from_value(wire.get("node").ok_or_else(invalid)?.clone()).map_err(|_| invalid())?;
-    let mut input = Self::new(
+    let candidate = wire
+      .get("code")
+      .map(|value| serde_json::from_value::<FlowNodeCode>(value.clone()).map_err(|_| invalid()))
+      .transpose()?;
+    let candidate = match candidate {
+      Some(FlowNodeCode::Source {
+        subject,
+        accepted_result: Some(reference),
+        ..
+      }) => match *subject {
+        crate::FactoryTaskSubject::Candidate(candidate) => Some((candidate, reference)),
+        _ => None,
+      },
+      _ => None,
+    };
+    let mut input = Self::new_with_candidate(
       work,
       admitted,
       flow,
       cycle,
       node,
       FlowPayload::restore(&payload_bytes, schema)?,
+      candidate,
     )?;
     if let Some(context) = wire.get("context") {
       let context = serde_json::from_value(context.clone()).map_err(|_| invalid())?;
@@ -485,10 +700,55 @@ impl FlowNodeInput {
   pub const fn factory_run_id(&self) -> FactoryRunId {
     self.factory_run_id
   }
-  /// Returns the exact Project, Repository and base revision.
+  /// Work correlation does not select a repository or grant code access.
   #[must_use]
-  pub const fn subject(&self) -> &ExactSubject {
+  pub const fn subject(&self) -> &crate::WorkSubject {
     &self.subject
+  }
+  /// Frozen explicit code choice; absence denotes the historical Work-backed encoding.
+  #[must_use]
+  pub fn code(&self) -> Option<&FlowNodeCode> {
+    self.code.as_deref()
+  }
+  /// Retained producing record proving an explicitly selected candidate resource.
+  /// This identity grants no payload access; the same record may also be explicitly projected as data.
+  #[must_use]
+  pub fn accepted_resource_record(&self) -> Option<&FlowRecordReference> {
+    match self.code.as_deref() {
+      Some(FlowNodeCode::Source { accepted_result, .. }) => accepted_result.as_ref(),
+      _ => None,
+    }
+  }
+  /// Exact task Context identity; Work correlation is explicitly non-repository for no-code steps.
+  pub fn task_subject(&self) -> Result<crate::FactoryTaskSubject, FactoryError> {
+    match self.code.as_deref() {
+      None => Ok(crate::FactoryTaskSubject::Exact(self.subject.repository()?.clone())),
+      Some(FlowNodeCode::None) => Ok(crate::FactoryTaskSubject::WorkInputV1(self.subject.clone())),
+      Some(FlowNodeCode::Source { subject, .. }) => Ok(subject.as_ref().clone()),
+    }
+  }
+  /// Exact attached repository resource; explicitly no-code steps never inherit Work's repository.
+  pub fn exact_resource(&self) -> Result<&ExactSubject, FactoryError> {
+    match self.code.as_deref() {
+      None => self.subject.repository(),
+      Some(FlowNodeCode::None) => Err(invalid()),
+      Some(FlowNodeCode::Source { subject, .. }) => subject.exact(),
+    }
+  }
+  /// Verifies candidate identity against the frozen resource, without granting code access.
+  /// Explicit candidate bindings require the full revision and ChangeSet identity;
+  /// historical and explicitly base-bound inputs retain their base-subject semantics.
+  #[must_use]
+  pub fn matches_candidate_resource(&self, candidate: &crate::CandidateSubject) -> bool {
+    if let Some(FlowNodeCode::Source { subject, .. }) = self.code.as_deref()
+      && let crate::FactoryTaskSubject::Candidate(selected) = subject.as_ref()
+    {
+      selected == candidate
+    } else {
+      self
+        .exact_resource()
+        .is_ok_and(|resource| resource == candidate.exact())
+    }
   }
   /// Returns the admitted Factory Configuration version and content identity.
   #[must_use]

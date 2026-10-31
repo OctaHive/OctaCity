@@ -224,7 +224,11 @@ impl AssociateIssueWork {
         })
         || admission.work.configuration().id() != t.configuration_id
         || admission.work.configuration().version() != t.configuration_version
-        || admission.work.subject().repository_id() != t.repository_id
+        || !admission
+          .work
+          .subject()
+          .repository()
+          .is_ok_and(|subject| subject.repository_id() == t.repository_id)
         || admission.work.artifacts().task().content_digest() != r.task_digest
         || admission.work.artifacts().task().encoded_size() != r.task_size
         || admission.work.artifacts().acceptance().content_digest() != r.acceptance_digest

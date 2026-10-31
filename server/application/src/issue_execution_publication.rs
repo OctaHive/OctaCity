@@ -105,8 +105,9 @@ impl<
       project_id: command.project_id,
       configuration_id: target.configuration_id,
       configuration_version: target.configuration_version,
-      repository_id: target.repository_id,
-      repository_version: target.repository_version,
+      repository_id: Some(target.repository_id),
+
+      repository_version: Some(target.repository_version),
     };
     crate::project_text_intake::authorize_project_text(self.policy.as_ref(), context, &selected).await?;
     let original = self

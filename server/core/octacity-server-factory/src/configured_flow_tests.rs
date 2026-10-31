@@ -712,7 +712,7 @@ fn changing_one_published_scope_updates_author_input_and_capture_gate() {
   .with_data_schemas(published.schemas.clone())
   .unwrap();
   let incoming = FlowIncomingData::new(&work, &admitted, FlowPayload::new(&incoming_schema,
-    serde_json::json!({"work_id":work.id(),"original_base":work.subject().base_revision(),"allowed_paths":["src"],"declared_requirements":[],"task":work.artifacts().task(),"original_acceptance":work.artifacts().acceptance(),"accepted_input":{"work_kind":"feature_request","size":"medium","risk":"low","admission_risk":"low","recommended_route":"development","research_required":false,"research_accepted":false,"component":"api","severity":"low","dependencies":[]}})).unwrap()).unwrap();
+    serde_json::json!({"work_id":work.id(),"original_base":work.subject().repository().unwrap().base_revision(),"allowed_paths":["src"],"declared_requirements":[],"task":work.artifacts().task(),"original_acceptance":work.artifacts().acceptance(),"accepted_input":{"work_kind":"feature_request","size":"medium","risk":"low","admission_risk":"low","recommended_route":"development","research_required":false,"research_accepted":false,"component":"api","severity":"low","dependencies":[]}})).unwrap()).unwrap();
   let schema = published
     .schemas
     .iter()

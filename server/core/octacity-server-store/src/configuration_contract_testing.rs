@@ -28,6 +28,67 @@ use crate::{
 
 const DIGEST: &str = "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef";
 
+#[cfg(test)]
+#[test]
+fn source_free_build_configuration_publishes_and_replays_without_a_repository() {
+  run_ready(
+    async {
+      let store = InMemoryConfigurationStore::new();
+      let project = id::<ProjectId>(800);
+      let pipeline = id::<PipelineId>(801);
+      let pool = id::<PoolId>(802);
+      store.seed_project(project).unwrap();
+      store
+        .seed_pipeline_version(project, pipeline, PipelineVersion::INITIAL)
+        .unwrap();
+      store.seed_pool(pool).unwrap();
+      let mut wire = serde_json::to_value(build_configuration(
+        id(803),
+        RepositoryVersion::INITIAL,
+        pipeline,
+        PipelineVersion::INITIAL,
+        pool,
+        "standalone",
+      ))
+      .unwrap();
+      wire.as_object_mut().unwrap().remove("repository_id");
+      wire.as_object_mut().unwrap().remove("repository_version");
+      wire["source"] = json!({"kind":"source_free_v1"});
+      let definition = serde_json::from_value::<BuildConfigurationDefinition>(wire.clone());
+      assert!(
+        definition.is_ok(),
+        "ordinary configuration has explicit source absence: {definition:?}"
+      );
+      let request = CreateBuildConfiguration {
+        id: id(804),
+        project_id: project,
+        name: "standalone".parse().unwrap(),
+        definition: definition.unwrap(),
+        idempotency_key: key("source-free-ordinary-configuration"),
+        published_at: time(10),
+      };
+      let created = store
+        .create_build_configuration(management_mutation(request.clone()))
+        .await
+        .unwrap();
+      assert_eq!(created.disposition, MutationDisposition::Applied);
+      assert_eq!(serde_json::to_value(&created.configuration.definition).unwrap(), wire);
+      let retained = store
+        .build_configuration_version(created.configuration.id, BuildConfigurationVersion::INITIAL)
+        .await
+        .unwrap();
+      assert_eq!(retained, created.configuration);
+      let replay = store
+        .create_build_configuration(management_mutation(request))
+        .await
+        .unwrap();
+      assert_eq!(replay.disposition, MutationDisposition::Replayed);
+      assert_eq!(replay.configuration, retained);
+    },
+    "source-free configuration uses the ordinary configuration owner",
+  );
+}
+
 /// Runs the reusable immutable Repository and Build Configuration contract.
 pub async fn verify_configuration_store_contract<S, P>(
   store: Arc<S>,
@@ -233,7 +294,7 @@ pub async fn verify_configuration_store_contract<S, P>(
   )
   .await;
   let mut missing_repository = configuration_v1.clone();
-  missing_repository.repository_id = id(999);
+  missing_repository.repository_id = Some(id(999));
   assert_missing_configuration_reference(
     Arc::clone(&store),
     id(211),
@@ -486,8 +547,9 @@ pub(crate) fn build_configuration(
   BuildConfigurationDefinition {
     enabled: true,
     job_concurrency_limit: 2,
-    repository_id,
-    repository_version,
+    repository_id: Some(repository_id),
+    repository_version: Some(repository_version),
+    source: None,
     pipeline_id,
     pipeline_version,
     parameters: ParameterSchema {

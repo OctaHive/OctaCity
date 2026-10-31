@@ -457,7 +457,8 @@ async fn issue_action_queue_keeps_parallel_targets_across_edits_and_competing_re
         intent_digest: digest(3),
         idempotency_key: idempotency("another-run"),
       },
-      repository_version: repository.version,
+      repository_version: Some(repository.version),
+
       work: another.work.clone(),
       run: another.run.clone(),
       flow: another.flow.clone(),

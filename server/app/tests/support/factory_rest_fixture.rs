@@ -206,8 +206,8 @@ impl octacity_server::FactoryRuntimeInstaller for Installation {
 fn verified_evidence(request: &FactoryNodeExecutionRequest<'_>, schema: &ImmutableReference) -> FlowDiscoveryFacts {
   use octacity_server_domain::{ArtifactId, AttemptId, BuildId, JobId, Timestamp};
   let subject = CandidateSubject::new(
-    request.input.subject().clone(),
-    request.input.subject().base_revision().clone(),
+    request.input.exact_resource().unwrap().clone(),
+    request.input.exact_resource().unwrap().base_revision().clone(),
     FactoryDigest::content_sha256(b"fixture-candidate"),
   );
   let changeset = ChangeSet::new(

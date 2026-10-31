@@ -23,7 +23,7 @@ pub(crate) async fn insert_build(
   accepted_at: Timestamp,
   configuration_version: i64,
   pipeline_version: i64,
-  repository_version: i64,
+  repository_version: Option<i64>,
 ) -> Result<(), StoreError> {
   let (trigger, factory, materialization, permissions) = match origin {
     BuildInsertionOrigin::Trigger(trigger) => (Some(trigger), None, None, None),
@@ -56,10 +56,10 @@ pub(crate) async fn insert_build(
   .bind(configuration_version)
   .bind(build.pipeline_id.as_uuid())
   .bind(pipeline_version)
-  .bind(build.repository_id.as_uuid())
+  .bind(build.repository_id.map(|id| id.as_uuid()))
   .bind(repository_version)
   .bind(trigger.map(TriggerOccurrenceId::as_uuid))
-  .bind(build.immutable_revision.as_str())
+  .bind(build.immutable_revision.as_ref().map(|revision| revision.as_str()))
   .bind(Json(build.input_snapshot.clone()))
   .bind(Json(build.effective_policy_snapshot.clone()))
   .bind(build.retention.metadata.unix_millis())

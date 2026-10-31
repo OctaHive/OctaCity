@@ -22,10 +22,10 @@ pub struct WorkSourceBinding {
   pub resource: ImmutableReference,
 }
 
-/// Exact Project-owned code Repository definition selected for Work admission.
+/// Exact Project-owned Repository definition shared by Factory resource bindings.
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
 #[serde(deny_unknown_fields)]
-pub struct WorkSourceRepositoryRef {
+pub struct FactoryRepositoryRef {
   /// Owning OctaCity Project, not a provider project identifier.
   pub project_id: ProjectId,
   /// Code Repository identity, regardless of the ticket provider.
@@ -35,6 +35,9 @@ pub struct WorkSourceRepositoryRef {
   /// Content identity of the immutable Repository definition.
   pub definition_digest: FactoryDigest,
 }
+
+/// Backward-compatible name for a Work Source's exact code Repository reference.
+pub type WorkSourceRepositoryRef = FactoryRepositoryRef;
 
 /// Independently installed ticket capability roles; provider names are open identities.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]

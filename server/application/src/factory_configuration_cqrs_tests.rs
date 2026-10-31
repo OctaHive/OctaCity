@@ -31,6 +31,127 @@ struct Fixture {
   draft: FactoryConfigurationDraft,
 }
 
+#[path = "factory_manual_authoring_tests.rs"]
+mod manual_authoring;
+
+#[test]
+fn configuration_hard_budget_rejection_retains_requested_value_maximum_and_owner() {
+  run_ready(async {
+    let project = ProjectId::generate();
+    let mut fixture = fixture(project);
+    fixture.draft.hard_budget = BudgetLimit::new(10, 10_000, 999, 10_000, 10_000).unwrap();
+    let store = Arc::new(InMemoryFactoryConfigurationStore::new());
+    store.seed_project(project).unwrap();
+    store.enable_project(project, fixture.choices).unwrap();
+    let before = store.mutation_evidence_counts().await;
+    let error = query(
+      &FactoryConfigurationHandlers::new(store.clone()),
+      ValidateFactoryConfigurationQuery {
+        id: FactoryConfigurationId::generate(),
+        project_id: project,
+        definition_digest: digest(20),
+        draft: fixture.draft,
+      },
+    )
+    .await
+    .unwrap_err();
+    let crate::ApplicationError::FactoryValidation(report) = error else {
+      panic!("budget failure must name its owner: {error:?}")
+    };
+    let report = serde_json::to_value(report).unwrap();
+    assert_eq!(report["errors"][0]["code"], "budget_exceeds_ceiling");
+    assert_eq!(report["errors"][0]["field"], "/flow/limits/budget");
+    assert_eq!(report["errors"][0]["ceiling"], "configuration");
+    assert_eq!(report["errors"][0]["resource"], "tokens");
+    assert_eq!(report["errors"][0]["requested"], 1000);
+    assert_eq!(report["errors"][0]["maximum"], 999);
+    assert_eq!(store.mutation_evidence_counts().await, before);
+  });
+}
+
+#[test]
+fn configuration_wip_rejection_names_the_global_node_ceiling_and_preserves_the_request() {
+  run_ready(async {
+    let project = ProjectId::generate();
+    let mut fixture = fixture(project);
+    fixture.draft.wip_limits = FactoryWipLimits::new(2, 3).unwrap();
+    let store = Arc::new(InMemoryFactoryConfigurationStore::new());
+    store.seed_project(project).unwrap();
+    store.enable_project(project, fixture.choices).unwrap();
+    let before = store.mutation_evidence_counts().await;
+    let error = query(
+      &FactoryConfigurationHandlers::new(store.clone()),
+      ValidateFactoryConfigurationQuery {
+        id: FactoryConfigurationId::generate(),
+        project_id: project,
+        definition_digest: digest(20),
+        draft: fixture.draft,
+      },
+    )
+    .await
+    .unwrap_err();
+    let crate::ApplicationError::FactoryValidation(report) = error else {
+      panic!("capacity failure must name its owner: {error:?}")
+    };
+    let report = serde_json::to_value(report).unwrap();
+    assert_eq!(report["errors"][0]["code"], "concurrency_exceeds_ceiling");
+    assert_eq!(report["errors"][0]["field"], "/flow/limits/max_wip");
+    assert_eq!(report["errors"][0]["ceiling"], "configuration_wip");
+    assert_eq!(report["errors"][0]["resource"], "active_nodes");
+    assert_eq!(report["errors"][0]["requested"], 4);
+    assert_eq!(report["errors"][0]["maximum"], 3);
+    assert_eq!(store.mutation_evidence_counts().await, before);
+  });
+}
+
+#[test]
+fn configuration_constraints_keep_global_and_per_run_concurrency_separate_without_publication() {
+  run_ready(async {
+    let project = ProjectId::generate();
+    let mut fixture = fixture(project);
+    fixture.draft.wip_limits = FactoryWipLimits::new(2, 8).unwrap();
+    let store = Arc::new(InMemoryFactoryConfigurationStore::new());
+    store.seed_project(project).unwrap();
+    store.enable_project(project, fixture.choices).unwrap();
+    let before = store.mutation_evidence_counts().await;
+    let validation = query(
+      &FactoryConfigurationHandlers::new(store.clone()),
+      ValidateFactoryConfigurationQuery {
+        id: FactoryConfigurationId::generate(),
+        project_id: project,
+        definition_digest: digest(20),
+        draft: fixture.draft,
+      },
+    )
+    .await
+    .unwrap();
+    let diagnostics = serde_json::to_value(validation.diagnostics).unwrap();
+    let concurrency = diagnostics["constraints"]["concurrency"].as_array().unwrap();
+    assert!(concurrency.iter().any(|limit| limit["scope"] == "configuration_runs"
+      && limit["requested"] == 2
+      && limit["effective"] == 2
+      && limit["unresolved"].is_null()));
+    assert!(
+      concurrency
+        .iter()
+        .any(|limit| limit["scope"] == "configuration_nodes" && limit["effective"] == 8)
+    );
+    assert!(
+      concurrency
+        .iter()
+        .any(|limit| limit["scope"] == "run_nodes" && limit["effective"] == 4)
+    );
+    assert!(
+      diagnostics["constraints"]["run_budget"]["sources"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .any(|source| source["source"] == "configuration")
+    );
+    assert_eq!(store.mutation_evidence_counts().await, before);
+  });
+}
+
 #[test]
 fn data_schema_normalization_returns_the_exact_content_identity_without_publishing_a_version() {
   run_ready(async {

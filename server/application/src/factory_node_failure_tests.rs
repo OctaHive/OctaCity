@@ -257,7 +257,7 @@ impl FactoryNodeExecutor for OverBudgetExecution {
 
 #[test]
 fn a_confirmed_budget_overrun_releases_the_node_and_preserves_actual_consumption() {
-  crate::factory_admission_tests::run_ready(async {
+  crate::factory_flow_tests::run_ready(async {
     let fixture = octacity_server_store::testing::factory_node_journal_contract_fixture();
     let store = Arc::new(octacity_server_store::testing::InMemoryFactoryConfigurationStore::new());
     let audit = octacity_server_store::testing::management_mutation_with_request((), "overrun-node")
@@ -763,7 +763,7 @@ pub(crate) fn single_slot_admissions() -> Vec<octacity_server_store::PublishedFa
         WorkEnvelopeId::generate(),
         fixture.admission.work.configuration().clone(),
         ExternalWorkIdentity::new(format!("manual/concurrent-node-{index}")).unwrap(),
-        fixture.admission.work.subject().clone(),
+        fixture.admission.work.subject().repository().unwrap().clone(),
         fixture.admission.work.artifacts().clone(),
         WorkClassification::new(
           fixture.admission.work.priority(),
@@ -849,7 +849,17 @@ pub(crate) async fn claim_configuration_nodes<S: FactoryRunStore>(
         .entry()
         .clone(),
     };
-    let subject = FactoryTaskSubject::Exact(snapshot.work.subject().clone());
+    let schema = &admission.flow.data_schemas()[0];
+    let input = FlowNodeInput::new(
+      &snapshot.work,
+      &snapshot.admitted_flow,
+      snapshot.admitted_flow.root_run(),
+      snapshot.admitted_flow.initial_cycle(),
+      target.node.clone(),
+      FlowPayload::new(schema, serde_json::json!({"count":3})).unwrap(),
+    )
+    .unwrap();
+    let subject = input.task_subject().unwrap();
     let task = snapshot.work.artifacts().task().clone();
     let context = ContextManifest::new(
       ContextManifestId::generate(),
@@ -870,20 +880,7 @@ pub(crate) async fn claim_configuration_nodes<S: FactoryRunStore>(
       ],
     )
     .unwrap();
-    let schema = &admission.flow.data_schemas()[0];
-    inputs.push(
-      FlowNodeInput::new(
-        &snapshot.work,
-        &snapshot.admitted_flow,
-        snapshot.admitted_flow.root_run(),
-        snapshot.admitted_flow.initial_cycle(),
-        target.node.clone(),
-        FlowPayload::new(schema, serde_json::json!({"count":3})).unwrap(),
-      )
-      .unwrap()
-      .with_context(context, vec![])
-      .unwrap(),
-    );
+    inputs.push(input.with_context(context, vec![]).unwrap());
     targets.push(target);
     claims.push(record);
   }

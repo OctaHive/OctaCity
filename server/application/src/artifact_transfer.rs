@@ -8,7 +8,7 @@ use octacity_protocol::{
   COORDINATOR_PROTOCOL_VERSION, CompleteOutputUploadRequest, CompleteOutputUploadResponse, OutputKind,
   ProtectedInputManifestV3, ProtectedInputTransferV3,
 };
-use octacity_server_domain::{ArtifactId, ArtifactName, ArtifactUploadId, BuildId, EntityKind, Timestamp};
+use octacity_server_domain::{ArtifactId, ArtifactName, ArtifactUploadId, BuildId, EntityKind, JobId, Timestamp};
 use octacity_server_store::{
   ArtifactContentDigest, ArtifactMediaType, ArtifactRecordStore, ArtifactReportFormat, ArtifactState, ArtifactType,
   ArtifactUploadRecord, ArtifactVerificationResult, BeginArtifactUpload, IdempotencyKey, ListPublishedArtifacts,
@@ -53,6 +53,8 @@ pub struct CompleteAgentArtifactUploadInput {
 /// Authoritative facts used to mint lease-scoped protected-input downloads.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct AuthorizeProtectedInputsInput {
+  /// Consuming Job copied from its committed Lease, never selected by Agent input.
+  pub job_id: JobId,
   /// Immutable metadata copied from the committed managed Job template.
   pub manifest: ProtectedInputManifestV3,
   /// Server-observed capability issue time.
@@ -269,13 +271,16 @@ where
     let lifetime = self.download_capability_lifetime.min(Duration::from_millis(
       u64::try_from(remaining_millis).map_err(|_| AgentArtifactError::InvalidRequest)?,
     ));
-    let mut transfers = Vec::with_capacity(input.manifest.inputs.len());
+    let mut selected = Vec::with_capacity(input.manifest.inputs.len());
     for protected in input.manifest.inputs {
       let artifact_id = protected
         .artifact_id
         .parse::<ArtifactId>()
         .map_err(|_| AgentArtifactError::InvalidRequest)?;
-      let published = self.store.published_execution_input(artifact_id).await?;
+      let published = self
+        .store
+        .published_execution_input_for_job(input.job_id, artifact_id)
+        .await?;
       if published.size_bytes != protected.size_bytes
         || published.digest.to_string() != protected.sha256
         || published.media_type.as_str() != protected.media_type
@@ -302,7 +307,15 @@ where
         published.media_type.as_str(),
       )
       .map_err(|_| AgentArtifactError::Integrity)?;
-      self.bytes.verify_published(&object).await?;
+      selected.push((protected, object, lifetime));
+    }
+    // Authorize the complete selection before touching bytes, then verify every
+    // object before minting any capability. A partial failure grants no downloads.
+    for (_, object, _) in &selected {
+      self.bytes.verify_published(object).await?;
+    }
+    let mut transfers = Vec::with_capacity(selected.len());
+    for (protected, object, lifetime) in selected {
       let authorization = self.bytes.authorize_download(&object, lifetime).await?;
       if authorization.expires_in > lifetime {
         return Err(AgentArtifactError::Unavailable);

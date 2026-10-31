@@ -33,6 +33,7 @@ struct AdmissionFingerprint<'a> {
 struct AdmissionRow {
   envelope: Json<WorkEnvelope>,
   configuration: Json<FactoryConfiguration>,
+  code_pins: Option<Json<Vec<octacity_server_factory::FlowCodePin>>>,
   intent_digest: Vec<u8>,
   run_id: uuid::Uuid,
   admitted_at_millis: i64,
@@ -48,7 +49,7 @@ pub(crate) async fn recover(
   );
   let row = sqlx::query_as::<_, AdmissionRow>(
     "SELECT work.envelope, configuration.definition AS configuration, work.intent_digest, \
-            run.id AS run_id, \
+            run.id AS run_id, run.flow_code_pins AS code_pins, \
             FLOOR(EXTRACT(EPOCH FROM run.admitted_at) * 1000)::BIGINT AS admitted_at_millis \
      FROM factory_work_envelopes AS work \
      JOIN factory_runs AS run ON run.work_envelope_id = work.id \
@@ -97,7 +98,7 @@ async fn replay_admission_identity<'e>(
 ) -> Result<Option<FactoryAdmissionMutationOutcome>, StoreError> {
   let row = sqlx::query_as::<_, AdmissionRow>(
     "SELECT work.envelope, configuration.definition AS configuration, work.intent_digest, \
-            run.id AS run_id, \
+            run.id AS run_id, run.flow_code_pins AS code_pins, \
             FLOOR(EXTRACT(EPOCH FROM run.admitted_at) * 1000)::BIGINT AS admitted_at_millis \
      FROM factory_work_envelopes AS work \
      JOIN factory_runs AS run ON run.work_envelope_id = work.id \
@@ -134,11 +135,17 @@ pub(crate) async fn context(
   if configuration.configuration.reference().project_id() != request.project_id {
     return Err(not_found(EntityKind::FactoryConfiguration));
   }
-  let repository =
-    crate::configuration_query::repository(pool, request.repository_id, request.repository_version).await?;
-  if repository.project_id != request.project_id {
-    return Err(not_found(EntityKind::Repository));
-  }
+  let repository = match (request.repository_id, request.repository_version) {
+    (Some(id), Some(version)) => {
+      let repository = crate::configuration_query::repository(pool, id, version).await?;
+      if repository.project_id != request.project_id {
+        return Err(not_found(EntityKind::Repository));
+      }
+      Some(repository)
+    }
+    (None, None) => None,
+    _ => return Err(conflict(EntityKind::FactoryRun)),
+  };
   Ok(FactoryAdmissionContext {
     configuration,
     repository,
@@ -253,9 +260,23 @@ async fn admit_once(
   .bind(request.probe.source_scope.source.as_str())
   .bind(security_scope_digest(&request.probe).as_bytes().as_slice())
   .bind(request.probe.external_identity.as_str())
-  .bind(request.work.subject().repository_id().as_uuid())
-  .bind(repository_version_number(request.repository_version)?)
-  .bind(request.work.subject().base_revision().as_str())
+  .bind(
+    request
+      .work
+      .subject()
+      .repository()
+      .ok()
+      .map(|subject| subject.repository_id().as_uuid()),
+  )
+  .bind(request.repository_version.map(repository_version_number).transpose()?)
+  .bind(
+    request
+      .work
+      .subject()
+      .repository()
+      .ok()
+      .map(|subject| subject.base_revision().as_str()),
+  )
   .bind(request.probe.intent_digest.as_bytes().as_slice())
   .bind(envelope_digest.as_bytes().as_slice())
   .bind(Json(&request.work))
@@ -266,8 +287,8 @@ async fn admit_once(
   sqlx::query(
     "INSERT INTO factory_runs \
        (id, project_id, work_envelope_id, factory_configuration_id, factory_configuration_version, \
-        state, version, subject_digest, flow_admission_limits, admitted_at, updated_at) \
-     VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, \
+        state, version, subject_digest, flow_admission_limits, flow_code_pins, admitted_at, updated_at) \
+     VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $11, \
              to_timestamp($10::double precision / 1000.0), to_timestamp($10::double precision / 1000.0))",
   )
   .bind(request.run.id().as_uuid())
@@ -280,6 +301,7 @@ async fn admit_once(
   .bind(subject_digest.as_bytes().as_slice())
   .bind(Json(request.flow.limits()))
   .bind(request.admitted_at.unix_millis())
+  .bind((!request.flow.code_pins().is_empty()).then(|| Json(request.flow.code_pins())))
   .execute(&mut *transaction)
   .await
   .map_err(|error| classify(error, EntityKind::FactoryRun))?;
@@ -489,13 +511,24 @@ async fn require_repository(
   transaction: &mut Transaction<'_, Postgres>,
   request: &AdmitFactoryWork,
 ) -> Result<(), StoreError> {
+  let Ok(subject) = request.work.subject().repository() else {
+    return if request.repository_version.is_none() {
+      Ok(())
+    } else {
+      Err(conflict(EntityKind::FactoryRun))
+    };
+  };
   let owner: Option<uuid::Uuid> = sqlx::query_scalar(
     "SELECT repository.project_id FROM repository_versions AS version \
      JOIN repositories AS repository ON repository.id = version.repository_id \
      WHERE version.repository_id = $1 AND version.version = $2 FOR KEY SHARE",
   )
-  .bind(request.work.subject().repository_id().as_uuid())
-  .bind(repository_version_number(request.repository_version)?)
+  .bind(subject.repository_id().as_uuid())
+  .bind(repository_version_number(
+    request
+      .repository_version
+      .ok_or_else(|| conflict(EntityKind::FactoryRun))?,
+  )?)
   .fetch_optional(&mut **transaction)
   .await
   .map_err(unavailable)?;
@@ -645,7 +678,14 @@ fn decode_admission(row: AdmissionRow) -> Result<PublishedFactoryAdmission, Stor
     octacity_server_factory::FactoryRunId::from_uuid(row.run_id).map_err(|_| StoreError::Unavailable)?,
     &work,
   );
-  let flow = AdmittedFlow::from_configuration(&configuration, &run).map_err(|_| StoreError::Unavailable)?;
+  let flow = AdmittedFlow::from_configuration(&configuration, &run)
+    .and_then(|flow| {
+      flow.with_code_pins(
+        row.code_pins.map_or_else(Vec::new, |pins| pins.0),
+        work.subject().project_id(),
+      )
+    })
+    .map_err(|_| StoreError::Unavailable)?;
   Ok(PublishedFactoryAdmission {
     work,
     run,

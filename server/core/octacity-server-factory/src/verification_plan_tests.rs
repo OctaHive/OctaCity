@@ -306,7 +306,7 @@ fn admitted_verification(environment: &str) -> (AdmittedFlow, CandidateSubject) 
   let (work, prior, _, _, _) = execution_fixture(FlowNodeKind::BuildCommand);
   let original = prior.closure().definition(prior.closure().root()).unwrap();
   let subject = CandidateSubject::new(
-    work.subject().clone(),
+    work.subject().repository().unwrap().clone(),
     ImmutableRevision::new("candidate").unwrap(),
     FactoryDigest::from_bytes([95; 32]),
   );
@@ -601,7 +601,7 @@ fn verification_definition_rejects_undeclared_network_and_credential_authority()
 fn verification_check_targets_are_selected_from_each_frozen_input_without_changing_plan() {
   let (work, prior, schema, _, original_attempt) = execution_fixture(FlowNodeKind::BuildCommand);
   let subject = CandidateSubject::new(
-    work.subject().clone(),
+    work.subject().repository().unwrap().clone(),
     ImmutableRevision::new("candidate").unwrap(),
     FactoryDigest::from_bytes([95; 32]),
   );
@@ -759,8 +759,8 @@ fn black_box_verification_rejects_implementation_context_before_plan_dispatch() 
     let source = if kind == ContextSourceKind::RepositoryRange {
       FactoryContextReference::RepositoryRange(
         FactoryRepositoryRange::new(
-          work.subject().repository_id(),
-          work.subject().base_revision().clone(),
+          work.subject().repository().unwrap().repository_id(),
+          work.subject().repository().unwrap().base_revision().clone(),
           FactoryRepositoryPath::new("src/private.rs").unwrap(),
           1,
           10,

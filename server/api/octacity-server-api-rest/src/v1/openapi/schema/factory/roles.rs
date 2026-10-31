@@ -8,6 +8,121 @@ pub(super) fn insert(schemas: &mut Map<String, Value>) {
   let reference = || schema_ref("FactoryImmutableReferenceResource");
   let digest = || schema_ref("FactoryDigest");
   schemas.insert(
+    "FactoryDeclarativeGateParameters".into(),
+    object(
+      [
+        ("precondition", nullable(schema_ref("FactoryFlowPredicate"))),
+        (
+          "rules",
+          bounded_array(
+            object(
+              [("when", schema_ref("FactoryFlowPredicate")), ("outcome", key())],
+              &["when", "outcome"],
+            ),
+            b.schema_entries,
+          ),
+        ),
+        ("fallback", key()),
+        (
+          "outputs",
+          bounded_map(schema_ref("FactoryFlowDataMapping"), b.schema_entries),
+        ),
+        ("default_output", nullable(schema_ref("FactoryFlowDataMapping"))),
+      ],
+      &["rules", "fallback"],
+    ),
+  );
+  schemas.insert(
+    "ValidateFactoryGateProgramRequest".into(),
+    object(
+      [("program", schema_ref("FactoryDeclarativeGateParameters"))],
+      &["program"],
+    ),
+  );
+  schemas.insert(
+    "FactoryAuthoringCapabilities".into(),
+    object(
+      [
+        (
+          "deterministic_gate",
+          object(
+            [
+              ("policy", reference()),
+              ("parameter_contract", json!({"const":"declarative_gate_v1"})),
+              ("max_parameter_bytes", positive_integer()),
+              ("resource_modes", bounded_array(json!({"enum":["none"]}), 1)),
+            ],
+            &["policy", "parameter_contract", "max_parameter_bytes", "resource_modes"],
+          ),
+        ),
+        (
+          "human_gates",
+          bounded_array(
+            object(
+              [
+                ("operation", json!({"enum":["escalation","delivery","promotion"]})),
+                ("resource_modes", bounded_array(json!({"enum":["none"]}), 1)),
+                (
+                  "responses",
+                  bounded_array(
+                    object(
+                      [
+                        (
+                          "disposition",
+                          json!({"enum":["acknowledge","resume","abort","confirm"]}),
+                        ),
+                        ("shape", schema_ref("FactoryFlowValueSchema")),
+                      ],
+                      &["disposition", "shape"],
+                    ),
+                    4,
+                  ),
+                ),
+              ],
+              &["operation", "responses", "resource_modes"],
+            ),
+            3,
+          ),
+        ),
+        ("build_resource_modes", bounded_array(json!({"enum":["repository"]}), 1)),
+        (
+          "source_free_incompatibility",
+          nullable(json!({"const":"executor_support_required"})),
+        ),
+      ],
+      &[
+        "deterministic_gate",
+        "human_gates",
+        "build_resource_modes",
+        "source_free_incompatibility",
+      ],
+    ),
+  );
+  schemas.insert(
+    "ResolveFactoryExecutionBindingRequest".into(),
+    object(
+      [
+        ("profile", schema_ref("FactoryRoleProfileReference")),
+        ("capability", key()),
+        ("result_outcome", key()),
+      ],
+      &["profile", "capability", "result_outcome"],
+    ),
+  );
+  schemas.insert(
+    "FactoryExecutionBindingResolution".into(),
+    object(
+      [
+        ("build", nullable(schema_ref("FactoryFlowBuildBinding"))),
+        (
+          "incompatibility",
+          nullable(json!({"type":"string","enum":["profile_incompatible","build_unavailable"]})),
+        ),
+      ],
+      &["build", "incompatibility"],
+    ),
+  );
+  schemas.insert(
     "DeleteFactoryRoleResponse".into(),
     object(
       [

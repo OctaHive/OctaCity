@@ -311,7 +311,7 @@ fn expired_source_artifacts_cannot_start_a_run_even_with_a_new_valid_scan_owner(
       intent.external_identity.clone(),
       octacity_server_factory::ExactSubject::new(
         intent.project_id,
-        intent.repository_id,
+        intent.repository_id.unwrap(),
         "base-revision".parse().unwrap(),
       ),
       intent.artifacts,
@@ -986,8 +986,9 @@ fn source_preparation_binds_an_exact_project_completion_document_without_build_p
                 project_id: project,
                 configuration_id: retained.input.definition().target.id(),
                 configuration_version: retained.input.definition().target.version(),
-                repository_id: retained.input.definition().repository.id,
-                repository_version: retained.input.definition().repository.version,
+                repository_id: Some(retained.input.definition().repository.id),
+
+                repository_version: Some(retained.input.definition().repository.version),
               },
               external_identity: ExternalWorkIdentity::new("reviewed-completion").unwrap(),
               source: settings.source.clone(),

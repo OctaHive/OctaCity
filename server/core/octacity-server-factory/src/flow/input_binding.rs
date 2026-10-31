@@ -282,7 +282,7 @@ fn predecessor<'a>(context: &'a FlowInputPreparation<'_>) -> Result<&'a crate::N
   }
   Ok(attempt)
 }
-fn select_record<'a>(
+pub(super) fn select_record<'a>(
   context: &'a FlowInputPreparation<'_>,
   node: &FactoryKey,
   outcome: &FactoryKey,

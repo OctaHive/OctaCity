@@ -87,6 +87,10 @@ pub struct FactoryConfigurationDocumentBounds {
   /// Maximum source-scoped external identity bytes.
   pub external_work_identity_bytes: usize,
 
+  /// Maximum available source declarations in one Flow.
+  pub code_sources: usize,
+  /// Maximum bytes in a normalized repository-relative path.
+  pub repository_path_bytes: usize,
   /// Maximum references in one permission category.
   pub permission_entries: usize,
   /// Maximum command arguments.
@@ -171,6 +175,8 @@ pub const fn factory_configuration_document_bounds() -> FactoryConfigurationDocu
     work_metadata_value_bytes: factory::MAX_FACTORY_METADATA_VALUE_BYTES,
     external_work_identity_bytes: factory::MAX_EXTERNAL_WORK_IDENTITY_BYTES,
 
+    code_sources: factory::MAX_FLOW_CODE_SOURCES,
+    repository_path_bytes: factory::MAX_FACTORY_REPOSITORY_PATH_BYTES,
     permission_entries: factory::MAX_PERMISSION_ENTRIES_PER_CATEGORY,
     command_arguments: factory::MAX_COMMAND_ARGUMENTS,
     cpu_millis: factory::MAX_FACTORY_CPU_MILLIS,

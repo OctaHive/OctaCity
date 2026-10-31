@@ -19,6 +19,93 @@ use octacity_server_store::{
 };
 use std::sync::Mutex;
 
+/// Uses actual retained input/attempt policy when testing a trusted action's own validation.
+pub(crate) fn retained_action_request<'a>(
+  snapshot: &'a octacity_server_store::FactoryRunSnapshot,
+  input: &'a FlowNodeInput,
+  observed_at: octacity_server_domain::Timestamp,
+) -> crate::FactoryFlowActionRequest<'a> {
+  let attempt = snapshot
+    .flow
+    .attempts
+    .iter()
+    .find(|attempt| attempt.input_digest() == input.digest().unwrap())
+    .unwrap();
+  let node = snapshot
+    .admitted_flow
+    .closure()
+    .definition(input.definition())
+    .unwrap()
+    .node(input.node())
+    .unwrap();
+  crate::FactoryFlowActionRequest {
+    operation_id: attempt.input_digest(),
+    work_id: snapshot.work.id(),
+    node_attempt_id: attempt.id(),
+    external_identity: snapshot.work.external_identity(),
+    subject: snapshot.work.subject(),
+    binding: node.action().unwrap(),
+    input,
+    schemas: snapshot.admitted_flow.data_schemas(),
+    permissions: node.permissions(),
+    budget: node.budget(),
+    deadline: attempt.deadline(),
+    started_at: attempt.started_at(),
+    authority_expires_at: attempt.claim().expires_at(),
+    observed_at,
+  }
+}
+
+/// Gives metadata-only action fixtures an explicit exact resource, independent of Work.
+pub(crate) fn flow_with_explicit_resource(mut input: FlowDefinitionInput, subject: &ExactSubject) -> FlowDefinition {
+  for node in &mut input.nodes {
+    if node.code().is_some() {
+      continue;
+    }
+    let mut wire = serde_json::to_value(&*node).unwrap();
+    wire["code"] = serde_json::to_value(FlowCodeBinding::Source {
+      source: FactoryKey::new("review-code").unwrap(),
+      access: MountMode::ReadOnly,
+      scope: FlowCodeScope::Repository,
+      revision: FlowCodeRevision::ExactRevision {
+        revision: subject.base_revision().clone(),
+      },
+    })
+    .unwrap();
+    *node = serde_json::from_value(wire).unwrap();
+  }
+  FlowDefinition::new(input)
+    .unwrap()
+    .with_code_sources(std::collections::BTreeMap::from([(
+      FactoryKey::new("review-code").unwrap(),
+      FlowCodeSource {
+        repository: FactoryRepositoryRef {
+          project_id: subject.project_id(),
+          id: subject.repository_id(),
+          version: RepositoryVersion::INITIAL,
+          definition_digest: FactoryDigest::from_bytes([137; 32]),
+        },
+        selection: octacity_server_domain::RepositorySourceSelection::ExactRevision(subject.base_revision().clone()),
+        access: MountMode::ReadOnly,
+        scope: FlowCodeScope::Repository,
+      },
+    )]))
+    .unwrap()
+}
+
+/// Retains exact admitted inputs and classification without a synthetic VCS identity.
+pub(crate) fn repository_free_work(work: &WorkEnvelope) -> WorkEnvelope {
+  WorkEnvelope::new(
+    work.id(),
+    work.configuration().clone(),
+    work.external_identity().clone(),
+    WorkSubject::project_input(work.subject().project_id(), work.artifacts()).unwrap(),
+    work.artifacts().clone(),
+    WorkClassification::new(work.priority(), work.risk(), work.metadata().clone()),
+  )
+  .unwrap()
+}
+
 /// The caller advances deterministic fixture time through the public owner call.
 /// Tests for time elapsing inside a capability supply their own moving clock.
 pub(crate) fn clock() -> std::sync::Arc<dyn crate::FactoryExecutionClock> {
@@ -180,10 +267,23 @@ impl BuildQueryStore for Builds {
         configuration_version: configuration.version(),
         pipeline_id: PipelineId::generate(),
         pipeline_version: PipelineVersion::INITIAL,
-        repository_id: request.repository_id,
-        repository_version: RepositoryVersion::INITIAL,
-        immutable_revision: request.immutable_revision,
-        input_snapshot: serde_json::json!({}),
+        repository_id: request.subject.exact().ok().map(|resource| resource.repository_id()),
+        repository_version: request.subject.exact().ok().map(|_| RepositoryVersion::INITIAL),
+        immutable_revision: request
+          .subject
+          .exact()
+          .ok()
+          .map(|resource| resource.base_revision().clone()),
+        source: if matches!(request.subject, FactoryTaskSubject::WorkInputV1(_)) {
+          Some(octacity_server_domain::BuildSourceMode::SourceFreeV1)
+        } else {
+          None
+        },
+        input_snapshot: if matches!(request.subject, FactoryTaskSubject::WorkInputV1(_)) {
+          serde_json::json!({"source": {"kind": "source_free_v1"}, "parameters": {}})
+        } else {
+          serde_json::json!({})
+        },
         effective_policy_snapshot: serde_json::json!({}),
         retention: BuildRetentionDeadlines {
           metadata: time(10_000),

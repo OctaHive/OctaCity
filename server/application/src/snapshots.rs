@@ -3,13 +3,13 @@ use std::collections::BTreeMap;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
-use crate::{EffectiveProjectPolicy, JobSpecToolchainPolicy, ManualSourceSelection};
+use crate::{BuildSourceSelection, EffectiveProjectPolicy, JobSpecToolchainPolicy};
 
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
 #[serde(deny_unknown_fields)]
 pub(crate) struct BuildInputSnapshot {
   pub(crate) parameters: BTreeMap<String, Value>,
-  pub(crate) source: ManualSourceSelection,
+  pub(crate) source: BuildSourceSelection,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq, Serialize)]

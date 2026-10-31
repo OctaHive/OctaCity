@@ -21,9 +21,10 @@ pub(crate) fn trigger_request(occurrence: u64, base: u64, pool: PoolId) -> Accep
     configuration_version: BuildConfigurationVersion::INITIAL,
     pipeline_id: id::<PipelineId>(33),
     pipeline_version: PipelineVersion::INITIAL,
-    repository_id: id::<RepositoryId>(34),
-    repository_version: RepositoryVersion::INITIAL,
-    immutable_revision: ImmutableRevision::new("0123456789abcdef").unwrap(),
+    repository_id: Some(id::<RepositoryId>(34)),
+    repository_version: Some(RepositoryVersion::INITIAL),
+    immutable_revision: Some(ImmutableRevision::new("0123456789abcdef").unwrap()),
+    source: None,
     input_snapshot: json!({"parameter": "value"}),
     effective_policy_snapshot: json!({
       "allowed_pool": pool.to_string(),
@@ -281,4 +282,41 @@ pub fn job_spec_template_with_cache(build_id: BuildId, node: &str, cache: Option
     &policy,
   )
   .unwrap()
+}
+
+/// Ordinary managed Build with explicit source absence and no Factory operation.
+#[must_use]
+pub fn source_free_store_contract_fixture() -> StoreContractFixture {
+  let mut fixture = authoritative_store_contract_fixture();
+  let build = &mut fixture.request.build;
+  build.repository_id = None;
+  build.repository_version = None;
+  build.immutable_revision = None;
+  build.source = Some(octacity_server_domain::BuildSourceMode::SourceFreeV1);
+  build.input_snapshot = json!({"parameters": {}, "source": {"kind": "source_free_v1"}});
+  let canonical: octacity_protocol::JobSpecV3 = serde_json::from_str(include_str!(
+    "../../../../../shared/protocol-fixtures/job-spec/job-spec-v3.json"
+  ))
+  .unwrap();
+  let mut permissions = canonical.permissions.clone();
+  permissions.mounts.retain(|mount| mount.root != "/workspace/source");
+  let program = json!({"execution": canonical.execution, "protected_inputs": canonical.protected_inputs,
+    "permissions": permissions, "required_enforcement": canonical.required_enforcement});
+  let snapshot = JobSpecBuildSnapshot::source_free(build.id, BTreeMap::new());
+  let policy = JobSpecPolicySnapshot::new(
+    SourcePluginPolicy::new("git", "1.0.0", canonical.source.plugin_sha256, "url").unwrap(),
+    canonical.octa,
+    octacity_server_job::JobRuntimePolicy::Current(canonical.runtime),
+    None,
+    canonical.cache,
+    canonical.outputs,
+    octacity_server_job::JobSpecValidity::new(600).unwrap(),
+  )
+  .unwrap();
+  for job in &mut fixture.request.jobs {
+    job.job_spec_template =
+      derive_job_spec_template(&snapshot, job.pipeline_node_id.clone(), program.clone(), &policy).unwrap();
+  }
+  fixture.request.validate().unwrap();
+  fixture
 }

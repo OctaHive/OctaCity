@@ -336,9 +336,14 @@ pub struct BuildConfigurationProjection {
   /// Maximum active Jobs across Builds of this Configuration version.
   pub job_concurrency_limit: u32,
   /// Exact immutable Repository reference.
-  pub repository_id: RepositoryId,
+  #[serde(default, skip_serializing_if = "Option::is_none")]
+  pub repository_id: Option<RepositoryId>,
   /// Exact immutable Repository version.
-  pub repository_version: RepositoryVersion,
+  #[serde(default, skip_serializing_if = "Option::is_none")]
+  pub repository_version: Option<RepositoryVersion>,
+  /// Explicit versioned source absence; historical repository projections omit this field.
+  #[serde(default, skip_serializing_if = "Option::is_none")]
+  pub source: Option<octacity_server_domain::BuildSourceMode>,
   /// Exact immutable Pipeline reference.
   pub pipeline_id: PipelineId,
   /// Exact immutable Pipeline version.
@@ -476,6 +481,7 @@ impl TryFrom<PublishedBuildConfiguration> for BuildConfigurationProjection {
       job_concurrency_limit: definition.job_concurrency_limit,
       repository_id: definition.repository_id,
       repository_version: definition.repository_version,
+      source: definition.source,
       pipeline_id: definition.pipeline_id,
       pipeline_version: definition.pipeline_version,
       parameters,

@@ -13,12 +13,13 @@ impl Fixture {
         project_id: project,
         configuration_id: fixture.input.definition().target.id(),
         configuration_version: fixture.input.definition().target.version(),
-        repository_id: fixture.input.definition().repository.id,
-        repository_version: fixture.input.definition().repository.version,
+        repository_id: Some(fixture.input.definition().repository.id),
+
+        repository_version: Some(fixture.input.definition().repository.version),
       })
       .await
       .unwrap();
-    let repository = &context.repository;
+    let repository = context.repository.as_ref().unwrap();
     sqlx::query("INSERT INTO repositories (id,project_id,name,created_at) VALUES ($1,$2,$3,to_timestamp(0))")
       .bind(repository.id.as_uuid())
       .bind(project.as_uuid())

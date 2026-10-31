@@ -10,7 +10,7 @@ fn immutable_candidate_deliverables_require_declared_public_changes_and_reject_d
       {"kind":"scripts","paths":["tools"],"min_files":1}]
   }))
   .unwrap();
-  let subject = FactoryTaskSubject::Exact(work().subject().clone());
+  let subject = FactoryTaskSubject::Exact(work().subject().repository().unwrap().clone());
   let contract = CandidateDeliverableContract::new(
     FactoryDigest::from_bytes([1; 32]),
     subject,
@@ -131,7 +131,7 @@ fn an_allowlisted_deliverable_policy_does_not_require_artificial_exclusions() {
   .expect("an explicit allowlist can already exclude all other paths");
   let contract = CandidateDeliverableContract::new(
     FactoryDigest::from_bytes([1; 32]),
-    FactoryTaskSubject::Exact(work().subject().clone()),
+    FactoryTaskSubject::Exact(work().subject().repository().unwrap().clone()),
     FactoryDigest::from_bytes([2; 32]),
     policy,
   )

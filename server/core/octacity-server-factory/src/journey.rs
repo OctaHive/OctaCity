@@ -48,9 +48,20 @@ impl FactoryFlowConfiguration {
     budget: BudgetLimit,
     wip: FactoryWipLimits,
   ) -> Result<(), FactoryError> {
-    if !self.limits.budget().fits_within(budget) || u32::from(self.limits.max_wip()) > wip.max_active_nodes() {
-      return Err(FactoryError::InvalidConfiguration {
-        field: "configured Flow bounds",
+    if let Some(violation) = self.limits.budget().first_excess(budget) {
+      return Err(FactoryError::BudgetCeilingExceeded {
+        context: Box::new(crate::FlowBudgetCeilingViolation {
+          definition: self.closure.root(),
+          node: None,
+          ceiling: crate::FlowBudgetCeiling::Configuration,
+          violation,
+        }),
+      });
+    }
+    if u32::from(self.limits.max_wip()) > wip.max_active_nodes() {
+      return Err(FactoryError::ConfigurationNodeCapacityExceeded {
+        requested: u32::from(self.limits.max_wip()),
+        maximum: wip.max_active_nodes(),
       });
     }
     if self

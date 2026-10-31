@@ -38,7 +38,7 @@ pub fn factory_protected_test_materialization(
   at: Timestamp,
 ) -> Result<Vec<octacity_protocol::ProtectedInputV3>, ApplicationError> {
   let invalid = ApplicationError::invalid;
-  if bundle.plan().subject().exact() != input.subject()
+  if bundle.plan().subject().exact().map_err(|_| invalid())? != input.exact_resource().map_err(|_| invalid())?
     || at >= bundle.retained_until()
     || input.context().is_none_or(|context| {
       !context.entries().iter().any(

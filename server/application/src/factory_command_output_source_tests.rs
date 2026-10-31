@@ -568,10 +568,10 @@ async fn finish_prepared_with_primary(
   let base = authoritative_store_contract_fixture();
   let mut build = base.request.build;
   build.project_id = intent.input().subject().project_id();
-  build.repository_id = intent.input().subject().repository_id();
+  build.repository_id = Some(intent.input().exact_resource().unwrap().repository_id());
   build.configuration_id = profile.build_configuration.id();
   build.configuration_version = profile.build_configuration.version();
-  build.immutable_revision = intent.input().subject().base_revision().clone();
+  build.immutable_revision = Some(intent.input().exact_resource().unwrap().base_revision().clone());
   if let Some(FixtureSource::Deployment(deployment)) = &source {
     let context = crate::factory_command_materializer_tests::deployment_context(&profile, &intent, &deployment.2);
     build.effective_policy_snapshot = serde_json::to_value(crate::snapshots::BuildPolicySnapshot {
@@ -603,7 +603,7 @@ async fn finish_prepared_with_primary(
   job.job_spec_template = derive_factory_managed_job_spec_template(FactoryManagedJobSpecInput {
     build: JobSpecBuildSnapshot::new(
       build.id,
-      build.immutable_revision.clone(),
+      build.immutable_revision.clone().unwrap(),
       None,
       RepositoryLocator::new("https://example.test/ordinary.git").unwrap(),
       BTreeMap::new(),
@@ -1012,6 +1012,7 @@ fn retained_command_candidate_outputs_match_the_exact_persisted_source_and_compi
     assert_eq!(
       managed
         .factory()
+        .unwrap()
         .change_set_materialization
         .as_ref()
         .unwrap()

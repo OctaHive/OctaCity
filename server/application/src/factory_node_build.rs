@@ -450,9 +450,8 @@ pub(crate) fn factory_build_request(
     ownership,
     operation_id: intent.operation_id().map_err(invalid)?,
     project_id: input.subject().project_id(),
-    repository_id: input.subject().repository_id(),
+    subject: input.task_subject().map_err(|_| ApplicationError::invalid())?,
     build_configuration: intent.profile().build_configuration.clone(),
-    immutable_revision: input.subject().base_revision().clone(),
     priority: intent.priority(),
     effective_permissions: intent.permissions().clone(),
     budget: intent.budget(),
@@ -795,8 +794,14 @@ async fn observe_accepted_build<B: BuildQueryStore>(
   if build.origin != expected_origin
     || build.build.id != accepted.build_id
     || build.build.project_id != request.project_id
-    || build.build.repository_id != request.repository_id
-    || build.build.immutable_revision != request.immutable_revision
+    || build.build.repository_id != request.subject.exact().ok().map(|resource| resource.repository_id())
+    || build.build.immutable_revision.as_ref() != request.subject.exact().ok().map(|resource| resource.base_revision())
+    || build.build.source
+      != if matches!(request.subject, FactoryTaskSubject::WorkInputV1(_)) {
+        Some(octacity_server_domain::BuildSourceMode::SourceFreeV1)
+      } else {
+        None
+      }
     || build.build.configuration_id != request.build_configuration.id()
     || build.build.configuration_version != request.build_configuration.version()
     || build.build.priority != request.priority

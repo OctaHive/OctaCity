@@ -90,15 +90,36 @@ pub enum FactoryTaskSubject {
   Exact(crate::ExactSubject),
   /// Exact candidate derived from a Project-owned repository base.
   Candidate(crate::CandidateSubject),
+  /// Versioned Work/input correlation for document-only tasks; it confers no repository resource.
+  WorkInputV1(crate::WorkSubject),
 }
 
 impl FactoryTaskSubject {
-  /// Returns the common exact base subject.
-  #[must_use]
-  pub const fn exact(&self) -> &crate::ExactSubject {
+  /// Returns an attached repository base, rejecting non-repository Work/input correlation.
+  pub const fn exact(&self) -> Result<&crate::ExactSubject, FactoryError> {
     match self {
-      Self::Exact(subject) => subject,
-      Self::Candidate(subject) => subject.exact(),
+      Self::Exact(subject) => Ok(subject),
+      Self::Candidate(subject) => Ok(subject.exact()),
+      Self::WorkInputV1(_) => Err(FactoryError::InconsistentSubject),
+    }
+  }
+  /// Exact revision visible to execution, absent for explicitly repository-free task scope.
+  /// Work correlation alone never supplies a revision or code authority.
+  #[must_use]
+  pub fn execution_revision(&self) -> Option<&ImmutableRevision> {
+    match self {
+      Self::Exact(subject) => Some(subject.base_revision()),
+      Self::Candidate(subject) => Some(subject.candidate_revision()),
+      Self::WorkInputV1(_) => None,
+    }
+  }
+  /// Common Project ownership without interpreting correlation as code access.
+  #[must_use]
+  pub const fn project_id(&self) -> octacity_server_domain::ProjectId {
+    match self {
+      Self::Exact(subject) => subject.project_id(),
+      Self::Candidate(subject) => subject.exact().project_id(),
+      Self::WorkInputV1(subject) => subject.project_id(),
     }
   }
 
@@ -106,13 +127,13 @@ impl FactoryTaskSubject {
   #[must_use]
   pub const fn candidate(&self) -> Option<&crate::CandidateSubject> {
     match self {
-      Self::Exact(_) => None,
+      Self::Exact(_) | Self::WorkInputV1(_) => None,
       Self::Candidate(subject) => Some(subject),
     }
   }
 
   pub(super) fn permits_revision(&self, revision: &ImmutableRevision) -> bool {
-    revision == self.exact().base_revision()
+    self.exact().is_ok_and(|subject| revision == subject.base_revision())
       || self
         .candidate()
         .is_some_and(|candidate| revision == candidate.candidate_revision())
@@ -228,14 +249,58 @@ impl<'de> Deserialize<'de> for FactoryRepositoryPath {
   }
 }
 
+/// Inclusive one-based source lines, independent of repository selection and revision.
+#[derive(Clone, Debug, Deserialize, Eq, Hash, Ord, PartialEq, PartialOrd, Serialize)]
+#[serde(try_from = "RepositoryLineRangeWire")]
+pub struct FactoryRepositoryLineRange {
+  first_line: u32,
+  last_line: u32,
+}
+impl FactoryRepositoryLineRange {
+  /// Validates a nonempty inclusive range without inventing a repository identity.
+  pub fn new(first_line: u32, last_line: u32) -> Result<Self, FactoryError> {
+    if first_line == 0 || last_line < first_line {
+      return Err(invalid("repository range"));
+    }
+    Ok(Self { first_line, last_line })
+  }
+  /// First inclusive one-based line.
+  #[must_use]
+  pub const fn first_line(&self) -> u32 {
+    self.first_line
+  }
+  /// Last inclusive one-based line.
+  #[must_use]
+  pub const fn last_line(&self) -> u32 {
+    self.last_line
+  }
+  /// Whether this selection is entirely within an already authorized range.
+  #[must_use]
+  pub const fn is_within(&self, ceiling: &Self) -> bool {
+    self.first_line >= ceiling.first_line && self.last_line <= ceiling.last_line
+  }
+}
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct RepositoryLineRangeWire {
+  first_line: u32,
+  last_line: u32,
+}
+impl TryFrom<RepositoryLineRangeWire> for FactoryRepositoryLineRange {
+  type Error = FactoryError;
+  fn try_from(wire: RepositoryLineRangeWire) -> Result<Self, Self::Error> {
+    Self::new(wire.first_line, wire.last_line)
+  }
+}
+
 /// Exact bounded repository range selected as call context.
 #[derive(Clone, Debug, Eq, PartialEq, Serialize)]
 pub struct FactoryRepositoryRange {
   repository_id: RepositoryId,
   revision: ImmutableRevision,
   path: FactoryRepositoryPath,
-  first_line: u32,
-  last_line: u32,
+  #[serde(flatten)]
+  lines: FactoryRepositoryLineRange,
 }
 
 impl FactoryRepositoryRange {
@@ -247,15 +312,12 @@ impl FactoryRepositoryRange {
     first_line: u32,
     last_line: u32,
   ) -> Result<Self, FactoryError> {
-    if first_line == 0 || last_line < first_line {
-      return Err(invalid("repository range"));
-    }
+    let lines = FactoryRepositoryLineRange::new(first_line, last_line)?;
     Ok(Self {
       repository_id,
       revision,
       path,
-      first_line,
-      last_line,
+      lines,
     })
   }
 
@@ -280,13 +342,13 @@ impl FactoryRepositoryRange {
   /// Returns the first inclusive one-based line.
   #[must_use]
   pub const fn first_line(&self) -> u32 {
-    self.first_line
+    self.lines.first_line()
   }
 
   /// Returns the last inclusive one-based line.
   #[must_use]
   pub const fn last_line(&self) -> u32 {
-    self.last_line
+    self.lines.last_line()
   }
 }
 
@@ -344,7 +406,7 @@ impl FactoryRepositoryFragmentReference {
     if rank == 0 {
       return Err(invalid("retrieval fragment rank"));
     }
-    if range.repository_id() != subject.exact().repository_id() || !subject.permits_revision(range.revision()) {
+    if range.repository_id() != subject.exact()?.repository_id() || !subject.permits_revision(range.revision()) {
       return Err(FactoryError::InconsistentSubject);
     }
     Ok(Self {

@@ -16,6 +16,24 @@ use octacity_server_application::{GetProjectSkillQuery, ImportProjectSkill, List
 pub(super) mod runtime_settings;
 /// Optional AI-agent authoring, independent of worker enrollment and execution providers.
 pub struct FactoryRoleManagementApplication {
+  gate_program: Arc<
+    dyn AuthorizedManagementQueryHandler<
+        octacity_server_application::ValidateFactoryGateProgramQuery,
+        Error = ApplicationError,
+      >,
+  >,
+  authoring: Arc<
+    dyn AuthorizedManagementQueryHandler<
+        octacity_server_application::GetFactoryAuthoringCapabilitiesQuery,
+        Error = ApplicationError,
+      >,
+  >,
+  execution_binding: Arc<
+    dyn AuthorizedManagementQueryHandler<
+        octacity_server_application::ResolveFactoryExecutionBindingQuery,
+        Error = ApplicationError,
+      >,
+  >,
   runtime_settings: Option<runtime_settings::RuntimeSettingsApplication>,
   delete: Arc<dyn AuthorizedManagementCommandHandler<DeleteFactoryRoleCommand, Error = ApplicationError>>,
   capabilities:
@@ -60,7 +78,16 @@ impl FactoryRoleManagementApplication {
       + AuthorizedManagementCommandHandler<CopyFactoryRoleTemplateCommand, Error = ApplicationError>
       + 'static,
     Q: AuthorizedManagementQueryHandler<GetFactoryRoleQuery, Error = ApplicationError>
-      + AuthorizedManagementQueryHandler<GetFactoryRoleProfileQuery, Error = ApplicationError>
+      + AuthorizedManagementQueryHandler<
+        octacity_server_application::ValidateFactoryGateProgramQuery,
+        Error = ApplicationError,
+      > + AuthorizedManagementQueryHandler<
+        octacity_server_application::GetFactoryAuthoringCapabilitiesQuery,
+        Error = ApplicationError,
+      > + AuthorizedManagementQueryHandler<
+        octacity_server_application::ResolveFactoryExecutionBindingQuery,
+        Error = ApplicationError,
+      > + AuthorizedManagementQueryHandler<GetFactoryRoleProfileQuery, Error = ApplicationError>
       + AuthorizedManagementQueryHandler<ListFactoryRolesQuery, Error = ApplicationError>
       + AuthorizedManagementQueryHandler<ListFactoryRoleProfilesQuery, Error = ApplicationError>
       + AuthorizedManagementQueryHandler<ValidateFactoryRoleQuery, Error = ApplicationError>
@@ -73,6 +100,9 @@ impl FactoryRoleManagementApplication {
       + 'static,
   {
     Self {
+      gate_program: queries.clone(),
+      authoring: queries.clone(),
+      execution_binding: queries.clone(),
       runtime_settings: None,
       delete: commands.clone(),
       capabilities: queries.clone(),
@@ -441,6 +471,51 @@ pub(super) async fn refresh_capability(
     &id,
   )
   .await
+}
+
+pub(super) async fn resolve_execution_binding(
+  State(app): State<Arc<ManagementApplication>>,
+  Extension(crate::ManagementRequest(id, context)): Extension<crate::ManagementRequest>,
+  Path(project): Path<String>,
+  payload: Result<Json<crate::v1::ResolveFactoryExecutionBindingRequest>, JsonRejection>,
+) -> Result<axum::response::Response, ApiError> {
+  let body = body(payload, &id)?;
+  let query = app
+    .inputs
+    .resolve_factory_execution_binding(&project, body.profile, &body.capability, &body.result_outcome)
+    .map_err(|e| invalid_input(e, &id))?;
+  read(&endpoints(&app, &id)?.execution_binding, &context, query, &id).await
+}
+
+pub(super) async fn authoring_capabilities(
+  State(app): State<Arc<ManagementApplication>>,
+  Extension(crate::ManagementRequest(id, context)): Extension<crate::ManagementRequest>,
+  Path(project): Path<String>,
+) -> Result<axum::response::Response, ApiError> {
+  let project_id = project
+    .parse()
+    .map_err(|_| application_error(ApplicationFailure::Invalid, &id))?;
+  read(
+    &endpoints(&app, &id)?.authoring,
+    &context,
+    octacity_server_application::GetFactoryAuthoringCapabilitiesQuery { project_id },
+    &id,
+  )
+  .await
+}
+
+pub(super) async fn validate_gate_program(
+  State(app): State<Arc<ManagementApplication>>,
+  Extension(crate::ManagementRequest(id, context)): Extension<crate::ManagementRequest>,
+  Path(project): Path<String>,
+  payload: Result<Json<crate::v1::ValidateFactoryGateProgramRequest>, JsonRejection>,
+) -> Result<axum::response::Response, ApiError> {
+  let body = body(payload, &id)?;
+  let query = app
+    .inputs
+    .validate_factory_gate_program(&project, body.program)
+    .map_err(|e| invalid_input(e, &id))?;
+  read(&endpoints(&app, &id)?.gate_program, &context, query, &id).await
 }
 
 pub(super) async fn validate_profile(

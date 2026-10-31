@@ -26,6 +26,8 @@ struct SelectedProfile {
 pub struct FlowBuildIntent {
   input: FlowNodeInput,
   #[serde(skip_serializing_if = "Option::is_none")]
+  step_task: Option<crate::FactoryInstructions>,
+  #[serde(skip_serializing_if = "Option::is_none")]
   selection: Option<SelectedProfile>,
   node: NodeAttempt,
   usage_before: BudgetUsage,
@@ -140,14 +142,7 @@ impl FlowBuildIntent {
     .ok_or_else(invalid)?;
     let permissions = candidate.map_or_else(
       || declared.permissions().clone(),
-      |candidate| {
-        candidate
-          .profile
-          .definition()
-          .permissions
-          .clone()
-          .with_elapsed_limit(candidate.profile.definition().budget.max_elapsed_millis())
-      },
+      |candidate| candidate.profile.definition().execution_permissions(),
     );
     if node.factory_run_id() != input.factory_run_id()
       || node.flow_run_id() != input.flow_run_id()
@@ -176,6 +171,7 @@ impl FlowBuildIntent {
       .validate(admitted.limits().budget())?;
     let profile = FlowBuildProfile::from_binding(definition.reference(), declared.key().clone(), binding);
     let intent = Self {
+      step_task: declared.task().cloned(),
       verification_check: if definition
         .execution()
         .verification()
@@ -299,6 +295,11 @@ impl FlowBuildIntent {
       .ok_or_else(invalid)?
       .validate(definition.execution().budget())
       .map(|_| ())
+  }
+  /// Reviewed assignment frozen from the exact admitted node, absent on legacy intents.
+  #[must_use]
+  pub const fn step_task(&self) -> Option<&crate::FactoryInstructions> {
+    self.step_task.as_ref()
   }
   /// Exact installed action parameters, absent for command/reasoning nodes.
   #[must_use]

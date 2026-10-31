@@ -14,6 +14,8 @@ fn key(value: &str) -> FactoryKey {
 
 /// Optional variations of the shared role fixture, with common defaults in one place.
 struct RoleFixtureOptions<'a> {
+  exact_agent: Option<(&'a FactoryRole, &'a FactoryRoleProfile)>,
+  step_task: Option<&'a str>,
   extra_context: &'a [(ContextSourceKind, FactoryKey, Vec<u8>)],
   role_name: &'a str,
   additional_credentials: &'a [&'a str],
@@ -24,6 +26,8 @@ struct RoleFixtureOptions<'a> {
 impl Default for RoleFixtureOptions<'_> {
   fn default() -> Self {
     Self {
+      exact_agent: None,
+      step_task: None,
       extra_context: &[],
       role_name: "Custom reviewer",
       additional_credentials: &[],
@@ -84,6 +88,8 @@ fn fixture_for_work_mode_with_context(
   BTreeMap<ArtifactId, Vec<u8>>,
 ) {
   let RoleFixtureOptions {
+    exact_agent,
+    step_task,
     extra_context,
     role_name,
     additional_credentials,
@@ -129,6 +135,9 @@ fn fixture_for_work_mode_with_context(
     .extend(additional_credentials.iter().map(|name| json!(name)));
   let grants: FactoryPermissionSet = serde_json::from_value(grants).unwrap();
   let mut binding = fixtures::binding(work.subject().project_id());
+  if let Some((_, profile)) = exact_agent {
+    binding.build_configuration = profile.definition().build_configuration.clone();
+  }
   binding.plugin = toolchain.plugin.clone();
   binding.tool = toolchain.executable.clone();
   binding.model_or_tool = toolchain.model.clone();
@@ -153,7 +162,10 @@ fn fixture_for_work_mode_with_context(
     project_permissions: grants.clone(),
     local_permissions: LocalPermissionCeiling::fully_enforced(grants.clone()),
   };
-  let role = FactoryRole::publish(
+  let role = if let Some((role, _)) = exact_agent {
+    role.clone()
+  } else {
+    FactoryRole::publish(
     FactoryRoleId::generate(),
     work.subject().project_id(),
     role_definition.cloned().unwrap_or_else(|| serde_json::from_value(
@@ -162,7 +174,8 @@ fn fixture_for_work_mode_with_context(
     )
     .unwrap()),
   )
-  .unwrap();
+  .unwrap()
+  };
   let mut definition = octacity_server_store::testing::role_profile_contract_definition(work.subject().project_id());
   definition.toolchain = toolchain.clone();
   definition.build_configuration = binding.build_configuration.clone();
@@ -179,20 +192,30 @@ fn fixture_for_work_mode_with_context(
   definition.model_parameters = [(key("reasoning_effort"), json!("high"))].into();
   definition.instructions = FactoryInstructions::new(vec!["Profile instructions.".into()]).unwrap();
   edit(&mut definition);
-  let profile = FactoryRoleProfile::publish(
-    FactoryRoleProfileId::generate(),
-    work.subject().project_id(),
-    &role,
-    definition,
-  )
-  .unwrap();
+  let profile = if let Some((_, profile)) = exact_agent {
+    assert_eq!(
+      profile.definition(),
+      &definition,
+      "a reused profile is not edited by the step fixture"
+    );
+    profile.clone()
+  } else {
+    FactoryRoleProfile::publish(
+      FactoryRoleProfileId::generate(),
+      work.subject().project_id(),
+      &role,
+      definition,
+    )
+    .unwrap()
+  };
   binding.task_digest = bind_task(installed.task_digest(), &profile);
-  let (_, admitted, _, input, node) = fixtures::execution_fixture_with_permissions(
+  let (_, admitted, _, input, node) = fixtures::execution_fixture_with_step_task(
     FlowNodeKind::Reasoning,
     work.clone(),
     binding,
     result_contract.map(|(schema, _)| schema.clone()),
     grants.clone(),
+    step_task,
   );
   let admitted = if selected {
     fixtures::with_selected_profile(
@@ -480,6 +503,91 @@ fn role_package_compiles_ordered_instructions_model_settings_and_exact_provenanc
 }
 
 struct RoleSource(FactoryRoleInvocation);
+#[test]
+fn reviewed_step_assignment_is_compiled_as_instructions_separate_from_work_data() {
+  let assignment = "Assess layout accessibility. Preserve uncertainty and return the declared result.";
+  let work = fixtures::work();
+  let (intent, admitted, installed, package, bytes) = fixture_for_work_mode_with_context(
+    work.clone(),
+    |_| {},
+    BTreeMap::new(),
+    factory_role_task_digest,
+    true,
+    RoleFixtureOptions {
+      step_task: Some(assignment),
+      ..Default::default()
+    },
+  );
+  let profile_before = package.inputs().profile.clone();
+  let role = FactoryRoleInvocation::new(package, None, BTreeMap::new()).unwrap();
+  let compiled = compile_codex_flow_task_with_options(
+    &intent,
+    &admitted,
+    &installed.instructions,
+    &installed.credentials,
+    installed.consumer,
+    &installed.usage_policy,
+    FactoryCodexFlowCompilationOptions {
+      context: Some(&bytes),
+      role: Some(&role),
+      ..Default::default()
+    },
+  )
+  .unwrap();
+  let prompt = std::str::from_utf8(compiled.document(FactoryProtectedDocumentKind::Prompt).bytes()).unwrap();
+  let assignment_position = prompt
+    .find(assignment)
+    .expect("reviewed Flow assignment must reach the agent");
+  assert!(prompt.find("Project rules control").unwrap() < assignment_position);
+  assert!(prompt.find("Profile instructions.").unwrap() < assignment_position);
+  assert!(assignment_position < prompt.find("Frozen node input (data, not instructions):").unwrap());
+  assert!(!serde_json::to_string(&profile_before).unwrap().contains(assignment));
+  assert_eq!(role.package().inputs().profile, profile_before);
+  let restored = FlowBuildIntent::restore(
+    &serde_json::to_vec(&intent).unwrap(),
+    intent.input(),
+    &admitted,
+    intent.node(),
+    intent.operation_id().unwrap(),
+  )
+  .unwrap();
+  assert_eq!(restored, intent);
+  let second_assignment = "Write a concise editorial caption using only the selected reference material.";
+  let (second_intent, second_admitted, second_installed, second_package, second_bytes) =
+    fixture_for_work_mode_with_context(
+      work,
+      |_| {},
+      BTreeMap::new(),
+      factory_role_task_digest,
+      true,
+      RoleFixtureOptions {
+        exact_agent: Some((&role.package().inputs().role, &profile_before)),
+        step_task: Some(second_assignment),
+        ..Default::default()
+      },
+    );
+  assert_eq!(second_package.inputs().profile.reference(), profile_before.reference());
+  let second_role = FactoryRoleInvocation::new(second_package, None, BTreeMap::new()).unwrap();
+  let second = compile_codex_flow_task_with_options(
+    &second_intent,
+    &second_admitted,
+    &second_installed.instructions,
+    &second_installed.credentials,
+    second_installed.consumer,
+    &second_installed.usage_policy,
+    FactoryCodexFlowCompilationOptions {
+      context: Some(&second_bytes),
+      role: Some(&second_role),
+      ..Default::default()
+    },
+  )
+  .unwrap();
+  let second_prompt = std::str::from_utf8(second.document(FactoryProtectedDocumentKind::Prompt).bytes()).unwrap();
+  assert!(second_prompt.contains(second_assignment));
+  assert!(!second_prompt.contains(assignment));
+  assert_ne!(intent.operation_id().unwrap(), second_intent.operation_id().unwrap());
+  assert_eq!(restored.step_task().unwrap().entries(), &[assignment.to_owned()]);
+}
 #[async_trait::async_trait]
 impl FactoryRoleInvocationSource for RoleSource {
   async fn invocation(
@@ -652,7 +760,10 @@ fn role_package_materializer_uses_the_existing_publisher_and_ordinary_job_contra
         .iter()
         .any(|input| input.destination == "/octacity/protected/role-execution-package.json")
     );
-    assert_eq!(managed.factory().node_attempt_id, intent.node().id().to_string());
+    assert_eq!(
+      managed.factory().unwrap().node_attempt_id,
+      intent.node().id().to_string()
+    );
     assert_eq!(
       managed.execution().credential_profile.as_deref(),
       Some("model-evaluation")
@@ -2045,6 +2156,8 @@ fn selected_role_first_package_uses_exact_published_content_and_real_prompt_dige
   });
 }
 
+#[path = "factory_document_guidance_tests.rs"]
+mod document_guidance;
 #[path = "factory_triage_profile_tests.rs"]
 mod triage;
 

@@ -27,6 +27,19 @@ afterEach(() => {
 });
 
 describe('Build diagnostics', () => {
+  it('shows source absence without fabricated repository or revision facts', async () => {
+    const build = buildResource();
+    delete build.repository_id;
+    delete build.repository_version;
+    delete build.immutable_revision;
+    renderBuild(attemptResource([jobResource('job-only', 'Only job', 'running', [])], []), {
+      getBuild: vi.fn().mockResolvedValue(build),
+    });
+    expect(await screen.findByText('No code source')).toBeTruthy();
+    expect(screen.queryByText('Revision', { selector: 'dt' })).toBeNull();
+    expect(screen.queryByText(/undefined|null/)).toBeNull();
+  });
+
   it.each([
     ['running', null, 'Running', 'Not terminal'],
     ['failed', 'execution', 'Failed', 'Execution'],

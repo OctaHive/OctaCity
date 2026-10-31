@@ -124,6 +124,22 @@ impl ManagementInputFactory {
       capability: parse(alias, "profile capability")?,
     })
   }
+  /// Decodes exact first-step selections; only the application derives compiler facts.
+  pub fn resolve_factory_execution_binding(
+    &self,
+    project: &str,
+    profile: Value,
+    capability: &str,
+    result_outcome: &str,
+  ) -> Result<crate::ResolveFactoryExecutionBindingQuery, ManagementInputError> {
+    Ok(crate::ResolveFactoryExecutionBindingQuery {
+      project_id: parse(project, "project id")?,
+      profile: factory_decode(profile)?,
+      capability: parse(capability, "profile capability")?,
+      result_outcome: parse(result_outcome, "result outcome")?,
+    })
+  }
+
   /// Preserves complete submitted settings; the application qualifies them without side effects.
   pub fn validate_factory_role_profile(
     &self,
@@ -369,6 +385,17 @@ impl ManagementInputFactory {
     })
   }
 
+  /// Decodes finite operator rules while leaving the evaluator identity to its installed owner.
+  pub fn validate_factory_gate_program(
+    &self,
+    project: &str,
+    program: Value,
+  ) -> Result<crate::ValidateFactoryGateProgramQuery, ManagementInputError> {
+    Ok(crate::ValidateFactoryGateProgramQuery {
+      project_id: parse(project, "project id")?,
+      program: factory_decode(program)?,
+    })
+  }
   /// Decodes a Project-owned schema shape while leaving its content identity to the core.
   pub fn validate_factory_flow_data_schema(
     &self,
@@ -710,9 +737,9 @@ pub struct ManualFactoryWorkInput {
   /// Exact configuration version.
   pub configuration_version: u64,
   /// Exact repository identity.
-  pub repository_id: String,
+  pub repository_id: Option<String>,
   /// Exact repository version.
-  pub repository_version: u64,
+  pub repository_version: Option<u64>,
   /// Stable external source identity.
   pub external_identity: String,
   /// Closed source-selection grammar.
@@ -748,20 +775,33 @@ impl ManagementInputFactory {
         .map(|(k, v)| (k.to_owned(), v.to_owned())),
     )
     .map_err(|_| ManagementInputError::Invalid("work metadata"))?;
-    Ok(crate::AdmitManualFactoryWorkCommand {
+    let command = crate::AdmitManualFactoryWorkCommand {
       profile_overrides: factory_decode(Value::Array(input.profile_overrides))?,
       project_id: parse(&input.project_id, "project id")?,
       configuration_id: parse(&input.configuration_id, "factory configuration id")?,
       configuration_version: version(input.configuration_version, "factory configuration version")?,
-      repository_id: parse(&input.repository_id, "repository id")?,
-      repository_version: version(input.repository_version, "repository version")?,
+      repository_id: input
+        .repository_id
+        .as_deref()
+        .map(|id| parse(id, "repository id"))
+        .transpose()?,
+
+      repository_version: input
+        .repository_version
+        .map(|value| version(value, "repository version"))
+        .transpose()?,
+
       external_identity: parse(&input.external_identity, "external work identity")?,
       source: decode(input.source, "work source")?,
       artifacts,
       classification: WorkClassification::new(classification.priority(), classification.risk(), metadata),
       idempotency_key: parse(key, "idempotency key")?,
       admitted_at: timestamp(now)?,
-    })
+    };
+    command
+      .validate_source()
+      .map_err(|_| ManagementInputError::Invalid("work source"))?;
+    Ok(command)
   }
 }
 

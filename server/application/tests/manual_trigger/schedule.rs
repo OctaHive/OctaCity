@@ -33,7 +33,7 @@ fn expired_duplicate_schedule_claim_replays_one_build_after_restart() {
           trigger: claim.schedule.trigger,
           target: claim.schedule.target,
           deduplication_identity: TriggerIdentity::new("schedule:1000").unwrap(),
-          source: ManualSourceSelection::ExactRevision(ImmutableRevision::new("0123456789abcdef").unwrap()),
+          source: ManualSourceSelection::ExactRevision(ImmutableRevision::new("0123456789abcdef").unwrap()).into(),
           parameters: fixture.command.parameters.clone(),
           priority: fixture.command.priority,
           observed_at: time(1_000),

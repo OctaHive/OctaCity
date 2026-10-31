@@ -79,7 +79,7 @@ impl EvaluationBranchResult {
     if assessment.plan_id() != plan.id()
       || assessment.subject() != plan.subject()
       || context.subject().candidate() != Some(plan.subject())
-      || input.subject() != plan.subject().exact()
+      || input.exact_resource()? != plan.subject().exact()
     {
       return Err(FactoryError::InvalidReference {
         relationship: "evaluation branch result bindings",

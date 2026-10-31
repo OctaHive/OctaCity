@@ -339,7 +339,7 @@ it('does not offer delivery for a candidate accepted by a different exact Decisi
     exact: {
       project_id: run.project_id,
       repository_id: 'repository',
-      base_revision: run.diagnostics.base_revision,
+      base_revision: 'revision-a',
     },
     candidate_revision: 'accepted-a',
     changeset_digest: 'a'.repeat(64),

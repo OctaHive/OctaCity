@@ -196,8 +196,8 @@ pub(super) struct TriggerPrerequisites {
   configuration_version: BuildConfigurationVersion,
   pipeline_id: PipelineId,
   pipeline_version: PipelineVersion,
-  repository_id: RepositoryId,
-  repository_version: RepositoryVersion,
+  repository_id: Option<RepositoryId>,
+  repository_version: Option<RepositoryVersion>,
 }
 
 impl TriggerPrerequisites {

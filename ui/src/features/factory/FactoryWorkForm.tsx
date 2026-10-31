@@ -288,9 +288,9 @@ export function FactoryWorkForm({
               classification: { priority, risk, metadata: {} },
             };
             const reviewedSource =
-              request.source.kind === 'default_reference'
+              source.kind === 'default_reference'
                 ? repositoryDetails.data?.definition.selection.default_reference
-                : request.source.value;
+                : source.value;
             setReview({
               returnFocus: event.currentTarget,
               consequence: `${t('factory.workConsequence')} · ${t('factory.configurationVersion', { version: request.configuration_version })} · ${request.configuration_id} · ${repository.name} · v${request.repository_version} · ${reviewedSource} · ${task.name} · ${acceptance.name} · ${specifications.map((item) => item.name).join(' · ')} · ${profileOverrides.map((item) => `${[...item.stage.calls, item.stage.node].join('/')} → ${item.profile.id} v${item.profile.version}`).join(' · ')}`,

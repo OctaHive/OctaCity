@@ -660,7 +660,7 @@ fn staged_source_labels_never_bypass_configured_eligibility_or_business_duplicat
         // The independent facts govern even when the model report claims the opposite.
         let execution = Arc::new(execution);
         let project = base.work.subject().project_id();
-        let repository_id = base.work.subject().repository_id();
+        let repository_id = base.work.subject().repository().unwrap().repository_id();
         let configuration_id = FactoryConfigurationId::generate();
         let flow = FactoryFlowConfiguration::new(
           base.flow.closure().clone(),

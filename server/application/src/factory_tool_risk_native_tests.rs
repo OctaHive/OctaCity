@@ -293,7 +293,7 @@ async fn fixture_with_capability(capability: &str) -> Fixture {
   .with_context(
     ContextManifest::new(
       ContextManifestId::generate(),
-      FactoryTaskSubject::Exact(work.subject().clone()),
+      FactoryTaskSubject::Exact(work.subject().repository().unwrap().clone()),
       FactoryDigest::from_bytes([63; 32]),
       vec![],
     )
@@ -361,10 +361,10 @@ async fn fixture_with_capability(capability: &str) -> Fixture {
   let base = authoritative_store_contract_fixture();
   let mut build = base.request.build.clone();
   build.project_id = work.subject().project_id();
-  build.repository_id = work.subject().repository_id();
+  build.repository_id = Some(work.subject().repository().unwrap().repository_id());
   build.configuration_id = intent.profile().build_configuration.id();
   build.configuration_version = intent.profile().build_configuration.version();
-  build.immutable_revision = work.subject().base_revision().clone();
+  build.immutable_revision = Some(work.subject().repository().unwrap().base_revision().clone());
   let mut canonical = crate::factory_job_test_support::canonical_v3_spec();
   canonical.runtime.timeout_seconds = 1;
   let mut execution = canonical.execution.clone();
@@ -381,7 +381,7 @@ async fn fixture_with_capability(capability: &str) -> Fixture {
   job.job_spec_template = derive_factory_managed_job_spec_template(FactoryManagedJobSpecInput {
     build: JobSpecBuildSnapshot::new(
       build.id,
-      build.immutable_revision.clone(),
+      build.immutable_revision.clone().unwrap(),
       None,
       RepositoryLocator::new("https://example.test/repository.git").unwrap(),
       BTreeMap::new(),

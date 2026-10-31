@@ -191,7 +191,7 @@ fn validate_build(
   constructed_at: Timestamp,
 ) -> Result<(), FactoryEvidenceError> {
   let record = &completed.record;
-  if record.input().subject() != change_set.subject().exact()
+  if record.input().exact_resource().ok() != Some(change_set.subject().exact())
     || record
       .input()
       .context()
@@ -283,7 +283,7 @@ mod tests {
         .cloned()
         .unwrap_or_else(|| {
           CandidateSubject::new(
-            input.subject().clone(),
+            input.exact_resource().unwrap().clone(),
             ImmutableRevision::new("candidate").unwrap(),
             digest(2),
           )

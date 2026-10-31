@@ -588,9 +588,8 @@ fn validate_configuration_references(
   project_id: ProjectId,
   definition: &crate::BuildConfigurationDefinition,
 ) -> Result<(), StoreError> {
-  if !state
-    .repository_versions
-    .contains_key(&(definition.repository_id, definition.repository_version))
+  if let (Some(repository), Some(version)) = (definition.repository_id, definition.repository_version)
+    && !state.repository_versions.contains_key(&(repository, version))
   {
     return Err(not_found(EntityKind::Repository));
   }

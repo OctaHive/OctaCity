@@ -33,6 +33,65 @@ use support::TestDatabase;
 
 #[tokio::test]
 #[ignore = "requires an explicitly configured disposable PostgreSQL service"]
+async fn source_free_build_retains_ordinary_intent_after_postgres_restart() {
+  let database = TestDatabase::migrated().await;
+  for _ in 0..2 {
+    sqlx::raw_sql(include_str!("../migrations/0111_source_free_build_input.sql"))
+      .execute(&database.pool)
+      .await
+      .unwrap();
+  }
+  let fixture = octacity_server_store::testing::source_free_store_contract_fixture();
+  seed_authoritative_prerequisites(&database.pool, &fixture)
+    .await
+    .unwrap();
+  let store = PostgresAuthoritativeStore::new(database.pool.clone(), support::test_signer());
+  let accepted = store.accept_trigger(fixture.request.clone()).await;
+  assert!(accepted.is_ok(), "source-free ordinary Build acceptance: {accepted:?}");
+  let restarted = PostgresAuthoritativeStore::new(database.pool.clone(), support::test_signer());
+  let retained = restarted.build(fixture.request.build.id).await.unwrap();
+  assert_eq!(retained.build, fixture.request.build);
+  assert!(matches!(
+    retained.origin,
+    octacity_server_store::BuildOrigin::Trigger(_)
+  ));
+  let replay = restarted.accept_trigger(fixture.request.clone()).await.unwrap();
+  assert_eq!(replay.disposition, MutationDisposition::Replayed);
+  let attempt = restarted.latest_attempt(retained.build.id).await.unwrap();
+  for job in attempt.jobs {
+    assert!(job.job.job_spec_template.source_revision().is_none());
+    assert!(job.job.job_spec_template.managed_intent().unwrap().factory().is_none());
+  }
+  database.cleanup().await;
+}
+
+#[tokio::test]
+#[ignore = "requires an explicitly configured disposable PostgreSQL service"]
+async fn build_restore_rejects_an_unsupported_retained_source_mode_instead_of_assuming_repository_defaults() {
+  let database = TestDatabase::migrated().await;
+  let fixture = authoritative_store_contract_fixture();
+  seed_authoritative_prerequisites(&database.pool, &fixture)
+    .await
+    .unwrap();
+  let store = PostgresAuthoritativeStore::new(database.pool.clone(), support::test_signer());
+  store.accept_trigger(fixture.request.clone()).await.unwrap();
+  // Emulate a retained version written by an incompatible consumer. The public
+  // reader must qualify intent, rather than silently reinterpret its source mode.
+  sqlx::query("UPDATE builds SET input_snapshot=jsonb_set(input_snapshot,'{source}',$1) WHERE id=$2")
+    .bind(sqlx::types::Json(json!({"kind":"future_source_mode"})))
+    .bind(fixture.request.build.id.as_uuid())
+    .execute(&database.pool)
+    .await
+    .unwrap();
+  assert_eq!(
+    store.build(fixture.request.build.id).await.unwrap_err(),
+    StoreError::Unavailable
+  );
+  database.cleanup().await;
+}
+
+#[tokio::test]
+#[ignore = "requires an explicitly configured disposable PostgreSQL service"]
 async fn build_queries_restore_an_exact_factory_origin_without_a_trigger_after_restart() {
   let database = TestDatabase::migrated().await;
   let fixture = authoritative_store_contract_fixture();

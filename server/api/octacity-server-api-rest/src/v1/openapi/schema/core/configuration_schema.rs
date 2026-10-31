@@ -224,46 +224,64 @@ pub(super) fn insert_configuration_schemas(schemas: &mut Map<String, Value>) {
       &["max_attempts", "retry_on"],
     ),
   );
+  let mut repository_definition = object(
+    [
+      ("enabled", boolean()),
+      (
+        "job_concurrency_limit",
+        json!({"type": "integer", "minimum": 1, "maximum": 10000}),
+      ),
+      ("repository_id", non_empty_string()),
+      ("repository_version", positive_integer()),
+      ("pipeline_id", non_empty_string()),
+      ("pipeline_version", positive_integer()),
+      ("parameters", schema_ref("ParameterSchema")),
+      ("triggers", unique_array(schema_ref("TriggerKind"))),
+      ("agent_requirements", schema_ref("AgentRequirements")),
+      ("allowed_pools", unique_array(non_empty_string())),
+      ("runtime", schema_ref("RuntimePolicy")),
+      ("secrets_profile", nullable(non_empty_string())),
+      ("cache", schema_ref("CachePolicy")),
+      ("artifacts", schema_ref("ArtifactPolicy")),
+      ("retry", schema_ref("RetryPolicy")),
+    ],
+    &[
+      "enabled",
+      "job_concurrency_limit",
+      "repository_id",
+      "repository_version",
+      "pipeline_id",
+      "pipeline_version",
+      "parameters",
+      "triggers",
+      "agent_requirements",
+      "allowed_pools",
+      "runtime",
+      "cache",
+      "artifacts",
+      "retry",
+    ],
+  );
+  repository_definition["properties"]["source"] = json!({"type":"null"});
+  let mut source_free_definition = repository_definition.clone();
+  source_free_definition["properties"]["repository_id"] = json!({"type":"null"});
+  source_free_definition["properties"]["repository_version"] = json!({"type":"null"});
+  source_free_definition["properties"]["source"] = schema_ref("BuildSourceMode");
+  let required = source_free_definition["required"].as_array_mut().unwrap();
+  required.retain(|field| field != "repository_id" && field != "repository_version");
+  required.push(json!("source"));
+  schemas.insert(
+    "BuildSourceMode".to_owned(),
+    object(
+      [("kind", json!({"type":"string", "const":"source_free_v1"}))],
+      &["kind"],
+    ),
+  );
   schemas.insert(
     "BuildConfigurationDefinition".to_owned(),
-    object(
-      [
-        ("enabled", boolean()),
-        (
-          "job_concurrency_limit",
-          json!({"type": "integer", "minimum": 1, "maximum": 10000}),
-        ),
-        ("repository_id", non_empty_string()),
-        ("repository_version", positive_integer()),
-        ("pipeline_id", non_empty_string()),
-        ("pipeline_version", positive_integer()),
-        ("parameters", schema_ref("ParameterSchema")),
-        ("triggers", unique_array(schema_ref("TriggerKind"))),
-        ("agent_requirements", schema_ref("AgentRequirements")),
-        ("allowed_pools", unique_array(non_empty_string())),
-        ("runtime", schema_ref("RuntimePolicy")),
-        ("secrets_profile", nullable(non_empty_string())),
-        ("cache", schema_ref("CachePolicy")),
-        ("artifacts", schema_ref("ArtifactPolicy")),
-        ("retry", schema_ref("RetryPolicy")),
-      ],
-      &[
-        "enabled",
-        "job_concurrency_limit",
-        "repository_id",
-        "repository_version",
-        "pipeline_id",
-        "pipeline_version",
-        "parameters",
-        "triggers",
-        "agent_requirements",
-        "allowed_pools",
-        "runtime",
-        "cache",
-        "artifacts",
-        "retry",
-      ],
-    ),
+    json!({
+      "oneOf":[repository_definition, source_free_definition],
+    }),
   );
   schemas.insert(
     "CreateBuildConfigurationRequest".to_owned(),

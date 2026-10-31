@@ -55,6 +55,7 @@ mod trigger;
 pub(crate) use fixtures::trigger_request;
 pub use fixtures::{
   compatible_inventory, compatible_snapshot, job_spec_template, job_spec_template_with_cache, retry_request,
+  source_free_store_contract_fixture,
 };
 pub(crate) use state::*;
 

@@ -147,7 +147,8 @@ pub fn materialize_factory_managed_build(
 }
 
 /// Compiles the published DAG with an explicitly verified source plan.
-/// Repository checkout remains pinned to the Work base; candidate reconstruction
+/// Checkout uses the selected node resource's exact base, independently of Work
+/// correlation, and is absent for explicit no-code input. Candidate reconstruction
 /// is signed separately and cannot be inferred from a mutable lifecycle pointer.
 pub fn materialize_factory_managed_build_with_source(
   input: FactoryManagedBuildInput,
@@ -155,9 +156,26 @@ pub fn materialize_factory_managed_build_with_source(
 ) -> Result<AcceptFactoryBuild, OrdinaryBuildApplicationError> {
   use OrdinaryBuildApplicationError::Invalid;
   let context = &input.context;
+  let repository = context.repository.as_ref();
   let configuration = &context.configuration;
   let definition = &configuration.definition;
-  let subject = input.intent.input().subject();
+  let work_subject = input.intent.input().subject();
+  let project_id = work_subject.project_id();
+  let resource = input.intent.input().exact_resource().ok();
+  match (resource, repository, definition.source) {
+    (Some(subject), Some(repository), None)
+      if repository.id == subject.repository_id()
+        && repository.project_id == project_id
+        && Some(repository.id) == definition.repository_id
+        && Some(repository.version) == definition.repository_version
+        && repository.definition.selection.allow_exact_revision => {}
+    (None, None, Some(octacity_server_domain::BuildSourceMode::SourceFreeV1))
+      if matches!(
+        input.intent.input().code(),
+        Some(octacity_server_factory::FlowNodeCode::None)
+      ) => {}
+    _ => return Err(Invalid),
+  }
   let profile = input.intent.profile();
   let permissions = input.intent.permissions();
   let selected = &input.intent.profile().build_configuration;
@@ -171,21 +189,16 @@ pub fn materialize_factory_managed_build_with_source(
   if !definition.enabled
     || configuration.id != selected.id()
     || configuration.version != selected.version()
-    || configuration.project_id != subject.project_id()
-    || selected.project_id() != subject.project_id()
-    || context.repository.id != subject.repository_id()
-    || context.repository.project_id != subject.project_id()
-    || context.repository.id != definition.repository_id
-    || context.repository.version != definition.repository_version
+    || configuration.project_id != project_id
+    || selected.project_id() != project_id
     || context.pipeline.id != definition.pipeline_id
     || context.pipeline.version != definition.pipeline_version
-    || context.pipeline.project_id != subject.project_id()
+    || context.pipeline.project_id != project_id
     || context
       .effective_policy
       .sources
       .last()
-      .is_none_or(|source| source.project_id != subject.project_id())
-    || !context.repository.definition.selection.allow_exact_revision
+      .is_none_or(|source| source.project_id != project_id)
     || input
       .intent
       .input()
@@ -268,14 +281,22 @@ pub fn materialize_factory_managed_build_with_source(
   outputs.single_output_bytes = outputs.single_output_bytes.min(single_ceiling);
   let policy =
     crate::build_configuration_job_policy::configuration_job_policy(&signing_context, None).map_err(|_| Invalid)?;
-  let build_snapshot = JobSpecBuildSnapshot::new(
-    build_id,
-    subject.base_revision().clone(),
-    None,
-    context.repository.definition.repository_locator.clone(),
-    BTreeMap::new(),
-  )
-  .map_err(|_| Invalid)?;
+  let build_snapshot = match (resource, repository) {
+    (Some(subject), Some(repository)) => JobSpecBuildSnapshot::new(
+      build_id,
+      subject.base_revision().clone(),
+      None,
+      repository.definition.repository_locator.clone(),
+      BTreeMap::new(),
+    )
+    .map_err(|_| Invalid)?,
+    (None, None) => JobSpecBuildSnapshot::source_free(build_id, BTreeMap::new()),
+    _ => return Err(Invalid),
+  };
+  let source_selection: octacity_server_domain::BuildSourceSelection = match resource {
+    Some(subject) => crate::ManualSourceSelection::ExactRevision(subject.base_revision().clone()).into(),
+    None => octacity_server_domain::BuildSourceMode::SourceFreeV1.into(),
+  };
   let frozen = input.intent.input();
   let causality = FactoryCausalityV3 {
     factory_run_id: frozen.factory_run_id().to_string(),
@@ -285,7 +306,7 @@ pub fn materialize_factory_managed_build_with_source(
     workflow_cycle_id: frozen.cycle_id().to_string(),
     node_attempt_id: input.intent.node().id().to_string(),
     input_digest: frozen.digest().map_err(|_| Invalid)?.to_string(),
-    subject_digest: subject.digest().to_string(),
+    subject_digest: work_subject.digest().to_string(),
     source_write_paths,
     change_set_capture: source.capture,
     change_set_materialization: materialization,
@@ -356,17 +377,18 @@ pub fn materialize_factory_managed_build_with_source(
     ownership: input.ownership,
     build: ImmutableBuildInput {
       id: build_id,
-      project_id: subject.project_id(),
+      project_id,
       configuration_id: configuration.id,
       configuration_version: configuration.version,
       pipeline_id: context.pipeline.id,
       pipeline_version: context.pipeline.version,
-      repository_id: context.repository.id,
-      repository_version: context.repository.version,
-      immutable_revision: subject.base_revision().clone(),
+      repository_id: repository.map(|repository| repository.id),
+      repository_version: repository.map(|repository| repository.version),
+      immutable_revision: resource.map(|subject| subject.base_revision().clone()),
+      source: source_selection.mode(),
       input_snapshot: serde_json::to_value(crate::snapshots::BuildInputSnapshot {
         parameters,
-        source: crate::ManualSourceSelection::ExactRevision(subject.base_revision().clone()),
+        source: source_selection,
       })
       .map_err(|_| Invalid)?,
       effective_policy_snapshot: serde_json::to_value(crate::snapshots::BuildPolicySnapshot {

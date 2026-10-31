@@ -1,4 +1,4 @@
-//! Strict provider-neutral values carried only by JobSpec execution contract v3.
+//! Strict provider-neutral managed values shared by JobSpec execution contracts v3 and v4.
 
 use std::net::IpAddr;
 

@@ -13,8 +13,8 @@ use std::sync::Arc;
 pub struct BuildExecutionContext {
   /// Selected immutable Build Configuration.
   pub configuration: PublishedBuildConfiguration,
-  /// Repository version selected by that configuration.
-  pub repository: PublishedRepository,
+  /// Exact selected Repository, absent only for explicit source-free configuration.
+  pub repository: Option<PublishedRepository>,
   /// Pipeline version selected by that configuration.
   pub pipeline: PublishedPipeline,
   /// Effective Project policy to freeze at Build acceptance.
@@ -103,11 +103,18 @@ impl<C: ConfigurationStore, L: PipelineStore, P: EffectiveProjectPolicySource>
       return Err(BuildExecutionContextError::Invalid);
     }
     let definition = &configuration.definition;
-    let repository = self
-      .configurations
-      .repository_version(definition.repository_id, definition.repository_version)
-      .await
-      .map_err(BuildExecutionContextError::Store)?;
+    definition.validate().map_err(|_| BuildExecutionContextError::Invalid)?;
+    let repository = match (definition.repository_id, definition.repository_version) {
+      (Some(id), Some(version)) => Some(
+        self
+          .configurations
+          .repository_version(id, version)
+          .await
+          .map_err(BuildExecutionContextError::Store)?,
+      ),
+      (None, None) => None,
+      _ => return Err(BuildExecutionContextError::Invalid),
+    };
     let pipeline = self
       .pipelines
       .pipeline_version(definition.pipeline_id, definition.pipeline_version)
@@ -118,10 +125,11 @@ impl<C: ConfigurationStore, L: PipelineStore, P: EffectiveProjectPolicySource>
       .effective_policy(project)
       .await
       .map_err(BuildExecutionContextError::Policy)?;
-    if repository.project_id != project
-      || repository.id != definition.repository_id
-      || repository.version != definition.repository_version
-      || pipeline.project_id != project
+    if repository.as_ref().is_some_and(|repository| {
+      repository.project_id != project
+        || Some(repository.id) != definition.repository_id
+        || Some(repository.version) != definition.repository_version
+    }) || pipeline.project_id != project
       || pipeline.id != definition.pipeline_id
       || pipeline.version != definition.pipeline_version
       || effective_policy

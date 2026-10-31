@@ -3,7 +3,7 @@ use std::collections::BTreeMap;
 
 use crate::{
   BudgetUsage, DecisionSignalFallback, DecisionSignalMode, DecisionSignalPurpose, DecisionSignalReceiptId,
-  DecisionSignalRequestId, DecisionSignalState, ExactSubject, FactoryDigest, FactoryError, FactoryKey, FactoryRunId,
+  DecisionSignalRequestId, DecisionSignalState, FactoryDigest, FactoryError, FactoryKey, FactoryRunId,
   ImmutableReference,
 };
 
@@ -151,7 +151,7 @@ impl DecisionSignalReceipt {
 
   /// Returns the exact immutable subject.
   #[must_use]
-  pub const fn subject(&self) -> &ExactSubject {
+  pub const fn subject(&self) -> &crate::WorkSubject {
     self.request.request().subject()
   }
 

@@ -95,3 +95,6 @@ pub mod factory_configuration;
 
 #[allow(dead_code)]
 pub mod evidence;
+
+#[allow(dead_code)]
+pub mod protected_input_job;

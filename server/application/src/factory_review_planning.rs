@@ -103,9 +103,17 @@ impl<S: FactoryRunStore> FactoryFlowActionPlugin for FactoryReviewPlanningAction
   ) -> Result<FactoryFlowActionObservation, ApplicationError> {
     let snapshot = self.store.factory_run_snapshot(request.input.factory_run_id()).await?;
     let observed_at = self.clock.now()?.max(request.observed_at);
-    let [source] = request.input.sources() else {
+    // The candidate publication proves the selected resource; the independently
+    // selected Evidence record still supplies the complete planning payload.
+    let mut sources = request
+      .input
+      .sources()
+      .iter()
+      .filter(|source| request.input.accepted_resource_record() != Some(*source));
+    let source = sources.next().ok_or_else(ApplicationError::invalid)?;
+    if sources.next().is_some() {
       return Err(ApplicationError::invalid());
-    };
+    }
     if snapshot.work.id() != request.work_id
       || snapshot.work.subject() != request.subject
       || !snapshot.flow.data.inputs.contains(request.input)
@@ -130,7 +138,7 @@ impl<S: FactoryRunStore> FactoryFlowActionPlugin for FactoryReviewPlanningAction
     let evidence: EvidenceManifest =
       serde_json::from_value(request.input.payload().value().clone()).map_err(|_| ApplicationError::invalid())?;
     if record.discovery() != Some(&FlowDiscoveryFacts::evidence(&evidence).map_err(|_| ApplicationError::invalid())?)
-      || evidence.subject().exact() != request.subject
+      || !request.input.matches_candidate_resource(evidence.subject())
       || evidence.constructed_at() > observed_at
       || evidence.items().iter().any(|item| observed_at >= item.fresh_until())
     {

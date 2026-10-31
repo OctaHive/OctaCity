@@ -48,7 +48,8 @@ impl<S: IssueExecutionStore + IssueStore, F: FactoryDiscoveryStore + octacity_se
       .iter()
       .find(|r| r.digest().ok() == Some(binding.record))
       .ok_or_else(ApplicationError::invalid)?;
-    if snapshot.work.subject() != binding.candidate.exact()
+    if record.input().subject() != snapshot.work.subject()
+      || record.input().exact_resource().ok() != Some(binding.candidate.exact())
       || record.discovery().and_then(|d| d.published_candidate()) != Some(&binding.candidate)
     {
       return Err(ApplicationError::invalid());

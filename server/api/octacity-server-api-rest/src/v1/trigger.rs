@@ -396,8 +396,8 @@ pub struct AcceptManualTriggerRequest {
   pub configuration_version: u64,
   /// Stable source-scoped occurrence identity.
   pub deduplication_identity: String,
-  /// Allowed source expression to resolve once.
-  pub source: ManualSource,
+  /// Explicit source-free mode or an allowed Repository expression resolved once.
+  pub source: octacity_server_application::BuildSourceSelection,
   /// Primitive parameter values supplied before defaults are applied.
   pub parameters: BTreeMap<String, Value>,
   /// Durable ready-queue priority copied to root Jobs.

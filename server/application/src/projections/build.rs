@@ -9,7 +9,7 @@ use octacity_server_store::ImmutableBuildInput;
 use serde::{Deserialize, Serialize, de::IgnoredAny};
 use serde_json::Value;
 
-use crate::{EffectiveProjectPolicy, ManualSourceSelection, TriggerHistoryProjection, snapshots::BuildInputSnapshot};
+use crate::{EffectiveProjectPolicy, TriggerHistoryProjection, snapshots::BuildInputSnapshot};
 
 use super::ProjectionError;
 
@@ -76,15 +76,18 @@ pub struct BuildProjection {
   /// Exact immutable Pipeline version.
   pub pipeline_version: PipelineVersion,
   /// Exact Repository identity.
-  pub repository_id: RepositoryId,
+  #[serde(skip_serializing_if = "Option::is_none")]
+  pub repository_id: Option<RepositoryId>,
   /// Exact immutable Repository version.
-  pub repository_version: RepositoryVersion,
+  #[serde(skip_serializing_if = "Option::is_none")]
+  pub repository_version: Option<RepositoryVersion>,
   /// Immutable source revision selected before Build acceptance.
-  pub immutable_revision: ImmutableRevision,
+  #[serde(skip_serializing_if = "Option::is_none")]
+  pub immutable_revision: Option<ImmutableRevision>,
   /// Resolved primitive Build parameters.
   pub parameters: BTreeMap<String, ParameterValueProjection>,
   /// Source expression retained for diagnosis.
-  pub source: ManualSourceSelection,
+  pub source: crate::BuildSourceSelection,
   /// Exact effective policy and contributing Project policy versions.
   pub effective_policy: EffectiveProjectPolicy,
   /// Durable ready-queue priority.

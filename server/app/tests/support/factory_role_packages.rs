@@ -230,6 +230,7 @@ async fn role_package_inputs_outlive_download_deadlines_until_run_retention_rele
   assert!(
     protected_input_transfer::service(store.clone())
       .authorize_protected_inputs(AuthorizeProtectedInputsInput {
+        job_id: build.jobs[0].id,
         manifest,
         observed_at_unix_ms: build.intent.node().deadline().unix_millis(),
         lease_expires_at: at(1_000_000)
@@ -621,7 +622,8 @@ async fn role_quota_postgres_uses_the_same_ordinary_build_contract_after_restart
             intent_digest: FactoryDigest::from_bytes([index as u8; 32]),
             idempotency_key: format!("role-quota-run-{index}").parse().unwrap(),
           },
-          repository_version: RepositoryVersion::INITIAL,
+          repository_version: Some(RepositoryVersion::INITIAL),
+
           work: admission.work.clone(),
           run: admission.run.clone(),
           flow: admission.flow.clone(),

@@ -230,11 +230,11 @@ fn installed_codex_author_materializes_only_the_explicit_trusted_capture_scope_w
     assert_eq!(accepted.jobs.len(), 1);
     let managed = accepted.jobs[0].job_spec_template.managed_intent().unwrap();
     assert_eq!(
-      managed.factory().source_write_paths.as_deref(),
+      managed.factory().unwrap().source_write_paths.as_deref(),
       Some(["public/approved".to_owned()].as_slice())
     );
-    assert_eq!(managed.factory().change_set_capture.as_ref(), Some(&capture));
-    assert!(managed.factory().change_set_materialization.is_none());
+    assert_eq!(managed.factory().unwrap().change_set_capture.as_ref(), Some(&capture));
+    assert!(managed.factory().unwrap().change_set_materialization.is_none());
     assert_eq!(managed.protected_inputs().inputs.len(), 4);
     assert_eq!(managed.permissions().secret_profiles, ["model-coding"]);
     assert!(managed.permissions().tools.is_empty());

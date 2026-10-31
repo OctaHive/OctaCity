@@ -191,7 +191,7 @@ fn action_descriptions_offer_only_original_policy_permitted_retries() {
     for allowance in [0, 1] {
       let mut fixture = testing::factory_node_journal_contract_fixture_with_retries(allowance);
       let candidate = CandidateSubject::new(
-        fixture.admission.work.subject().clone(),
+        fixture.admission.work.subject().repository().unwrap().clone(),
         octacity_server_domain::ImmutableRevision::new("original-head").unwrap(),
         FactoryDigest::from_bytes([97; 32]),
       );
@@ -418,7 +418,7 @@ fn parallel_issue_executions_keep_nested_and_root_targets_separate() {
       WorkEnvelopeId::generate(),
       other.work.configuration().clone(),
       ExternalWorkIdentity::new("another-execution").unwrap(),
-      other.work.subject().clone(),
+      other.work.subject().repository().unwrap().clone(),
       other.work.artifacts().clone(),
       WorkClassification::new(other.work.priority(), other.work.risk(), other.work.metadata().clone()),
     )

@@ -115,10 +115,12 @@ async fn prepare_scoped(
     project_id: input.project_id(),
     configuration_id: configuration.reference().id(),
     configuration_version: configuration.reference().version(),
-    repository_id: repository.id,
-    repository_version: repository.version,
+    repository_id: Some(repository.id),
+
+    repository_version: Some(repository.version),
+
     external_identity: pending.admission_identity(scope.clone()).external_identity,
-    source: octacity_server_store::RepositorySourceSelection::DefaultReference,
+    source: octacity_server_store::RepositorySourceSelection::DefaultReference.into(),
     artifacts: example.work.artifacts().clone(),
     classification: WorkClassification::new(
       example.work.priority(),

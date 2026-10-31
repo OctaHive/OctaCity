@@ -257,6 +257,8 @@ where
       .unwrap()
       .work
       .subject()
+      .repository()
+      .unwrap()
       .base_revision()
       .as_str(),
     "0123456789abcdef"

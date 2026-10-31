@@ -1,8 +1,8 @@
 use std::collections::BTreeMap;
 
 use octacity_protocol::{
-  AGENT_PROTOCOL_VERSION, EXECUTION_CONTRACT_V2, EXECUTION_CONTRACT_V3, ExecutionSpec, JobBinding, JobSpecV1,
-  JobSpecV2, JobSpecV3, SourceSpec,
+  AGENT_PROTOCOL_VERSION, EXECUTION_CONTRACT_V2, EXECUTION_CONTRACT_V3, EXECUTION_CONTRACT_V4, ExecutionSpec,
+  JobBinding, JobSourceV4, JobSpecV1, JobSpecV2, JobSpecV3, JobSpecV4, ManagedJobSpec, SourceSpec,
 };
 use octacity_server_domain::{AttemptNumber, JobId, PipelineNodeId, Timestamp};
 use serde_json::Value;
@@ -17,6 +17,7 @@ enum WireJobSpec {
   Legacy(JobSpecV1),
   Current(JobSpecV2),
   Managed(Box<JobSpecV3>),
+  SourceFree(Box<JobSpecV4>),
 }
 
 impl WireJobSpec {
@@ -25,6 +26,7 @@ impl WireJobSpec {
       Self::Legacy(spec) => spec.validate(binding),
       Self::Current(spec) => spec.validate(binding),
       Self::Managed(spec) => spec.validate(binding),
+      Self::SourceFree(spec) => spec.validate(binding),
     }
   }
 
@@ -33,6 +35,7 @@ impl WireJobSpec {
       Self::Legacy(spec) => signer.sign_v1(spec),
       Self::Current(spec) => signer.sign_v2(spec),
       Self::Managed(spec) => signer.sign_v3(spec),
+      Self::SourceFree(spec) => signer.sign_v4(spec),
     }
   }
 }
@@ -54,6 +57,14 @@ pub fn derive_job_spec_template(
   template: Value,
   policy: &JobSpecPolicySnapshot,
 ) -> Result<JobSpecTemplate, JobSpecDerivationError> {
+  if build.source.is_some() {
+    let intent: ManagedJobSpecIntent =
+      serde_json::from_value(template).map_err(|_| JobSpecDerivationError::InvalidTemplate)?;
+    if intent.factory.is_some() {
+      return Err(JobSpecDerivationError::InvalidTemplate);
+    }
+    return JobSpecTemplate::new_managed(build, pipeline_node_id, intent, policy);
+  }
   let execution: JobExecutionTemplate =
     serde_json::from_value(template).map_err(|_| JobSpecDerivationError::InvalidTemplate)?;
   JobSpecTemplate::new(build, pipeline_node_id, execution, policy)
@@ -118,16 +129,45 @@ fn wire_job_spec(
     ),
     None => expires_at,
   };
+  if template.source_mode().is_some() {
+    let (JobExecutionIntent::Managed(intent), JobRuntimePolicy::Current(runtime)) =
+      (template.execution(), &template.policy().runtime)
+    else {
+      return Err(JobSpecDerivationError::InvalidPolicy);
+    };
+    return Ok(WireJobSpec::SourceFree(Box::new(managed_spec(
+      template,
+      intent,
+      runtime,
+      JobSourceV4::SourceFreeV1 {},
+      EXECUTION_CONTRACT_V4,
+      &JobBinding {
+        job_id: &job_id,
+        attempt,
+        now: issued_at,
+      },
+      expires_at,
+    )?)));
+  }
   let mut source_parameters = BTreeMap::new();
   source_parameters.insert(
     template.policy().source.repository_parameter.clone(),
-    Value::String(template.repository_locator().to_owned()),
+    Value::String(
+      template
+        .repository_locator()
+        .ok_or(JobSpecDerivationError::InvalidPolicy)?
+        .to_owned(),
+    ),
   );
   let source = SourceSpec {
     provider: template.policy().source.provider.clone(),
     plugin_version: template.policy().source.plugin_version.clone(),
     plugin_sha256: template.policy().source.plugin_sha256.clone(),
-    revision: template.immutable_revision().as_str().to_owned(),
+    revision: template
+      .immutable_revision()
+      .ok_or(JobSpecDerivationError::InvalidPolicy)?
+      .as_str()
+      .to_owned(),
     reference: template
       .source_reference()
       .map(|reference| reference.as_str().to_owned()),
@@ -165,33 +205,59 @@ fn wire_job_spec(
       }))
     }
     (JobExecutionIntent::Managed(intent), JobRuntimePolicy::Current(runtime)) => {
-      Ok(WireJobSpec::Managed(Box::new(JobSpecV3 {
-        protocol_version: EXECUTION_CONTRACT_V3,
-        job_id,
-        attempt,
-        issued_at,
-        expires_at,
-        execution_deadline_unix_ms: match template.execution_deadline() {
-          Some(deadline) => u64::try_from(deadline.unix_millis()).map_err(|_| JobSpecDerivationError::InvalidPolicy)?,
-          None => issued_at
-            .checked_mul(1_000)
-            .and_then(|issued| issued.checked_add(intent.permissions.resources.elapsed_millis))
-            .ok_or(JobSpecDerivationError::ValidityOverflow)?,
-        },
+      Ok(WireJobSpec::Managed(Box::new(managed_spec(
+        template,
+        intent,
+        runtime,
         source,
-        octa: template.policy().octa.clone(),
-        execution: intent.execution.clone(),
-        runtime: runtime.clone(),
-        cache: template.policy().cache.clone(),
-        outputs: template.policy().outputs.clone(),
-        factory: Some(intent.factory.clone()),
-        protected_inputs: intent.protected_inputs.clone(),
-        permissions: intent.permissions.clone(),
-        required_enforcement: intent.required_enforcement.clone(),
-      })))
+        EXECUTION_CONTRACT_V3,
+        &JobBinding {
+          job_id: &job_id,
+          attempt,
+          now: issued_at,
+        },
+        expires_at,
+      )?)))
     }
+
     (JobExecutionIntent::Managed(_), JobRuntimePolicy::Legacy(_)) => Err(JobSpecDerivationError::InvalidPolicy),
   }
+}
+
+fn managed_spec<S>(
+  template: &JobSpecTemplate,
+  intent: &ManagedJobSpecIntent,
+  runtime: &octacity_protocol::RuntimeSpecV2,
+  source: S,
+  protocol_version: u16,
+  binding: &JobBinding<'_>,
+  expires_at: u64,
+) -> Result<ManagedJobSpec<S>, JobSpecDerivationError> {
+  let issued_at = binding.now;
+  Ok(ManagedJobSpec {
+    protocol_version,
+    job_id: binding.job_id.to_owned(),
+    attempt: binding.attempt,
+    issued_at,
+    expires_at,
+    execution_deadline_unix_ms: match template.execution_deadline() {
+      Some(deadline) => u64::try_from(deadline.unix_millis()).map_err(|_| JobSpecDerivationError::InvalidPolicy)?,
+      None => issued_at
+        .checked_mul(1_000)
+        .and_then(|issued| issued.checked_add(intent.permissions.resources.elapsed_millis))
+        .ok_or(JobSpecDerivationError::ValidityOverflow)?,
+    },
+    source,
+    octa: template.policy().octa.clone(),
+    execution: intent.execution.clone(),
+    runtime: runtime.clone(),
+    cache: template.policy().cache.clone(),
+    outputs: template.policy().outputs.clone(),
+    factory: intent.factory.clone(),
+    protected_inputs: intent.protected_inputs.clone(),
+    permissions: intent.permissions.clone(),
+    required_enforcement: intent.required_enforcement.clone(),
+  })
 }
 
 fn wire_execution(

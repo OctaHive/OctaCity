@@ -353,7 +353,7 @@ impl<
     + IntegrationAdministrationStore,
 > FactoryRoleProfileHandlers<S>
 {
-  async fn profile_capability(
+  pub(super) async fn profile_capability(
     &self,
     context: &ManagementRequestContext,
     project: ProjectId,

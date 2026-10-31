@@ -263,16 +263,18 @@ impl<
         project_id: project,
         configuration_id: definition.target.id(),
         configuration_version: definition.target.version(),
-        repository_id: definition.repository.id,
-        repository_version: definition.repository.version,
+        repository_id: Some(definition.repository.id),
+
+        repository_version: Some(definition.repository.version),
       })
       .await?;
+    let selected_repository = selected.repository.as_ref().ok_or_else(ApplicationError::invalid)?;
     let repository = WorkSourceRepositoryRef {
-      project_id: selected.repository.project_id,
-      id: selected.repository.id,
-      version: selected.repository.version,
+      project_id: selected_repository.project_id,
+      id: selected_repository.id,
+      version: selected_repository.version,
       definition_digest: FactoryDigest::content_sha256(
-        &serde_json::to_vec(&selected.repository.definition).map_err(|_| ApplicationError::invalid())?,
+        &serde_json::to_vec(&selected_repository.definition).map_err(|_| ApplicationError::invalid())?,
       ),
     };
     let find = |binding: &WorkSourceBinding, role| {
@@ -325,7 +327,7 @@ impl<
       FactoryValidationDiagnostics::invalid(field)
     })?;
     validate_managed_work_source(&input, &metadata, &grant, &administration)?;
-    validate_source_input_dependencies(&input, &selected.configuration.configuration, &selected.repository)?;
+    validate_source_input_dependencies(&input, &selected.configuration.configuration, selected_repository)?;
     // This intake cannot supply a reviewed Issue revision/association. Disabled drafts remain repairable.
     if input.definition().enabled
       && crate::factory_issue_status_authoring::flow_issue_status_selections(

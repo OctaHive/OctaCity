@@ -233,7 +233,15 @@ pub(crate) async fn correlate_replay(
   // A concurrent ordinary observer may have won; compare retained immutable input.
   if admission.work.external_identity() != &record.intent.external_identity
     || admission.work.artifacts() != &record.work_artifacts()?
-    || record.frozen_revision.as_ref() != Some(admission.work.subject().base_revision())
+    || record.frozen_revision.as_ref()
+      != Some(
+        admission
+          .work
+          .subject()
+          .repository()
+          .map_err(|_| conflict())?
+          .base_revision(),
+      )
   {
     return Err(conflict());
   }

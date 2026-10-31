@@ -186,7 +186,7 @@ fn managed_create_command(
     verification_material_handle: "secret:webhook-verification".to_owned(),
     verification_headers: vec!["x-signature".to_owned()],
     administration_credential_handle: "secret:provider-administration".to_owned(),
-    repository_id: fixture.context.repository.id,
+    repository_id: fixture.context.repository.as_ref().unwrap().id,
     event_kind: TriggerEventKind::new("push").unwrap(),
     parameters: BTreeMap::new(),
     priority: 0,

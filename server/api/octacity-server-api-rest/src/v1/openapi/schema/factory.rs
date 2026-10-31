@@ -4,6 +4,8 @@ use super::super::{
 use serde_json::{Map, Value, json};
 
 mod bindings;
+mod code;
+mod constraints;
 mod data;
 mod diagnostics;
 mod flow;
@@ -51,6 +53,7 @@ pub(super) fn insert_factory_schemas(schemas: &mut Map<String, Value>) {
   presets::insert(schemas);
   readiness::insert(schemas);
   runtime_settings::insert(schemas);
+  constraints::insert(schemas);
   schemas.insert(
     "FactoryFlowHumanGateBinding".to_owned(),
     json!({"oneOf":[
@@ -100,8 +103,12 @@ pub(super) fn insert_factory_schemas(schemas: &mut Map<String, Value>) {
     ),
   );
   schemas.insert("FactoryValidationDiagnostics".to_owned(), object([
+    ("constraints",schema_ref("FactoryEffectiveConstraints")),
     ("errors", json!({"type":"array","maxItems":1,"items":object([
-      ("field",non_empty_string()),("code",json!({"enum":["unavailable_reference","invalid_contract"]})),
+      ("field",non_empty_string()),("code",json!({"enum":["unavailable_reference","invalid_contract","budget_exceeds_ceiling","concurrency_exceeds_ceiling"]})),
+      ("ceiling",json!({"enum":["flow_definition","flow_admission","configuration","configuration_wip"]})),
+      ("resource",json!({"enum":["attempts","elapsed_time","tokens","cost","output_bytes","active_nodes"]})),
+      ("requested",non_negative_integer()),("maximum",non_negative_integer()),
       ("definition",schema_ref("FactoryFlowDefinitionReference")),("node",non_empty_string())
     ], &["field","code"])})),
     ("unavailable_references", json!({"type":"array","maxItems":1,"items":non_empty_string()})),
@@ -109,7 +116,14 @@ pub(super) fn insert_factory_schemas(schemas: &mut Map<String, Value>) {
     ("required_agent_capabilities",json!({"type":"array","items":schema_ref("FactoryImmutableReferenceResource")})),
     ("required_backend_capabilities",json!({"type":"array","items":non_empty_string()})),
     ("effective_permissions",json!({"type":"array","items":object([
-      ("definition",schema_ref("FactoryFlowDefinitionReference")),("node",non_empty_string()),("permissions",schema_ref("FactoryPermissions"))
+      ("definition",schema_ref("FactoryFlowDefinitionReference")),("node",non_empty_string()),("permissions",schema_ref("FactoryPermissions")),
+      ("requested",schema_ref("FactoryPermissions")),
+      ("sources",bounded_array(json!({"enum":["flow_admission","flow_definition","node"]}),3)),
+      ("profiles",bounded_array(object([
+        ("profile",schema_ref("FactoryRoleProfileReference")),("permissions",schema_ref("FactoryPermissions")),
+        ("sources",bounded_array(json!({"enum":["role_profile","profile_budget","node","flow_definition","flow_admission"]}),5)),
+      ], &["profile","permissions","sources"]),bounds.role_entries)),
+      ("unresolved_sources",bounded_array(json!({"enum":["project_policy","installed_runtime_policy","agent_local","backend_placement"]}),4)),
     ], &["definition","node","permissions"])})),
     ("warnings",json!({"type":"array","items":json!({"enum":["agent_local_permissions_resolved_at_dispatch"]})})),
   ], &["errors","unavailable_references","required_node_capabilities","required_agent_capabilities","required_backend_capabilities","effective_permissions","warnings"]));
@@ -180,7 +194,7 @@ pub(super) fn insert_factory_schemas(schemas: &mut Map<String, Value>) {
           "external_identity",
           json!({"type":"string","minLength":1,"maxLength":bounds.external_work_identity_bytes}),
         ),
-        ("source", schema_ref("ManualSource")),
+        ("source", schema_ref("FactoryWorkSourceSelection")),
         ("artifacts", schema_ref("FactoryWorkArtifacts")),
         ("classification", schema_ref("FactoryWorkClassification")),
         (
@@ -191,8 +205,6 @@ pub(super) fn insert_factory_schemas(schemas: &mut Map<String, Value>) {
       &[
         "configuration_id",
         "configuration_version",
-        "repository_id",
-        "repository_version",
         "external_identity",
         "source",
         "artifacts",
@@ -219,7 +231,6 @@ pub(super) fn insert_factory_schemas(schemas: &mut Map<String, Value>) {
         "disposition",
         "work_envelope_id",
         "factory_run_id",
-        "base_revision",
         "state",
         "admitted_at_unix_ms",
       ],
@@ -235,6 +246,23 @@ pub(super) fn insert_factory_schemas(schemas: &mut Map<String, Value>) {
       ],
       &["project_id", "repository_id", "base_revision"],
     ),
+  );
+  schemas.insert(
+    "FactoryWorkSourceSelection".to_owned(),
+    json!({"oneOf":[
+      schema_ref("ManualSource"),
+      object([("kind",json!({"type":"string","const":"project_input_v1"}))], &["kind"])
+    ]}),
+  );
+  schemas.insert(
+    "FactoryWorkSubject".to_owned(),
+    json!({"oneOf":[
+      schema_ref("FactoryExactSubject"),
+      object([
+        ("kind",json!({"type":"string","const":"project_input_v1"})),
+        ("project_id",non_empty_string()), ("input_digest",schema_ref("FactoryDigest"))
+      ], &["kind","project_id","input_digest"])
+    ]}),
   );
   schemas.insert(
     "FactoryCandidateSubject".to_owned(),
@@ -280,7 +308,7 @@ pub(super) fn insert_factory_schemas(schemas: &mut Map<String, Value>) {
     "FactoryRunSummaryDiagnostics".to_owned(),
     object(
       [
-        ("base_revision", non_empty_string()),
+        ("base_revision", nullable(non_empty_string())),
         ("candidate", nullable(schema_ref("FactoryCandidateSubject"))),
         (
           "current_nodes",
@@ -447,6 +475,7 @@ pub(super) fn insert_factory_schemas(schemas: &mut Map<String, Value>) {
     ),
   );
   flow::insert(schemas);
+  code::insert(schemas);
   let mut validation = schemas["FactoryFlowConfiguration"].clone();
   validation["properties"]["diagnostics"] = schema_ref("FactoryValidationDiagnostics");
   schemas.insert("FactoryFlowDefinitionValidation".to_owned(), validation);

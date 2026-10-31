@@ -425,7 +425,7 @@ fn issue_pipeline_action_new_execution_and_unrelated_metadata_do_not_invalidate_
       request(
         &current,
         work.configuration().id(),
-        work.subject().repository_id(),
+        work.subject().repository().unwrap().repository_id(),
         "parallel",
       ),
     )
@@ -824,7 +824,7 @@ fn issue_pipeline_action_restore_rejects_candidate_metadata_without_selected_evi
       .retained_pipeline_command()
       .unwrap();
     retained.provenance.candidate = Some(octacity_server_factory::CandidateSubject::new(
-      snapshot.work.subject().clone(),
+      snapshot.work.subject().repository().unwrap().clone(),
       octacity_server_domain::ImmutableRevision::new("unverified-candidate").unwrap(),
       FactoryDigest::from_bytes([77; 32]),
     ));
@@ -844,7 +844,7 @@ fn issue_pipeline_action_legacy_artifact_association_has_no_invented_requirement
     let command = crate::factory_admission_tests::command(
       issue.project_id,
       work.configuration().id(),
-      work.subject().repository_id(),
+      work.subject().repository().unwrap().repository_id(),
     );
     let identity = command.external_identity.clone();
     AuthorizedCommandHandler::new(

@@ -55,8 +55,8 @@ pub struct FactoryAdmissionOutcome {
   pub work_envelope_id: WorkEnvelopeId,
   /// Durable Factory Run identity.
   pub factory_run_id: FactoryRunId,
-  /// Exact immutable base revision resolved by the original admission.
-  pub base_revision: octacity_server_domain::ImmutableRevision,
+  /// Original resolved revision, absent for repository-free Project/input Work.
+  pub base_revision: Option<octacity_server_domain::ImmutableRevision>,
   /// Initial current-state projection.
   pub state: octacity_server_factory::FactoryRunState,
   /// Authoritative original admission time.
@@ -67,6 +67,7 @@ pub struct FactoryAdmissionOutcome {
 pub struct FactoryAdmissionHandlers<S> {
   store: Arc<S>,
   revisions: Arc<dyn RevisionResolver>,
+  repositories: Option<Arc<dyn octacity_server_store::ConfigurationStore>>,
   policy: Arc<dyn crate::ManagementAuthorizationPolicy>,
 }
 
@@ -81,8 +82,16 @@ impl<S> FactoryAdmissionHandlers<S> {
     Self {
       store,
       revisions,
+      repositories: None,
       policy,
     }
+  }
+
+  /// Reuses the Project Repository owner for explicitly declared Flow resources.
+  #[must_use]
+  pub fn with_repositories(mut self, repositories: Arc<dyn octacity_server_store::ConfigurationStore>) -> Self {
+    self.repositories = Some(repositories);
+    self
   }
 
   /// Creates handlers from backend-neutral admission and revision ports.
@@ -159,7 +168,7 @@ impl<S: FactoryAdmissionStore + 'static> FactoryAdmissionHandlers<S> {
     &self,
     context: &crate::ManagementRequestContext,
     configuration_id: FactoryConfigurationId,
-    repository_id: RepositoryId,
+    repository_id: Option<RepositoryId>,
     artifacts: &WorkArtifacts,
   ) -> Result<(), ApplicationError> {
     crate::factory_configuration_choices::require_visible_reference(
@@ -169,13 +178,15 @@ impl<S: FactoryAdmissionStore + 'static> FactoryAdmissionHandlers<S> {
       configuration_id,
     )
     .await?;
-    crate::factory_configuration_choices::require_visible_reference(
-      self.policy.as_ref(),
-      context,
-      ManagementResourceKind::Repository,
-      repository_id,
-    )
-    .await?;
+    if let Some(repository_id) = repository_id {
+      crate::factory_configuration_choices::require_visible_reference(
+        self.policy.as_ref(),
+        context,
+        ManagementResourceKind::Repository,
+        repository_id,
+      )
+      .await?;
+    }
     for artifact in std::iter::once(artifacts.task())
       .chain(std::iter::once(artifacts.acceptance()))
       .chain(artifacts.specifications())
@@ -208,10 +219,23 @@ impl<S: FactoryAdmissionStore + 'static> FactoryAdmissionHandlers<S> {
       .require_visible_work_references(
         context,
         receipt.work.configuration().id(),
-        receipt.work.subject().repository_id(),
+        receipt
+          .work
+          .subject()
+          .repository()
+          .ok()
+          .map(|subject| subject.repository_id()),
         receipt.work.artifacts(),
       )
       .await?;
+    crate::factory_code_sources::validate_sources(
+      receipt.flow.closure(),
+      project_id,
+      self.repositories.as_deref(),
+      self.policy.as_ref(),
+      context,
+    )
+    .await?;
     Ok(Some(receipt))
   }
 
@@ -223,6 +247,15 @@ impl<S: FactoryAdmissionStore + 'static> FactoryAdmissionHandlers<S> {
     pinned_input: Option<&octacity_server_factory::WorkSourceInput>,
   ) -> Result<FactoryAdmissionOutcome, ApplicationError> {
     if let Some(outcome) = self.store.replay_factory_admission(&probe).await? {
+      self.require_visible_dependencies(context, &command).await?;
+      crate::factory_code_sources::validate_sources(
+        outcome.admission.flow.closure(),
+        command.project_id,
+        self.repositories.as_deref(),
+        self.policy.as_ref(),
+        context,
+      )
+      .await?;
       return Ok(outcome.into());
     }
     let request = self.prepare_fresh_intent(context, command, probe, pinned_input).await?;
@@ -242,6 +275,7 @@ impl<S: FactoryAdmissionStore + 'static> FactoryAdmissionHandlers<S> {
     probe: FactoryAdmissionProbe,
     pinned_input: Option<&octacity_server_factory::WorkSourceInput>,
   ) -> Result<AdmitFactoryWork, ApplicationError> {
+    command.validate_source()?;
     self.require_visible_dependencies(context, &command).await?;
     let admission_context = self
       .store
@@ -259,8 +293,19 @@ impl<S: FactoryAdmissionStore + 'static> FactoryAdmissionHandlers<S> {
       .profile_overrides
       .validate(&configuration.flow().closure, command.project_id)
       .map_err(|_| ApplicationError::invalid())?;
+    crate::factory_code_sources::validate_sources(
+      &configuration.flow().closure,
+      command.project_id,
+      self.repositories.as_deref(),
+      self.policy.as_ref(),
+      context,
+    )
+    .await?;
     if let Some(input) = pinned_input {
-      let repository = &admission_context.repository;
+      let repository = admission_context
+        .repository
+        .as_ref()
+        .ok_or_else(ApplicationError::invalid)?;
       let expected = &input.definition().repository;
       let encoded = serde_json::to_vec(&repository.definition).map_err(|_| ApplicationError::invalid())?;
       if input.definition().target != *configuration.reference()
@@ -273,17 +318,41 @@ impl<S: FactoryAdmissionStore + 'static> FactoryAdmissionHandlers<S> {
         return Err(ApplicationError::invalid());
       }
     }
-    let source =
-      select_source(&command.source, &admission_context.repository).map_err(|_| ApplicationError::invalid())?;
-    let base_revision = self
-      .revisions
-      .resolve(RevisionResolutionRequest {
-        repository: admission_context.repository.clone(),
-        selection: source,
-      })
-      .await
-      .map_err(map_revision_error)?;
-    materialize_resolved_admission(command, probe, admission_context, base_revision)
+    let subject = if matches!(
+      command.source,
+      octacity_server_store::FactoryAdmissionSource::ProjectInput(_)
+    ) {
+      octacity_server_factory::WorkSubject::project_input(command.project_id, &command.artifacts)
+        .map_err(|_| ApplicationError::invalid())?
+    } else {
+      let repository = admission_context
+        .repository
+        .as_ref()
+        .ok_or_else(ApplicationError::invalid)?;
+      let source = select_source(command.source.repository()?, repository).map_err(|_| ApplicationError::invalid())?;
+      let revision = self
+        .revisions
+        .resolve(RevisionResolutionRequest {
+          repository: repository.clone(),
+          selection: source,
+        })
+        .await
+        .map_err(map_revision_error)?;
+      octacity_server_factory::ExactSubject::new(command.project_id, repository.id, revision).into()
+    };
+    let pins = crate::factory_code_sources::resolve_used_sources(
+      configuration.flow(),
+      self.repositories.as_deref(),
+      self.revisions.as_ref(),
+    )
+    .await?;
+    let project = command.project_id;
+    let mut admission = materialize_subject_admission(command, probe, admission_context, subject)?;
+    admission.flow = admission
+      .flow
+      .with_code_pins(pins, project)
+      .map_err(|_| ApplicationError::invalid())?;
+    Ok(admission)
   }
 }
 
@@ -352,7 +421,13 @@ impl From<FactoryAdmissionMutationOutcome> for FactoryAdmissionOutcome {
       disposition: value.disposition.into(),
       work_envelope_id: value.admission.work.id(),
       factory_run_id: value.admission.run.id(),
-      base_revision: value.admission.work.subject().base_revision().clone(),
+      base_revision: value
+        .admission
+        .work
+        .subject()
+        .repository()
+        .ok()
+        .map(|subject| subject.base_revision().clone()),
       state: value.admission.run.state(),
       admitted_at: value.admission.admitted_at,
     }
@@ -395,12 +470,23 @@ pub(super) fn materialize_resolved_admission(
   admission_context: octacity_server_store::FactoryAdmissionContext,
   base_revision: octacity_server_domain::ImmutableRevision,
 ) -> Result<AdmitFactoryWork, ApplicationError> {
+  let repository_id = command.repository_id.ok_or_else(ApplicationError::invalid)?;
+  let subject = octacity_server_factory::ExactSubject::new(command.project_id, repository_id, base_revision).into();
+  materialize_subject_admission(command, probe, admission_context, subject)
+}
+
+fn materialize_subject_admission(
+  command: FactoryWorkAdmissionIntent,
+  probe: FactoryAdmissionProbe,
+  admission_context: octacity_server_store::FactoryAdmissionContext,
+  subject: octacity_server_factory::WorkSubject,
+) -> Result<AdmitFactoryWork, ApplicationError> {
   let configuration = &admission_context.configuration.configuration;
   let work = WorkEnvelope::new(
     WorkEnvelopeId::generate(),
     configuration.reference().clone(),
     command.external_identity,
-    octacity_server_factory::ExactSubject::new(command.project_id, command.repository_id, base_revision),
+    subject,
     command.artifacts,
     command.classification,
   )
@@ -426,7 +512,10 @@ pub(super) fn validate_admission_project(
 ) -> Result<(), ApplicationError> {
   if !selected.configuration.configuration.is_enabled()
     || selected.configuration.configuration.reference().project_id() != project
-    || selected.repository.project_id != project
+    || selected
+      .repository
+      .as_ref()
+      .is_some_and(|repository| repository.project_id != project)
   {
     return Err(ApplicationError::invalid());
   }

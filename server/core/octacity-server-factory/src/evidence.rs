@@ -36,7 +36,7 @@ impl ChangeSet {
     bundle_artifact: ArtifactId,
     manifest_artifact: ArtifactId,
   ) -> Result<Self, FactoryError> {
-    if subject.exact() != input.subject() {
+    if subject.exact() != input.exact_resource()? {
       return Err(FactoryError::InconsistentSubject);
     }
     if node.factory_run_id() != input.factory_run_id()

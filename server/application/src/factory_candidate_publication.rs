@@ -180,7 +180,12 @@ impl<P> FactoryCandidatePublicationAction<P> {
       );
     }
     let candidate = context.subject().candidate().ok_or_else(ApplicationError::invalid)?;
-    if candidate.exact() != request.subject {
+    if candidate.exact()
+      != request
+        .input
+        .exact_resource()
+        .map_err(|_| ApplicationError::invalid())?
+    {
       return Err(ApplicationError::invalid());
     }
     let artifact = |name: &FactoryKey| {

@@ -3,6 +3,12 @@ use octacity_server_factory::*;
 use std::collections::BTreeMap;
 
 fn selected_fixture(project: ProjectId) -> Fixture {
+  selected_fixture_with_profiles(project, |_, _| {})
+}
+fn selected_fixture_with_profiles(
+  project: ProjectId,
+  mut edit: impl FnMut(&str, &mut FactoryRoleProfileDefinition),
+) -> Fixture {
   let mut fixture = fixture(project);
   let prior = fixture.draft.flow.as_ref().unwrap();
   let root = prior.closure.definition(prior.closure.root()).unwrap();
@@ -49,7 +55,7 @@ fn selected_fixture(project: ProjectId) -> Fixture {
     let mut build = base_build.clone();
     build.result_tool = Some(verifier.clone());
     build.model_or_tool = exact(name, "v1", byte);
-    let definition = FactoryRoleProfileDefinition {
+    let mut definition = FactoryRoleProfileDefinition {
       model_identifier: None,
       thinking_parameter: None,
       name: FactoryText::new(name).unwrap(),
@@ -69,6 +75,7 @@ fn selected_fixture(project: ProjectId) -> Fixture {
       permissions: FactoryPermissionSet::deny_all(),
       budget: original.budget(),
     };
+    edit(name, &mut definition);
     entries.references.extend([
       FactoryReferenceChoice {
         kind: FactoryChoiceKind::NodeCapability,
@@ -96,7 +103,7 @@ fn selected_fixture(project: ProjectId) -> Fixture {
         )
         .unwrap(),
         public_environment: BTreeMap::new(),
-        local_permissions: LocalPermissionCeiling::fully_enforced(FactoryPermissionSet::deny_all()),
+        local_permissions: LocalPermissionCeiling::fully_enforced(definition.permissions.clone()),
       },
     ));
     candidates.insert(
@@ -226,6 +233,54 @@ fn selection_validation_and_diagnostics_include_every_candidate_build_contract()
 }
 
 #[test]
+fn constraints_explain_each_exact_profile_allowance_instead_of_claiming_the_node_reservation() {
+  run_ready(async {
+    let project = ProjectId::generate();
+    let fixture = selected_fixture_with_profiles(project, |name, definition| {
+      if name == "default" {
+        definition.budget = BudgetLimit::new(1, 10_000, 17, 10_000, 10_000).unwrap();
+      }
+    });
+    let flow = fixture.draft.flow.as_ref().unwrap();
+    let selected_node = flow
+      .closure
+      .definitions()
+      .iter()
+      .flat_map(|d| d.nodes())
+      .find(|n| n.profile_selection().is_some())
+      .unwrap();
+    let profile = selected_node.profile_selection().unwrap().candidates[&key("default")]
+      .profile
+      .reference()
+      .clone();
+    let store = Arc::new(InMemoryFactoryConfigurationStore::new());
+    store.seed_project(project).unwrap();
+    store.enable_project(project, fixture.choices).unwrap();
+    let validation = query(
+      &FactoryConfigurationHandlers::new(store),
+      ValidateFactoryConfigurationQuery {
+        id: FactoryConfigurationId::generate(),
+        project_id: project,
+        definition_digest: digest(20),
+        draft: fixture.draft,
+      },
+    )
+    .await
+    .unwrap();
+    let diagnostics = serde_json::to_value(validation.diagnostics).unwrap();
+    let budgets = diagnostics["constraints"]["node_budgets"].as_array().unwrap();
+    let selected = budgets
+      .iter()
+      .find(|budget| budget["profile"] == serde_json::json!(profile))
+      .expect("each exact candidate must retain its own effective allowance");
+    assert_eq!(selected["requested"]["max_tokens"], 1000);
+    assert_eq!(selected["effective"]["max_tokens"], 17);
+    assert_eq!(selected["sources"][0]["source"], "role_profile");
+    assert_eq!(selected["sources"][0]["scope"], "node_execution");
+  });
+}
+
+#[test]
 fn standalone_flow_publication_uses_the_same_profile_compatibility_validation() {
   run_ready(async {
     let project = ProjectId::generate();
@@ -234,6 +289,8 @@ fn standalone_flow_publication_uses_the_same_profile_compatibility_validation() 
     let root = flow.closure.definition(flow.closure.root()).unwrap();
     let draft = crate::FactoryFlowDefinitionDraft {
       root: crate::FactoryFlowRootDraft {
+        code_sources: None,
+        process: root.process().cloned(),
         input_schema: root.input_schema().cloned(),
         entry: root.entry().clone(),
         nodes: root.nodes().to_vec(),
@@ -277,7 +334,137 @@ fn standalone_flow_publication_uses_the_same_profile_compatibility_validation() 
 
 // Root validation may read installed choices, but cannot read a subflow or write a publication.
 // Fail immediately if the public handler crosses either boundary in these contracts.
-struct PublicationChoices(std::sync::Mutex<FactoryConfigurationChoices>);
+pub(super) struct PublicationChoices(pub(super) std::sync::Mutex<FactoryConfigurationChoices>);
+
+#[test]
+fn access_constraints_explain_profile_narrowing_and_defer_actual_agent_enforcement() {
+  run_ready(async {
+    let project = ProjectId::generate();
+    let mut fixture = selected_fixture_with_profiles(project, |name, definition| {
+      if name == "default" {
+        definition.budget = BudgetLimit::new(1, 1000, 1000, 10_000, 10_000).unwrap();
+      }
+    });
+    let old = fixture.draft.flow.take().unwrap();
+    let root = old.closure.definition(old.closure.root()).unwrap();
+    let selected = root
+      .nodes()
+      .iter()
+      .find(|node| node.profile_selection().is_some())
+      .unwrap();
+    let profile = selected.profile_selection().unwrap().candidates[&key("default")]
+      .profile
+      .reference()
+      .clone();
+    let selected_key = selected.key().clone();
+    let mut permissions = serde_json::to_value(FactoryPermissionSet::deny_all()).unwrap();
+    permissions["network_hosts"] = serde_json::json!(["api.allowed.example"]);
+    permissions["resources"]["elapsed_millis"] = serde_json::json!(10_000);
+    let mut root_wire = serde_json::to_value(root).unwrap();
+    root_wire.as_object_mut().unwrap().remove("reference");
+    root_wire["execution"]["permissions"] = permissions.clone();
+    for node in root_wire["nodes"].as_array_mut().unwrap() {
+      node["permissions"] = permissions.clone();
+    }
+    let root_draft: crate::FactoryFlowRootDraft = serde_json::from_value(root_wire).unwrap();
+    let definition = FlowDefinition::new(FlowDefinitionInput {
+      id: root.reference().id(),
+      version: root.reference().version(),
+      input_schema: root_draft.input_schema,
+      entry: root_draft.entry,
+      nodes: root_draft.nodes,
+      transitions: root_draft.transitions,
+      terminals: root_draft.terminals,
+      context_projections: root_draft.context_projections,
+      data_projections: root_draft.data_projections,
+      execution: root_draft.execution,
+    })
+    .unwrap();
+    let mut limits = serde_json::to_value(old.limits).unwrap();
+    limits["permissions"] = permissions;
+    fixture.draft.flow = Some(
+      FactoryFlowConfiguration::new(
+        PinnedFlowDefinitionClosure::new(definition.reference(), vec![definition]).unwrap(),
+        serde_json::from_value(limits).unwrap(),
+        old.data_schemas,
+        old.pools,
+      )
+      .unwrap(),
+    );
+    let store = Arc::new(InMemoryFactoryConfigurationStore::new());
+    store.seed_project(project).unwrap();
+    store.enable_project(project, fixture.choices).unwrap();
+    let validation = query(
+      &FactoryConfigurationHandlers::new(store),
+      ValidateFactoryConfigurationQuery {
+        id: FactoryConfigurationId::generate(),
+        project_id: project,
+        definition_digest: digest(20),
+        draft: fixture.draft,
+      },
+    )
+    .await
+    .unwrap();
+    let diagnostics = serde_json::to_value(validation.diagnostics).unwrap();
+    let node = diagnostics["effective_permissions"]
+      .as_array()
+      .unwrap()
+      .iter()
+      .find(|row| row["node"] == serde_json::json!(selected_key))
+      .unwrap();
+    assert_eq!(
+      node["requested"]["network_hosts"],
+      serde_json::json!(["api.allowed.example"])
+    );
+    assert!(
+      node["sources"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .any(|source| source == "flow_admission")
+    );
+    let selected = node["profiles"]
+      .as_array()
+      .expect("profile ceilings remain explicit")
+      .iter()
+      .find(|row| row["profile"] == serde_json::json!(profile))
+      .unwrap();
+    assert_eq!(selected["permissions"]["network_hosts"], serde_json::json!([]));
+    assert_eq!(selected["permissions"]["resources"]["elapsed_millis"], 0);
+    assert!(
+      selected["sources"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .any(|source| source == "profile_budget")
+    );
+    assert!(
+      node["unresolved_sources"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .any(|source| source == "agent_local")
+    );
+    assert!(
+      node["unresolved_sources"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .any(|source| source == "backend_placement")
+    );
+    assert!(!diagnostics.to_string().contains("Private profile instructions"));
+    for source in ["project_policy", "installed_runtime_policy"] {
+      assert!(
+        node["unresolved_sources"]
+          .as_array()
+          .unwrap()
+          .iter()
+          .any(|value| value == source),
+        "dispatch policy {source} cannot be claimed resolved by definition validation"
+      );
+    }
+  });
+}
 use octacity_server_store::*;
 #[async_trait]
 impl FactoryConfigurationStore for PublicationChoices {
@@ -403,6 +590,8 @@ fn decision_profile_answers_are_checked_before_flow_publication() {
     );
     let draft = crate::FactoryFlowDefinitionDraft {
       root: crate::FactoryFlowRootDraft {
+        code_sources: None,
+        process: root.process().cloned(),
         input_schema: root.input_schema().cloned(),
         entry: root.entry().clone(),
         nodes: root.nodes().to_vec(),

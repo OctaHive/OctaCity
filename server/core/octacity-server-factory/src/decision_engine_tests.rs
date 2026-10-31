@@ -96,7 +96,7 @@ fn fixture_with_test_outcome_and_quorum(test_outcome: DeterministicGateOutcome, 
   .expect("fixture work is valid");
   let signal_node = crate::testing::capability_node_fixture(&work, None);
   let candidate = CandidateSubject::new(
-    work.subject().clone(),
+    work.subject().repository().unwrap().clone(),
     ImmutableRevision::new("candidate").expect("fixture revision is valid"),
     digest(3),
   );

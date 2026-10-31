@@ -30,7 +30,7 @@ pub struct ManualTriggerCommand {
   /// Stable source-scoped idempotency identity for this manual occurrence.
   pub deduplication_identity: octacity_server_domain::TriggerIdentity,
   /// Allowed source expression to resolve or verify exactly once.
-  pub source: ManualSourceSelection,
+  pub source: octacity_server_domain::BuildSourceSelection,
   /// Parameter values supplied by the caller before defaults are applied.
   pub parameters: BTreeMap<String, Value>,
   /// Durable ready-queue priority copied to root Jobs.

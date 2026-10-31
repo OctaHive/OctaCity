@@ -44,7 +44,11 @@ pub(crate) async fn execute(
   let trigger_version = number(request.trigger.trigger.version.get(), StoreOperation::AcceptTrigger)?;
   let configuration_version = number(request.build.configuration_version.get(), StoreOperation::AcceptTrigger)?;
   let pipeline_version = number(request.build.pipeline_version.get(), StoreOperation::AcceptTrigger)?;
-  let repository_version = number(request.build.repository_version.get(), StoreOperation::AcceptTrigger)?;
+  let repository_version = request
+    .build
+    .repository_version
+    .map(|version| number(version.get(), StoreOperation::AcceptTrigger))
+    .transpose()?;
   let attempt_number = number(request.attempt_number.get(), StoreOperation::AcceptTrigger)?;
   let mut transaction = match crate::mutation::begin(pool, &identity).await? {
     MutationStart::Fresh(transaction) => transaction,
@@ -281,7 +285,7 @@ async fn require_references(
   trigger_version: i64,
   configuration_version: i64,
   pipeline_version: i64,
-  repository_version: i64,
+  repository_version: Option<i64>,
 ) -> Result<(), StoreError> {
   let references_exist: bool = sqlx::query_scalar(
     "SELECT EXISTS (\
@@ -295,8 +299,9 @@ async fn require_references(
          AND configuration.id = $3 AND version.version = $4 \
          AND configuration.project_id = $5 \
          AND version.pipeline_id = $6 AND version.pipeline_version = $7 \
-         AND version.repository_id = $8 AND version.repository_version = $9 \
-         AND trigger.kind = $10 AND trigger.enabled AND version.enabled\
+         AND version.repository_id IS NOT DISTINCT FROM $8 AND version.repository_version IS NOT DISTINCT FROM $9 \
+         AND trigger.kind = $10 AND trigger.enabled AND version.enabled \
+         AND version.configuration_snapshot->'source' IS NOT DISTINCT FROM $11::jsonb\
      )",
   )
   .bind(request.trigger.trigger.id.as_uuid())
@@ -306,9 +311,10 @@ async fn require_references(
   .bind(request.build.project_id.as_uuid())
   .bind(request.build.pipeline_id.as_uuid())
   .bind(pipeline_version)
-  .bind(request.build.repository_id.as_uuid())
+  .bind(request.build.repository_id.map(|id| id.as_uuid()))
   .bind(repository_version)
   .bind(request.trigger.cause.kind().as_str())
+  .bind(request.build.source.map(Json))
   .fetch_one(&mut **transaction)
   .await
   .map_err(unavailable)?;
@@ -443,7 +449,7 @@ async fn insert_build(
   request: &AcceptTrigger,
   configuration_version: i64,
   pipeline_version: i64,
-  repository_version: i64,
+  repository_version: Option<i64>,
 ) -> Result<(), StoreError> {
   crate::build_materialization::insert_build(
     transaction,

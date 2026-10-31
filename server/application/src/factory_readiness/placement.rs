@@ -133,14 +133,17 @@ impl FactoryReadinessPlacement {
           return result(Blocked, "pipeline_incompatible", end);
         }
         let definition = &execution.configuration.definition;
+        let Some(execution_repository) = execution.repository.as_ref() else {
+          return result(Blocked, "repository_binding_unavailable", end);
+        };
         if execution.configuration.id != pin.id()
           || execution.configuration.version != pin.version()
           || execution.configuration.project_id != pin.project_id()
-          || execution.repository.id != repository.id
-          || execution.repository.project_id != repository.project_id
-          || execution.repository.version != repository.version
-          || execution.repository.id != definition.repository_id
-          || execution.repository.version != definition.repository_version
+          || execution_repository.id != repository.id
+          || execution_repository.project_id != repository.project_id
+          || execution_repository.version != repository.version
+          || Some(execution_repository.id) != definition.repository_id
+          || Some(execution_repository.version) != definition.repository_version
           || execution.pipeline.id != definition.pipeline_id
           || execution.pipeline.version != definition.pipeline_version
           || execution.pipeline.project_id != pin.project_id()

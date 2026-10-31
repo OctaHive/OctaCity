@@ -298,6 +298,15 @@ impl FactoryRoleProfile {
 }
 
 impl FactoryRoleProfileDefinition {
+  /// Retained permission request narrowed by the same profile's execution watchdog.
+  /// Installation, Project and Agent enforcement remain separate enclosing owners.
+  #[must_use]
+  pub fn execution_permissions(&self) -> FactoryPermissionSet {
+    self
+      .permissions
+      .clone()
+      .with_elapsed_limit(self.budget.max_elapsed_millis())
+  }
   /// Exact plugin identifier frozen in this profile; legacy definitions retain their installed selection.
   #[must_use]
   pub fn runtime_model(&self) -> &str {

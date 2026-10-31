@@ -67,7 +67,7 @@ async fn assert_configured_node_discovery(kind: &str) {
     factory_node_journal_contract_fixture()
   };
   let candidate = octacity_server_factory::CandidateSubject::new(
-    node_fixture.admission.work.subject().clone(),
+    node_fixture.admission.work.subject().repository().unwrap().clone(),
     ImmutableRevision::new("review-candidate").unwrap(),
     digest(91),
   );
@@ -105,7 +105,7 @@ async fn assert_configured_node_discovery(kind: &str) {
     .id();
   seed_factory_build(
     &database.pool,
-    work.subject(),
+    work.subject().repository().unwrap(),
     repository.version,
     build_configuration,
     node_fixture.execution.build_id(),
@@ -119,7 +119,10 @@ async fn assert_configured_node_discovery(kind: &str) {
     .factory_run_summary(node_fixture.admission.run.id(), FactoryRunListVisibility::all())
     .await
     .unwrap();
-  assert_eq!(summary.diagnostics.base_revision, *work.subject().base_revision());
+  assert_eq!(
+    summary.diagnostics.base_revision,
+    Some(work.subject().repository().unwrap().base_revision().clone())
+  );
   assert_eq!(
     summary.diagnostics.candidate,
     if kind == "large_signal" {
@@ -335,7 +338,7 @@ async fn cleanup_generic_node_journal(store: &PostgresStore, run_id: FactoryRunI
         run_id,
         snapshot.run.configuration().clone(),
         &snapshot.work,
-        snapshot.run.subject().clone(),
+        snapshot.run.subject().repository().unwrap().clone(),
         FactoryRunState::Completed,
         version,
       )
@@ -690,7 +693,7 @@ async fn factory_configuration_admission_and_discovery_match_the_in_memory_contr
     observer_b.work.id(),
     observer_b.work.configuration().clone(),
     observer_b.work.external_identity().clone(),
-    observer_b.work.subject().clone(),
+    observer_b.work.subject().repository().unwrap().clone(),
     observer_a.work.artifacts().clone(),
     WorkClassification::new(
       WorkPriority::new(20).unwrap(),
@@ -950,7 +953,7 @@ fn admission_from_configuration(
       intent_digest: digest(u8::try_from(run.id().as_uuid().as_u128() % 255).unwrap()),
       idempotency_key: idempotency(&format!("admission-{}", run.id())),
     },
-    repository_version: repository.version,
+    repository_version: Some(repository.version),
     work,
     run,
     flow,
@@ -2065,7 +2068,10 @@ mod run_contract {
         ))
         .await
         .unwrap();
-      let repo = repository(project, self.admission.run.subject().repository_id());
+      let repo = repository(
+        project,
+        self.admission.run.subject().repository().unwrap().repository_id(),
+      );
       let admission = admission_from_configuration(
         800 + index as u128,
         900 + index as u128,
@@ -2143,7 +2149,7 @@ mod run_contract {
       admission.run.id(),
       admission.run.configuration().clone(),
       &admission.work,
-      admission.run.subject().clone(),
+      admission.run.subject().repository().unwrap().clone(),
       FactoryRunState::Running,
       version,
     )
@@ -2233,7 +2239,7 @@ async fn seed_projection_admission(
   let work = &admission.work;
   let project = work.subject().project_id();
   seed_projects(&database.pool, project, ProjectId::generate()).await;
-  let repository = repository(project, work.subject().repository_id());
+  let repository = repository(project, work.subject().repository().unwrap().repository_id());
   seed_repository(&database.pool, &repository).await;
   let mut configured = fixture(project);
   configured.draft.wip_limits = admission.flow.wip_limits();
@@ -2297,7 +2303,8 @@ async fn seed_projection_admission(
           intent_digest: digest(1),
           idempotency_key: idempotency(&format!("generic-node-intake-{}", work.id())),
         },
-        repository_version: repository.version,
+        repository_version: Some(repository.version),
+
         work: work.clone(),
         run: admission.run.clone(),
         flow: admission.flow.clone(),
@@ -2540,5 +2547,193 @@ async fn deleted_agents_cannot_receive_new_automatic_profile_choices() {
     &store, &admission, &input, &ownership,
   )
   .await;
+  database.cleanup().await;
+}
+
+#[tokio::test]
+#[ignore = "requires an explicitly configured disposable PostgreSQL service"]
+async fn repository_free_admission_persists_and_replays_without_repository_rows() {
+  assert_project_input_admission(false).await;
+}
+
+#[tokio::test]
+#[ignore = "requires an explicitly configured disposable PostgreSQL service"]
+async fn per_step_code_pins_survive_postgres_restart_snapshot_and_identity_recovery() {
+  assert_project_input_admission(true).await;
+}
+
+async fn assert_project_input_admission(with_code: bool) {
+  use octacity_server_store::FactoryRunStore as _;
+  let database = TestDatabase::migrated().await;
+  let postgres = PostgresStore::new(database.pool.clone());
+  let project = ProjectId::generate();
+  seed_projects(&database.pool, project, ProjectId::generate()).await;
+  let mut fixture = fixture(project);
+  let pins = if with_code {
+    use octacity_server_factory::{
+      FactoryFlowConfiguration, FlowCodePin, FlowDefinition, FlowDefinitionInput, PinnedFlowDefinitionClosure,
+    };
+    let repository = repository(project, RepositoryId::generate());
+    seed_repository(&database.pool, &repository).await;
+    let flow = fixture.draft.flow.as_ref().unwrap();
+    let original = flow.closure.definition(flow.closure.root()).unwrap();
+    let nodes = original
+      .nodes()
+      .iter()
+      .enumerate()
+      .map(|(index, node)| {
+        let mut wire = serde_json::to_value(node).unwrap();
+        wire["code"] = if index == 0 {
+          serde_json::json!({
+            "kind":"source","source":"reviewed","access":"read_only",
+            "scope":{"kind":"repository"},"revision":{"kind":"admitted_base"}
+          })
+        } else {
+          serde_json::json!({"kind":"none"})
+        };
+        serde_json::from_value(wire).unwrap()
+      })
+      .collect();
+    let root = FlowDefinition::new(FlowDefinitionInput {
+      id: original.reference().id(),
+      version: original.reference().version(),
+      input_schema: original.input_schema().cloned(),
+      entry: original.entry().clone(),
+      nodes,
+      transitions: original.transitions().to_vec(),
+      terminals: original.terminals().to_vec(),
+      context_projections: original.context_projections().to_vec(),
+      data_projections: original.data_projections().to_vec(),
+      execution: original.execution().clone(),
+    })
+    .unwrap()
+    .with_code_sources(
+      serde_json::from_value(serde_json::json!({"reviewed":{
+        "repository":{"project_id":project,"id":repository.id,"version":repository.version,
+        "definition_digest":FactoryDigest::content_sha256(&serde_json::to_vec(&repository.definition).unwrap())},
+        "selection":{"kind":"default_reference"},"access":"read_only","scope":{"kind":"repository"}
+      }}))
+      .unwrap(),
+    )
+    .unwrap();
+    let pins = vec![FlowCodePin {
+      definition: root.reference(),
+      source: key("reviewed"),
+      subject: ExactSubject::new(project, repository.id, "frozen-before-admission".parse().unwrap()),
+    }];
+    fixture.draft.flow = Some(
+      FactoryFlowConfiguration::new(
+        PinnedFlowDefinitionClosure::new(root.reference(), vec![root]).unwrap(),
+        flow.limits.clone(),
+        flow.data_schemas.clone(),
+        flow.pools.clone(),
+      )
+      .unwrap(),
+    );
+    pins
+  } else {
+    vec![]
+  };
+  let configuration = FactoryConfiguration::publish(
+    FactoryConfigurationId::generate(),
+    FactoryConfigurationVersion::INITIAL,
+    project,
+    digest(20),
+    fixture.draft.clone(),
+    &fixture.choices,
+  )
+  .unwrap();
+  postgres
+    .create_factory_configuration(management_mutation_with_request(
+      CreateFactoryConfiguration {
+        intent: FactoryConfigurationMutationIntent::Create {
+          id: configuration.reference().id(),
+          project_id: project,
+          definition_digest: configuration.reference().definition_digest(),
+          draft: fixture.draft,
+        },
+        configuration: configuration.clone(),
+        idempotency_key: idempotency("project-input-config"),
+        published_at: time(1),
+      },
+      "project-input-config",
+    ))
+    .await
+    .unwrap();
+  let selected = postgres
+    .factory_admission_context(octacity_server_store::ReadFactoryAdmissionContext {
+      project_id: project,
+      configuration_id: configuration.reference().id(),
+      configuration_version: configuration.reference().version(),
+      repository_id: None,
+      repository_version: None,
+    })
+    .await
+    .expect("Project/input admission must not look up a Repository");
+  assert_eq!(selected.configuration.configuration, configuration);
+  assert!(selected.repository.is_none());
+  let artifacts = WorkArtifacts::new(artifact(90), artifact(91), vec![]).unwrap();
+  let work = WorkEnvelope::new(
+    WorkEnvelopeId::generate(),
+    configuration.reference().clone(),
+    ExternalWorkIdentity::new("manual/project-input").unwrap(),
+    octacity_server_factory::WorkSubject::project_input(project, &artifacts).unwrap(),
+    artifacts,
+    WorkClassification::new(
+      WorkPriority::new(1).unwrap(),
+      RiskClass::Low,
+      FactoryMetadata::default(),
+    ),
+  )
+  .unwrap();
+  let run = FactoryRun::admitted(FactoryRunId::generate(), &work);
+  let request = AdmitFactoryWork {
+    probe: FactoryAdmissionProbe {
+      source_scope: FactoryWorkSourceScope {
+        source: key("manual"),
+        security_scope: octacity_server_store::ManagementSecurityScope::trusted_network(),
+      },
+      external_identity: work.external_identity().clone(),
+      intent_digest: digest(21),
+      idempotency_key: idempotency("project-input-work"),
+    },
+    repository_version: None,
+    flow: octacity_server_factory::AdmittedFlow::from_configuration(&configuration, &run)
+      .unwrap()
+      .with_code_pins(pins, project)
+      .unwrap(),
+    work,
+    run,
+    admitted_at: time(2),
+  };
+  let admitted = postgres
+    .admit_factory_work(management_mutation_with_request(request.clone(), "project-input-work"))
+    .await
+    .unwrap();
+  let reread = PostgresStore::new(database.pool.clone());
+  let replay = reread.replay_factory_admission(&request.probe).await.unwrap().unwrap();
+  assert_eq!(admitted.admission, replay.admission);
+  let snapshot = reread.factory_run_snapshot(request.run.id()).await.unwrap();
+  assert_eq!(snapshot.work, request.work);
+  assert_eq!(snapshot.run, request.run);
+  assert_eq!(
+    snapshot.admitted_flow, request.flow,
+    "snapshot must retain exact resource revisions"
+  );
+  let recovered = reread
+    .recover_factory_admission(&FactoryAdmissionIdentity {
+      source_scope: request.probe.source_scope.clone(),
+      external_identity: request.work.external_identity().clone(),
+    })
+    .await
+    .unwrap()
+    .unwrap();
+  assert_eq!(
+    recovered.flow, request.flow,
+    "identity recovery must not reconstruct unpinned resources"
+  );
+  let mut conflicting = request.probe;
+  conflicting.intent_digest = digest(22);
+  assert!(reread.replay_factory_admission(&conflicting).await.is_err());
   database.cleanup().await;
 }

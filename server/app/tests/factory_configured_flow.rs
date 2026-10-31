@@ -53,8 +53,8 @@ impl flow_contract::FactoryTestBuildSeeder for Seeder {
         &self.pool,
         &ExactSubject::new(
           request.project_id,
-          request.repository_id,
-          request.immutable_revision.clone(),
+          request.subject.exact().unwrap().repository_id(),
+          request.subject.exact().unwrap().base_revision().clone(),
         ),
         RepositoryVersion::INITIAL,
         request.build_configuration.id(),
@@ -177,7 +177,7 @@ async fn configured_manual_intake_and_unknown_node_recover_the_same_journal_and_
 async fn admit(pool: &sqlx::PgPool, admission: &PublishedFactoryAdmission) -> Arc<PostgresStore> {
   let work = &admission.work;
   let project = work.subject().project_id();
-  let repository = work.subject().repository_id();
+  let repository = work.subject().repository().unwrap().repository_id();
   sqlx::query("INSERT INTO projects (id,name,version,created_at,updated_at) VALUES ($1,'configured-factory',1,to_timestamp(0),to_timestamp(0))").bind(project.as_uuid()).execute(pool).await.unwrap();
   sqlx::query("INSERT INTO repositories (id,project_id,name,created_at) VALUES ($1,$2,'source',to_timestamp(0))")
     .bind(repository.as_uuid())
@@ -235,7 +235,8 @@ async fn admit(pool: &sqlx::PgPool, admission: &PublishedFactoryAdmission) -> Ar
       intent_digest: FactoryDigest::from_bytes([1; 32]),
       idempotency_key: IdempotencyKey::new("configured-manual-intake").unwrap(),
     },
-    repository_version: RepositoryVersion::INITIAL,
+    repository_version: Some(RepositoryVersion::INITIAL),
+
     work: work.clone(),
     run: admission.run.clone(),
     flow: admission.flow.clone(),
@@ -458,7 +459,7 @@ async fn configured_node_retry_restores_operator_intent_and_frozen_input_in_post
     .clone();
   postgres_support::factory_build::seed_factory_build(
     &database.pool,
-    fixture.admission.work.subject(),
+    fixture.admission.work.subject().repository().unwrap(),
     RepositoryVersion::INITIAL,
     build_configuration.id(),
     ids.0,
@@ -503,7 +504,7 @@ async fn configured_execution_failure_restores_the_exact_stop_and_usage_in_postg
     .clone();
   postgres_support::factory_build::seed_factory_build(
     &database.pool,
-    fixture.admission.work.subject(),
+    fixture.admission.work.subject().repository().unwrap(),
     RepositoryVersion::INITIAL,
     build_configuration.id(),
     ids.0,
@@ -536,7 +537,7 @@ async fn configured_effectful_cancellation_retains_the_stop_receipt_and_budget_a
     .clone();
   postgres_support::factory_build::seed_factory_build(
     &database.pool,
-    fixture.admission.work.subject(),
+    fixture.admission.work.subject().repository().unwrap(),
     RepositoryVersion::INITIAL,
     build_configuration.id(),
     ids.0,
@@ -612,7 +613,7 @@ async fn configured_queued_node_retry_restores_frozen_input_and_a_fresh_reservat
     .clone();
   postgres_support::factory_build::seed_factory_build(
     &database.pool,
-    admission.work.subject(),
+    admission.work.subject().repository().unwrap(),
     RepositoryVersion::INITIAL,
     build_configuration.id(),
     ids.0,
@@ -635,7 +636,7 @@ async fn independently_claimed_runs_preserve_configured_node_capacity_in_postgre
   let node = &admissions[0].flow.closure().definitions()[0].nodes()[0];
   postgres_support::factory_build::seed_factory_build(
     &database.pool,
-    admissions[0].work.subject(),
+    admissions[0].work.subject().repository().unwrap(),
     RepositoryVersion::INITIAL,
     node.build().unwrap().build_configuration.id(),
     ids.0,
@@ -668,7 +669,8 @@ async fn admit_runs(pool: &sqlx::PgPool, admissions: &[PublishedFactoryAdmission
             intent_digest: FactoryDigest::from_bytes([2; 32]),
             idempotency_key: IdempotencyKey::new("second-concurrent-run").unwrap(),
           },
-          repository_version: RepositoryVersion::INITIAL,
+          repository_version: Some(RepositoryVersion::INITIAL),
+
           work: second.work.clone(),
           run: second.run.clone(),
           flow: second.flow.clone(),
@@ -807,6 +809,15 @@ fn protected_build_admission_with_tool_control(
   capture_paths: Option<&[&str]>,
   control: Option<octacity_protocol::FactoryToolControlModeV3>,
 ) -> PublishedFactoryAdmission {
+  protected_build_admission_with_source(managed, output_bytes, capture_paths, control, false)
+}
+fn protected_build_admission_with_source(
+  managed: bool,
+  output_bytes: u64,
+  capture_paths: Option<&[&str]>,
+  control: Option<octacity_protocol::FactoryToolControlModeV3>,
+  source_free: bool,
+) -> PublishedFactoryAdmission {
   let original = failure_contract::single_slot_admissions().remove(0);
   if !managed {
     return original;
@@ -814,6 +825,12 @@ fn protected_build_admission_with_tool_control(
   let mut grants = serde_json::to_value(factory_job_test_support::permissions(false)).unwrap();
   if control.is_some() {
     grants["tools"] = serde_json::json!([factory_job_test_support::reference("fixture.read", "v1")]);
+  }
+  if source_free {
+    grants["mounts"]
+      .as_array_mut()
+      .unwrap()
+      .retain(|mount| mount["root"] != "/workspace/source");
   }
   let grants: FactoryPermissionSet = serde_json::from_value(grants).unwrap();
   let old = &original.flow.closure().definitions()[0];
@@ -857,6 +874,13 @@ fn protected_build_admission_with_tool_control(
       )
       .unwrap(),
   };
+  let node = if source_free {
+    let mut wire = serde_json::to_value(node).unwrap();
+    wire["code"] = serde_json::json!({"kind":"none"});
+    serde_json::from_value(wire).unwrap()
+  } else {
+    node
+  };
   let definition = FlowDefinition::new(FlowDefinitionInput {
     id: FlowDefinitionId::generate(),
     version: FlowDefinitionVersion::INITIAL,
@@ -870,6 +894,11 @@ fn protected_build_admission_with_tool_control(
     execution: FlowExecutionPolicy::new(total, grants.clone(), 1).unwrap(),
   })
   .unwrap();
+  let definition = if source_free {
+    definition.with_code_sources(Default::default()).unwrap()
+  } else {
+    definition
+  };
   let root = FlowRun::root(&original.run, definition.reference()).unwrap();
   let cycle = WorkflowCycle::initial(&root).unwrap();
   let flow = AdmittedFlow::new(
@@ -883,6 +912,41 @@ fn protected_build_admission_with_tool_control(
   .with_data_schemas(original.flow.data_schemas().to_vec())
   .unwrap();
   PublishedFactoryAdmission { flow, ..original }
+}
+
+#[tokio::test]
+#[ignore = "requires an explicitly configured disposable PostgreSQL service"]
+async fn no_code_factory_build_retains_source_absence_and_exact_operation_after_postgres_restart() {
+  let (database, _, request) = prepared_factory_build_with_source(true, 10_000, None, None, true).await;
+  assert!(matches!(request.intent.input().code(), Some(FlowNodeCode::None)));
+  assert!(request.build.repository_id.is_none());
+  assert!(
+    request
+      .jobs
+      .iter()
+      .all(|job| job.job_spec_template.source_revision().is_none())
+  );
+  let store = octacity_server_store_postgres::PostgresAuthoritativeStore::new(
+    database.pool.clone(),
+    postgres_support::test_signer(),
+  );
+  let accepted = store.accept_factory_build(request.clone()).await;
+  assert!(
+    accepted.is_ok(),
+    "an explicit no-code Flow operation must use ordinary source-free Build storage: {accepted:?}"
+  );
+  let accepted = accepted.unwrap();
+  let restarted = octacity_server_store_postgres::PostgresAuthoritativeStore::new(
+    sqlx::PgPool::connect_with(database.pool.connect_options().as_ref().clone())
+      .await
+      .unwrap(),
+    postgres_support::test_signer(),
+  );
+  let retained = restarted.build(accepted.build_id).await.unwrap();
+  assert_eq!(retained.build, request.build);
+  assert!(matches!(retained.origin, BuildOrigin::Factory(_)));
+  assert_eq!(restarted.accept_factory_build(request).await.unwrap(), accepted);
+  database.cleanup().await;
 }
 
 #[tokio::test]
@@ -1348,12 +1412,22 @@ async fn prepared_factory_build_with_tool_control(
   capture_paths: Option<&[&str]>,
   control: Option<octacity_protocol::FactoryToolControlModeV3>,
 ) -> (postgres_support::TestDatabase, Arc<PostgresStore>, AcceptFactoryBuild) {
+  prepared_factory_build_with_source(managed, output_bytes, capture_paths, control, false).await
+}
+async fn prepared_factory_build_with_source(
+  managed: bool,
+  output_bytes: u64,
+  capture_paths: Option<&[&str]>,
+  control: Option<octacity_protocol::FactoryToolControlModeV3>,
+  source_free: bool,
+) -> (postgres_support::TestDatabase, Arc<PostgresStore>, AcceptFactoryBuild) {
   let database = postgres_support::TestDatabase::migrated().await;
-  let admissions = [protected_build_admission_with_tool_control(
+  let admissions = [protected_build_admission_with_source(
     managed,
     output_bytes,
     capture_paths,
     control,
+    source_free,
   )];
   let admissions = &admissions[..];
   let store = admit_runs(&database.pool, admissions).await;
@@ -1412,11 +1486,14 @@ async fn seed_factory_build_prerequisites(pool: &sqlx::PgPool, request: &AcceptF
   .execute(pool)
   .await
   .unwrap();
-  sqlx::query("INSERT INTO build_configuration_versions (build_configuration_id,version,enabled,repository_id,repository_version,pipeline_id,pipeline_version,configuration_snapshot,job_concurrency_limit,allowed_pool_ids,retry_max_attempts,retries_infrastructure,published_at) VALUES ($1,$2,true,$3,$4,$5,$6,'{}',4,ARRAY[$7::uuid],1,false,to_timestamp(0))")
+  sqlx::query("INSERT INTO build_configuration_versions (build_configuration_id,version,enabled,repository_id,repository_version,pipeline_id,pipeline_version,configuration_snapshot,job_concurrency_limit,allowed_pool_ids,retry_max_attempts,retries_infrastructure,published_at) VALUES ($1,$2,true,$3,$4,$5,$6,$8,4,ARRAY[$7::uuid],1,false,to_timestamp(0))")
     .bind(build.configuration_id.as_uuid()).bind(build.configuration_version.get() as i64)
-    .bind(build.repository_id.as_uuid()).bind(build.repository_version.get() as i64)
+    .bind(build.repository_id.map(|id| id.as_uuid())).bind(build.repository_version.map(|version| version.get() as i64))
     .bind(build.pipeline_id.as_uuid()).bind(build.pipeline_version.get() as i64)
-    .bind(fixture.allowed_pool.as_uuid()).execute(pool).await.unwrap();
+    .bind(fixture.allowed_pool.as_uuid())
+    .bind(sqlx::types::Json(match build.source {
+      Some(mode) => serde_json::json!({"source": mode}), None => serde_json::json!({}),
+    })).execute(pool).await.unwrap();
 }
 
 fn factory_build_contract_request(
@@ -1436,11 +1513,26 @@ fn factory_build_contract_request(
     .map(|job| (job.id, JobId::generate()))
     .collect();
   build.project_id = intent.input().subject().project_id();
-  build.repository_id = intent.input().subject().repository_id();
+  build.repository_id = intent
+    .input()
+    .exact_resource()
+    .ok()
+    .map(|resource| resource.repository_id());
   build.configuration_id = intent.profile().build_configuration.id();
   build.configuration_version = intent.profile().build_configuration.version();
-  build.immutable_revision = intent.input().subject().base_revision().clone();
+  build.immutable_revision = intent
+    .input()
+    .exact_resource()
+    .ok()
+    .map(|resource| resource.base_revision().clone());
   build.priority = intent.priority();
+  if matches!(intent.input().code(), Some(FlowNodeCode::None)) {
+    build.repository_id = None;
+    build.repository_version = None;
+    build.immutable_revision = None;
+    build.source = Some(BuildSourceMode::SourceFreeV1);
+    build.input_snapshot = serde_json::json!({"parameters": {}, "source": {"kind":"source_free_v1"}});
+  }
   let accepted_at = at(12);
   let mut jobs: Vec<_> = fixture
     .request
@@ -1496,14 +1588,18 @@ fn factory_build_contract_request(
           },
         });
         job.job_spec_template = derive_factory_managed_job_spec_template(FactoryManagedJobSpecInput {
-          build: octacity_server_job::JobSpecBuildSnapshot::new(
-            build.id,
-            build.immutable_revision.clone(),
-            None,
-            RepositoryLocator::new("https://example.test/source.git").unwrap(),
-            Default::default(),
-          )
-          .unwrap(),
+          build: if build.source == Some(BuildSourceMode::SourceFreeV1) {
+            octacity_server_job::JobSpecBuildSnapshot::source_free(build.id, Default::default())
+          } else {
+            octacity_server_job::JobSpecBuildSnapshot::new(
+              build.id,
+              build.immutable_revision.clone().unwrap(),
+              None,
+              RepositoryLocator::new("https://example.test/source.git").unwrap(),
+              Default::default(),
+            )
+            .unwrap()
+          },
           pipeline_node_id: job.pipeline_node_id.clone(),
           execution,
           causality,
@@ -2153,7 +2249,7 @@ async fn disabled_factory_runtime_cleans_previous_private_inputs_without_factory
 #[tokio::test]
 #[ignore = "requires an explicitly configured disposable PostgreSQL service"]
 async fn protected_factory_documents_publish_before_build_without_fabricated_agent_provenance() {
-  let (database, store, build) = prepared_factory_build(true).await;
+  let (database, store, mut build) = prepared_factory_build(true).await;
   let artifact_id = ArtifactId::generate();
   let input = octacity_protocol::ProtectedInputV3 {
     artifact_id: artifact_id.to_string(),
@@ -2205,34 +2301,12 @@ async fn protected_factory_documents_publish_before_build_without_fabricated_age
   let manifest = octacity_protocol::ProtectedInputManifestV3 {
     inputs: vec![input.clone()],
   };
-  let grant = transfer
-    .authorize_protected_inputs(AuthorizeProtectedInputsInput {
-      manifest: manifest.clone(),
-      observed_at_unix_ms: build.intent.node().deadline().unix_millis() - 10_000,
-      lease_expires_at: at(1_000_000),
-    })
-    .await
-    .unwrap();
-  assert_eq!(grant[0].input, input);
-  assert_eq!(
-    grant[0].capability.expires_at_unix_ms,
-    build.intent.node().deadline().unix_millis() as u64
-  );
-  assert!(!format!("{grant:?}").contains("signature=private"));
   assert!(
-    transfer
-      .authorize_protected_inputs(AuthorizeProtectedInputsInput {
-        manifest,
-        observed_at_unix_ms: build.intent.node().deadline().unix_millis(),
-        lease_expires_at: at(1_000_000),
-      })
+    store
+      .published_execution_input_for_job(build.jobs[0].id, artifact_id)
       .await
       .is_err(),
-    "expired private inputs cannot mint a download"
-  );
-  assert!(
-    store.published_artifact(artifact_id).await.is_err(),
-    "private inputs are not ordinary Agent outputs"
+    "publication alone does not authorize a consuming Job"
   );
   let authoritative = octacity_server_store_postgres::PostgresAuthoritativeStore::new(
     database.pool.clone(),
@@ -2244,6 +2318,55 @@ async fn protected_factory_documents_publish_before_build_without_fabricated_age
       .await
       .unwrap()
       .is_none()
+  );
+  let mut template = serde_json::to_value(&build.jobs[0].job_spec_template).unwrap();
+  let inputs = template["execution"]["protected_inputs"]["inputs"]
+    .as_array_mut()
+    .unwrap();
+  inputs.push(serde_json::to_value(&input).unwrap());
+  inputs.sort_by(|left, right| left["artifact_id"].as_str().cmp(&right["artifact_id"].as_str()));
+  build.jobs[0].job_spec_template = serde_json::from_value(template).unwrap();
+  authoritative.accept_factory_build(build.clone()).await.unwrap();
+  let grant = transfer
+    .authorize_protected_inputs(AuthorizeProtectedInputsInput {
+      job_id: build.jobs[0].id,
+      manifest: manifest.clone(),
+      observed_at_unix_ms: build.intent.node().deadline().unix_millis() - 10_000,
+      lease_expires_at: at(1_000_000),
+    })
+    .await
+    .unwrap();
+  assert_eq!(grant[0].input, input);
+  let (unrelated, _) =
+    postgres_support::protected_input_job::accept(&database.pool, build.build.project_id, &manifest.inputs).await;
+  assert!(
+    store
+      .published_execution_input_for_job(unrelated, artifact_id)
+      .await
+      .is_err(),
+    "a same-Project ordinary Job cannot borrow another invocation's private inputs"
+  );
+
+  assert_eq!(
+    grant[0].capability.expires_at_unix_ms,
+    build.intent.node().deadline().unix_millis() as u64
+  );
+  assert!(!format!("{grant:?}").contains("signature=private"));
+  assert!(
+    transfer
+      .authorize_protected_inputs(AuthorizeProtectedInputsInput {
+        job_id: build.jobs[0].id,
+        manifest,
+        observed_at_unix_ms: build.intent.node().deadline().unix_millis(),
+        lease_expires_at: at(1_000_000),
+      })
+      .await
+      .is_err(),
+    "expired private inputs cannot mint a download"
+  );
+  assert!(
+    store.published_artifact(artifact_id).await.is_err(),
+    "private inputs are not ordinary Agent outputs"
   );
   let mut substitution = request;
   substitution.inputs[0].input.sha256 = "11".repeat(32);

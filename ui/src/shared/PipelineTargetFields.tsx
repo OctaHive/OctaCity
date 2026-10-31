@@ -8,7 +8,7 @@ import { QueryBackgroundNotice, QueryFailureNotice, QueryLoadingNotice } from '.
 import { SelectMenu } from './SelectMenu';
 
 type Target = Pick<
-  components['schemas']['AdmitManualFactoryWorkRequest'],
+  components['schemas']['IssueExecutionTarget'],
   'configuration_id' | 'configuration_version' | 'repository_id' | 'repository_version' | 'source'
 >;
 /** Existing authorized catalog reads are supplied by app composition, independently of intake. */

@@ -679,7 +679,10 @@ pub(super) async fn admit_manual_factory_work(
       disposition: mutation_disposition(outcome.disposition),
       work_envelope_id: outcome.work_envelope_id.to_string(),
       factory_run_id: outcome.factory_run_id.to_string(),
-      base_revision: outcome.base_revision.as_str().to_owned(),
+      base_revision: outcome
+        .base_revision
+        .as_ref()
+        .map(|revision| revision.as_str().to_owned()),
       state: outcome.state.as_str().to_owned(),
       admitted_at_unix_ms: outcome.admitted_at.unix_millis(),
     }),

@@ -1,5 +1,5 @@
 use async_trait::async_trait;
-use octacity_server_domain::{ArtifactId, ArtifactUploadId};
+use octacity_server_domain::{ArtifactId, ArtifactUploadId, EntityKind, JobId};
 
 use crate::{
   ArtifactRecord, ArtifactUploadRecord, ArtifactVerificationResult, BeginArtifactUpload, BeginArtifactUploadOutcome,
@@ -41,15 +41,29 @@ pub trait ArtifactRecordStore: Send + Sync {
   /// Reads a published logical Artifact and its backend-neutral upload identity.
   async fn published_artifact(&self, artifact_id: ArtifactId) -> Result<ArtifactUploadRecord, StoreError>;
 
-  /// Reads verified input metadata without assigning fabricated Agent provenance.
-  /// Ordinary published Artifacts remain eligible; private compiler inputs are
-  /// available only through this transfer boundary, never output discovery.
+  /// Reads verified metadata for trusted owners without fabricating Agent provenance.
+  /// Private compiler inputs remain excluded from ordinary output discovery.
+  /// Metadata alone grants no download authority; consumers use the scoped Job lookup.
   async fn published_execution_input(
     &self,
     artifact_id: ArtifactId,
   ) -> Result<crate::PublishedExecutionInput, StoreError> {
     let upload = self.published_artifact(artifact_id).await?;
     crate::PublishedExecutionInput::from_artifact(&upload)
+  }
+
+  /// Resolves only inputs selected by the authoritative consuming Job and permitted by their owner.
+  /// Project publications remain Project-scoped; private compiler inputs additionally require
+  /// their exact retained Factory operation. Metadata knowledge grants no read authority.
+  /// Adapters without this owner projection fail closed.
+  async fn published_execution_input_for_job(
+    &self,
+    _job_id: JobId,
+    _artifact_id: ArtifactId,
+  ) -> Result<crate::PublishedExecutionInput, StoreError> {
+    Err(StoreError::NotFound {
+      entity: EntityKind::Artifact,
+    })
   }
 
   /// Lists a bounded set of published logical outputs for one Build.

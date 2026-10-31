@@ -770,7 +770,7 @@ fn triage_eligibility_committed_results_prepare_the_gate_and_only_the_declared_s
       })
       .unwrap();
       if index == 0 {
-        let subject = FactoryTaskSubject::Exact(work.subject().clone());
+        let subject = FactoryTaskSubject::Exact(work.subject().repository().unwrap().clone());
         let artifact = FactoryArtifactReference::new(
           ArtifactId::generate(),
           FactoryDigest::content_sha256(b"private Project goals"),

@@ -607,7 +607,7 @@ async fn admit_configuration(
   work: &WorkEnvelope,
 ) -> (Arc<InMemoryFactoryConfigurationStore>, FactoryRunId) {
   let project = work.subject().project_id();
-  let repository = work.subject().repository_id();
+  let repository = work.subject().repository().unwrap().repository_id();
   let configuration_id = work.configuration().id();
   let config = crate::factory_admission_tests::configuration_with_flow(project, configuration_id, Some(flow));
   let store = Arc::new(InMemoryFactoryConfigurationStore::new());
@@ -928,7 +928,7 @@ fn a_failed_bounded_observation_rolls_back_and_external_monitoring_cannot_rewrit
     let mut command = crate::factory_admission_tests::command(
       snapshot.work.subject().project_id(),
       snapshot.work.configuration().id(),
-      snapshot.work.subject().repository_id(),
+      snapshot.work.subject().repository().unwrap().repository_id(),
     );
     command.external_identity = ExternalWorkIdentity::new("monitoring/new-observation").unwrap();
     command.idempotency_key = IdempotencyKey::new("monitoring-new-work").unwrap();

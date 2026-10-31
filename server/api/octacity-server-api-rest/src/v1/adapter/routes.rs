@@ -560,6 +560,18 @@ fn registered_routes() -> ManagementRoutes {
       "listFactoryProfileCapabilities",
       super::factory_roles::capabilities,
     )
+    .post::<octacity_server_application::ResolveFactoryExecutionBindingQuery, _, _>(
+      "resolveFactoryExecutionBinding",
+      super::factory_roles::resolve_execution_binding,
+    )
+    .get::<octacity_server_application::GetFactoryAuthoringCapabilitiesQuery, _, _>(
+      "getFactoryAuthoringCapabilities",
+      super::factory_roles::authoring_capabilities,
+    )
+    .post::<octacity_server_application::ValidateFactoryGateProgramQuery, _, _>(
+      "validateFactoryGateProgram",
+      super::factory_roles::validate_gate_program,
+    )
     .get::<octacity_server_application::GetFactoryRuntimeSettingsQuery, _, _>(
       "getFactoryRuntimeSettings",
       super::factory_roles::runtime_settings::current,

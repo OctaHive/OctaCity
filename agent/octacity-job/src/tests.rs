@@ -475,7 +475,7 @@ async fn runs_a_verified_job_through_the_selected_backend_and_cleans_up() {
     .unwrap();
 
   assert_eq!(completion.runner().status, RunStatus::Succeeded);
-  assert_eq!(completion.source().revision, spec.source.revision);
+  assert_eq!(completion.source().unwrap().revision, spec.source.revision);
   assert_eq!(completion.output_limits(), &spec.outputs);
   assert_eq!(source_calls.load(Ordering::SeqCst), 1);
   assert_eq!(starts.load(Ordering::SeqCst), 1);

@@ -669,6 +669,38 @@ fn v3_allows_source_free_execution_but_never_source_capture_or_write_overlays() 
 }
 
 #[test]
+fn signed_v4_source_free_job_needs_no_repository_or_factory_causality() {
+  let signing_key = SigningKey::from_bytes(&[31; 32]);
+  let keys = BTreeMap::from([("test-key".to_owned(), signing_key.verifying_key())]);
+  let mut wire = serde_json::to_value(v3_spec()).unwrap();
+  wire["protocol_version"] = serde_json::json!(4);
+  wire["source"] = serde_json::json!({"kind":"source_free_v1"});
+  wire.as_object_mut().unwrap().remove("factory");
+  wire["permissions"]["mounts"]
+    .as_array_mut()
+    .unwrap()
+    .retain(|mount| mount["root"] != FACTORY_SOURCE_ROOT);
+  let result = verify_compatible_job_spec(&signed_envelope(&wire, &signing_key), &keys, binding(&spec()));
+  assert!(
+    result.is_ok(),
+    "a signed ordinary source-free Job requires no synthetic source: {result:?}"
+  );
+  assert_eq!(result.unwrap().protocol_version(), 4);
+  for field in ["revision", "provider"] {
+    let mut forged = wire.clone();
+    forged["source"][field] = serde_json::json!("undeclared");
+    assert!(verify_compatible_job_spec(&signed_envelope(&forged, &signing_key), &keys, binding(&spec())).is_err());
+  }
+  let mut envelope = signed_envelope(&wire, &signing_key);
+  wire["source"] = serde_json::to_value(spec().source).unwrap();
+  envelope.payload = BASE64.encode(serde_json::to_vec(&wire).unwrap());
+  assert!(matches!(
+    verify_compatible_job_spec(&envelope, &keys, binding(&spec())),
+    Err(JobSpecError::InvalidSignature)
+  ));
+}
+
+#[test]
 fn v3_binds_independent_mcp_credentials_to_exact_variables_and_signed_profile_grants() {
   let mut wire = serde_json::to_value(v3_spec()).unwrap();
   wire["execution"]["mcp_credentials"] = serde_json::json!({

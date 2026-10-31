@@ -17,8 +17,8 @@ pub struct FactoryCodexNodeRunContract<'a> {
   pub schema: &'a FlowDataSchema,
   /// BLAKE3 of the complete compiler-owned prompt actually supplied to execution.
   pub prompt_digest: FactoryDigest,
-  /// Exact source revision actually materialized for the Job.
-  pub source_revision: &'a ImmutableRevision,
+  /// Exact materialized revision, absent only for a source-free Job.
+  pub source_revision: Option<&'a ImmutableRevision>,
   /// Frozen common execution ceiling.
   pub budget: BudgetLimit,
   /// Installed cost basis, verified against the executed protected manifest.
@@ -36,7 +36,7 @@ impl FactoryCodexNodeRunContract<'_> {
       model: &self.profile.model_or_tool,
       model_identifier: self.model_identifier,
       prompt_digest: self.prompt_digest,
-      source_revision: self.source_revision.as_str(),
+      source_revision: self.source_revision.map(ImmutableRevision::as_str),
     }
   }
 }
@@ -152,7 +152,7 @@ pub fn verify_codex_review_node_run(
   .map_err(|_| invalid())?;
   if expected.profile != intent.profile()
     || expected.budget != intent.budget()
-    || expected.source_revision != review.invocation.plan().subject().candidate_revision()
+    || expected.source_revision != Some(review.invocation.plan().subject().candidate_revision())
     || expected.prompt_digest != crate::codex_prompt_provenance_digest(text)
     || expected.execution_window.start() < &intent.node().started_at()
     || expected.execution_window.end() > &intent.node().deadline()

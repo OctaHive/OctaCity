@@ -68,11 +68,17 @@ impl FactoryFlowInputPreparer for Inputs {
     snapshot: &FactoryRunSnapshot,
     target: &FactoryNodeTarget,
   ) -> Result<FlowNodeInput, ApplicationError> {
-    prepare_factory_flow_input(snapshot, target)?
+    let input = prepare_factory_flow_input(snapshot, target)?;
+    let subject = if input.code().is_some() {
+      input.task_subject().map_err(|_| ApplicationError::invalid())?
+    } else {
+      FactoryTaskSubject::Candidate(self.0.clone())
+    };
+    input
       .with_context(
         ContextManifest::new(
           ContextManifestId::generate(),
-          FactoryTaskSubject::Candidate(self.0.clone()),
+          subject,
           FactoryDigest::from_bytes([3; 32]),
           vec![],
         )
@@ -91,6 +97,7 @@ struct Fixture {
   plan: EvaluationPlan,
   assessment: Assessment,
   policy: DecisionPolicy,
+  decision: Arc<FactoryEvaluationDecisionAction<store_testing::InMemoryFactoryConfigurationStore>>,
 }
 
 fn fixture(trusted_assessment: bool, failing_evidence: bool, complete_selection: bool) -> Fixture {
@@ -109,11 +116,46 @@ fn fixture_for_work(
   failing_evidence: bool,
   complete_selection: bool,
 ) -> Fixture {
+  fixture_with_resource(
+    work,
+    run_id,
+    trusted_assessment,
+    failing_evidence,
+    complete_selection,
+    false,
+    None,
+  )
+}
+fn fixture_with_resource(
+  work: WorkEnvelope,
+  run_id: FactoryRunId,
+  trusted_assessment: bool,
+  failing_evidence: bool,
+  complete_selection: bool,
+  independent_resource: bool,
+  other_candidate_digest_only: Option<bool>,
+) -> Fixture {
   let candidate = CandidateSubject::new(
-    work.subject().clone(),
+    work.subject().repository().unwrap().clone(),
     ImmutableRevision::new("reviewed-candidate").unwrap(),
     FactoryDigest::from_bytes([9; 32]),
   );
+  let selected_candidate = match other_candidate_digest_only {
+    Some(digest_only) => CandidateSubject::new(
+      candidate.exact().clone(),
+      if digest_only {
+        candidate.candidate_revision().clone()
+      } else {
+        ImmutableRevision::new("other-candidate").unwrap()
+      },
+      if digest_only {
+        FactoryDigest::from_bytes([10; 32])
+      } else {
+        candidate.changeset_digest()
+      },
+    ),
+    None => candidate.clone(),
+  };
   let (input, node) = octacity_server_factory::testing::candidate_node_fixture(&work);
   let changeset = ChangeSet::new(
     ChangeSetId::generate(),
@@ -124,6 +166,7 @@ fn fixture_for_work(
     ArtifactId::generate(),
   )
   .unwrap();
+
   let evidence = EvidenceManifest::new(
     EvidenceManifestId::generate(),
     &changeset,
@@ -262,6 +305,11 @@ fn fixture_for_work(
     &[],
   )
   .unwrap();
+  let work = if independent_resource {
+    crate::factory_node_test_support::repository_free_work(&work)
+  } else {
+    work
+  };
   let values = [
     serde_json::to_value(&evidence).unwrap(),
     serde_json::to_value(&plan).unwrap(),
@@ -316,8 +364,16 @@ fn fixture_for_work(
     reference("planning-owner"),
     reference("review-owner"),
   ];
+  let candidate_owner = reference("candidate-owner");
+  let other_candidate_owner = reference("other-candidate-owner");
+  let candidate_outcome = FlowOutcomeDefinition::new(key("ready"), FlowOutcomeKind::Success, empty.reference().clone());
   let permissions = FactoryPermissionSet::try_new(FactoryPermissionDraft {
-    plugins: owners.iter().cloned().chain([decision_identity.clone()]).collect(),
+    plugins: owners
+      .iter()
+      .cloned()
+      .chain([decision_identity.clone(), candidate_owner.clone()])
+      .chain(other_candidate_digest_only.map(|_| other_candidate_owner.clone()))
+      .collect(),
     ..Default::default()
   })
   .unwrap();
@@ -437,11 +493,72 @@ fn fixture_for_work(
     )
   }));
   let total = BudgetLimit::new(8, 10_000, 1000, 1000, 1_000_000).unwrap();
-  let definition = FlowDefinition::new(FlowDefinitionInput {
+  if independent_resource {
+    nodes.push(
+      FlowNodeDefinition::new(FlowNodeDefinitionInput {
+        key: key("capture-resource"),
+        kind: FlowNodeKind::TrustedAction,
+        input_schema: Some(empty.reference().clone()),
+        outcomes: vec![candidate_outcome.clone()],
+        budget: budget(),
+        permissions: permissions.clone(),
+        required: true,
+        subflow: None,
+      })
+      .unwrap()
+      .with_action(FlowActionBinding::new(candidate_owner.clone(), key("publish"), serde_json::json!({})).unwrap())
+      .unwrap()
+      .with_input_binding(
+        FlowInputBinding::new(
+          BTreeMap::new(),
+          FlowDataMapping::new(FlowValueMapping::Constant {
+            value: serde_json::json!(true),
+          })
+          .unwrap(),
+        )
+        .unwrap(),
+      )
+      .unwrap(),
+    );
+    transitions.push(FlowTransition::new(
+      key("capture-resource"),
+      key("ready"),
+      FlowTransitionTarget::Node(key(names[0])),
+    ));
+    if other_candidate_digest_only.is_some() {
+      // Independently retain C1 for the review and C2 for the later decision.
+      // Both producers use the same base; no candidate/assessment is forged.
+      let mut wire = serde_json::to_value(nodes.last().unwrap()).unwrap();
+      wire["key"] = serde_json::json!("capture-other-resource");
+      let other: FlowNodeDefinition = serde_json::from_value(wire).unwrap();
+      nodes.push(
+        other
+          .with_action(
+            FlowActionBinding::new(other_candidate_owner.clone(), key("publish"), serde_json::json!({})).unwrap(),
+          )
+          .unwrap(),
+      );
+      transitions[2] = FlowTransition::new(
+        key(names[2]),
+        key("ready"),
+        FlowTransitionTarget::Node(key("capture-other-resource")),
+      );
+      transitions.push(FlowTransition::new(
+        key("capture-other-resource"),
+        key("ready"),
+        FlowTransitionTarget::Node(key("choose-next-action")),
+      ));
+    }
+  }
+  let definition = FlowDefinitionInput {
     id: FlowDefinitionId::generate(),
     version: FlowDefinitionVersion::INITIAL,
     input_schema: Some(empty.reference().clone()),
-    entry: key(names[0]),
+    entry: if independent_resource {
+      key("capture-resource")
+    } else {
+      key(names[0])
+    },
     nodes,
     transitions,
     terminals: vec![FlowTerminalDefinition::new(
@@ -451,8 +568,26 @@ fn fixture_for_work(
     context_projections: vec![],
     data_projections: vec![],
     execution: FlowExecutionPolicy::new(total, permissions.clone(), 1).unwrap(),
-  })
-  .unwrap();
+  };
+  let definition = if independent_resource {
+    let mut definition = definition;
+    for node in &mut definition.nodes {
+      if !["capture-resource", "capture-other-resource"].contains(&node.key().as_str()) {
+        let producer = if other_candidate_digest_only.is_some() && node.key().as_str() == "choose-next-action" {
+          "capture-other-resource"
+        } else {
+          "capture-resource"
+        };
+        let mut wire = serde_json::to_value(&*node).unwrap();
+        wire["code"] = serde_json::json!({"kind":"source", "source":"review-code", "access":"read_only",
+          "scope":{"kind":"repository"}, "revision":{"kind":"accepted_candidate", "node":producer, "outcome":"ready"}});
+        *node = serde_json::from_value(wire).unwrap();
+      }
+    }
+    crate::factory_node_test_support::flow_with_explicit_resource(definition, candidate.exact())
+  } else {
+    FlowDefinition::new(definition).unwrap()
+  };
   let run = FactoryRun::admitted(run_id, &work);
   let flow = FlowRun::root(&run, definition.reference()).unwrap();
   let cycle = WorkflowCycle::initial(&flow).unwrap();
@@ -536,17 +671,40 @@ fn fixture_for_work(
       )
     })
     .collect::<Vec<_>>();
+  if independent_resource {
+    entries.push((
+      FlowNodeKind::TrustedAction,
+      NodeExecutionIdentity::External(candidate_owner.clone()),
+      Arc::new(FactoryFlowActionAdapter::new(Arc::new(Publication {
+        identity: candidate_owner,
+        value: serde_json::json!(true),
+        discovery: Some(FlowDiscoveryFacts::candidate(candidate.clone())),
+        outcome: candidate_outcome.clone(),
+      }))),
+    ));
+    if other_candidate_digest_only.is_some() {
+      entries.push((
+        FlowNodeKind::TrustedAction,
+        NodeExecutionIdentity::External(other_candidate_owner.clone()),
+        Arc::new(FactoryFlowActionAdapter::new(Arc::new(Publication {
+          identity: other_candidate_owner,
+          value: serde_json::json!(true),
+          discovery: Some(FlowDiscoveryFacts::candidate(selected_candidate)),
+          outcome: candidate_outcome,
+        }))),
+      ));
+    }
+  }
+  let decision = Arc::new(FactoryEvaluationDecisionAction::new(
+    decision_identity.clone(),
+    store.clone(),
+    profile,
+    crate::factory_node_test_support::clock(),
+  ));
   entries.push((
     FlowNodeKind::TrustedAction,
     NodeExecutionIdentity::External(decision_identity.clone()),
-    Arc::new(FactoryFlowActionAdapter::new(Arc::new(
-      FactoryEvaluationDecisionAction::new(
-        decision_identity,
-        store.clone(),
-        profile,
-        crate::factory_node_test_support::clock(),
-      ),
-    ))),
+    Arc::new(FactoryFlowActionAdapter::new(decision.clone())),
   ));
   Fixture {
     store,
@@ -557,6 +715,7 @@ fn fixture_for_work(
     plan,
     assessment,
     policy,
+    decision,
   }
 }
 
@@ -570,11 +729,101 @@ async fn run(fixture: &Fixture) -> Result<FactoryRunSnapshot, ApplicationError> 
   for time in 11..70 {
     runner.reconcile_flow(fixture.run, fixture.claim, at(time)).await?;
     let snapshot = fixture.store.factory_run_snapshot(fixture.run).await?;
-    if snapshot.flow.data.records.len() == 4 {
+    let expected = snapshot
+      .admitted_flow
+      .closure()
+      .definition(snapshot.admitted_flow.closure().root())
+      .unwrap()
+      .nodes()
+      .len();
+    if snapshot.flow.data.records.len() == expected {
       return Ok(snapshot);
     }
   }
   panic!("configured decision must finish")
+}
+
+#[test]
+fn accepted_review_decision_uses_the_step_resource_without_a_work_repository() {
+  crate::factory_admission_tests::run_ready(async {
+    let fixture = fixture_with_resource(
+      store_testing::factory_node_journal_contract_fixture().admission.work,
+      FactoryRunId::generate(),
+      true,
+      false,
+      true,
+      true,
+      None,
+    );
+    let snapshot = run(&fixture)
+      .await
+      .expect("retained review facts qualify by the exact node resource");
+    assert!(snapshot.work.subject().repository().is_err());
+    let record = snapshot
+      .flow
+      .data
+      .records
+      .iter()
+      .find(|record| {
+        record
+          .discovery()
+          .is_some_and(|facts| facts.kind() == FlowDiscoveryKind::Decision)
+      })
+      .unwrap();
+    let decision: Decision = serde_json::from_value(record.payload().value().clone()).unwrap();
+    assert_eq!(decision.outcome(), DecisionOutcome::Accept);
+    assert_eq!(decision.subject().exact(), record.input().exact_resource().unwrap());
+    assert_eq!(decision.assessment_ids(), &[fixture.assessment.id()]);
+  });
+}
+
+#[test]
+fn decision_action_rejects_genuine_review_facts_for_another_selected_candidate() {
+  crate::factory_admission_tests::run_ready(async {
+    for digest_only in [false, true] {
+      let h = fixture_with_resource(
+        store_testing::factory_node_journal_contract_fixture().admission.work,
+        FactoryRunId::generate(),
+        true,
+        false,
+        true,
+        true,
+        Some(digest_only),
+      );
+      let runner = FactoryFlowRunner::new(
+        h.store.clone(),
+        h.executors.clone(),
+        h.input.clone(),
+        crate::factory_node_test_support::clock(),
+      );
+      for time in 11..70 {
+        let reconciled = runner.reconcile_flow(h.run, h.claim, at(time)).await;
+        let snapshot = h.store.factory_run_snapshot(h.run).await.unwrap();
+        if let Some(input) = snapshot
+          .flow
+          .data
+          .inputs
+          .iter()
+          .find(|input| input.node() == &key("choose-next-action"))
+        {
+          assert!(
+            h.decision
+              .execute(crate::factory_node_test_support::retained_action_request(
+                &snapshot,
+                input,
+                at(69)
+              ))
+              .await
+              .is_err(),
+            "the decision action itself must refuse another candidate's retained review facts"
+          );
+          break;
+        }
+        reconciled.unwrap();
+        assert!(time < 69, "the real runner must retain a decision input");
+      }
+    }
+  });
 }
 
 #[test]

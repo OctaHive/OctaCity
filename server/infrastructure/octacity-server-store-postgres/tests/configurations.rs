@@ -29,6 +29,71 @@ use tokio::sync::Barrier;
 
 #[tokio::test]
 #[ignore = "requires an explicitly configured disposable PostgreSQL service"]
+async fn source_free_configuration_survives_postgres_restart_without_a_repository() {
+  let database = TestDatabase::migrated().await;
+  for _ in 0..2 {
+    sqlx::raw_sql(include_str!("../migrations/0110_source_free_build_configuration.sql"))
+      .execute(&database.pool)
+      .await
+      .unwrap();
+  }
+  let project = id::<ProjectId>(800);
+  let pool = id::<PoolId>(801);
+  let pipeline = id::<PipelineId>(802);
+  seed_project_and_pool(&database.pool, project, pool).await;
+  let store = PostgresStore::new(database.pool.clone());
+  store
+    .create_pipeline(management_mutation(CreatePipeline {
+      id: pipeline,
+      project_id: project,
+      name: "standalone".parse().unwrap(),
+      dag: dag("standalone"),
+      idempotency_key: key("source-free-pipeline"),
+      published_at: time(10),
+    }))
+    .await
+    .unwrap();
+  let mut wire = serde_json::to_value(configuration(
+    id(803),
+    pipeline,
+    PipelineVersion::INITIAL,
+    pool,
+    "standalone",
+  ))
+  .unwrap();
+  wire.as_object_mut().unwrap().remove("repository_id");
+  wire.as_object_mut().unwrap().remove("repository_version");
+  wire["source"] = json!({"kind":"source_free_v1"});
+  let request = CreateBuildConfiguration {
+    id: id(804),
+    project_id: project,
+    name: "standalone".parse().unwrap(),
+    definition: serde_json::from_value(wire.clone()).unwrap(),
+    idempotency_key: key("source-free-configuration"),
+    published_at: time(20),
+  };
+  let created = store
+    .create_build_configuration(management_mutation(request.clone()))
+    .await
+    .unwrap();
+  let restarted = PostgresStore::new(independent_pool(&database.pool).await);
+  let retained = restarted
+    .build_configuration_version(created.configuration.id, BuildConfigurationVersion::INITIAL)
+    .await
+    .unwrap();
+  assert_eq!(serde_json::to_value(&retained.definition).unwrap(), wire);
+  assert_eq!(retained, created.configuration);
+  let replay = restarted
+    .create_build_configuration(management_mutation(request))
+    .await
+    .unwrap();
+  assert_eq!(replay.disposition, octacity_server_store::MutationDisposition::Replayed);
+  assert_eq!(replay.configuration, retained);
+  database.cleanup().await;
+}
+
+#[tokio::test]
+#[ignore = "requires an explicitly configured disposable PostgreSQL service"]
 async fn concurrent_publication_preserves_build_configuration_and_pipeline_snapshots() {
   let database = TestDatabase::migrated().await;
   let project_id = id::<ProjectId>(1);
@@ -282,8 +347,9 @@ fn configuration(
   BuildConfigurationDefinition {
     enabled: true,
     job_concurrency_limit: 2,
-    repository_id,
-    repository_version: RepositoryVersion::INITIAL,
+    repository_id: Some(repository_id),
+    repository_version: Some(RepositoryVersion::INITIAL),
+    source: None,
     pipeline_id,
     pipeline_version,
     parameters: ParameterSchema {

@@ -81,7 +81,7 @@ impl<S: FactoryRunStore> FactoryReviewInvocationSource for FactoryStoredReviewIn
       serde_json::from_value(payload.get("evaluator").cloned().ok_or_else(invalid)?).map_err(|_| invalid())?;
     if &selected != evaluator
       || !plan.has_evaluator(evaluator)
-      || plan.subject().exact() != input.subject()
+      || !input.matches_candidate_resource(plan.subject())
       || plan.subject() != evidence.subject()
       || plan.evidence_id() != evidence.id()
       || plan.created_at() > observed_at

@@ -26,6 +26,18 @@ fn installed_work_status_contract_defines_its_exact_closed_receipt_without_a_pub
   let action = FactoryWorkStatusAction::installed(identity.clone(), reporter.clone()).unwrap();
   assert_eq!(contract.plugin, identity);
   assert_eq!(contract.action.as_str(), "set_status");
+  let presentation = serde_json::to_value(&contract).unwrap();
+  assert_eq!(presentation["parameters"]["contract"], "work_status_v1");
+  assert_eq!(presentation["parameters"]["source_update_required"], true);
+  assert_eq!(presentation["parameters"]["outbox_required"], true);
+  assert_eq!(
+    presentation["parameters"]["max_status_bytes"],
+    MAX_FACTORY_SAFE_TEXT_BYTES
+  );
+  assert_eq!(
+    presentation["parameters"]["max_attempts"],
+    FactoryReporterRetryPolicy::MAX_ATTEMPTS
+  );
   assert_eq!(contract.outcome.key().as_str(), "queued");
   assert_eq!(contract.outcome.schema(), contract.output.reference());
   let binding = FlowActionBinding::new(

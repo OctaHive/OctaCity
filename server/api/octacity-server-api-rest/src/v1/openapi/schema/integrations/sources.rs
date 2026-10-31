@@ -19,9 +19,17 @@ pub(super) fn insert(schemas: &mut Map<String, Value>) {
     object(
       json!({
         "plugin":pin(), "action":{"type":"string","const":"set_status"},
+        "parameters":object(json!({
+          "contract":{"const":"work_status_v1"},
+          "max_status_bytes":{"type":"integer","minimum":1},
+          "source_update_required":{"const":true},
+          "outbox_required":{"const":true},
+          "max_attempts":{"type":"integer","minimum":1},
+          "max_retry_delay_millis":{"type":"integer","minimum":1}
+        }), &["contract","max_status_bytes","source_update_required","outbox_required","max_attempts","max_retry_delay_millis"]),
         "output":reference("FactoryFlowDataSchema"), "outcome":reference("FactoryFlowOutcome")
       }),
-      &["plugin", "action", "output", "outcome"],
+      &["plugin", "action", "parameters", "output", "outcome"],
     ),
   );
   let id = || json!({"type":"string","format":"uuid"});

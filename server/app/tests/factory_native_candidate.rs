@@ -185,7 +185,7 @@ async fn default_native_runtime_materializes_one_exact_readonly_candidate_and_re
   let managed = job.job.job_spec_template.managed_intent().unwrap();
   let protected = managed.protected_inputs().clone();
   assert_eq!(protected.inputs.len(), 6);
-  let instruction = managed.factory().change_set_materialization.as_ref().unwrap();
+  let instruction = managed.factory().unwrap().change_set_materialization.as_ref().unwrap();
   assert_eq!(instruction.candidate_revision, candidate_fixture::CANDIDATE);
   assert_eq!(
     instruction.bundle_input,
@@ -195,8 +195,8 @@ async fn default_native_runtime_materializes_one_exact_readonly_candidate_and_re
     instruction.manifest_input,
     artifacts[1].identity().artifact_id.to_string()
   );
-  assert!(managed.factory().source_write_paths.is_none());
-  assert!(managed.factory().change_set_capture.is_none());
+  assert!(managed.factory().unwrap().source_write_paths.is_none());
+  assert!(managed.factory().unwrap().change_set_capture.is_none());
   assert!(managed.execution().tool_control.is_none());
   assert!(managed.permissions().tools.is_empty());
   assert!(

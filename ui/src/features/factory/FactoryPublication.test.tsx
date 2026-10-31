@@ -12,6 +12,46 @@ import { factoryApi } from './api';
 import { FactoryPublication } from './FactoryPublication';
 import { configurationFixture } from '../../../tests/fixtures/factory';
 afterEach(cleanup);
+it.each([
+  ['budget_exceeds_ceiling', 'Budget exceeds its enclosing limit'],
+  ['concurrency_exceeds_ceiling', 'Concurrency exceeds its enclosing limit'],
+] as const)(
+  'shows the authoritative %s blocker without permitting publication',
+  async (code, label) => {
+    const { request } = setup();
+    const api = {
+      ...factoryApi,
+      validateFlow: vi.fn(async () => {
+        throw new ManagementApiError({
+          code: 'invalid_request',
+          message: 'Limit rejected',
+          requestId: null,
+          retryAfterMilliseconds: null,
+          status: 400,
+          validationIssues: [{ field: '/execution/budget', code }],
+        });
+      }),
+    };
+    render(
+      <QueryClientProvider client={createConsoleQueryClient()}>
+        <RouterProvider
+          router={createMemoryRouter([
+            {
+              path: '*',
+              element: <FactoryPublication api={api} subject={{ kind: 'flow', request }} />,
+            },
+          ])}
+        />
+      </QueryClientProvider>,
+    );
+    await userEvent.click(screen.getByRole('button', { name: 'Validate draft' }));
+    expect(await screen.findByText(label, { exact: false })).toBeTruthy();
+    expect(screen.getByRole('button', { name: 'Review publication' })).toHaveProperty(
+      'disabled',
+      true,
+    );
+  },
+);
 function setup() {
   const config = configurationFixture().configuration;
   const root = config.flow.closure.definitions.find(

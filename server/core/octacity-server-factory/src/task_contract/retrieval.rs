@@ -124,7 +124,7 @@ impl RetrievalReceipt {
       if fragment.rank != expected_rank {
         return Err(invalid("retrieval fragment rank"));
       }
-      if fragment.range.repository_id() != subject.exact().repository_id() || fragment.range.revision() != &revision {
+      if fragment.range.repository_id() != subject.exact()?.repository_id() || fragment.range.revision() != &revision {
         return Err(FactoryError::InconsistentSubject);
       }
     }

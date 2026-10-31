@@ -18,7 +18,8 @@ verification.
 
 ## Compatibility and rollout
 
-The server supports execution contracts `1..=3`. Released Agents that have not
+The server supports execution contracts `1..=4`; [revision 4](signed-job-spec-v4.md)
+adds explicit source-free managed Jobs. Released Agents that have not
 implemented protected input staging and enforcement continue to advertise
 `1..=2`, negotiate v2, and remain eligible for ordinary v1/v2 Jobs. They are
 ineligible for v3 Jobs. An Agent must not advertise v3 until it can enforce the

@@ -81,7 +81,7 @@ impl ImplementationResult {
       return Err(invalid("implementation task mode"));
     }
     let subject = match (outcome, candidate) {
-      (ImplementationOutcome::Succeeded, Some(candidate)) if candidate.exact() == envelope.subject().exact() => {
+      (ImplementationOutcome::Succeeded, Some(candidate)) if candidate.exact() == envelope.subject().exact()? => {
         FactoryTaskSubject::Candidate(candidate)
       }
       (ImplementationOutcome::Succeeded, _) => return Err(FactoryError::InconsistentSubject),

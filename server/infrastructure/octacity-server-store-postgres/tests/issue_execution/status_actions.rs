@@ -197,7 +197,8 @@ async fn linked_at_schema(
         intent_digest: FactoryDigest::from_bytes([99; 32]),
         idempotency_key: reviewed.admission_key(),
       },
-      repository_version: RepositoryVersion::INITIAL,
+      repository_version: Some(RepositoryVersion::INITIAL),
+
       work,
       flow: AdmittedFlow::from_configuration(&configuration, &run).unwrap(),
       run,
@@ -577,7 +578,7 @@ async fn parallel_work(
     WorkEnvelopeId::generate(),
     previous.work.configuration().clone(),
     reviewed.external_identity(),
-    previous.work.subject().clone(),
+    previous.work.subject().repository().unwrap().clone(),
     previous.work.artifacts().clone(),
     WorkClassification::new(
       previous.work.priority(),
@@ -603,7 +604,8 @@ async fn parallel_work(
         intent_digest: FactoryDigest::from_bytes([98; 32]),
         idempotency_key: reviewed.admission_key(),
       },
-      repository_version: reviewed.intent.target.repository_version,
+      repository_version: Some(reviewed.intent.target.repository_version),
+
       work,
       flow: AdmittedFlow::from_configuration(&configuration, &run).unwrap(),
       run,

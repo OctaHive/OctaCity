@@ -192,8 +192,9 @@ async fn setup_with_flow(
         project_id: project,
         configuration_id: id,
         configuration_version: FactoryConfigurationVersion::INITIAL,
-        repository_id: repo,
-        repository_version: RepositoryVersion::INITIAL,
+        repository_id: Some(repo),
+
+        repository_version: Some(RepositoryVersion::INITIAL),
       },
       external_identity: ExternalWorkIdentity::new("manual-text/one").unwrap(),
       source: RepositorySourceSelection::ExactRevision(ImmutableRevision::new("original-base").unwrap()),
@@ -246,7 +247,14 @@ async fn durable_shared_text_recovers_unknown_bytes_and_original_admission_after
   assert_eq!(bytes.writes.load(Ordering::SeqCst), 2);
   assert_eq!(resolver.0.load(Ordering::SeqCst), 1);
   assert_eq!(
-    admitted.admission.work.subject().base_revision().as_str(),
+    admitted
+      .admission
+      .work
+      .subject()
+      .repository()
+      .unwrap()
+      .base_revision()
+      .as_str(),
     "original-base"
   );
   let original = restarted
@@ -282,8 +290,8 @@ async fn reviewed_request(
         target: IssueExecutionTarget {
           configuration_id: submission.intent.target.configuration_id,
           configuration_version: submission.intent.target.configuration_version,
-          repository_id: submission.intent.target.repository_id,
-          repository_version: submission.intent.target.repository_version,
+          repository_id: submission.intent.target.repository_id.unwrap(),
+          repository_version: submission.intent.target.repository_version.unwrap(),
           source: submission.intent.source.clone(),
           mapping: IssueExecutionMapping::TitleDescriptionAcceptanceV1,
         },
@@ -589,77 +597,99 @@ async fn killed_publishers_resume_at_byte_publication_admission_and_association_
 #[tokio::test]
 #[ignore = "requires an explicitly configured disposable PostgreSQL service"]
 async fn published_project_inputs_use_existing_protected_transfer_without_build_provenance() {
-  let database = postgres::TestDatabase::migrated().await;
-  let store = Arc::new(PostgresStore::new(database.pool.clone()));
-  let (issue, mut submission) = setup(&store).await;
-  submission.documents = ProjectTextDocuments::try_new("hello", "acceptance").unwrap();
-  let bytes = Arc::new(Bytes::new());
-  let intake = ProjectTextIntake::new(
-    store.clone(),
-    bytes.clone(),
-    Arc::new(Resolver(AtomicUsize::new(0))),
-    Arc::new(TrustedNetworkManagementPolicy),
-    Arc::new(Clock(AtomicI64::new(20))),
-  );
-  let admission = intake.submit(&context(), submission).await.unwrap().admission;
-  let artifact = admission.work.artifacts().task();
-  let published = store.published_execution_input(artifact.artifact_id()).await.unwrap();
-  assert_eq!(published.size_bytes, 5);
-  assert_eq!(
-    published.digest.to_string(),
-    "2cf24dba5fb0a30e26e83b2ac5b9e29e1b161e5c1fa7425e73043362938b9824"
-  );
-  assert!(store.published_artifact(artifact.artifact_id()).await.is_err());
-  let reader = FactoryArtifactReader::new(
-    store.clone(),
-    Arc::new(PostgresAuthoritativeStore::new(
-      database.pool.clone(),
-      postgres::test_signer(),
-    )),
-    bytes,
-  )
-  .with_project_inputs(store.clone());
-  let selected = ReadFactoryArtifact {
-    project_id: issue.project_id,
-    artifact: artifact.clone(),
-    maximum_bytes: 100,
-    observed_at: at(21),
-    required_until: at(50),
-  };
-  assert_eq!(reader.read_input(selected.clone()).await.unwrap().bytes(), b"hello");
-  assert!(reader.read(selected).await.is_err());
-  let input = octacity_protocol::ProtectedInputV3 {
-    artifact_id: artifact.artifact_id().to_string(),
-    sha256: published.digest.to_string(),
-    size_bytes: 5,
-    media_type: "text/plain".into(),
-    destination: format!("{}/task.txt", octacity_protocol::PROTECTED_INPUT_ROOT),
-  };
-  let manifest = octacity_protocol::ProtectedInputManifestV3 {
-    inputs: vec![input.clone()],
-  };
-  let expires = published.expires_at.unwrap();
-  let transfers = protected_input_transfer::service(store.clone())
-    .authorize_protected_inputs(AuthorizeProtectedInputsInput {
-      manifest: manifest.clone(),
-      observed_at_unix_ms: expires.unix_millis() - 10_000,
-      lease_expires_at: at(expires.unix_millis() + 50_000),
-    })
-    .await
-    .unwrap();
-  assert_eq!(transfers[0].input, input);
-  assert_eq!(transfers[0].capability.expires_at_unix_ms, expires.unix_millis() as u64);
-  assert!(
-    protected_input_transfer::service(store)
+  for same_project in [true, false] {
+    let database = postgres::TestDatabase::migrated().await;
+    let store = Arc::new(PostgresStore::new(database.pool.clone()));
+    let (issue, mut submission) = setup(&store).await;
+    submission.documents = ProjectTextDocuments::try_new("hello", "acceptance").unwrap();
+    let bytes = Arc::new(Bytes::new());
+    let intake = ProjectTextIntake::new(
+      store.clone(),
+      bytes.clone(),
+      Arc::new(Resolver(AtomicUsize::new(0))),
+      Arc::new(TrustedNetworkManagementPolicy),
+      Arc::new(Clock(AtomicI64::new(20))),
+    );
+    let admission = intake.submit(&context(), submission).await.unwrap().admission;
+    let artifact = admission.work.artifacts().task();
+    let published = store.published_execution_input(artifact.artifact_id()).await.unwrap();
+    assert_eq!(published.size_bytes, 5);
+    assert_eq!(
+      published.digest.to_string(),
+      "2cf24dba5fb0a30e26e83b2ac5b9e29e1b161e5c1fa7425e73043362938b9824"
+    );
+    assert!(store.published_artifact(artifact.artifact_id()).await.is_err());
+    let reader = FactoryArtifactReader::new(
+      store.clone(),
+      Arc::new(PostgresAuthoritativeStore::new(
+        database.pool.clone(),
+        postgres::test_signer(),
+      )),
+      bytes,
+    )
+    .with_project_inputs(store.clone());
+    let selected = ReadFactoryArtifact {
+      project_id: issue.project_id,
+      artifact: artifact.clone(),
+      maximum_bytes: 100,
+      observed_at: at(21),
+      required_until: at(50),
+    };
+    assert_eq!(reader.read_input(selected.clone()).await.unwrap().bytes(), b"hello");
+    assert!(reader.read(selected).await.is_err());
+    let input = octacity_protocol::ProtectedInputV3 {
+      artifact_id: artifact.artifact_id().to_string(),
+      sha256: published.digest.to_string(),
+      size_bytes: 5,
+      media_type: "text/plain".into(),
+      destination: format!("{}/task.txt", octacity_protocol::PROTECTED_INPUT_ROOT),
+    };
+    let manifest = octacity_protocol::ProtectedInputManifestV3 {
+      inputs: vec![input.clone()],
+    };
+    let (job, _) = postgres::protected_input_job::accept(
+      &database.pool,
+      if same_project {
+        issue.project_id
+      } else {
+        ProjectId::generate()
+      },
+      &manifest.inputs,
+    )
+    .await;
+    let expires = published.expires_at.unwrap();
+    let transfers = protected_input_transfer::service(store.clone())
       .authorize_protected_inputs(AuthorizeProtectedInputsInput {
-        manifest,
-        observed_at_unix_ms: expires.unix_millis(),
-        lease_expires_at: at(expires.unix_millis() + 50_000)
+        job_id: job,
+        manifest: manifest.clone(),
+        observed_at_unix_ms: expires.unix_millis() - 10_000,
+        lease_expires_at: at(expires.unix_millis() + 50_000),
       })
-      .await
-      .is_err()
-  );
-  database.cleanup().await;
+      .await;
+    if !same_project {
+      assert!(
+        transfers.is_err(),
+        "a declared input cannot bypass its publication's Project owner"
+      );
+      database.cleanup().await;
+      continue;
+    }
+    let transfers = transfers.unwrap();
+    assert_eq!(transfers[0].input, input);
+    assert_eq!(transfers[0].capability.expires_at_unix_ms, expires.unix_millis() as u64);
+    assert!(
+      protected_input_transfer::service(store)
+        .authorize_protected_inputs(AuthorizeProtectedInputsInput {
+          job_id: job,
+          manifest,
+          observed_at_unix_ms: expires.unix_millis(),
+          lease_expires_at: at(expires.unix_millis() + 50_000)
+        })
+        .await
+        .is_err()
+    );
+    database.cleanup().await;
+  }
 }
 
 #[tokio::test]

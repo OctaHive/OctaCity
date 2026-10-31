@@ -208,7 +208,7 @@ fn verification_fixture(
   .with_data_schemas(prior.data_schemas().to_vec())
   .unwrap();
   let subject = FactoryTaskSubject::Candidate(CandidateSubject::new(
-    work.subject().clone(),
+    work.subject().repository().unwrap().clone(),
     octacity_server_domain::ImmutableRevision::new("candidate").unwrap(),
     FactoryDigest::from_bytes([95; 32]),
   ));
@@ -350,6 +350,7 @@ pub(crate) fn execution_fixture_with_retry_policy(
     ExecutionFixtureOptions {
       maximum,
       public_result: false,
+      ..Default::default()
     },
     FactoryPermissionSet::deny_all(),
   )
@@ -362,13 +363,48 @@ pub(crate) fn execution_fixture_with_permissions(
   output_schema: Option<FlowDataSchema>,
   permissions: FactoryPermissionSet,
 ) -> (WorkEnvelope, AdmittedFlow, FlowDataSchema, FlowNodeInput, NodeAttempt) {
+  execution_fixture_with_step_task(kind, work, selection, output_schema, permissions, None)
+}
+
+pub(crate) fn execution_fixture_with_step_task(
+  kind: FlowNodeKind,
+  work: WorkEnvelope,
+  selection: FlowBuildBinding,
+  output_schema: Option<FlowDataSchema>,
+  permissions: FactoryPermissionSet,
+  step_task: Option<&str>,
+) -> (WorkEnvelope, AdmittedFlow, FlowDataSchema, FlowNodeInput, NodeAttempt) {
   execution_fixture_with_authority(
     kind,
     work,
     selection,
     None,
     output_schema,
-    ExecutionFixtureOptions::default(),
+    ExecutionFixtureOptions {
+      step_task: step_task.map(str::to_owned),
+      ..Default::default()
+    },
+    permissions,
+  )
+}
+
+#[allow(dead_code)] // Source-free application contracts reuse the same ordinary Flow owner.
+pub(crate) fn execution_fixture_without_code(
+  kind: FlowNodeKind,
+  work: WorkEnvelope,
+  selection: FlowBuildBinding,
+  permissions: FactoryPermissionSet,
+) -> (WorkEnvelope, AdmittedFlow, FlowDataSchema, FlowNodeInput, NodeAttempt) {
+  execution_fixture_with_authority(
+    kind,
+    work,
+    selection,
+    None,
+    None,
+    ExecutionFixtureOptions {
+      source_free: true,
+      ..Default::default()
+    },
     permissions,
   )
 }
@@ -389,6 +425,7 @@ pub(crate) fn public_result_execution_fixture(
     ExecutionFixtureOptions {
       maximum: 0,
       public_result,
+      ..Default::default()
     },
     FactoryPermissionSet::deny_all(),
   )
@@ -398,6 +435,8 @@ pub(crate) fn public_result_execution_fixture(
 struct ExecutionFixtureOptions {
   maximum: u16,
   public_result: bool,
+  step_task: Option<String>,
+  source_free: bool,
 }
 
 fn execution_fixture_with_authority(
@@ -453,8 +492,18 @@ fn execution_fixture_with_authority(
   .with_build(selection.clone())
   .unwrap();
   node = node.with_execution_retries(maximum).unwrap();
+  if let Some(task) = options.step_task {
+    let mut wire = serde_json::to_value(&node).unwrap();
+    wire["task"] = serde_json::json!(task);
+    node = serde_json::from_value(wire).expect("the operator's reviewed step task is a Flow node contract");
+  }
   if let Some(pool) = pool {
     node = node.with_phase_pool(pool);
+  }
+  if options.source_free {
+    let mut wire = serde_json::to_value(&node).unwrap();
+    wire["code"] = serde_json::json!({"kind": "none"});
+    node = serde_json::from_value(wire).unwrap();
   }
   let definition = FlowDefinition::new(FlowDefinitionInput {
     id: FlowDefinitionId::generate(),
@@ -476,6 +525,11 @@ fn execution_fixture_with_authority(
     execution: FlowExecutionPolicy::new(limits.budget(), permissions, 1).unwrap(),
   })
   .unwrap();
+  let definition = if options.source_free {
+    definition.with_code_sources(std::collections::BTreeMap::new()).unwrap()
+  } else {
+    definition
+  };
   let run = FactoryRun::admitted(FactoryRunId::generate(), &work);
   let flow = FlowRun::root(&run, definition.reference()).unwrap();
   let cycle = WorkflowCycle::initial(&flow).unwrap();
@@ -493,7 +547,11 @@ fn execution_fixture_with_authority(
     vec![schema.clone(), output_schema.clone()]
   })
   .unwrap();
-  let task_subject = FactoryTaskSubject::Exact(work.subject().clone());
+  let task_subject = if options.source_free {
+    FactoryTaskSubject::WorkInputV1(work.subject().clone())
+  } else {
+    FactoryTaskSubject::Exact(work.subject().repository().unwrap().clone())
+  };
   let task = work.artifacts().task().clone();
   let context_entry = ContextManifestEntry::new(
     ContextSourceKind::Task,
@@ -672,7 +730,7 @@ pub(crate) fn promotion_execution_fixture_for_work(
   })
   .unwrap();
   let candidate = CandidateSubject::new(
-    work.subject().clone(),
+    work.subject().repository().unwrap().clone(),
     octacity_server_domain::ImmutableRevision::new("accepted-candidate").unwrap(),
     FactoryDigest::from_bytes([91; 32]),
   );

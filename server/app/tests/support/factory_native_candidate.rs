@@ -473,7 +473,7 @@ pub(super) fn candidate_plan(work: &WorkEnvelope, profile: &FactoryCodexBuildPro
   let capture_tool = capture_tool();
   let captured = CapturedChangeSetManifestV1 {
     format_version: 1,
-    base_revision: work.subject().base_revision().as_str().to_owned(),
+    base_revision: work.subject().repository().unwrap().base_revision().as_str().to_owned(),
     candidate_revision: CANDIDATE.to_owned(),
     node_attempt_id: producer_id.to_string(),
     capture_tool: FactoryImmutableReferenceV3 {

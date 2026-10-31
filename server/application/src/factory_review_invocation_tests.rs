@@ -7,6 +7,70 @@ fn at(value: i64) -> Timestamp {
   Timestamp::from_unix_millis(value).unwrap()
 }
 #[test]
+fn stored_review_qualifies_the_selected_resource_without_a_work_repository() {
+  crate::factory_admission_tests::run_ready(async {
+    let (store, input, evaluator) = crate::factory_review_planning_tests::prepared_review_invocation_with_source(
+      true,
+      crate::factory_review_planning_tests::ReviewFixtureSource::IndependentExact,
+    )
+    .await;
+    assert!(input.subject().repository().is_err());
+    let proof = FactoryStoredReviewInvocationSource::new(store)
+      .invocation(&input, &evaluator, at(31))
+      .await;
+    assert!(
+      proof.is_ok(),
+      "review uses the exact node resource: {:?}",
+      proof.as_ref().err()
+    );
+    let proof = proof.unwrap();
+    assert_eq!(proof.plan().subject().exact(), input.exact_resource().unwrap());
+    assert_eq!(proof.plan().evidence_id(), proof.evidence().id());
+  });
+}
+#[test]
+fn review_invocation_keeps_the_candidate_proof_separate_from_its_selected_plan_and_evidence() {
+  crate::factory_admission_tests::run_ready(async {
+    let (store, input, evaluator) = crate::factory_review_planning_tests::prepared_review_invocation_with_source(
+      true,
+      crate::factory_review_planning_tests::ReviewFixtureSource::AcceptedCandidate,
+    )
+    .await;
+    assert_eq!(input.sources().len(), 3);
+    assert!(input.subject().repository().is_err());
+    let proof = FactoryStoredReviewInvocationSource::new(store)
+      .invocation(&input, &evaluator, at(31))
+      .await
+      .unwrap();
+    assert_eq!(proof.plan().subject().exact(), input.exact_resource().unwrap());
+    assert_eq!(proof.plan().evidence_id(), proof.evidence().id());
+  });
+}
+
+#[test]
+fn review_invocation_rejects_another_candidate_from_the_same_base() {
+  crate::factory_admission_tests::run_ready(async {
+    for digest_only in [false, true] {
+      let (store, input, evaluator) = crate::factory_review_planning_tests::prepared_review_invocation_with_source(
+        true,
+        crate::factory_review_planning_tests::ReviewFixtureSource::OtherCandidate {
+          recipient: "consume_frozen_review",
+          digest_only,
+        },
+      )
+      .await;
+      let result = FactoryStoredReviewInvocationSource::new(store)
+        .invocation(&input, &evaluator, at(31))
+        .await;
+      assert!(
+        result.is_err(),
+        "a genuine retained plan for another candidate is not this invocation's plan"
+      );
+    }
+  });
+}
+
+#[test]
 fn review_invocation_qualifies_only_the_full_selected_plan_evidence_and_installed_evaluator() {
   crate::factory_admission_tests::run_ready(async {
     let (store, input, evaluator) = crate::factory_review_planning_tests::prepared_review_invocation(true).await;

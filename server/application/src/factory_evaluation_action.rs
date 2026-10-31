@@ -131,7 +131,7 @@ impl<S: FactoryRunStore> FactoryFlowActionPlugin for FactoryEvaluationDecisionAc
     if snapshot.work.id() != request.work_id
       || snapshot.work.subject() != request.subject
       || !snapshot.flow.data.inputs.contains(request.input)
-      || selected.plan.subject().exact() != request.subject
+      || !request.input.matches_candidate_resource(selected.plan.subject())
       || selected.plan.evidence_id() != selected.evidence.id()
       || selected.plan.subject() != selected.evidence.subject()
       || selected.plan.created_at() > at
@@ -276,6 +276,9 @@ fn selected_records<'a>(
   input
     .sources()
     .iter()
+    // The selected candidate record proves resource provenance; it is not an
+    // additional assessment or an implicit projection into the decision payload.
+    .filter(|source| input.accepted_resource_record() != Some(*source))
     .map(|source| {
       let record = snapshot
         .flow

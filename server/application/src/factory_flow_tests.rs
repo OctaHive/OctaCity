@@ -41,7 +41,7 @@ impl FactoryFlowInputPreparer for Inputs {
     if let Some(binding) = binding {
       let selected = binding.selected_sources(input.payload()).unwrap();
       let subject = match binding.candidate_revision(input.payload()).unwrap() {
-        None => FactoryTaskSubject::Exact(snapshot.work.subject().clone()),
+        None => FactoryTaskSubject::Exact(snapshot.work.subject().repository().unwrap().clone()),
         Some(revision) => {
           let (_, (_, FactoryContextReference::Artifact(manifest))) = selected
             .iter()
@@ -51,7 +51,7 @@ impl FactoryFlowInputPreparer for Inputs {
             panic!("fixture requires a verified manifest artifact")
           };
           FactoryTaskSubject::Candidate(CandidateSubject::new(
-            snapshot.work.subject().clone(),
+            snapshot.work.subject().repository().unwrap().clone(),
             revision,
             input
               .payload()
@@ -95,7 +95,7 @@ impl FactoryFlowInputPreparer for Inputs {
         )
         .map_err(|_| ApplicationError::invalid());
     }
-    let subject = FactoryTaskSubject::Exact(snapshot.work.subject().clone());
+    let subject = FactoryTaskSubject::Exact(snapshot.work.subject().repository().unwrap().clone());
     let task = snapshot.work.artifacts().task().clone();
     let manifest = ContextManifest::new(
       ContextManifestId::generate(),
@@ -337,7 +337,7 @@ impl FactoryNodeBuildOutputSource for Execution {
       } else if requirement.kind() == &key("terminal_resolution") {
         serde_json::json!({"accepted":false,"outcome":"unresolved"})
       } else if requirement.kind() == &key("execution_facts") {
-        serde_json::json!({"outcome":"observed","candidate_revision":request.immutable_revision,"report_digest":FactoryDigest::content_sha256(&documents[0].bytes),"fresh_until":10000,"requirements_evidence":[]})
+        serde_json::json!({"outcome":"observed","candidate_revision":request.subject.exact().unwrap().base_revision(),"report_digest":FactoryDigest::content_sha256(&documents[0].bytes),"fresh_until":10000,"requirements_evidence":[]})
       } else {
         self.facts[&profile.node].clone()
       };
@@ -1183,7 +1183,7 @@ fn model_small_work_claim_cannot_bypass_independently_verified_large_work() {
     );
     assert_eq!(
       author_input.payload().value()["original_base"],
-      snapshot.work.subject().base_revision().as_str()
+      snapshot.work.subject().repository().unwrap().base_revision().as_str()
     );
     assert_eq!(author_input.payload().value()["accepted_input"]["size"], "large");
     assert_eq!(author_input.sources().len(), 1);
@@ -2097,7 +2097,7 @@ fn append_request(
       snapshot.run.id(),
       snapshot.run.configuration().clone(),
       &snapshot.work,
-      snapshot.run.subject().clone(),
+      snapshot.run.subject().repository().unwrap().clone(),
       FactoryRunState::Running,
       version,
     )

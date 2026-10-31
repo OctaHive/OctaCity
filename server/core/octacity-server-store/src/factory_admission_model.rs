@@ -46,8 +46,8 @@ pub struct FactoryAdmissionProbe {
 pub struct FactoryAdmissionContext {
   /// Selected immutable Factory Configuration version.
   pub configuration: PublishedFactoryConfiguration,
-  /// Selected immutable Repository version.
-  pub repository: PublishedRepository,
+  /// Selected Repository version; absent for Project/input admission.
+  pub repository: Option<PublishedRepository>,
 }
 
 /// Request for exact immutable admission definitions.
@@ -60,10 +60,10 @@ pub struct ReadFactoryAdmissionContext {
   pub configuration_id: FactoryConfigurationId,
   /// Selected immutable Factory Configuration version.
   pub configuration_version: FactoryConfigurationVersion,
-  /// Selected Repository identity.
-  pub repository_id: RepositoryId,
-  /// Selected immutable Repository version.
-  pub repository_version: RepositoryVersion,
+  /// Selected Repository identity; both repository fields must be present or absent.
+  pub repository_id: Option<RepositoryId>,
+  /// Selected Repository version; absent for Project/input admission.
+  pub repository_version: Option<RepositoryVersion>,
 }
 
 /// Atomic input that publishes one immutable Work Envelope and admitted Run.
@@ -71,8 +71,8 @@ pub struct ReadFactoryAdmissionContext {
 pub struct AdmitFactoryWork {
   /// Replay identity checked before VCS resolution.
   pub probe: FactoryAdmissionProbe,
-  /// Exact Repository version used to resolve the immutable subject.
-  pub repository_version: RepositoryVersion,
+  /// Exact Repository version; absent only when Work has no repository subject.
+  pub repository_version: Option<RepositoryVersion>,
   /// Immutable normalized Work input.
   pub work: WorkEnvelope,
   /// Initial admitted Factory Run projection.
@@ -96,7 +96,8 @@ impl AdmitFactoryWork {
         StoreInputError::InvalidMutationAuditContext,
       ));
     }
-    let valid = self.work.external_identity() == &self.probe.external_identity
+    let valid = self.repository_version.is_some() == self.work.subject().repository().is_ok()
+      && self.work.external_identity() == &self.probe.external_identity
       && initial_admission_matches(&self.work, &self.run, &self.flow);
     valid.then_some(()).ok_or_else(|| {
       StoreError::invalid(
@@ -119,12 +120,14 @@ impl AdmitFactoryWork {
           StoreInputError::InvalidFactoryAdmission,
         )
       })?;
-    let expected = AdmittedFlow::from_configuration(configuration, &self.run).map_err(|_| {
-      StoreError::invalid(
-        StoreOperation::AdmitFactoryWork,
-        StoreInputError::InvalidFactoryAdmission,
-      )
-    })?;
+    let expected = AdmittedFlow::from_configuration(configuration, &self.run)
+      .and_then(|flow| flow.with_code_pins(self.flow.code_pins().to_vec(), self.work.subject().project_id()))
+      .map_err(|_| {
+        StoreError::invalid(
+          StoreOperation::AdmitFactoryWork,
+          StoreInputError::InvalidFactoryAdmission,
+        )
+      })?;
     (self.flow == expected).then_some(()).ok_or_else(|| {
       StoreError::invalid(
         StoreOperation::AdmitFactoryWork,

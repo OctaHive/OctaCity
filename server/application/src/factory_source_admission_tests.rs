@@ -46,9 +46,11 @@ async fn installed(
     .unwrap();
   let repository = WorkSourceRepositoryRef {
     project_id: intent.project_id,
-    id: intent.repository_id,
-    version: intent.repository_version,
-    definition_digest: FactoryDigest::content_sha256(&serde_json::to_vec(&selected.repository.definition).unwrap()),
+    id: intent.repository_id.unwrap(),
+    version: intent.repository_version.unwrap(),
+    definition_digest: FactoryDigest::content_sha256(
+      &serde_json::to_vec(&selected.repository.as_ref().unwrap().definition).unwrap(),
+    ),
   };
   let capability = WorkSourceCapability {
     project_id: intent.project_id,
@@ -277,7 +279,8 @@ fn source_authority_requires_the_exact_enabled_input_and_source_capability() {
         project_id: project,
         configuration_id: configuration,
         configuration_version: request.intent.configuration_version,
-        repository_id,
+        repository_id: Some(repository_id),
+
         repository_version: request.intent.repository_version,
       })
       .await
@@ -351,8 +354,8 @@ fn ticket_intent_cannot_substitute_the_installed_project_configuration_or_reposi
         "project" => changed.project_id = ProjectId::generate(),
         "configuration" => changed.configuration_id = FactoryConfigurationId::generate(),
         "configuration version" => changed.configuration_version = FactoryConfigurationVersion::new(2).unwrap(),
-        "repository" => changed.repository_id = RepositoryId::generate(),
-        "repository version" => changed.repository_version = RepositoryVersion::new(2).unwrap(),
+        "repository" => changed.repository_id = Some(RepositoryId::generate()),
+        "repository version" => changed.repository_version = Some(RepositoryVersion::new(2).unwrap()),
         _ => unreachable!(),
       }
       assert_eq!(
@@ -496,7 +499,8 @@ fn source_pins_must_match_the_authoritative_target_flow_and_repository_content()
         project_id: project,
         configuration_id,
         configuration_version: intent.configuration_version,
-        repository_id,
+        repository_id: Some(repository_id),
+
         repository_version: intent.repository_version,
       })
       .await

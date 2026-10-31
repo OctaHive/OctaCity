@@ -444,6 +444,10 @@ impl ManagementQueryUseCase<octacity_server_application::ValidateFactoryConfigur
       return Err(ApplicationError::FactoryValidation(Box::new(
         octacity_server_application::FactoryValidationDiagnostics {
           errors: vec![octacity_server_application::FactoryValidationIssue {
+            resource: None,
+            requested: None,
+            maximum: None,
+            ceiling: None,
             field: "/admission_policy".to_owned(),
             code: "unavailable_reference",
             definition: None,
@@ -664,6 +668,14 @@ impl ManagementQueryUseCase<octacity_server_application::ValidateFactoryFlowDefi
     _grant: &ManagementAuthorizationGrant,
     query: octacity_server_application::ValidateFactoryFlowDefinitionQuery,
   ) -> Result<octacity_server_application::FactoryFlowDefinitionValidation, Self::Error> {
+    self.factory_flow_drafts.lock().unwrap().push(query.draft.clone());
+    if let Some(task) = query.draft.root.nodes.iter().find_map(|node| node.task()) {
+      assert_eq!(
+        task.entries(),
+        &["Assess layout accessibility using the selected documents.".to_owned()]
+      );
+      self.record("validate_step_task");
+    }
     if let Some(binding) = query
       .draft
       .root
@@ -693,6 +705,158 @@ pub(super) fn flow_draft_request() -> serde_json::Value {
   let mut root = flow["closure"]["definitions"][0].clone();
   root.as_object_mut().unwrap().remove("reference");
   serde_json::json!({"id":"33333333-3333-4333-8333-333333333333","project_id":"11111111-1111-4111-8111-111111111111","definition":{"root":root,"limits":flow["limits"],"data_schemas":flow["data_schemas"]}})
+}
+
+#[tokio::test]
+async fn flow_http_keeps_reviewed_step_instructions_separate_from_the_role_and_input() {
+  // The unavailable application deliberately prevents publication/execution;
+  // this contract checks the real HTTP decoder and exact application request.
+  let application = Arc::new(RecordingApplication::default());
+  let routes = management_router_with_application(
+    || true,
+    recording_management_application(application.clone(), application.clone()),
+  );
+  let mut request = flow_draft_request();
+  let node = &mut request["definition"]["root"]["nodes"][0];
+  node["kind"] = serde_json::json!("reasoning");
+  node.as_object_mut().unwrap().remove("action");
+  node["task"] = serde_json::json!("Assess layout accessibility using the selected documents.");
+  assert_json_matches_component(&openapi_document(), "FactoryFlowNodeDefinition", node);
+  let response = routes
+    .oneshot(json_request(
+      "POST",
+      "/api/v1/flow-definitions/validate",
+      "not-a-publication",
+      None,
+      &request.to_string(),
+    ))
+    .await
+    .unwrap();
+  assert_eq!(response.status(), StatusCode::SERVICE_UNAVAILABLE);
+  assert_eq!(
+    *application.calls.lock().unwrap(),
+    ["validate_step_task", "validate_factory_flow_definition"]
+  );
+}
+
+#[tokio::test]
+async fn ordinary_flow_http_preserves_exact_document_roles_without_attaching_them_to_siblings() {
+  let application = Arc::new(RecordingApplication::default());
+  let routes = management_router_with_application(
+    || true,
+    recording_management_application(application.clone(), application.clone()),
+  );
+  let mut request = flow_draft_request();
+  let artifact = serde_json::json!({
+    "artifact_id":"22222222-2222-4222-8222-222222222222",
+    "content_digest":"ab".repeat(32), "encoded_size":20
+  });
+  request["definition"]["root"]["nodes"][0]["context_binding"] = serde_json::json!({
+    "entries": {
+      "reviewed-guidance": {"source_kind":"policy", "source":{"value":{"mapping":"constant","value":{"kind":"artifact","value":artifact}}}},
+      "supporting-reference": {"source_kind":"specification", "source":{"value":{"mapping":"constant","value":{"kind":"artifact","value":artifact}}}}
+    }
+  });
+  let response = routes
+    .oneshot(json_request(
+      "POST",
+      "/api/v1/flow-definitions/validate",
+      "no-publication",
+      None,
+      &request.to_string(),
+    ))
+    .await
+    .unwrap();
+  // This boundary covers decoding, not execution qualification; the application is unavailable.
+  assert_eq!(response.status(), StatusCode::SERVICE_UNAVAILABLE);
+  let drafts = application.factory_flow_drafts.lock().unwrap();
+  assert_eq!(drafts.len(), 1);
+  let received = serde_json::to_value(&drafts[0]).unwrap();
+  assert_eq!(
+    received["root"]["nodes"][0]["context_binding"]["entries"],
+    request["definition"]["root"]["nodes"][0]["context_binding"]["entries"]
+  );
+  assert!(
+    drafts[0]
+      .root
+      .nodes
+      .iter()
+      .skip(1)
+      .all(|node| node.context_binding().is_none())
+  );
+  assert_eq!(*application.calls.lock().unwrap(), ["validate_factory_flow_definition"]);
+}
+
+#[tokio::test]
+async fn common_flow_http_retains_process_inputs_and_their_explicit_recipients_without_publication() {
+  let application = Arc::new(RecordingApplication::default());
+  let routes = management_router_with_application(
+    || true,
+    recording_management_application(application.clone(), application.clone()),
+  );
+  let mut request = flow_draft_request();
+  let recipient = request["definition"]["root"]["entry"].clone();
+  let process = serde_json::json!({"criteria":{
+    "artifact":{"artifact_id":"22222222-2222-4222-8222-222222222222", "content_digest":"ab".repeat(32), "encoded_size":120},
+    "recipients":[recipient]
+  }});
+  request["definition"]["root"]["process"] = process.clone();
+  assert_json_matches_component(&openapi_document(), "CreateFactoryFlowDefinitionRequest", &request);
+  let response = routes
+    .oneshot(json_request(
+      "POST",
+      "/api/v1/flow-definitions/validate",
+      "not-publication",
+      None,
+      &request.to_string(),
+    ))
+    .await
+    .unwrap();
+  assert_eq!(response.status(), StatusCode::SERVICE_UNAVAILABLE);
+  let drafts = application.factory_flow_drafts.lock().unwrap();
+  assert_eq!(serde_json::to_value(&drafts[0]).unwrap()["root"]["process"], process);
+  assert_eq!(*application.calls.lock().unwrap(), ["validate_factory_flow_definition"]);
+}
+
+#[tokio::test]
+async fn common_flow_http_documents_explicit_code_inventory_and_scoped_step_selection() {
+  let application = Arc::new(RecordingApplication::default());
+  let routes = management_router_with_application(
+    || true,
+    recording_management_application(application.clone(), application.clone()),
+  );
+  let mut request = flow_draft_request();
+  let source = serde_json::json!({
+    "repository":{"project_id":request["project_id"],"id":"22222222-2222-4222-8222-222222222222",
+    "version":1,"definition_digest":"ab".repeat(32)},
+    "selection":{"kind":"reference","value":"refs/heads/main"},
+    "access":"read_only","scope":{"kind":"repository"}
+  });
+  request["definition"]["root"]["code_sources"] = serde_json::json!({"selected":source});
+  for node in request["definition"]["root"]["nodes"].as_array_mut().unwrap() {
+    node["code"] = serde_json::json!({"kind":"none"});
+  }
+  let binding = serde_json::json!({"kind":"source","source":"selected","access":"read_only",
+    "scope":{"kind":"selected","entries":[{"kind":"range","path":"src/lib.rs","lines":{"first_line":10,"last_line":20}}]},
+    "revision":{"kind":"admitted_base"}});
+  request["definition"]["root"]["nodes"][0]["code"] = binding.clone();
+  assert_json_matches_component(&openapi_document(), "CreateFactoryFlowDefinitionRequest", &request);
+  let response = routes
+    .oneshot(json_request(
+      "POST",
+      "/api/v1/flow-definitions/validate",
+      "review-code",
+      None,
+      &request.to_string(),
+    ))
+    .await
+    .unwrap();
+  assert_eq!(response.status(), StatusCode::SERVICE_UNAVAILABLE);
+  let drafts = application.factory_flow_drafts.lock().unwrap();
+  let decoded = serde_json::to_value(&drafts[0]).unwrap();
+  assert_eq!(decoded["root"]["nodes"][0]["code"], binding);
+  assert_eq!(decoded["root"]["code_sources"]["selected"], source);
+  assert_eq!(*application.calls.lock().unwrap(), ["validate_factory_flow_definition"]);
 }
 
 #[tokio::test]
@@ -923,7 +1087,11 @@ impl ManagementCommandUseCase<octacity_server_application::AdmitManualFactoryWor
       disposition: octacity_server_application::MutationDisposition::Applied,
       work_envelope_id: "77777777-7777-4777-8777-777777777777".parse().unwrap(),
       factory_run_id: "66666666-6666-4666-8666-666666666666".parse().unwrap(),
-      base_revision: "0123456789abcdef0123456789abcdef01234567".parse().unwrap(),
+      base_revision: if command.repository_id.is_none() {
+        None
+      } else {
+        Some("0123456789abcdef0123456789abcdef01234567".parse().unwrap())
+      },
       state: "admitted".parse().unwrap(),
       admitted_at: Timestamp::from_unix_millis(1).unwrap(),
     })
@@ -1897,6 +2065,59 @@ async fn flow_validation_adds_safe_capability_and_permission_diagnostics_without
   assert_json_matches_component(&openapi_document(), "FactoryFlowDefinitionValidation", &body);
 }
 
+#[tokio::test]
+async fn flow_validation_reports_budget_scopes_sources_and_unresolved_configuration_limits() {
+  let application = Arc::new(RecordingApplication::successful_workflow());
+  let routes = management_router_with_application(
+    || true,
+    recording_management_application(application.clone(), application),
+  );
+  let response = routes
+    .oneshot(json_request(
+      "POST",
+      "/api/v1/flow-definitions/validate",
+      "not-a-publication",
+      None,
+      &flow_draft_request().to_string(),
+    ))
+    .await
+    .unwrap();
+  assert_eq!(response.status(), StatusCode::OK);
+  let body: serde_json::Value =
+    serde_json::from_slice(&to_bytes(response.into_body(), usize::MAX).await.unwrap()).unwrap();
+  let constraints = &body["diagnostics"]["constraints"];
+  let run = &constraints["run_budget"];
+  assert_eq!(run["scope"], "run_total");
+  assert_eq!(run["requested"]["max_tokens"], 1000);
+  assert_eq!(run["effective"]["max_tokens"], 1000);
+  assert_eq!(run["sources"][0]["source"], "flow_admission");
+  let budgets = constraints["node_budgets"]
+    .as_array()
+    .expect("node budgets retain their own scope");
+  let implementation = budgets.iter().find(|budget| budget["node"] == "implement").unwrap();
+  assert_eq!(implementation["scope"], "node_execution");
+  assert_eq!(implementation["requested"]["max_attempts"], 2);
+  assert_eq!(implementation["effective"]["max_attempts"], 2);
+  assert_eq!(implementation["retry_charging"], "cumulative_in_run");
+  assert!(
+    implementation["sources"]
+      .as_array()
+      .unwrap()
+      .iter()
+      .any(|source| source["source"] == "flow_definition")
+  );
+  let concurrency = constraints["concurrency"].as_array().unwrap();
+  assert!(
+    concurrency
+      .iter()
+      .any(|limit| limit["scope"] == "run_nodes" && limit["effective"] == 4)
+  );
+  assert!(concurrency.iter().any(|limit| limit["scope"] == "configuration_runs"
+    && limit["effective"].is_null()
+    && limit["unresolved"] == "configuration_required"));
+  assert_json_matches_component(&openapi_document(), "FactoryFlowDefinitionValidation", &body);
+}
+
 #[test]
 fn local_issue_status_parameters_have_a_closed_provider_free_http_contract() {
   let document = openapi_document();
@@ -1974,4 +2195,46 @@ async fn manual_factory_admission_preserves_exact_optional_profile_overrides() {
     .unwrap();
   assert_eq!(response.status(), StatusCode::BAD_REQUEST);
   assert_eq!(peer.factory_admission_overrides.lock().unwrap().len(), 1);
+}
+
+#[tokio::test]
+async fn admits_versioned_project_input_work_without_vcs_fields() {
+  let application = Arc::new(RecordingApplication::successful_workflow());
+  let routes = management_router_with_application(
+    || true,
+    recording_management_application(application.clone(), application),
+  );
+  let mut request = manual_work_request();
+  request.as_object_mut().unwrap().remove("repository_id");
+  request.as_object_mut().unwrap().remove("repository_version");
+  request["source"] = serde_json::json!({"kind":"project_input_v1"});
+  let response = routes
+    .oneshot(json_request(
+      "POST",
+      "/api/v1/projects/11111111-1111-4111-8111-111111111111/factory-work",
+      "project-input-work",
+      None,
+      &request.to_string(),
+    ))
+    .await
+    .unwrap();
+  assert_eq!(response.status(), StatusCode::CREATED);
+  let body: serde_json::Value =
+    serde_json::from_slice(&to_bytes(response.into_body(), usize::MAX).await.unwrap()).unwrap();
+  assert_eq!(body["state"], "admitted");
+  assert!(body.get("base_revision").is_none());
+  assert_json_matches_component(&openapi_document(), "AdmitManualFactoryWorkRequest", &request);
+  assert_json_matches_component(&openapi_document(), "FactoryAdmissionResponse", &body);
+}
+
+#[test]
+fn flow_code_revision_contract_documents_immutable_and_accepted_result_selection() {
+  let document = openapi_document();
+  for revision in [
+    serde_json::json!({"kind":"admitted_base"}),
+    serde_json::json!({"kind":"exact_revision","revision":"reviewed-sha"}),
+    serde_json::json!({"kind":"accepted_candidate","node":"compile","outcome":"prepared"}),
+  ] {
+    assert_json_matches_component(&document, "FactoryFlowCodeRevision", &revision);
+  }
 }

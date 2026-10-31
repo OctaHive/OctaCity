@@ -45,7 +45,7 @@ impl<A: ArtifactRecordStore, S: BuildQueryStore, B: ArtifactByteReader> FactoryF
       if node.build().is_none() {
         return Ok(input);
       }
-      let subject = FactoryTaskSubject::Exact(snapshot.work.subject().clone());
+      let subject = input.task_subject().map_err(|_| ApplicationError::invalid())?;
       let policy = FactoryDigest::sha256("octacity.factory.artifact-context-policy.v1", &[b"null"]);
       return freeze_context(input, subject, policy, vec![]);
     };
@@ -53,12 +53,19 @@ impl<A: ArtifactRecordStore, S: BuildQueryStore, B: ArtifactByteReader> FactoryF
       .candidate_revision(input.payload())
       .map_err(|_| ApplicationError::invalid())?
     {
-      None => FactoryTaskSubject::Exact(snapshot.work.subject().clone()),
+      None => input.task_subject().map_err(|_| ApplicationError::invalid())?,
       Some(revision) => FactoryTaskSubject::Candidate(selected_candidate(snapshot, &input, &revision)?),
     };
     let selected = binding
       .selected_sources(input.payload())
       .map_err(|_| ApplicationError::invalid())?;
+    // Qualify the complete selection before reading any protected bytes.
+    if selected
+      .values()
+      .any(|(_, source)| !matches!(source, FactoryContextReference::Artifact(_)))
+    {
+      return Err(ApplicationError::invalid());
+    }
     let policy_bytes = serde_json::to_vec(binding).map_err(|_| ApplicationError::invalid())?;
     let policy = FactoryDigest::sha256("octacity.factory.artifact-context-policy.v1", &[&policy_bytes]);
     let observed_at = self.clock.now()?;
@@ -137,6 +144,7 @@ fn selected_candidate(
   input: &FlowNodeInput,
   revision: &octacity_server_domain::ImmutableRevision,
 ) -> Result<CandidateSubject, ApplicationError> {
+  let resource = input.exact_resource().map_err(|_| ApplicationError::invalid())?;
   let records = snapshot
     .flow
     .data
@@ -175,7 +183,7 @@ fn selected_candidate(
       if let Some(candidate) = record
         .discovery()
         .and_then(FlowDiscoveryFacts::published_candidate)
-        .filter(|candidate| candidate.exact() == snapshot.work.subject() && candidate.candidate_revision() == revision)
+        .filter(|candidate| candidate.exact() == resource && candidate.candidate_revision() == revision)
       {
         if selected.as_ref().is_some_and(|other| other != candidate) {
           return Err(ApplicationError::invalid());

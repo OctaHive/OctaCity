@@ -451,6 +451,7 @@ async fn assignment(
     Some(manifest) => state
       .artifacts
       .authorize_protected_inputs(AuthorizeProtectedInputsInput {
+        job_id: grant.job_id,
         manifest: manifest.clone(),
         observed_at_unix_ms,
         // The wire Lease carries whole seconds. Capabilities must be bounded by

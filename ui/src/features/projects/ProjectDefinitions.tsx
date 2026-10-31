@@ -367,7 +367,9 @@ function BuildConfigurationDetails({
           ],
           [
             t('definitions.repository'),
-            `${configuration.definition.repository_id} v${configuration.definition.repository_version}`,
+            configuration.definition.source?.kind === 'source_free_v1'
+              ? t('manualBuild.sourceFree')
+              : `${configuration.definition.repository_id} v${configuration.definition.repository_version}`,
           ],
           [t('definitions.jobConcurrency'), String(configuration.definition.job_concurrency_limit)],
         ]}

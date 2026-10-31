@@ -562,8 +562,8 @@ impl WorkSourcePreparation {
       || intent.project_id != self.input.project_id()
       || intent.configuration_id != definition.target.id()
       || intent.configuration_version != definition.target.version()
-      || intent.repository_id != definition.repository.id
-      || intent.repository_version != definition.repository.version
+      || intent.repository_id != Some(definition.repository.id)
+      || intent.repository_version != Some(definition.repository.version)
       || intent.external_identity
         != self
           .admission_identity(crate::ManagementSecurityScope::trusted_network())
@@ -628,20 +628,21 @@ impl WorkSourcePreparation {
     guard: &AdmitPreparedWorkSource,
     request: &crate::AdmitFactoryWork,
   ) -> Result<(), StoreError> {
+    let subject = request.work.subject().repository().map_err(|_| source_conflict())?;
     let intent = self.intent.as_ref().ok_or_else(source_conflict)?;
     if self.id != guard.preparation_id
       || self.input.project_id() != guard.claim.project_id
       || self.admission_probe(request.probe.source_scope.security_scope.clone())? != request.probe
       || self.input.definition().target != *request.work.configuration()
       || intent.project_id != request.work.subject().project_id()
-      || intent.repository_id != request.work.subject().repository_id()
+      || intent.repository_id != Some(subject.repository_id())
       || intent.repository_version != request.repository_version
       || intent.artifacts != *request.work.artifacts()
       || intent.classification.priority() != request.work.priority()
       || intent.classification.risk() != request.work.risk()
       || intent.classification.metadata() != request.work.metadata()
       || intent.admitted_at != request.admitted_at
-      || matches!(&intent.source, crate::RepositorySourceSelection::ExactRevision(revision) if revision != request.work.subject().base_revision())
+      || matches!(&intent.source, crate::FactoryAdmissionSource::Repository(crate::RepositorySourceSelection::ExactRevision(revision)) if revision != subject.base_revision())
     {
       return Err(source_conflict());
     }

@@ -78,10 +78,11 @@ pub(crate) async fn accept(
     StoreOperation::AcceptFactoryBuild,
   )?;
   let pipeline = number(request.build.pipeline_version.get(), StoreOperation::AcceptFactoryBuild)?;
-  let repository = number(
-    request.build.repository_version.get(),
-    StoreOperation::AcceptFactoryBuild,
-  )?;
+  let repository = request
+    .build
+    .repository_version
+    .map(|version| number(version.get(), StoreOperation::AcceptFactoryBuild))
+    .transpose()?;
   crate::build_materialization::insert_build(
     &mut transaction,
     &request.build,
@@ -166,8 +167,10 @@ async fn require_references(
   let exists: bool = sqlx::query_scalar(
     "SELECT EXISTS (SELECT 1 FROM build_configuration_versions version JOIN build_configurations configuration \
        ON configuration.id=version.build_configuration_id WHERE configuration.id=$1 AND configuration.project_id=$2 \
-       AND version.version=$3 AND version.enabled AND version.repository_id=$4 AND version.repository_version=$5 \
-       AND version.pipeline_id=$6 AND version.pipeline_version=$7 AND $8::uuid[] <@ version.allowed_pool_ids)",
+       AND version.version=$3 AND version.enabled \
+       AND version.repository_id IS NOT DISTINCT FROM $4 AND version.repository_version IS NOT DISTINCT FROM $5 \
+       AND version.pipeline_id=$6 AND version.pipeline_version=$7 AND $8::uuid[] <@ version.allowed_pool_ids \
+       AND version.configuration_snapshot->'source' IS NOT DISTINCT FROM $9::jsonb)",
   )
   .bind(build.configuration_id.as_uuid())
   .bind(build.project_id.as_uuid())
@@ -175,11 +178,13 @@ async fn require_references(
     build.configuration_version.get(),
     StoreOperation::AcceptFactoryBuild,
   )?)
-  .bind(build.repository_id.as_uuid())
-  .bind(number(
-    build.repository_version.get(),
-    StoreOperation::AcceptFactoryBuild,
-  )?)
+  .bind(build.repository_id.map(|id| id.as_uuid()))
+  .bind(
+    build
+      .repository_version
+      .map(|version| number(version.get(), StoreOperation::AcceptFactoryBuild))
+      .transpose()?,
+  )
   .bind(build.pipeline_id.as_uuid())
   .bind(number(
     build.pipeline_version.get(),
@@ -192,6 +197,7 @@ async fn require_references(
       .flat_map(|job| job.allowed_pools.iter().map(|pool| pool.as_uuid()))
       .collect::<Vec<_>>(),
   )
+  .bind(build.source.map(sqlx::types::Json))
   .fetch_one(&mut **tx)
   .await
   .map_err(unavailable)?;

@@ -706,7 +706,7 @@ impl FactorySourceCandidateProcessor for AdmissionProcessor {
               max_artifact_bytes: 131072,
               retention_millis: 86400000,
             },
-            source: ordinary.source,
+            source: ordinary.source.repository().unwrap().clone(),
             classification: ordinary.classification,
           },
         )

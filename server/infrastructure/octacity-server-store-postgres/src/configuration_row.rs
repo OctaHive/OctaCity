@@ -52,8 +52,8 @@ pub(crate) struct BuildConfigurationRow {
   pub(crate) name: String,
   pub(crate) version: i64,
   pub(crate) enabled: bool,
-  pub(crate) repository_id: Uuid,
-  pub(crate) repository_version: i64,
+  pub(crate) repository_id: Option<Uuid>,
+  pub(crate) repository_version: Option<i64>,
   pub(crate) pipeline_id: Uuid,
   pub(crate) pipeline_version: i64,
   pub(crate) configuration_snapshot: Json<Value>,
@@ -67,10 +67,18 @@ impl TryFrom<BuildConfigurationRow> for PublishedBuildConfiguration {
     let definition: BuildConfigurationDefinition =
       serde_json::from_value(row.configuration_snapshot.0).map_err(|_| StoreError::Unavailable)?;
     definition.validate().map_err(|_| StoreError::Unavailable)?;
-    let repository_id = RepositoryId::from_uuid(row.repository_id).map_err(|_| StoreError::Unavailable)?;
-    let repository_version =
-      RepositoryVersion::new(u64::try_from(row.repository_version).map_err(|_| StoreError::Unavailable)?)
-        .map_err(|_| StoreError::Unavailable)?;
+    let repository_id = row
+      .repository_id
+      .map(RepositoryId::from_uuid)
+      .transpose()
+      .map_err(|_| StoreError::Unavailable)?;
+    let repository_version = row
+      .repository_version
+      .map(|version| {
+        RepositoryVersion::new(u64::try_from(version).map_err(|_| StoreError::Unavailable)?)
+          .map_err(|_| StoreError::Unavailable)
+      })
+      .transpose()?;
     let pipeline_id = PipelineId::from_uuid(row.pipeline_id).map_err(|_| StoreError::Unavailable)?;
     let pipeline_version =
       PipelineVersion::new(u64::try_from(row.pipeline_version).map_err(|_| StoreError::Unavailable)?)

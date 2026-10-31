@@ -5,6 +5,171 @@ use octacity_server_application::*;
 use std::sync::atomic::AtomicBool;
 
 #[tokio::test]
+async fn normalizes_a_custom_gate_program_without_client_hashes_or_business_outcomes() {
+  let (router, project, _) = role_router();
+  let program = serde_json::json!({
+    "rules":[{"when":{"operation":"compare","left":{"source":"path","path":"/assessment/size"},"comparison":"less_or_equal","right":{"source":"literal","value":7}},"outcome":"ready_for_layout"}],
+    "fallback":"editor_review",
+    "outputs":{"ready_for_layout":{"value":{"mapping":"pointer","path":"/assessment"}}}
+  });
+  let path = format!("/api/v1/projects/{project}/factory-gate-programs/validate");
+  let response = router
+    .clone()
+    .oneshot(json_request(
+      "POST",
+      &path,
+      "not-a-publication",
+      None,
+      &serde_json::json!({"program":program}).to_string(),
+    ))
+    .await
+    .unwrap();
+  assert_eq!(response.status(), StatusCode::OK);
+  assert_eq!(response.headers()["cache-control"], "no-store");
+  let binding = json_response(response).await;
+  assert_eq!(binding["policy"]["identity"], "factory.declarative-gate");
+  assert_eq!(binding["parameters"], program);
+  assert_json_matches_component(&openapi_document(), "FactoryFlowGate", &binding);
+  let mut invalid = program;
+  invalid["rules"][0]["when"]["comparison"] = serde_json::json!("run_shell");
+  let response = router
+    .oneshot(json_request(
+      "POST",
+      &path,
+      "unused",
+      None,
+      &serde_json::json!({"program":invalid}).to_string(),
+    ))
+    .await
+    .unwrap();
+  assert_eq!(response.status(), StatusCode::BAD_REQUEST);
+}
+
+#[tokio::test]
+async fn empty_project_discovers_builtin_gate_contracts_without_saved_nodes() {
+  let (router, project, _) = role_router();
+  let response = router
+    .oneshot(empty_request(
+      "GET",
+      &format!("/api/v1/projects/{project}/factory-authoring-capabilities"),
+      None,
+    ))
+    .await
+    .unwrap();
+  assert_eq!(response.status(), StatusCode::OK);
+  assert_eq!(response.headers()["cache-control"], "no-store");
+  let body = json_response(response).await;
+  assert_json_matches_component(&openapi_document(), "FactoryAuthoringCapabilities", &body);
+  assert_eq!(
+    body["deterministic_gate"]["policy"]["identity"],
+    "factory.declarative-gate"
+  );
+  assert_eq!(body["deterministic_gate"]["parameter_contract"], "declarative_gate_v1");
+  assert_eq!(body["human_gates"].as_array().unwrap().len(), 3);
+  assert_eq!(
+    body["deterministic_gate"]["resource_modes"],
+    serde_json::json!(["none"])
+  );
+  assert!(
+    body["human_gates"]
+      .as_array()
+      .unwrap()
+      .iter()
+      .all(|gate| gate["resource_modes"] == serde_json::json!(["none"]))
+  );
+  let escalation = &body["human_gates"][0];
+  assert_eq!(escalation["operation"], "escalation");
+  let responses = escalation["responses"].as_array().unwrap();
+  assert_eq!(responses.len(), 3);
+  assert!(
+    responses
+      .iter()
+      .any(|r| r["disposition"] == "resume" && r["shape"]["fields"]["reason"]["required"] == true)
+  );
+  assert!(!responses.iter().any(|r| r["disposition"] == "confirm"));
+  assert_eq!(body["build_resource_modes"], serde_json::json!(["repository"]));
+  assert_eq!(body["source_free_incompatibility"], "executor_support_required");
+  assert!(!body.to_string().contains("MODEL_AUTH"));
+}
+
+#[tokio::test]
+async fn first_step_resolves_an_installed_profile_binding_without_a_flow_or_business_preset() {
+  use octacity_server_application::testing::MutationEvidenceProbe;
+  let project = ProjectId::generate();
+  let store = Arc::new(testing::InMemoryFactoryConfigurationStore::new());
+  store.seed_project(project).unwrap();
+  let (choices, definition) = testing::installed_role_execution_choices(project);
+  store.enable_project(project, choices).unwrap();
+  let policy = Arc::new(TrustedNetworkManagementPolicy);
+  let handlers = Arc::new(FactoryRoleProfileHandlers::with_policy(store.clone(), policy.clone()));
+  let peer = Arc::new(RecordingApplication::default());
+  let app =
+    recording_management_application(peer.clone(), peer).with_factory_roles(FactoryRoleManagementApplication::new(
+      Arc::new(AuthorizedCommandHandler::new(policy.clone(), handlers.clone())),
+      Arc::new(AuthorizedQueryHandler::new(policy, handlers)),
+    ));
+  let router = management_router_with_application(|| true, app);
+  let mut intent = serde_json::to_value(testing::role_profile_contract_intent(project)).unwrap();
+  intent.as_object_mut().unwrap().remove("project_id");
+  intent["profiles"].as_array_mut().unwrap().truncate(1);
+  intent["profiles"][0]["definition"] = serde_json::to_value(&definition).unwrap();
+  let published = router
+    .clone()
+    .oneshot(json_request(
+      "POST",
+      &format!("/api/v1/projects/{project}/factory-role-publications"),
+      "first-agent",
+      None,
+      &intent.to_string(),
+    ))
+    .await
+    .unwrap();
+  assert_eq!(published.status(), StatusCode::OK);
+  let published = json_response(published).await;
+  let profile = &published["profiles"][0];
+  let before = store.mutation_evidence_counts().await;
+  let request =
+    serde_json::json!({"profile":profile["reference"],"capability":"dependency-1","result_outcome":"evaluated"});
+  let response = router
+    .oneshot(json_request(
+      "POST",
+      &format!("/api/v1/projects/{project}/factory-execution-bindings/resolve"),
+      "not-a-publication",
+      None,
+      &request.to_string(),
+    ))
+    .await
+    .unwrap();
+  assert_eq!(
+    response.status(),
+    StatusCode::OK,
+    "first-step execution must not depend on a saved Flow"
+  );
+  assert_eq!(response.headers()["cache-control"], "no-store");
+  let resolved = json_response(response).await;
+  assert!(resolved["incompatibility"].is_null());
+  let build = &resolved["build"];
+  assert_eq!(
+    build["build_configuration"],
+    profile["definition"]["build_configuration"]
+  );
+  assert_eq!(build["tool"], profile["definition"]["toolchain"]["executable"]);
+  assert_eq!(build["plugin"], profile["definition"]["toolchain"]["plugin"]);
+  assert_eq!(build["model_or_tool"], profile["definition"]["toolchain"]["model"]);
+  assert_eq!(build["result_outcome"], "evaluated");
+  assert_eq!(build["result_output"], "result");
+  assert_eq!(build["result_output_kind"], "report");
+  assert_ne!(
+    build["task_digest"],
+    serde_json::json!("49".repeat(32)),
+    "the exact Profile must be bound by the server"
+  );
+  assert!(!resolved.to_string().contains("MODEL_AUTH"));
+  assert!(!resolved.to_string().contains("--approved-private-argument"));
+  assert_eq!(store.mutation_evidence_counts().await, before);
+}
+
+#[tokio::test]
 async fn factory_roles_http_publishes_complete_definitions_and_replays_the_original_receipt() {
   let (router, project, mut intent) = role_router();
   intent["profiles"][0]["definition"]["thinking_parameter"] = serde_json::json!("reasoning_effort");
@@ -716,6 +881,9 @@ macro_rules! unavailable_role_use_cases {
   )+};
 }
 unavailable_role_use_cases!(query:
+  ResolveFactoryExecutionBindingQuery=>"resolve_factory_execution_binding",
+  GetFactoryAuthoringCapabilitiesQuery=>"get_factory_authoring_capabilities",
+  ValidateFactoryGateProgramQuery=>"validate_factory_gate_program",
   GetFactoryRoleQuery=>"get_factory_role", GetFactoryRoleProfileQuery=>"get_factory_role_profile",
   ListFactoryRolesQuery=>"list_factory_roles", ListFactoryRoleProfilesQuery=>"list_factory_role_profiles",
   ValidateFactoryRoleQuery=>"validate_factory_role", ListFactoryRoleTemplatesQuery=>"list_factory_role_templates",
@@ -759,6 +927,9 @@ pub(super) fn management_requests() -> Vec<Request<Body>> {
     json_request("POST",&format!("{prefix}/factory-roles/validate"),"unused",None,&serde_json::json!({"id":role,"definition":intent["role"]["definition"]}).to_string()),
     empty_request("GET",&format!("{prefix}/factory-profile-capabilities?limit=1"),None),
     empty_request("GET",&format!("{prefix}/factory-profile-capabilities/runtime"),None),
+    empty_request("GET",&format!("{prefix}/factory-authoring-capabilities"),None),
+    json_request("POST",&format!("{prefix}/factory-gate-programs/validate"),"unused",None,r#"{"program":{"rules":[],"fallback":"review"}}"#),
+    json_request("POST",&format!("{prefix}/factory-execution-bindings/resolve"),"unused",None,&serde_json::json!({"profile":{"project_id":project,"id":profile,"version":1,"digest":"01".repeat(32)},"capability":"runtime","result_outcome":"observed"}).to_string()),
     json_request("POST",&format!("{prefix}/factory-role-profiles/validate"),"unused",None,&serde_json::json!({"id":profile,"role":reference,"capability":"runtime","definition":intent["profiles"][0]["definition"]}).to_string()),
     json_request("POST",&format!("{prefix}/factory-skills"),"import",None,&serde_json::json!({"identity":"test","files":[{"path":"SKILL.md","sha256":"01".repeat(32),"bytes":[1]}]}).to_string()),
     empty_request("GET",&format!("{prefix}/factory-skills?limit=1"),None),

@@ -214,8 +214,9 @@ fn configuration(project_id: ProjectId) -> PublishedBuildConfiguration {
     definition: BuildConfigurationDefinition {
       enabled: true,
       job_concurrency_limit: 2,
-      repository_id: id(5),
-      repository_version: RepositoryVersion::INITIAL,
+      repository_id: Some(id(5)),
+      repository_version: Some(RepositoryVersion::INITIAL),
+      source: None,
       pipeline_id: id(3),
       pipeline_version: PipelineVersion::INITIAL,
       parameters: ParameterSchema {
@@ -315,9 +316,10 @@ fn build_input(project_id: ProjectId) -> ImmutableBuildInput {
     configuration_version: BuildConfigurationVersion::INITIAL,
     pipeline_id: id(3),
     pipeline_version: PipelineVersion::INITIAL,
-    repository_id: id(5),
-    repository_version: RepositoryVersion::INITIAL,
-    immutable_revision: ImmutableRevision::new("0123456789abcdef").unwrap(),
+    repository_id: Some(id(5)),
+    repository_version: Some(RepositoryVersion::INITIAL),
+    immutable_revision: Some(ImmutableRevision::new("0123456789abcdef").unwrap()),
+    source: None,
     input_snapshot: json!({
       "parameters": {"release": true},
       "source": serde_json::to_value(ManualSourceSelection::ExactRevision(

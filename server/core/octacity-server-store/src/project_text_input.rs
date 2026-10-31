@@ -200,8 +200,9 @@ impl ProjectTextPreparation {
     let intent = self.admission_intent()?;
     let r = request.mutation();
     let work = &r.work;
+    let subject = work.subject().repository().map_err(|_| project_text_conflict())?;
     if self.published_at.is_none()
-      || self.frozen_revision.as_ref() != Some(work.subject().base_revision())
+      || self.frozen_revision.as_ref() != Some(subject.base_revision())
       || request.audit().security_scope() != &self.security_scope
       || r.probe.source_scope.security_scope != self.security_scope
       || r.probe.source_scope.source.as_str() != "manual"
@@ -211,7 +212,7 @@ impl ProjectTextPreparation {
       || work.external_identity() != &intent.external_identity
       || work.artifacts() != &intent.artifacts
       || work.subject().project_id() != intent.project_id
-      || work.subject().repository_id() != intent.repository_id
+      || Some(subject.repository_id()) != intent.repository_id
       || work.configuration().id() != intent.configuration_id
       || work.configuration().version() != intent.configuration_version
       || r.repository_version != intent.repository_version
@@ -253,7 +254,7 @@ impl ProjectTextPreparation {
       repository_id: t.repository_id,
       repository_version: t.repository_version,
       external_identity: s.external_identity.clone(),
-      source: s.source.clone(),
+      source: s.source.clone().into(),
       artifacts: self.work_artifacts()?,
       classification: s.classification.clone(),
       idempotency_key: s.idempotency_key.clone(),

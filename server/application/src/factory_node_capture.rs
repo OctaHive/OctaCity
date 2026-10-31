@@ -64,7 +64,7 @@ pub fn factory_node_candidate_materialization(
   let invalid = || FactoryChangeSetError::InvalidEvidence;
   let context = input.context().ok_or_else(invalid)?;
   if context.subject().candidate() != Some(candidate.subject())
-    || candidate.subject().exact() != input.subject()
+    || candidate.subject().exact() != input.exact_resource().map_err(|_| invalid())?
     || bundle.identity().artifact_id != candidate.bundle_artifact()
     || manifest.identity().artifact_id != candidate.manifest_artifact()
     || bundle.identity().job_id != manifest.identity().job_id
@@ -94,7 +94,11 @@ pub fn factory_node_candidate_materialization(
   }
   Ok(crate::FactoryCandidateMaterialization {
     change_set_id: candidate.id(),
-    base_revision: input.subject().base_revision().clone(),
+    base_revision: input
+      .exact_resource()
+      .map_err(|_| FactoryChangeSetError::InvalidEvidence)?
+      .base_revision()
+      .clone(),
     candidate_revision: candidate.subject().candidate_revision().clone(),
     bundle: bundle.identity().clone(),
     manifest: manifest.identity().clone(),
@@ -184,11 +188,13 @@ pub(crate) fn verify_factory_node_change_set_manifest(
     .context()
     .ok_or(FactoryChangeSetError::InvalidEvidence)?
     .subject();
-  let base = subject
-    .candidate()
-    .map_or(subject.exact().base_revision(), |candidate| {
-      candidate.candidate_revision()
-    });
+  let base = subject.candidate().map_or(
+    subject
+      .exact()
+      .map_err(|_| FactoryChangeSetError::InvalidEvidence)?
+      .base_revision(),
+    |candidate| candidate.candidate_revision(),
+  );
   validate_manifest(&manifest, intent.node().id().to_string(), base.as_str(), &output)?;
   validate_direct_source_scope(intent, &manifest)?;
   verify_deliverables(intent, &manifest)?;
@@ -317,11 +323,13 @@ fn recover_candidate(
   let manifest: CapturedChangeSetManifestV1 = serde_json::from_slice(bytes).map_err(|_| invalid())?;
   manifest.validate().map_err(|_| invalid())?;
   let subject = intent.input().context().ok_or_else(invalid)?.subject();
-  let base = subject
-    .candidate()
-    .map_or(subject.exact().base_revision(), |candidate| {
-      candidate.candidate_revision()
-    });
+  let base = subject.candidate().map_or(
+    subject
+      .exact()
+      .map_err(|_| FactoryChangeSetError::InvalidEvidence)?
+      .base_revision(),
+    |candidate| candidate.candidate_revision(),
+  );
   let file_matches = |file: &CapturedChangeSetFileV1| {
     output(&file.name).is_ok_and(|output| {
       file.size_bytes == output.artifact.encoded_size() && file.sha256 == output.artifact.content_digest().to_string()
@@ -387,7 +395,11 @@ fn captured_candidate(
   )
   .map_err(|_| FactoryChangeSetError::InvalidEvidence)?;
   let subject = CandidateSubject::new(
-    intent.input().subject().clone(),
+    intent
+      .input()
+      .exact_resource()
+      .map_err(|_| FactoryChangeSetError::InvalidEvidence)?
+      .clone(),
     ImmutableRevision::new(manifest.candidate_revision.clone()).map_err(|_| FactoryChangeSetError::InvalidEvidence)?,
     digest,
   );

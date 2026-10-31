@@ -18,7 +18,13 @@ pub(crate) fn validate_configuration_policy(
 ) -> Result<(), BuildConfigurationPolicyError> {
   let definition = &context.configuration.definition;
   let policy = &context.effective_policy.policy;
-  if !policy.repositories.contains(&context.repository.id) {
+  if context
+    .repository
+    .as_ref()
+    .is_some_and(|repository| !policy.repositories.contains(&repository.id))
+    || (context.repository.is_none()
+      && definition.source != Some(octacity_server_domain::BuildSourceMode::SourceFreeV1))
+  {
     return Err(BuildConfigurationPolicyError::RepositoryNotAllowed);
   }
   if !runtime_allowed(policy, &definition.runtime) {

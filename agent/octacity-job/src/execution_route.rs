@@ -9,9 +9,9 @@ use octacity_execution::{
 };
 use octacity_protocol::{
   CachePolicy, ExecutionCacheIdentityV2, ExecutionCapabilityV2, ExecutionEnvironmentId, ExecutionEvidenceV2,
-  ExecutionMode, ExecutionSpec, FactoryEnforcementCapabilityV3, JobSpecV1, JobSpecV2, JobSpecV3, NetworkPolicy,
-  OciIsolation as ProtocolOciIsolation, OctaSpec, OutputLimits, PlatformArchitecture, PlatformOs, RuntimeSpec,
-  RuntimeSpecV2, RuntimeTarget, SourceSpec, VerifiedJobSpec,
+  ExecutionMode, ExecutionSpec, FactoryEnforcementCapabilityV3, JobSpecV1, JobSpecV2, JobSpecV3, JobSpecV4,
+  ManagedJobSpec, NetworkPolicy, OciIsolation as ProtocolOciIsolation, OctaSpec, OutputLimits, PlatformArchitecture,
+  PlatformOs, RuntimeSpec, RuntimeSpecV2, RuntimeTarget, SourceSpec, VerifiedJobSpec,
 };
 
 use crate::{JobError, factory_preflight::ManagedFactoryExecution};
@@ -76,7 +76,7 @@ pub(super) struct ExecutableJobSpec {
   pub(super) execution_deadline: Option<u64>,
   pub(super) job_id: String,
   pub(super) attempt: u32,
-  pub(super) source: SourceSpec,
+  pub(super) source: Option<SourceSpec>,
   pub(super) octa: OctaSpec,
   pub(super) execution: ExecutableExecution,
   pub(super) runtime: ExecutableRuntime,
@@ -113,6 +113,7 @@ impl TryFrom<VerifiedJobSpec> for ExecutableJobSpec {
       VerifiedJobSpec::V1(spec) => Ok(Self::from(spec)),
       VerifiedJobSpec::V2(spec) => Ok(Self::from(spec)),
       VerifiedJobSpec::V3(spec) => Ok(Self::from(*spec)),
+      VerifiedJobSpec::V4(spec) => Ok(Self::from(*spec)),
     }
   }
 }
@@ -123,7 +124,7 @@ impl From<JobSpecV1> for ExecutableJobSpec {
       execution_deadline: None,
       job_id: spec.job_id,
       attempt: spec.attempt,
-      source: spec.source,
+      source: Some(spec.source),
       octa: spec.octa,
       execution: ExecutableExecution::Ordinary(spec.execution),
       runtime: ExecutableRuntime::Legacy(spec.runtime),
@@ -139,7 +140,7 @@ impl From<JobSpecV2> for ExecutableJobSpec {
       execution_deadline: None,
       job_id: spec.job_id,
       attempt: spec.attempt,
-      source: spec.source,
+      source: Some(spec.source),
       octa: spec.octa,
       execution: ExecutableExecution::Ordinary(spec.execution),
       runtime: ExecutableRuntime::Current(spec.runtime),
@@ -151,11 +152,22 @@ impl From<JobSpecV2> for ExecutableJobSpec {
 
 impl From<JobSpecV3> for ExecutableJobSpec {
   fn from(spec: JobSpecV3) -> Self {
+    Self::managed(spec, Some)
+  }
+}
+impl From<JobSpecV4> for ExecutableJobSpec {
+  fn from(spec: JobSpecV4) -> Self {
+    Self::managed(spec, |_| None)
+  }
+}
+impl ExecutableJobSpec {
+  fn managed<S>(spec: ManagedJobSpec<S>, source: impl FnOnce(S) -> Option<SourceSpec>) -> Self {
+    let source = source(spec.source);
     Self {
       execution_deadline: Some(spec.execution_deadline_unix_ms),
       job_id: spec.job_id,
       attempt: spec.attempt,
-      source: spec.source,
+      source,
       octa: spec.octa,
       execution: ExecutableExecution::Managed(Box::new(ManagedFactoryExecution {
         execution_deadline_unix_ms: spec.execution_deadline_unix_ms,

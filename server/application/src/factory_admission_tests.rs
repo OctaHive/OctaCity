@@ -57,10 +57,10 @@ pub(super) fn command(
     project_id,
     configuration_id,
     configuration_version: FactoryConfigurationVersion::INITIAL,
-    repository_id,
-    repository_version: RepositoryVersion::INITIAL,
+    repository_id: Some(repository_id),
+    repository_version: Some(RepositoryVersion::INITIAL),
     external_identity: ExternalWorkIdentity::new("manual/work-42").unwrap(),
-    source: RepositorySourceSelection::DefaultReference,
+    source: RepositorySourceSelection::DefaultReference.into(),
     artifacts: WorkArtifacts::new(artifact(90), artifact(91), Vec::new()).unwrap(),
     classification: WorkClassification::new(
       WorkPriority::new(20).unwrap(),
@@ -191,7 +191,8 @@ fn exact_scoped_replay_returns_one_run_before_resolving_mutable_state_again() {
       AdmitManualFactoryWorkCommand {
         source: RepositorySourceSelection::ExactRevision(
           octacity_server_domain::ImmutableRevision::new("different-revision").unwrap(),
-        ),
+        )
+        .into(),
         ..request
       },
     )
@@ -430,7 +431,7 @@ fn ambiguous_or_disallowed_repository_references_never_admit_work() {
       AdmitManualFactoryWorkCommand {
         external_identity: ExternalWorkIdentity::new("manual/work-43").unwrap(),
         idempotency_key: IdempotencyKey::new("admit-work-43").unwrap(),
-        source: RepositorySourceSelection::Reference(SourceReference::new("refs/heads/other").unwrap()),
+        source: RepositorySourceSelection::Reference(SourceReference::new("refs/heads/other").unwrap()).into(),
         ..command(project_id, configuration_id, repository_id)
       },
     )
@@ -889,3 +890,89 @@ pub(crate) fn with_issue_status_action(
   )
   .unwrap()
 }
+
+#[test]
+fn repository_free_admission_replays_exact_inputs_without_vcs_or_repository() {
+  run_ready(async {
+    let project = ProjectId::generate();
+    let configuration_id = FactoryConfigurationId::generate();
+    let store = Arc::new(InMemoryFactoryConfigurationStore::new());
+    store.seed_project(project).unwrap();
+    store
+      .seed_factory_configuration_version(PublishedFactoryConfiguration {
+        configuration: configuration(project, configuration_id),
+        published_at: time(1),
+      })
+      .unwrap();
+    let resolver = Arc::new(RecordingResolver::default());
+    let handler = FactoryAdmissionHandlers::new(store.clone(), resolver.clone());
+    let mut wire = serde_json::to_value(command(project, configuration_id, RepositoryId::generate())).unwrap();
+    wire.as_object_mut().unwrap().remove("repository_id");
+    wire.as_object_mut().unwrap().remove("repository_version");
+    wire["source"] = serde_json::json!({"kind":"project_input_v1"});
+    let request = serde_json::from_value::<AdmitManualFactoryWorkCommand>(wire);
+    assert!(
+      request.is_ok(),
+      "explicit Project/input admission must not require VCS fields: {request:?}"
+    );
+    let request = request.unwrap();
+    let first = admit(&handler, request.clone()).await.unwrap();
+    let replay = admit(&handler, request.clone()).await.unwrap();
+    assert_eq!(first.disposition, MutationDisposition::Applied);
+    assert_eq!(replay.disposition, MutationDisposition::Replayed);
+    assert_eq!(first.factory_run_id, replay.factory_run_id);
+    assert_eq!(first.work_envelope_id, replay.work_envelope_id);
+    assert_eq!(first.base_revision, None);
+    assert_eq!(resolver.call_count(), 0);
+    let snapshot = store.factory_run_snapshot(first.factory_run_id).await.unwrap();
+    let subject = serde_json::to_value(snapshot.work.subject()).unwrap();
+    assert_eq!(subject["kind"], "project_input_v1");
+    assert!(subject.get("repository_id").is_none());
+    assert!(subject.get("base_revision").is_none());
+    let changed = AdmitManualFactoryWorkCommand {
+      artifacts: WorkArtifacts::new(artifact(92), artifact(93), vec![]).unwrap(),
+      ..request
+    };
+    assert_eq!(
+      admit(&handler, changed).await.unwrap_err().classification(),
+      ApplicationFailure::Conflict
+    );
+    assert_eq!(resolver.call_count(), 0);
+    assert_eq!(store.management_audit_facts().await.len(), 1);
+  });
+}
+
+#[test]
+fn legacy_repository_admission_retains_its_v1_replay_fingerprint() {
+  let mut request = command(
+    "11111111-1111-4111-8111-111111111111".parse().unwrap(),
+    "22222222-2222-4222-8222-222222222222".parse().unwrap(),
+    "33333333-3333-4333-8333-333333333333".parse().unwrap(),
+  );
+  request.external_identity = ExternalWorkIdentity::new("operator.issue-14").unwrap();
+  request.artifacts = WorkArtifacts::new(
+    FactoryArtifactReference::new("44444444-4444-4444-8444-444444444444".parse().unwrap(), digest(0xab), 1).unwrap(),
+    FactoryArtifactReference::new("55555555-5555-4555-8555-555555555555".parse().unwrap(), digest(0xcd), 1).unwrap(),
+    vec![],
+  )
+  .unwrap();
+  request.classification = WorkClassification::new(
+    WorkPriority::new(1).unwrap(),
+    RiskClass::Low,
+    FactoryMetadata::default(),
+  );
+  // Fixed v1 length-framed preimage: repository fields, source expression and
+  // exact Artifact identities; transport key/time are deliberately excluded.
+  assert_eq!(
+    octacity_server_store::factory_admission_intent_digest(&request, "octacity.factory.manual-admission.v1")
+      .to_string(),
+    "c547eb9ca23bb2ccff275b10b377b798b17cbbe769db56da939cfc6c2d9c15e7"
+  );
+  assert_eq!(
+    serde_json::to_value(request.source).unwrap(),
+    serde_json::json!({"kind":"default_reference"})
+  );
+}
+
+#[path = "factory_code_admission_tests.rs"]
+mod code_admission;

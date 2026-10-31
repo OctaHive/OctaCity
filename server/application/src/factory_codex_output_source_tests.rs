@@ -480,6 +480,7 @@ async fn prepared_role_source_with_mcp_evidence(
 
 #[derive(Default)]
 struct PreparedRoleOptions {
+  source_free: bool,
   capture: Option<FactoryCodexCapturePolicy>,
   capture_paths: Vec<octacity_protocol::CapturedChangeSetPathV1>,
   observation_override: Option<serde_json::Value>,
@@ -494,6 +495,7 @@ struct PreparedRoleOptions {
 
 async fn prepared_role_options(options: PreparedRoleOptions) -> SourceFixture {
   let PreparedRoleOptions {
+    source_free,
     capture,
     capture_paths,
     observation_override,
@@ -537,7 +539,19 @@ async fn prepared_role_options(options: PreparedRoleOptions) -> SourceFixture {
     WorkClassification::new(previous.priority(), previous.risk(), previous.metadata().clone()),
   )
   .unwrap();
+  let work = if source_free {
+    crate::factory_node_test_support::repository_free_work(&work)
+  } else {
+    work
+  };
   let mut grants = serde_json::to_value(crate::factory_job_test_support::permissions(false)).unwrap();
+  if source_free {
+    assert!(capture.is_none());
+    grants["mounts"]
+      .as_array_mut()
+      .unwrap()
+      .retain(|mount| mount["root"] != "/workspace/source");
+  }
   for mount in grants["mounts"].as_array_mut().unwrap() {
     if mount["root"] == "/workspace/source" {
       mount["mode"] = serde_json::json!(if capture.is_some() { "read_write" } else { "read_only" });
@@ -643,8 +657,11 @@ async fn prepared_role_options(options: PreparedRoleOptions) -> SourceFixture {
     }
   }
   binding.task_digest = profile.task_digest();
-  let (_, admitted, schema, input, _) =
-    fixtures::execution_fixture_with_permissions(FlowNodeKind::Reasoning, work.clone(), binding, None, grants.clone());
+  let (_, admitted, schema, input, _) = if source_free {
+    fixtures::execution_fixture_without_code(FlowNodeKind::Reasoning, work.clone(), binding, grants.clone())
+  } else {
+    fixtures::execution_fixture_with_permissions(FlowNodeKind::Reasoning, work.clone(), binding, None, grants.clone())
+  };
   let (admitted, schema, input) = if verify_mcp {
     mcp_evidence::conclusion_admission(&work, admitted, schema, input)
   } else {
@@ -1063,20 +1080,37 @@ async fn finish_prepared_source(input: PreparedSourceInput) -> SourceFixture {
   });
   let mut build = base.request.build.clone();
   build.project_id = intent.input().subject().project_id();
-  build.repository_id = intent.input().subject().repository_id();
+  build.repository_id = intent
+    .input()
+    .exact_resource()
+    .ok()
+    .map(|resource| resource.repository_id());
   build.configuration_id = profile.build_configuration.id();
   build.configuration_version = profile.build_configuration.version();
-  build.immutable_revision = intent.input().subject().base_revision().clone();
+  build.immutable_revision = intent
+    .input()
+    .exact_resource()
+    .ok()
+    .map(|resource| resource.base_revision().clone());
+  if matches!(intent.input().code(), Some(FlowNodeCode::None)) {
+    build.repository_version = None;
+    build.source = Some(BuildSourceMode::SourceFreeV1);
+    build.input_snapshot = serde_json::json!({"parameters":{}, "source":{"kind":"source_free_v1"}});
+  }
   let mut job = base.request.jobs[0].clone();
   job.job_spec_template = derive_factory_managed_job_spec_template(FactoryManagedJobSpecInput {
-    build: JobSpecBuildSnapshot::new(
-      build.id,
-      build.immutable_revision.clone(),
-      None,
-      RepositoryLocator::new("https://example.test/repository.git").unwrap(),
-      BTreeMap::new(),
-    )
-    .unwrap(),
+    build: if build.source == Some(BuildSourceMode::SourceFreeV1) {
+      JobSpecBuildSnapshot::source_free(build.id, Default::default())
+    } else {
+      JobSpecBuildSnapshot::new(
+        build.id,
+        build.immutable_revision.clone().unwrap(),
+        None,
+        RepositoryLocator::new("https://example.test/repository.git").unwrap(),
+        BTreeMap::new(),
+      )
+      .unwrap()
+    },
     pipeline_node_id: job.pipeline_node_id.clone(),
     execution: program.execution,
     protected_inputs: program.protected_inputs,
@@ -1173,8 +1207,13 @@ async fn finish_prepared_source(input: PreparedSourceInput) -> SourceFixture {
     .input()
     .context()
     .and_then(|context| context.subject().candidate())
-    .map_or(&build.immutable_revision, |candidate| candidate.candidate_revision());
-  let mut provenance=serde_json::to_vec(&serde_json::json!({"format_version":1,"trace_format_version":1,"result_format_version":1,"plugin":{"name":"octa_plugin_codex","version":profile.toolchain.plugin.version()},"codex":{"name":"codex-cli","version":profile.toolchain.executable.version()},"settings":{"model":profile.toolchain.model.identity(),"reasoning_effort":null},"prompt_digest":{"algorithm":"blake3","value":codex_prompt_provenance_digest(prompt)},"source_revision":selected_revision,"timing":{"started_unix_millis":started_at,"finished_unix_millis":completed_at,"duration_millis":4},"outcome":"completed","usage":usage})).unwrap();
+    .map(|candidate| candidate.candidate_revision())
+    .or(build.immutable_revision.as_ref());
+  let mut provenance_record = serde_json::json!({"format_version":1,"trace_format_version":1,"result_format_version":1,"plugin":{"name":"octa_plugin_codex","version":profile.toolchain.plugin.version()},"codex":{"name":"codex-cli","version":profile.toolchain.executable.version()},"settings":{"model":profile.toolchain.model.identity(),"reasoning_effort":null},"prompt_digest":{"algorithm":"blake3","value":codex_prompt_provenance_digest(prompt)},"source_revision":selected_revision,"timing":{"started_unix_millis":started_at,"finished_unix_millis":completed_at,"duration_millis":4},"outcome":"completed","usage":usage});
+  if selected_revision.is_none() {
+    provenance_record.as_object_mut().unwrap().remove("source_revision");
+  }
+  let mut provenance = serde_json::to_vec(&provenance_record).unwrap();
   let mut trace = b"{\"format_version\":1,\"sequence\":0,\"event\":{\"type\":\"turn.completed\"}}\n".to_vec();
   let trace_id = ArtifactId::generate();
   if native_mcp {
@@ -1213,7 +1252,7 @@ async fn finish_prepared_source(input: PreparedSourceInput) -> SourceFixture {
     let manifest = CapturedChangeSetManifestV1 {
       cumulative_changes: None,
       format_version: 1,
-      base_revision: build.immutable_revision.to_string(),
+      base_revision: build.immutable_revision.as_ref().unwrap().to_string(),
       candidate_revision: "0123456789abcdef0123456789abcdef0123456789".to_owned(),
       node_attempt_id: intent.node().id().to_string(),
       capture_tool: FactoryImmutableReferenceV3 {
@@ -1504,11 +1543,11 @@ fn installed_candidate_output_source_verifies_frozen_source_inputs_and_candidate
       .managed_intent()
       .unwrap();
     assert_eq!(managed.protected_inputs().inputs.len(), 6);
-    assert!(managed.factory().source_write_paths.is_none());
-    assert!(managed.factory().change_set_capture.is_none());
+    assert!(managed.factory().unwrap().source_write_paths.is_none());
+    assert!(managed.factory().unwrap().change_set_capture.is_none());
     assert_eq!(
       fixture.query.build.build.immutable_revision,
-      fixture.intent.input().subject().base_revision().clone()
+      Some(fixture.intent.input().exact_resource().unwrap().base_revision().clone())
     );
     let source = FactoryCodexBuildOutputSource::new(
       fixture.runs.clone(),
@@ -1768,6 +1807,45 @@ fn codex_output_source_rejects_provenance_outside_the_executed_job_window() {
         "a retained provider report cannot establish its own execution window"
       );
     }
+  });
+}
+
+#[test]
+fn installed_source_free_codex_output_uses_fenced_job_facts_without_inventing_repository_provenance() {
+  crate::factory_admission_tests::run_ready(async {
+    let fixture = prepared_role_options(PreparedRoleOptions {
+      source_free: true,
+      ..Default::default()
+    })
+    .await;
+    assert!(matches!(fixture.intent.input().code(), Some(FlowNodeCode::None)));
+    assert!(fixture.query.build.build.repository_id.is_none());
+    assert!(
+      fixture.query.attempt.jobs[0]
+        .job
+        .job_spec_template
+        .source_revision()
+        .is_none()
+    );
+    let observed = fixture
+      .source(fixture.query.clone())
+      .published_outputs(fixture.query.build.build.id, fixture.query.attempt.id, 10_000)
+      .await;
+    let observed = observed.unwrap_or_else(|error| {
+      panic!("qualified no-code results must retain truthful absent VCS provenance: {error:?}")
+    });
+    let FactoryNodeBuildOutputObservation::Verified(observed) = observed else {
+      panic!("a successful source-free invocation must retain its declared result");
+    };
+    assert_eq!(
+      observed.documents[0].data.as_ref().unwrap().payload().value(),
+      &serde_json::json!({"count":9})
+    );
+    assert_eq!(
+      observed.execution.input_digest,
+      fixture.intent.input().digest().unwrap()
+    );
+    assert_eq!(observed.usage.tokens, 5);
   });
 }
 

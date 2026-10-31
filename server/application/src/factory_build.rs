@@ -7,7 +7,7 @@ use octacity_protocol::{
   ChangeSetMaterializationV3, ProtectedInputV3,
 };
 use octacity_server_artifacts::ArtifactIdentity;
-use octacity_server_domain::{AttemptId, BuildId, ImmutableRevision, JobId, ProjectId, RepositoryId, Timestamp};
+use octacity_server_domain::{AttemptId, BuildId, ImmutableRevision, JobId, ProjectId, Timestamp};
 use octacity_server_factory::{BuildConfigurationRef, FactoryDigest, FactoryPermissionSet, LocalPermissionCeiling};
 use octacity_server_job::{JobFailureClass, JobState};
 use octacity_server_orchestrator::BuildState;
@@ -119,12 +119,10 @@ pub struct CreateFactoryBuild {
   pub operation_id: FactoryDigest,
   /// Project owning both the Run and selected Build Configuration.
   pub project_id: ProjectId,
-  /// Repository selected by the immutable Work subject.
-  pub repository_id: RepositoryId,
+  /// Exact selected task resource, or explicit Work-input scope with no code attachment.
+  pub subject: octacity_server_factory::FactoryTaskSubject,
   /// Exact immutable Build Configuration selected by the node.
   pub build_configuration: BuildConfigurationRef,
-  /// Exact immutable revision the ordinary Build must materialize.
-  pub immutable_revision: ImmutableRevision,
   /// Existing Build ready-queue priority.
   pub priority: i64,
   /// Effective Factory permissions after pure narrowing.

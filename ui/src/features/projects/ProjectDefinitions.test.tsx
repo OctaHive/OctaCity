@@ -66,6 +66,54 @@ describe('Project definitions', () => {
     expect(await screen.findByText('0 Jobs')).toBeTruthy();
   });
 
+  it('starts an explicitly source-free Build without looking up a Repository', async () => {
+    vi.stubGlobal('crypto', { randomUUID: vi.fn(() => '44444444-4444-4444-8444-444444444444') });
+    const api = fakeProjectsApi();
+    api.getProject.mockResolvedValue({ ancestors: [], project: project('delivery', 'Delivery') });
+    api.listBuildConfigurations.mockResolvedValue(
+      definitionPage([configuration('configuration-a', 'Documents')], null),
+    );
+    api.listTriggers.mockResolvedValue(definitionPage([trigger('manual-trigger', 'manual')], null));
+    const original = configurationDetails('configuration-a', 'Documents');
+    api.getBuildConfiguration.mockResolvedValue({
+      ...original,
+      definition: {
+        ...original.definition,
+        repository_id: null,
+        repository_version: null,
+        source: { kind: 'source_free_v1' },
+      },
+    });
+    api.triggerBuild.mockResolvedValue({
+      attempt_id: 'attempt-free',
+      build_id: 'build-free',
+      disposition: 'applied',
+      outcome: 'accepted',
+      ready_job_ids: ['job-free'],
+      trigger_occurrence_id: 'occurrence-free',
+    });
+    renderProjects('/projects/delivery', api);
+    await userEvent.click(await screen.findByRole('button', { name: 'View Documents details' }));
+    const review = await screen.findByRole('button', { name: 'Review Build' });
+    expect(api.getRepository).not.toHaveBeenCalled();
+    await userEvent.click(review);
+    const dialog = await screen.findByRole('dialog', { name: 'Start Build from Documents?' });
+    await userEvent.click(within(dialog).getByRole('button', { name: 'Start Build' }));
+    expect(api.triggerBuild).toHaveBeenCalledWith(
+      {
+        configuration_id: 'configuration-a',
+        configuration_version: 3,
+        parameters: {},
+        priority: 0,
+        source: { kind: 'source_free_v1' },
+        trigger_id: 'manual-trigger',
+        trigger_version: 3,
+      },
+      { 'Idempotency-Key': '44444444-4444-4444-8444-444444444444' },
+    );
+    expect(api.getRepository).not.toHaveBeenCalled();
+  });
+
   it('validates and confirms one manual Build from the selected configuration', async () => {
     vi.stubGlobal('crypto', {
       randomUUID: vi.fn(() => '44444444-4444-4444-8444-444444444444'),

@@ -1,4 +1,4 @@
-import { useInfiniteQuery, useQuery, useQueryClient } from '@tanstack/react-query';
+import { skipToken, useInfiniteQuery, useQuery, useQueryClient } from '@tanstack/react-query';
 import { useMemo, useRef, useState, type FormEvent } from 'react';
 import { Link } from 'react-router-dom';
 
@@ -60,17 +60,17 @@ export function ManualBuildForm({
         item.configuration_id === configuration.id &&
         item.configuration_version === configuration.version,
     );
+  const sourceFree = configuration.definition.source?.kind === 'source_free_v1';
+  const repositoryId = configuration.definition.repository_id;
+  const repositoryVersion = configuration.definition.repository_version;
+  const hasRepository = !sourceFree && repositoryId != null && repositoryVersion != null;
   const repository = useQuery({
-    queryFn: ({ signal }) =>
-      api.getRepository(
-        configuration.definition.repository_id,
-        configuration.definition.repository_version,
-        signal,
-      ),
-    queryKey: queryKeys.repository(
-      configuration.definition.repository_id,
-      configuration.definition.repository_version,
-    ),
+    queryFn: hasRepository
+      ? ({ signal }) => api.getRepository(repositoryId, repositoryVersion, signal)
+      : skipToken,
+    queryKey: hasRepository
+      ? queryKeys.repository(repositoryId, repositoryVersion)
+      : queryKeys.buildConfigurationRepository(configuration.id, configuration.version),
   });
   const initialValues = useMemo(() => initialParameterValues(configuration), [configuration]);
   const [values, setValues] = useState<Record<string, ParameterValue>>(initialValues);
@@ -84,9 +84,11 @@ export function ManualBuildForm({
   } | null>(null);
   const sourceOptions =
     repository.data === undefined ? [] : manualSourceOptions(repository.data, t);
-  const selectedSourceKind = sourceOptions.some((option) => option.value === sourceKind)
-    ? sourceKind
-    : (sourceOptions[0]?.value ?? null);
+  const selectedSourceKind: ManualSourceKind | null = sourceFree
+    ? 'source_free_v1'
+    : sourceOptions.some((option) => option.value === sourceKind)
+      ? sourceKind
+      : (sourceOptions[0]?.value ?? null);
   const allowedReferences = repository.data?.definition.selection.allowed_references ?? [];
   const selectedReference = allowedReferences.includes(sourceValue)
     ? sourceValue
@@ -130,7 +132,9 @@ export function ManualBuildForm({
           valueType={parameter.value_type}
         />
       ))}
-      {repository.data === undefined || selectedSourceKind === null ? null : (
+      {sourceFree ? (
+        <p>{t('manualBuild.sourceFree')}</p>
+      ) : repository.data === undefined || selectedSourceKind === null ? null : (
         <ManualSourceFields
           allowedReferences={allowedReferences}
           kind={selectedSourceKind}
@@ -197,9 +201,9 @@ export function ManualBuildForm({
             </button>
           ) : null}
         </div>
-      ) : repository.isPending ? (
+      ) : !sourceFree && repository.isPending ? (
         <QueryLoadingNotice label={t('definitions.repository')} />
-      ) : repository.data === undefined ? (
+      ) : !sourceFree && repository.data === undefined ? (
         <QueryFailureNotice
           error={repository.error}
           onRetry={repository.refetch}
@@ -427,7 +431,11 @@ function parseManualBuildRequest(
     errors.push(t('manualBuild.wholeNumber', { field: t('manualBuild.priority') }));
   }
   const trimmedSource = sourceValue.trim();
-  if (sourceKind !== 'default_reference' && trimmedSource.length === 0) {
+  if (
+    sourceKind !== 'default_reference' &&
+    sourceKind !== 'source_free_v1' &&
+    trimmedSource.length === 0
+  ) {
     errors.push(
       t('manualBuild.required', {
         field:
@@ -443,7 +451,7 @@ function parseManualBuildRequest(
       parameters,
       priority,
       source:
-        sourceKind === 'default_reference'
+        sourceKind === 'default_reference' || sourceKind === 'source_free_v1'
           ? { kind: sourceKind }
           : { kind: sourceKind, value: trimmedSource },
       trigger_id: trigger.id,

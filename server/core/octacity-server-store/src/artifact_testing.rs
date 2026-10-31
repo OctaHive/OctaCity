@@ -249,6 +249,25 @@ impl ArtifactRecordStore for InMemoryArtifactRecordStore {
       })
   }
 
+  async fn published_execution_input_for_job(
+    &self,
+    job_id: octacity_server_domain::JobId,
+    artifact_id: ArtifactId,
+  ) -> Result<crate::PublishedExecutionInput, StoreError> {
+    if job_id != self.lease.job_id {
+      return Err(StoreError::NotFound {
+        entity: EntityKind::Artifact,
+      });
+    }
+    let upload = self.published_artifact(artifact_id).await?;
+    if upload.artifact.identity().build_id != self.lease.build_id {
+      return Err(StoreError::NotFound {
+        entity: EntityKind::Artifact,
+      });
+    }
+    crate::PublishedExecutionInput::from_artifact(&upload)
+  }
+
   async fn list_published_artifacts(
     &self,
     query: ListPublishedArtifacts,

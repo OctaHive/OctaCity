@@ -41,6 +41,34 @@ impl ArtifactByteReader for InMemoryArtifactBytes {
   }
 }
 
+/// Installed compiler and reusable profile, without any Flow, Build or business preset.
+pub fn installed_role_execution_choices(
+  project: ProjectId,
+) -> (
+  octacity_server_factory::FactoryConfigurationChoices,
+  octacity_server_factory::FactoryRoleProfileDefinition,
+) {
+  use octacity_server_factory::*;
+  let (choices, definition) = installed_role_choices(project);
+  let choices = choices
+    .with_build_pipeline_contract(FactoryBuildPipelineContract {
+      build_configuration: definition.build_configuration.clone(),
+      tool: definition.toolchain.executable.clone(),
+      plugin: definition.toolchain.plugin.clone(),
+      model_or_tool: definition.toolchain.model.clone(),
+      pipeline_node: octacity_server_domain::PipelineNodeId::new("worker").unwrap(),
+      compilation: Some(FactoryBuildCompilationContract {
+        task_digest: FactoryDigest::from_bytes([73; 32]),
+        role_profiles: true,
+        result_output: FactoryKey::new("result").unwrap(),
+        result_output_kind: EvidenceOutputKind::Report,
+        mcp_result_tool: None,
+      }),
+    })
+    .unwrap();
+  (choices, definition)
+}
+
 /// Compatible installed profile data reused by application and HTTP authoring contracts.
 pub fn installed_role_choices(
   project: ProjectId,
@@ -629,13 +657,14 @@ impl ReadinessExecutionFixture {
     context.configuration.id = binding.build_configuration.id();
     context.configuration.version = binding.build_configuration.version();
     context.configuration.project_id = project;
-    context.repository.project_id = project;
-    context.repository.id = repository.id;
-    context.repository.version = repository.version;
+    let selected_repository = context.repository.as_mut().unwrap();
+    selected_repository.project_id = project;
+    selected_repository.id = repository.id;
+    selected_repository.version = repository.version;
     context.pipeline.project_id = project;
     let definition = &mut context.configuration.definition;
-    definition.repository_id = repository.id;
-    definition.repository_version = repository.version;
+    definition.repository_id = Some(repository.id);
+    definition.repository_version = Some(repository.version);
     definition.agent_requirements.capabilities.clear();
     definition.secrets_profile = None;
     definition.runtime.class = RuntimeClass::Host;

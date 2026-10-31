@@ -121,10 +121,11 @@ impl<R: FactoryRunStore, Q: BuildQueryStore, A: ArtifactRecordStore, B: Artifact
       || build.state.is_terminal()
       || build.updated_at > now
       || build.build.project_id != intent.input().subject().project_id()
-      || build.build.repository_id != intent.input().subject().repository_id()
+      || build.build.repository_id != Some(intent.input().exact_resource().map_err(|_| invalid())?.repository_id())
       || build.build.configuration_id != profile.build_configuration.id()
       || build.build.configuration_version != profile.build_configuration.version()
-      || build.build.immutable_revision != *intent.input().subject().base_revision()
+      || build.build.immutable_revision.as_ref()
+        != Some(intent.input().exact_resource().map_err(|_| invalid())?.base_revision())
       || attempt.id != job.attempt_id
       || attempt.build_id != build_id
       || attempt.number != completion.attempt
@@ -187,6 +188,7 @@ impl<R: FactoryRunStore, Q: BuildQueryStore, A: ArtifactRecordStore, B: Artifact
         .managed_intent()
         .ok_or_else(invalid)?
         .factory()
+        .ok_or_else(invalid)?
         .change_set_materialization
         != materialization
     {

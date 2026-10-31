@@ -13,6 +13,7 @@ mod identity;
 mod json;
 mod name;
 mod source;
+pub use source::{BuildSourceMode, BuildSourceSelection, RepositorySourceSelection};
 mod time;
 mod transition;
 mod version;

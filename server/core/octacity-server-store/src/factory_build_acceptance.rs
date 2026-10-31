@@ -42,11 +42,17 @@ impl AcceptFactoryBuild {
     input.verify_attempt(self.intent.node()).map_err(|_| invalid())?;
     self.build.validate().map_err(|_| invalid())?;
     let configuration = &self.intent.profile().build_configuration;
+    match (input.exact_resource().ok(), self.build.source) {
+      (Some(resource), None)
+        if self.build.repository_id == Some(resource.repository_id())
+          && self.build.immutable_revision.as_ref() == Some(resource.base_revision()) => {}
+      (None, Some(octacity_server_domain::BuildSourceMode::SourceFreeV1))
+        if matches!(input.code(), Some(octacity_server_factory::FlowNodeCode::None)) => {}
+      _ => return Err(invalid()),
+    }
     if self.build.project_id != input.subject().project_id()
-      || self.build.repository_id != input.subject().repository_id()
       || self.build.configuration_id != configuration.id()
       || self.build.configuration_version != configuration.version()
-      || self.build.immutable_revision != *input.subject().base_revision()
       || self.build.priority != self.intent.priority()
     {
       return Err(invalid());
@@ -69,8 +75,10 @@ impl AcceptFactoryBuild {
         let Some(managed) = template.managed_intent() else {
           return true;
         };
-        let factory = managed.factory();
-        template.source_revision() != &self.build.immutable_revision
+        let Some(factory) = managed.factory() else {
+          return true;
+        };
+        template.source_revision() != self.build.immutable_revision.as_ref()
           || template.execution_deadline() != Some(self.intent.node().deadline())
           || managed.permissions() != &permissions
           || factory.factory_run_id != input.factory_run_id().to_string()

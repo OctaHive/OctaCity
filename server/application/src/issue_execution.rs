@@ -118,8 +118,9 @@ impl<S: IssueExecutionStore + octacity_server_store::IssueStore, F: FactoryAdmis
         project_id: intent.project_id,
         configuration_id: target.configuration_id,
         configuration_version: target.configuration_version,
-        repository_id: target.repository_id,
-        repository_version: target.repository_version,
+        repository_id: Some(target.repository_id),
+
+        repository_version: Some(target.repository_version),
       })
       .await?;
     crate::factory_admission::validate_admission_project(&selected, intent.project_id)?;
@@ -145,8 +146,11 @@ impl<S: IssueExecutionStore + octacity_server_store::IssueStore, F: FactoryAdmis
       }
     }
 
-    crate::manual_trigger::select_source(&target.source, &selected.repository)
-      .map_err(|_| ApplicationError::InvalidInput)?;
+    crate::manual_trigger::select_source(
+      &target.source,
+      selected.repository.as_ref().ok_or_else(ApplicationError::invalid)?,
+    )
+    .map_err(|_| ApplicationError::InvalidInput)?;
     Ok(self.store.request_issue_execution(request).await?)
   }
 }

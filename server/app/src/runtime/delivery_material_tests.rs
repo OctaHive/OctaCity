@@ -39,9 +39,10 @@ impl BuildQueryStore for Builds {
         configuration_version: BuildConfigurationVersion::INITIAL,
         pipeline_id: PipelineId::generate(),
         pipeline_version: PipelineVersion::INITIAL,
-        repository_id: RepositoryId::generate(),
-        repository_version: RepositoryVersion::INITIAL,
-        immutable_revision: ImmutableRevision::new("1".repeat(40)).unwrap(),
+        repository_id: Some(RepositoryId::generate()),
+        repository_version: Some(RepositoryVersion::INITIAL),
+        immutable_revision: Some(ImmutableRevision::new("1".repeat(40)).unwrap()),
+        source: None,
         input_snapshot: serde_json::json!({}),
         effective_policy_snapshot: serde_json::json!({}),
         retention: BuildRetentionDeadlines {

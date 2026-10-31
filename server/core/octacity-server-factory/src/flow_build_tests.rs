@@ -891,7 +891,7 @@ fn a_node_context_contract_excludes_undeclared_sources_and_substituted_candidate
   )
   .unwrap();
   let subject = FactoryTaskSubject::Candidate(CandidateSubject::new(
-    work.subject().clone(),
+    work.subject().repository().unwrap().clone(),
     octacity_server_domain::ImmutableRevision::new("spec-candidate").unwrap(),
     FactoryDigest::from_bytes([75; 32]),
   ));
@@ -986,7 +986,7 @@ fn a_node_context_contract_excludes_undeclared_sources_and_substituted_candidate
     "required context cannot be omitted"
   );
   let foreign = FactoryTaskSubject::Candidate(CandidateSubject::new(
-    work.subject().clone(),
+    work.subject().repository().unwrap().clone(),
     octacity_server_domain::ImmutableRevision::new("other-candidate").unwrap(),
     FactoryDigest::from_bytes([75; 32]),
   ));
