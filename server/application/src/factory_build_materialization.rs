@@ -251,6 +251,21 @@ pub fn materialize_factory_managed_build_with_source(
         .plugins()
         .any(|plugin| plugin.identity().as_str() == identity && &plugin.digest().to_string() == digest)
     });
+  // Reserve only the output capacity actually authorized for this task. The
+  // published Build Configuration is a ceiling shared by multiple producers.
+  let requested = permissions.outputs();
+  let outputs = &mut signing_context.configuration.definition.artifacts;
+  outputs.artifact_count = outputs.artifact_count.min(requested.max_artifact_count());
+  outputs.artifact_bytes = outputs.artifact_bytes.min(requested.max_artifact_bytes());
+  outputs.report_count = outputs.report_count.min(requested.max_report_count());
+  outputs.report_bytes = outputs.report_bytes.min(requested.max_report_bytes());
+  let single_ceiling = match (outputs.artifact_count > 0, outputs.report_count > 0) {
+    (true, true) => outputs.artifact_bytes.min(outputs.report_bytes),
+    (true, false) => outputs.artifact_bytes,
+    (false, true) => outputs.report_bytes,
+    (false, false) => 0,
+  };
+  outputs.single_output_bytes = outputs.single_output_bytes.min(single_ceiling);
   let policy =
     crate::build_configuration_job_policy::configuration_job_policy(&signing_context, None).map_err(|_| Invalid)?;
   let build_snapshot = JobSpecBuildSnapshot::new(

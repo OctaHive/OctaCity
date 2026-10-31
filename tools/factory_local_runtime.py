@@ -15,6 +15,7 @@ from pinned_source_archive import download, extract_tar_archive
 from validate_octa_release_contract import CODEX_RUNTIME_SETTINGS_CAPABILITY
 
 POLICY = Path(__file__).resolve().parents[1] / 'deployment/local-stand/factory-runtime.json'
+COMPANION_POLICY = POLICY.with_name('factory-runtime-companions.json')
 DISCOVERY_PROGRAM = '/usr/local/bin/octa_plugin_codex'
 
 def _native_login_bytes(path: Path) -> bytes:
@@ -58,6 +59,58 @@ def install_native_login(root: Path, *, home: Path | None = None) -> dict:
 def _digest(value: bytes) -> str:
     return hashlib.sha256(value).hexdigest()
 
+def install_runtime_companions(runtime: dict) -> list[dict]:
+    """Install pinned peer executables under the existing private Runtime owner.
+
+    Each peer remains a separate executable inventory/permission entry. No login,
+    model settings or workload authority is installed here.
+    """
+    policy_bytes = COMPANION_POLICY.read_bytes()
+    policy = json.loads(policy_bytes)
+    if policy['runtime_version'] != runtime['policy']['archive']['version']:
+        raise ValueError('runtime companion version differs from the selected executable')
+    bundle = runtime['bundle']
+    state.validate_private_directory(bundle)
+    receipt = bundle / 'companions.json'
+    identity = _digest(policy_bytes)
+    if receipt.exists() or receipt.is_symlink():
+        retained = json.loads(state.read_regular_file(receipt, 'runtime companions', max_bytes=65536,
+            modes=frozenset({0o600})))
+        if retained['policy_sha256'] != identity:
+            raise ValueError('runtime companion installation differs from the reviewed policy')
+        selected = retained['executables']
+    else:
+        selected = []
+        for item in policy['executables']:
+            source = item['archive']
+            name = item['filename']
+            if (source['version'] != policy['runtime_version'] or Path(name).name != name
+                    or name in ('', '.', '..', 'codex', 'inputs.json', 'companions.json')):
+                raise ValueError('invalid runtime companion identity')
+            with tempfile.TemporaryDirectory(prefix='.companion-', dir=bundle) as temporary:
+                staging = Path(temporary)
+                archive = staging / 'release.tar.gz'
+                download(source, archive)
+                extract_tar_archive(archive, staging / 'release', max_expanded_bytes=source['expanded_max_bytes'],
+                    max_file_bytes=source['file_max_bytes'], max_members=source['member_max_count'])
+                payload = (staging / 'release' / source['executable']).read_bytes()
+                target = bundle / name
+                if state.publish_exclusive_private_file(target, payload):
+                    target.chmod(0o700)
+                actual = state.read_regular_file(target, 'runtime companion', max_bytes=source['file_max_bytes'],
+                    modes=frozenset({0o700}))
+                if _digest(actual) != _digest(payload):
+                    raise ValueError('runtime companion bytes differ from the reviewed installation')
+                selected.append({'identity':item['identity'], 'version':source['version'], 'platform':item['platform'],
+                    'path':str(target), 'sha256':_digest(actual), 'guest_filename':name})
+        state.publish_exclusive_private_file(receipt, json.dumps({'policy_sha256':identity, 'executables':selected}).encode())
+    for item in selected:
+        actual = state.read_regular_file(Path(item['path']), 'runtime companion', max_bytes=256 * 1024**2,
+            modes=frozenset({0o700}))
+        if _digest(actual) != item['sha256']:
+            raise ValueError('runtime companion bytes differ from the reviewed installation')
+    return selected
+
 def _settings_support(compatibility: dict) -> dict:
     # The released adapter owns these transport families; no MCP program or grant is installed.
     qualified = CODEX_RUNTIME_SETTINGS_CAPABILITY in compatibility.get('plugin', {}).get('capabilities', [])
@@ -99,8 +152,10 @@ def install_runtime_executable(root: Path, native: Path, *, octa_root: Path | No
     cli = state.read_regular_file(program, 'installed Codex runtime', max_bytes=source['file_max_bytes'], modes=frozenset({0o700}))
     if retained != {'policy_sha256':_digest(policy_bytes), 'executable_sha256':_digest(cli)}:
         raise ValueError('installed runtime identity differs from the reviewed installation')
-    return {'bundle': bundle, 'executable': program, 'sha256': _digest(cli),
-            'policy': policy, 'compatibility': compatibility, 'octa': installed}
+    runtime = {'bundle': bundle, 'executable': program, 'sha256': _digest(cli),
+               'policy': policy, 'compatibility': compatibility, 'octa': installed}
+    runtime['companions'] = install_runtime_companions(runtime)
+    return runtime
 
 
 def _install_discovery_home(bundle: Path, home: Path | None) -> None:

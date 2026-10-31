@@ -14,14 +14,29 @@ RUN --mount=type=cache,target=/usr/local/cargo/registry,sharing=locked \
     --mount=type=cache,target=/usr/local/cargo/git,sharing=locked \
     --mount=type=cache,target=/workspace/octacity/target,sharing=locked \
     set -eu; \
-    cargo build --locked --release -p octacity-server -p octacity-github --bins; \
+    cargo build --locked --release -p octacity-server -p octacity-github -p octacity-vcs-git --bins; \
     cargo build --manifest-path /workspace/octa/Cargo.toml --target-dir /workspace/octacity/target --locked --release -p octa_plugin_codex --bin octa_plugin_codex; \
-    for executable in octacity-server octacity-github octa_plugin_codex; do \
+    for executable in octacity-server octacity-github octacity-vcs-git octa_plugin_codex; do \
       binary=target/release/$executable; \
       install -D -m 0755 "$binary" "/out/rootfs/usr/local/bin/$executable"; \
       ldd "$binary" | awk '{ for (field = 1; field <= NF; field++) if ($field ~ /^\//) print $field }' | \
         sort -u | while IFS= read -r library; do cp --parents -L "$library" /out/rootfs; done; \
     done; \
+    for executable in /usr/bin/git /usr/lib/git-core/git-remote-http; do \
+      install -D -m 0755 "$executable" "/out/rootfs$executable"; \
+      ldd "$executable" | awk '{ for (field = 1; field <= NF; field++) if ($field ~ /^\//) print $field }' | \
+        sort -u | while IFS= read -r library; do cp --parents -L "$library" /out/rootfs; done; \
+    done; \
+    cp /out/rootfs/usr/lib/git-core/git-remote-http /out/rootfs/usr/lib/git-core/git-remote-https; \
+    vcs=/out/rootfs/usr/local/lib/octacity/vcs/git; \
+    mkdir -p "$vcs/credentials"; \
+    chmod 0700 "$vcs" "$vcs/credentials"; \
+    install -m 0700 target/release/octacity-vcs-git "$vcs/adapter"; \
+    digest=$(sha256sum "$vcs/adapter" | cut -d ' ' -f 1); \
+    printf 'manifest_version = 1\nadapter_id = "git"\nexecutable = "adapter"\nexecutable_sha256 = "%s"\n[protocol]\nmin = 1\nmax = 1\n[capabilities]\nlist_references = true\nread_commit = true\nlist_tree = true\nread_file = true\nresolve_revision = true\n' "$digest" > "$vcs/adapter.toml"; \
+    printf 'config_version = 1\ngit_path = "/usr/bin/git"\ncredential_directory = "credentials"\n' > "$vcs/git-adapter.toml"; \
+    chmod 0600 "$vcs/adapter.toml" "$vcs/git-adapter.toml"; \
+    chown -R 65532:65532 /out/rootfs/usr/local/lib/octacity/vcs; \
     mkdir -p /out/rootfs/etc; \
     cp /etc/nsswitch.conf /out/rootfs/etc/nsswitch.conf; \
     install -D -m 0644 /etc/ssl/certs/ca-certificates.crt /out/rootfs/etc/ssl/certs/ca-certificates.crt; \

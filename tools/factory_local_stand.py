@@ -46,6 +46,47 @@ def _prepare_bootstrap_services(root: Path) -> None:
     launcher._run_compose(root, 8443, ("run", "--rm", "--no-deps", "--entrypoint", "/bin/true", "gateway"), timeout_seconds=30)
 
 
+def _resume_vcs_intake(client, project: str, configuration: str, namespace: uuid.UUID, digest: str) -> None:
+    """After a VCS upgrade, retry exhausted standalone inputs through their ordinary owner.
+
+    This preserves the stable input, exact target, prepared bytes and operator filters.
+    Unchanged startup never replenishes attempts; disabled inputs stay disabled.
+    """
+    from urllib.parse import urlencode
+    cursor, records = None, []
+    for _ in range(100):
+        query = urlencode({"limit": 25, **({"after": cursor} if cursor else {})})
+        page = client.get(f"/api/v1/projects/{project}/factory-sources?{query}")
+        records.extend(page["items"])
+        following = page.get("next_cursor")
+        if following is None:
+            break
+        if following == cursor:
+            raise ValueError("Source recovery repeated its configuration cursor")
+        cursor = following
+    else:
+        raise ValueError("Source recovery exceeded its bounded configuration page limit")
+    grouped = {member["id"] for record in records if record["kind"] == "group"
+        for member in record["definition"]["members"]}
+    for record in records:
+        if record["kind"] != "input":
+            continue
+        item = record["definition"]
+        definition = item["definition"]
+        if item["id"] in grouped or not definition["enabled"] or definition["target"]["id"] != configuration:
+            continue
+        identity, version = str(uuid.UUID(item["id"])), item["version"]
+        base = f"/api/v1/projects/{project}/factory-source-inputs/{identity}/versions"
+        observed = client.get(f"{base}/{version}/diagnostics?limit=1")
+        schedule = (observed.get("scan") or {}).get("schedule") or {}
+        if not schedule.get("exhausted") or schedule.get("failure") not in {"transient", "unavailable"}:
+            continue
+        client.post(base, f"{namespace}-vcs-{digest[:16]}-retry-{identity}-{version}",
+            {"intent": {"project_id": project, "group": None, "inputs": [{
+                "id": identity, "expected_version": version, "definition": definition}]}},
+            expected_version=version)
+
+
 def run_triage_stand(root: Path, source: str | None, revision: str | None, *,
                      github_repository: str | None = None, github_token_file: Path | None = None) -> dict:
     """Install the actual two-stage pipeline, leaving activation to ordinary review.
@@ -83,6 +124,11 @@ def run_triage_stand(root: Path, source: str | None, revision: str | None, *,
     native = launcher._prepare_native_installation(root)
     launcher._build_images(native)
     image = triage.prepare_guest_image(root, native.path)
+    vcs_digest = launcher.server_builder.vcs_adapter_digest(launcher.SERVER_IMAGE)
+    vcs = root / "triage" / f"vcs-{vcs_digest}.json"
+    triage._publish(vcs, {"version": 1, "integrations": [{
+        "integration_id": str(uuid.uuid5(namespace, "source")), "adapter_id": "git",
+        "adapter_sha256": vcs_digest, "credential_handle": "anonymous"}]})
     if receipt_file.exists():
         # Bootstrap receipts are immutable seeds, not the current installation.
         # Resume through the same owner used by explicit installation updates.
@@ -95,10 +141,19 @@ def run_triage_stand(root: Path, source: str | None, revision: str | None, *,
                 raise ValueError("the retained triage installation is incomplete")
             arguments = ["up", "--root", str(root)]
             for name, path in inputs.items():
-                if path is not None:
+                if path is not None and name != "vcs_integrations":
                     arguments.extend(("--" + name.replace("_", "-"), str(path)))
+            arguments.extend(("--vcs-integrations", str(vcs)))
+            installed_vcs = inputs["vcs_integrations"]
+            upgraded_vcs = installed_vcs is None or installed_vcs.read_bytes() != vcs.read_bytes()
+            if upgraded_vcs:
+                arguments.append("--update-factory-installation")
             launcher.run(launcher.parse_arguments(arguments))
-        return _read_json(receipt_file)
+        retained = _read_json(receipt_file)
+        if upgraded_vcs:
+            _resume_vcs_intake(integration.LocalStandClient(root, bootstrap.DEFAULT_ORIGIN),
+                retained["project"], retained["configuration"]["id"], namespace, vcs_digest)
+        return retained
     executable = install_runtime_executable(root, native.path)
     if not resources_file.exists() or not assets_file.exists():
         _prepare_bootstrap_services(root)
@@ -114,14 +169,14 @@ def run_triage_stand(root: Path, source: str | None, revision: str | None, *,
             _private_json(assets_file, assets)
     resources, assets = _read_json(resources_file), _read_json(assets_file)
     server_config.generate_server_configuration(root, native.path, factory_profiles=Path(assets["profiles"]),
-        factory_issue_mcp_readers=Path(assets["issue_mcp_readers"]))
+        factory_issue_mcp_readers=Path(assets["issue_mcp_readers"]), vcs_integrations=vcs)
     repository = github_repository or installed_github_resource(root)["resource"]["locator"]
     frozen_source = None if installation["revision"] is None else {"kind": "exact_revision", "value": installation["revision"]}
     install_repository(root, repository, preparation_mapping=triage.preparation_mapping(resources["project"]), preparation_source=frozen_source)
     print("Starting the standard stand with isolated triage agents", flush=True)
     launcher.run(launcher.parse_arguments(["up", "--root", str(root),
         "--factory-profiles", assets["profiles"], "--factory-agent-profile", assets["agent_profile"],
-        "--factory-issue-mcp-readers", assets["issue_mcp_readers"]]))
+        "--factory-issue-mcp-readers", assets["issue_mcp_readers"], "--vcs-integrations", str(vcs)]))
     client = integration.LocalStandClient(root, bootstrap.DEFAULT_ORIGIN)
     connection = ensure_github_connection(client, root, resources["project"], installed_github_resource(root),
         github_token_file, namespace)

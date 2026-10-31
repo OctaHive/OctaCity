@@ -695,7 +695,7 @@ else:
         entry = (
             f'"issue-reader" = {{ path = {json.dumps(str(program))}, version = "1.2.0", '
             f'platform = "linux-aarch64", sha256 = "{hashlib.sha256(program.read_bytes()).hexdigest()}", '
-            'standalone = true }, '
+            'standalone = true, guest_filename = "runtime-helper" }, '
         )
         policy.write_text(policy.read_text().replace("tool_executables = {", "tool_executables = { " + entry, 1))
         receipt = CONFIGURATOR.generate_agent_configuration(
@@ -704,6 +704,7 @@ else:
         )
         configuration = tomllib.loads(Path(receipt["config"]).read_text())
         self.assertTrue(configuration["tool_executables"]["issue-reader"]["standalone"])
+        self.assertEqual(configuration["tool_executables"]["issue-reader"]["guest_filename"], "runtime-helper")
         self.assertEqual(configuration["factory_permissions"], permissions)
         self.assertEqual(configuration["allowed_network_hosts"], ["api.openai.com"])
 

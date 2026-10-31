@@ -122,6 +122,7 @@ def installed_factory_inputs(root: Path, exports: Path) -> dict[str, Path | None
     """
     bundle = root / "config/server"
     paths = {"factory_profiles": bundle / "factory-profiles.json",
+        "vcs_integrations": bundle / "vcs-integrations.json",
         "factory_agent_profile": root / "config/factory-agent-profile.toml",
         "factory_runtime_bundle": bundle / "factory-runtime",
         "factory_delivery_bundle": bundle / "factory-delivery"}
@@ -145,6 +146,7 @@ def factory_installation_update(
     factory_delivery_bundle: Path | None = None,
     factory_signal_connectors: Path | None = None,
     factory_issue_mcp_readers: Path | None = None,
+    vcs_integrations: Path | None = None,
     openssl: str = "openssl",
 ) -> Iterator[None]:
     """Preflight before stopping; restore the old configuration on startup failure.
@@ -188,7 +190,8 @@ def factory_installation_update(
             factory_runtime_bundle=factory_runtime_bundle or inherited["factory_runtime_bundle"],
             factory_delivery_bundle=factory_delivery_bundle or inherited["factory_delivery_bundle"],
             factory_signal_connectors=factory_signal_connectors or inherited["factory_signal_connectors"],
-            factory_issue_mcp_readers=factory_issue_mcp_readers or inherited["factory_issue_mcp_readers"])
+            factory_issue_mcp_readers=factory_issue_mcp_readers or inherited["factory_issue_mcp_readers"],
+            vcs_integrations=vcs_integrations or inherited["vcs_integrations"])
         integrated = staging / "config/integrations/server.toml"
         if integrated.exists():
             previous_base = (root / "config/server/server.toml").read_bytes()

@@ -131,10 +131,12 @@ class AgentConfigurationError(RuntimeError):
 def _verify_factory_executable(tool: Any, *, allow_standalone: bool = False) -> None:
     """Verify one immutable operator executable, independently of its purpose."""
     required = {"path", "version", "platform", "sha256"}
-    if not isinstance(tool, dict) or not required <= set(tool) or set(tool) - required - ({"standalone"} if allow_standalone else set()):
+    if not isinstance(tool, dict) or not required <= set(tool) or set(tool) - required - ({"standalone", "guest_filename"} if allow_standalone else set()):
         raise ValueError("tool")
     if "standalone" in tool and type(tool["standalone"]) is not bool:
         raise ValueError("tool kind")
+    if "guest_filename" in tool and (not isinstance(tool["guest_filename"], str) or not tool["guest_filename"]):
+        raise ValueError("tool guest filename")
     if not all(isinstance(tool[key], str) and tool[key] for key in required) or not VERSION_PATTERN.fullmatch(tool["version"]) or not re.fullmatch("[a-z0-9_-]+", tool["platform"]) or not re.fullmatch("[0-9a-f]{64}", tool["sha256"]):
         raise ValueError("tool")
     executable = Path(tool["path"])

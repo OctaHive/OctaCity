@@ -16,6 +16,40 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 @unittest.skipUnless(os.name == "posix", "private Runtime installation requires POSIX ownership")
 class FactoryLocalRuntimeTests(unittest.TestCase):
+    def test_runtime_companions_are_pinned_repeatable_and_cannot_replace_retained_bytes(self):
+        import factory_local_runtime as runtime
+        with tempfile.TemporaryDirectory() as temporary:
+            base = Path(temporary)
+            bundle = base / "runtime"
+            bundle.mkdir(mode=0o700)
+            payload = b"qualified runtime companion"
+            archive = base / "companion.tar.gz"
+            with tarfile.open(archive, "w:gz") as output:
+                member = tarfile.TarInfo("helper-linux"); member.size = len(payload)
+                output.addfile(member, io.BytesIO(payload))
+            policy = base / "companions.json"
+            policy.write_text(json.dumps({"runtime_version":"0.161.0", "executables":[{
+                "identity":"runtime-helper", "filename":"runtime-helper", "platform":"linux-aarch64",
+                "archive":{"version":"0.161.0", "executable":"helper-linux",
+                    "sha256":hashlib.sha256(archive.read_bytes()).hexdigest(),
+                    "expanded_max_bytes":4096, "file_max_bytes":4096, "member_max_count":4}}]}))
+            selected = {"bundle":bundle,"policy":{"archive":{"version":"0.161.0"}}}
+            with patch.object(runtime, "COMPANION_POLICY", policy), patch.object(runtime, "download", side_effect=lambda _, target: shutil.copyfile(archive,target)) as fetched:
+                companions = runtime.install_runtime_companions(selected)
+                self.assertEqual(len(companions), 1)
+                self.assertEqual(companions[0]["identity"], "runtime-helper")
+                self.assertEqual(companions[0]["guest_filename"], "runtime-helper")
+                self.assertEqual(companions[0]["sha256"], hashlib.sha256(payload).hexdigest())
+                installed = Path(companions[0]["path"])
+                self.assertEqual(installed.read_bytes(), payload)
+                self.assertEqual(installed.stat().st_mode & 0o777, 0o700)
+                self.assertEqual(runtime.install_runtime_companions(selected), companions)
+                self.assertEqual(fetched.call_count, 1, "repeat startup must reuse the verified installation offline")
+                installed.write_bytes(b"substituted companion")
+                with self.assertRaisesRegex(ValueError, "companion"):
+                    runtime.install_runtime_companions(selected)
+                self.assertEqual(fetched.call_count, 1, "drift requires repair, not silent replacement")
+
     def test_native_login_installation_seeds_only_auth_once_and_preserves_native_updates(self):
         import factory_local_runtime as runtime
         with tempfile.TemporaryDirectory() as temporary:
@@ -72,9 +106,15 @@ class FactoryLocalRuntimeTests(unittest.TestCase):
                 content = b'#!/bin/sh\necho codex-cli 0.161.0\n'
                 member = tarfile.TarInfo('codex-test'); member.size = len(content); member.mode = 0o755
                 archive.addfile(member, io.BytesIO(content))
+                helper = b"qualified native companion"
+                member = tarfile.TarInfo("helper-test"); member.size = len(helper); member.mode = 0o755
+                archive.addfile(member, io.BytesIO(helper))
             policy = json.loads(runtime.POLICY.read_text())
             policy['archive'].update(sha256=hashlib.sha256(source.read_bytes()).hexdigest(), executable='codex-test')
             policy_path = base / 'runtime.json'; policy_path.write_text(json.dumps(policy))
+            companions = json.loads(runtime.COMPANION_POLICY.read_text())
+            companions['executables'][0]['archive'].update(sha256=hashlib.sha256(source.read_bytes()).hexdigest(), executable='helper-test')
+            companion_policy = base / 'companions.json'; companion_policy.write_text(json.dumps(companions))
             native = base / 'native/oct a'; native.mkdir(parents=True)
             (native / 'codex-compatibility.json').write_text(json.dumps({'plugin':{'capabilities':['codex.task-runtime-settings.v1']},'executable':{'supported_versions':['0.161.0'], 'selection_environment':'OCTA_CODEX_EXECUTABLE'}}))
             (native.parent / 'job-spec-policy.json').write_text(json.dumps({'octa':{'version':'0.7.2', 'plugin_digests':{'codex':'a'*64}}}))
@@ -83,7 +123,7 @@ class FactoryLocalRuntimeTests(unittest.TestCase):
             (home / 'config.toml').write_text('private MCP and local instructions')
             api = types.SimpleNamespace(get=lambda _: {'id':'cfg','project_id':'project','version':1,'definition':{'enabled':True}},
                 post=lambda *args: {'reference':{'identity':'runtime-parameters','version':'v1','digest':'b'*64},'shape':{'type':'object','fields':{}}})
-            with patch.object(runtime, 'POLICY', policy_path), patch.object(runtime, 'download', side_effect=lambda _, target: shutil.copyfile(source,target)), \
+            with patch.object(runtime, 'POLICY', policy_path), patch.object(runtime, 'COMPANION_POLICY', companion_policy), patch.object(runtime, 'download', side_effect=lambda _, target: shutil.copyfile(source,target)), \
                     patch.object(runtime.subprocess, 'run', return_value=types.SimpleNamespace(stdout='c'*64+'  plugin\n')):
                 installed = runtime.install_runtime(base/'stand', native.parent, {'project':'project','configuration':'cfg'}, api, home=home, octa_root=native)
                 legacy = copy.deepcopy(installed['project'])
@@ -101,6 +141,8 @@ class FactoryLocalRuntimeTests(unittest.TestCase):
                     agent_only = runtime.install_runtime_executable(base/'agent-only', native.parent, octa_root=native)
                 self.assertEqual(agent_only['executable'].read_bytes(), content)
                 self.assertEqual(agent_only['sha256'], hashlib.sha256(content).hexdigest())
+                self.assertEqual(Path(agent_only['companions'][0]['path']).read_bytes(), helper)
+                self.assertEqual(agent_only['companions'][0]['guest_filename'], 'codex-code-mode-host')
                 self.assertFalse((agent_only['bundle']/'home').exists(), 'binary installation cannot import host authentication or configuration')
             bundle = installed['bundle']
             self.assertEqual((bundle/'codex').read_bytes(), content)
@@ -164,7 +206,14 @@ class FactoryRuntimeRestTests(unittest.TestCase):
                 with stand.bootstrap_server(root,native) as client:
                     pool = client.post(bootstrap.POOL_PATH,namespace+'-pool',bootstrap.LOCAL_POOL_REQUEST)['resource']['id']
                     resources = demo_support.prepare_resources(client,pool,'https://github.com/OctaHive/OctaCity',stand.integration._guest_image(),namespace)
-                    with patch.object(runtime,'SERVER_IMAGE',image), patch.object(runtime,'download',side_effect=lambda _,target:shutil.copyfile(archive,target)):
+                    pinned_download = runtime.download
+                    primary_digest = json.loads(runtime.POLICY.read_text())['archive']['sha256']
+                    def download_asset(policy, target):
+                        if policy['sha256'] == primary_digest:
+                            shutil.copyfile(archive, target)
+                        else:
+                            pinned_download(policy, target)
+                    with patch.object(runtime,'SERVER_IMAGE',image), patch.object(runtime,'download',side_effect=download_asset):
                         installed = runtime.install_runtime(root,native,resources,client)
                     profiles = root/'profiles.json'
                     stand._private_json(profiles,{'version':1,'projects':[installed['project']],'codex':[]})

@@ -17,6 +17,22 @@ from factory_integrations import configure_integrations
 
 class LocalStandEntrypointTests(unittest.TestCase):
     @unittest.skipUnless(shutil.which("docker"), "Docker is required for the container boundary")
+    def test_packaged_vcs_adapter_loads_its_git_configuration_as_the_server_user(self):
+        image = os.environ.get("OCTACITY_TEST_SERVER_IMAGE", "octacity/server:local")
+        if subprocess.run(["docker", "image", "inspect", image], capture_output=True).returncode:
+            self.skipTest("build the local server image before checking VCS")
+        request = json.loads((REPOSITORY / "server/protocols/octacity-vcs-protocol/fixtures/resolve-revision-v1.json").read_text())
+        request["command"]["payload"]["reference"] = "not-a-fully-qualified-reference"
+        request["command"]["payload"]["repository"]["credential_handle"] = "anonymous"
+        result = subprocess.run(["docker", "run", "--rm", "-i", "--pull", "never", "--network", "none", "--read-only",
+            "--workdir", "/usr/local/lib/octacity/vcs/git", "--entrypoint", "/usr/local/bin/octacity-vcs-git", image],
+            input=json.dumps(request) + "\n", capture_output=True, text=True, timeout=20)
+        self.assertEqual(result.returncode, 0, result.stderr)
+        response = json.loads(result.stdout)
+        self.assertEqual(response["request_id"], request["request_id"])
+        self.assertEqual(response["outcome"]["payload"]["code"], "unsupported_reference")
+
+    @unittest.skipUnless(shutil.which("docker"), "Docker is required for the container boundary")
     def test_server_image_exposes_plugin_owned_model_metadata_without_task_or_credentials(self):
         image = os.environ.get("OCTACITY_TEST_SERVER_IMAGE", "octacity/server:local")
         if subprocess.run(["docker", "image", "inspect", image], capture_output=True).returncode:

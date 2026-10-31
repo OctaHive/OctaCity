@@ -468,11 +468,51 @@ connections and session history are not copied. A missing/expired login or
 unavailable model entitlement requires operator remediation through Codex;
 no API-key fallback or custom OAuth client is installed.
 
+The stand's `factory-triage.json` declares a 150,000-token budget per stage
+and 300,000 per Flow/Configuration. Cached input tokens remain part of measured
+token consumption. These workflow budgets are independent of the pinned binary
+installation; changing a limit publishes new profiles and Flow/Configuration
+versions, while existing Runs retain their original limits.
+
+The same private Runtime installer also installs the separately checksummed
+`codex-code-mode-host` from the selected Codex release. Its pinned archive is
+declared in `deployment/local-stand/factory-runtime-companions.json`; repeated
+starts verify retained bytes without replacing drift. The generated Agent
+inventory and stage permissions select it explicitly, and its declared guest
+filename lets Codex locate its tool host beside the CLI. It receives no additional
+MCP scope or provider credentials.
+
+The server image includes the ordinary digest-pinned Git VCS adapter and its
+HTTPS Git transport. The default stand installs its Repository integration
+automatically, so the reviewed default branch is resolved to an exact revision
+at Work admission; no manually copied commit SHA is required. This installation
+uses anonymous reads for the public code repository, independently of the GitHub
+Issue connection and model/MCP credentials.
+
+Resuming a pre-VCS stand through the same `tools/factory-stand` command upgrades
+only the recognized generated configuration through the ordinary atomic update.
+Database/object-store contents, published Flows/Configurations, current Agent
+credentials, input targets and filters are retained. After that VCS upgrade, an
+enabled standalone triage input whose scan exhausted transient/unavailable
+attempts is republished unchanged through the normal versioned management API
+to resume its retained preparation. Disabled inputs and exclusive groups are
+untouched. Unchanged subsequent startup does not replenish attempts again.
+Missing VCS resolution support is a configuration failure, rather than a
+transient provider error retried eight times.
+
 Subscription mode records tokens/time and reports monetary cost as unknown
 unless the native client provides it. API mode requires reported cost or
 explicit operator pricing. Finite technical budgets remain in force in both
 modes; unknown cost is never converted to zero. Reviewed model, network,
 resource and budget defaults are in `deployment/local-stand/factory-triage.json`.
+The output budget covers Artifacts and Reports together: the default reserves
+32 MiB for trace/provenance Artifacts and 32 MiB for Reports per model step.
+Ordinary Job output ceilings are narrowed to that step's exact permissions;
+unused capacity from a broader Build Configuration is not reserved again.
+Protected-input downloads use the same operator-configured additional CA roots
+as coordinator requests and output uploads. Certificate and origin checks remain
+enabled; the local CA does not need to be added to the workstation trust store
+for the Agent to download a step's context.
 
 The investigation MCP token is a separate private credential, scoped to this
 Project's Issue search/read operations, with a 30-day expiry. It is distinct

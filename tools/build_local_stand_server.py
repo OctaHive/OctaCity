@@ -5,6 +5,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import re
 from pathlib import Path
 import subprocess
 import tempfile
@@ -107,6 +108,18 @@ def verification_commands(image: str, fixture: Path) -> tuple[list[str], list[st
     return version, validate
 
 
+def vcs_adapter_digest(image: str) -> str:
+    """Read the packaged adapter identity offline, under the image's ordinary user."""
+    result = subprocess.run([
+        "docker", "run", "--rm", "--platform", CONTAINER_PLATFORM, "--network", "none", "--read-only",
+        "--entrypoint", "/usr/bin/sha256sum", image, "/usr/local/lib/octacity/vcs/git/adapter",
+    ], check=True, capture_output=True, text=True, timeout=20)
+    digest = result.stdout.split()[0] if result.stdout.split() else ""
+    if not re.fullmatch(r"[0-9a-f]{64}", digest):
+        raise LocalStandBuildError("server image VCS adapter identity is invalid")
+    return digest
+
+
 def verify_image(
     image: str, fixture: Path, expected_version: str, expected_revision: str
 ) -> None:
@@ -144,6 +157,7 @@ def verify_image(
     metadata = json.loads(catalog.stdout)
     if metadata.get("manual_model") is not True or not isinstance(metadata.get("models"), list):
         raise LocalStandBuildError("server image has invalid model-catalog metadata")
+    vcs_adapter_digest(image)
 
 
 def build(image: str, manifest: Path, fixture: Path, repository: Path) -> None:

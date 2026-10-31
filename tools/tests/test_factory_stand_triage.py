@@ -121,6 +121,8 @@ class FactoryStandTriageTests(unittest.TestCase):
                 self.assertEqual(selection["input"]["source"], binding)
                 self.assertIsNone(selection["input"]["reporter"])
                 self.assertEqual(selection["effects"], {})
+                self.assertEqual(selection["execution"]["budget"]["max_tokens"], 300000)
+                self.assertEqual(selection["configuration"]["hard_budget"]["max_tokens"], 300000)
                 self.assertEqual(selection["repository"]["definition_digest"], "b" * 64)
                 source["predicate_label_presence"] = ["any"]
                 with self.assertRaisesRegex(ValueError, "unlabeled"):
@@ -157,6 +159,11 @@ class FactoryStandTriageTests(unittest.TestCase):
             native = {"executable": program, "sha256": hashlib.sha256(program.read_bytes()).hexdigest(),
                 "policy": json.loads(runtime.POLICY.read_text()),
                 "octa": {"version": "0.8.0", "plugin_digests": {"codex": "a" * 64}}}
+            helper = base / "runtime-helper"
+            helper.write_bytes(b"qualified native companion")
+            helper.chmod(0o700)
+            native["companions"] = [{"identity":"runtime-helper", "version":"0.161.0", "platform":"linux-aarch64",
+                "path":str(helper), "sha256":hashlib.sha256(helper.read_bytes()).hexdigest(), "guest_filename":"runtime-helper"}]
             home = base / "operator"
             home.mkdir(mode=0o700)
             auth = home / "auth.json"
@@ -179,6 +186,14 @@ class FactoryStandTriageTests(unittest.TestCase):
                 compiled, = catalog["codex"]
                 self.assertEqual(compiled["authentication"], "native_login_file")
                 self.assertEqual(compiled["usage_policy"], {"kind": "subscription"})
+                outputs = compiled["project_permissions"]["outputs"]
+                self.assertGreaterEqual(outputs["max_artifact_count"], 2)
+                self.assertGreaterEqual(outputs["max_report_count"], 1)
+                ceiling = catalog["projects"][0]["role_profiles"]["triage-runtime"]["ceiling"]
+                self.assertEqual(ceiling["budget"], {"max_attempts": 1, "max_elapsed_millis": 300000,
+                    "max_tokens": 150000, "max_cost_micro_units": 1000000, "max_output_bytes": 67108864})
+                self.assertLessEqual(outputs["max_artifact_bytes"] + outputs["max_report_bytes"],
+                    ceiling["budget"]["max_output_bytes"])
                 self.assertEqual(compiled["toolchain"]["model"]["identity"], "gpt-6.1-sol")
                 self.assertEqual(compiled["build_configuration"]["id"], configuration)
                 self.assertEqual(compiled["build_configuration"]["definition_digest"],
@@ -201,6 +216,14 @@ class FactoryStandTriageTests(unittest.TestCase):
                 self.assertEqual(json.loads(Path(mcp).read_text()), {"ISSUE_MCP_TOKEN": token})
                 self.assertNotEqual(Path(mcp), Path(login["path"]))
                 self.assertEqual(selected["tool_executables"]["codex-cli"]["sha256"], native["sha256"])
+                self.assertTrue(selected["tool_executables"]["runtime-helper"]["standalone"])
+                self.assertEqual(selected["tool_executables"]["runtime-helper"]["guest_filename"], "runtime-helper")
+                companion = {"identity":"runtime-helper", "version":"0.161.0", "digest":native["companions"][0]["sha256"]}
+                self.assertIn(companion, compiled["project_permissions"]["executables"])
+                self.assertIn(companion, ceiling["permissions"]["executables"])
+                self.assertEqual(selected["factory_permissions"]["executables"],
+                    sorted(selected["factory_permissions"]["executables"], key=lambda item:item["identity"]))
+
                 self.assertNotIn("model_discovery", catalog["projects"][0]["role_profiles"]["triage-runtime"])
                 public = Path(result["profiles"]).read_text() + Path(result["agent_profile"]).read_text()
                 self.assertNotIn("private-model-canary", public)
@@ -279,7 +302,9 @@ class FactoryStandTriageTests(unittest.TestCase):
         self.assertEqual(definition["cache"], {"namespace": None, "read": False, "write": False})
         self.assertEqual(definition["runtime"]["timeout_seconds"], 300)
         self.assertEqual(definition["runtime"]["memory_bytes"], 1073741824)
-        self.assertGreaterEqual(definition["artifacts"]["single_output_bytes"], 67108864)
+        outputs = definition["artifacts"]
+        self.assertGreater(outputs["single_output_bytes"], 0)
+        self.assertLessEqual(outputs["single_output_bytes"], min(outputs["artifact_bytes"], outputs["report_bytes"]))
         self.assertEqual(resources["pipeline_node"], calls[2][1]["dag"]["nodes"][0]["id"])
         self.assertEqual(calls[1][1]["definition"]["selection"]["default_reference"], "refs/heads/main")
         self.assertNotIn("trigger", resources)

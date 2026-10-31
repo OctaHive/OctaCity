@@ -11,10 +11,17 @@
     "digest": "6921e3ae725944f5f3969ea11dc7a264d12e205774e4b92195f2f82933c08886"
   },
   "mcp_credential_lifetime_millis": 2592000000,
+  "stage_budget": {
+    "max_attempts": 1,
+    "max_elapsed_millis": 300000,
+    "max_tokens": 150000,
+    "max_cost_micro_units": 1000000,
+    "max_output_bytes": 67108864
+  },
   "flow_budget": {
     "max_attempts": 8,
     "max_elapsed_millis": 600000,
-    "max_tokens": 200000,
+    "max_tokens": 300000,
     "max_cost_micro_units": 2000000,
     "max_output_bytes": 134217728
   },
@@ -28,10 +35,10 @@
   },
   "outputs": {
     "artifact_count": 4,
-    "artifact_bytes": 67108864,
+    "artifact_bytes": 33554432,
     "report_count": 4,
-    "report_bytes": 67108864,
-    "single_output_bytes": 67108864
+    "report_bytes": 33554432,
+    "single_output_bytes": 33554432
   },
   "retention": {
     "build_seconds": 86400,

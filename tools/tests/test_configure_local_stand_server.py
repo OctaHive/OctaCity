@@ -78,6 +78,23 @@ class LocalStandServerConfigurationTests(unittest.TestCase):
         )
         manifest_path.chmod(0o600)
 
+    def test_vcs_installation_configures_pinned_repository_resolution_without_source_substitution(self):
+        integration = {"integration_id": "11111111-1111-4111-8111-111111111111",
+            "adapter_id": "git", "adapter_sha256": "ab" * 32, "credential_handle": "anonymous"}
+        catalog = self.root / "vcs.json"
+        contents = json.dumps({"version": 1, "integrations": [integration]}).encode()
+        catalog.write_bytes(contents)
+        catalog.chmod(0o600)
+        receipt = CONFIGURATOR.generate_server_configuration(self.root, self.installation,
+            vcs_integrations=catalog)
+        document = tomllib.loads(Path(receipt["config"]).read_text())
+        self.assertEqual(document["vcs_adapter_registry"], "/usr/local/lib/octacity/vcs")
+        self.assertEqual(document["vcs_integrations"], [integration])
+        self.assertNotIn("source_revision", document)
+        self.assertEqual((self.root / "config/server/vcs-integrations.json").read_bytes(), contents)
+        self.assertEqual(CONFIGURATOR.generate_server_configuration(self.root, self.installation,
+            vcs_integrations=catalog), receipt)
+
     def test_issue_mcp_reader_installs_only_its_private_project_scoped_credential(self):
         token = "ocmcp.triage-issues." + "ab" * 32
         credential = self.root / "secrets/triage-issue-reader"

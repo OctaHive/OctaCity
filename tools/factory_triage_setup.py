@@ -208,6 +208,8 @@ def prepare_runtime(root: Path, native: dict, resources: dict, client) -> dict:
     readers, mcp_variables = _issue_reader(root, resources["project"], policy["mcp_credential_lifetime_millis"])
     plugin = _reference("codex", native["octa"]["version"], native["octa"]["plugin_digests"]["codex"])
     executable = _reference("codex-cli", native["policy"]["archive"]["version"], native["sha256"])
+    companions = native.get("companions", [])
+    companion_references = [_reference(item["identity"], item["version"], item["sha256"]) for item in companions]
     toolchain = {"plugin": plugin, "executable": executable, "model": _reference(policy["model_identifier"])}
     published = client.get(f"/api/v1/build-configurations/{resources['configuration']}/versions/1")
     build = {name: published[name] for name in ("id", "project_id", "version")}
@@ -222,7 +224,7 @@ def prepare_runtime(root: Path, native: dict, resources: dict, client) -> dict:
     arguments += [exact(value) for value in ("--ephemeral", "--skip-git-repo-check", "--ignore-user-config")]
     permissions = copy.deepcopy(native["policy"]["permissions"])
     outputs = policy["outputs"]
-    permissions.update(plugins=[plugin], executables=[executable],
+    permissions.update(plugins=[plugin], executables=[executable, *companion_references],
         commands=[{"executable": executable, "arguments": [exact("--version")]},
             {"executable": executable, "arguments": [*arguments, exact("-")]},
             {"executable": executable, "arguments": [*arguments, {"kind": "any"}, exact("-")]}],
@@ -245,10 +247,11 @@ def prepare_runtime(root: Path, native: dict, resources: dict, client) -> dict:
     ceiling = {"name": "GPT-6.1 Sol triage", "instructions": [], "toolchain": toolchain,
         "model_parameters": {}, "skills": {}, "context_requirements": ["task", "completion", "project-goals", "project-rules"],
         "build_configuration": build, "credential_purpose": "evaluator", "permissions": permissions,
-        "budget": native["policy"]["budget"], "execution": {"cli_arguments": ["--ephemeral", "--skip-git-repo-check"],
+        "budget": policy["stage_budget"], "execution": {"cli_arguments": ["--ephemeral", "--skip-git-repo-check"],
             "environment": {"ISSUE_MCP_TOKEN": {"kind": "secret", "reference": logical}}}}
     references = [{"kind": "node_capability", "alias": pin["identity"], "reference": pin}
         for pin in toolchain.values()]
+    references += [{"kind":"node_capability", "alias":pin["identity"], "reference":pin} for pin in companion_references]
     references += [{"kind": kind, "alias": name, "reference": _reference(name)} for kind, name in
         (("admission_policy", "triage-admission"), ("permission_ceiling", "triage-ceiling"),
          ("secret_profile", "triage-model"), ("secret_profile", "triage-mcp"))]
@@ -278,6 +281,10 @@ def prepare_runtime(root: Path, native: dict, resources: dict, client) -> dict:
         "allowed_network_hosts": policy["network_hosts"], "tool_executables": {"codex-cli": {
             "path": str(native["executable"]), "version": executable["version"], "platform": "linux-aarch64", "sha256": native["sha256"]}},
         "factory_credential_profiles": {"triage-model": login, "triage-mcp": str(mcp_variables)}}
+    for item in companions:
+        agent_policy["tool_executables"][item["identity"]] = {
+            key:item[key] for key in ("path", "version", "platform", "sha256", "guest_filename")}
+        agent_policy["tool_executables"][item["identity"]]["standalone"] = True
     contents = ("\n".join(f"{key} = {agent._toml_value(value)}" for key, value in agent_policy.items()) + "\n").encode()
     if not state.publish_exclusive_private_file(agent_profile, contents):
         if state.read_regular_file(agent_profile, "triage Agent policy", max_bytes=262144, modes=frozenset({0o600})) != contents:

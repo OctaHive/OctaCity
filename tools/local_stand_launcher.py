@@ -368,6 +368,7 @@ def _up(arguments: argparse.Namespace) -> dict[str, object]:
                 factory_delivery_bundle=arguments.factory_delivery_bundle,
                 factory_signal_connectors=arguments.factory_signal_connectors,
                 factory_issue_mcp_readers=arguments.factory_issue_mcp_readers,
+                vcs_integrations=arguments.vcs_integrations,
                 openssl=arguments.openssl, preflight=preflight,
                 stop=lambda: _stop_halves(owner, root, arguments.https_port, remove_volumes=False),
             )
@@ -388,6 +389,7 @@ def _up(arguments: argparse.Namespace) -> dict[str, object]:
                     factory_delivery_bundle=arguments.factory_delivery_bundle,
                     factory_runtime_bundle=arguments.factory_runtime_bundle,
                     factory_issue_mcp_readers=arguments.factory_issue_mcp_readers,
+                    vcs_integrations=arguments.vcs_integrations,
                 )
                 _build_images(native)
                 if arguments.factory_profiles is not None:
@@ -763,6 +765,7 @@ def parse_arguments(arguments: Sequence[str] | None = None) -> argparse.Namespac
     up.add_argument("--factory-signal-connectors", type=Path, help="separate private installed Decision Signal connector catalog")
     up.add_argument("--factory-issue-mcp-readers", type=Path, help="explicit Project-scoped read-only Issue MCP installation")
     up.add_argument("--factory-delivery-bundle", type=Path, help="separate private installed Delivery adapter directory")
+    up.add_argument("--vcs-integrations", type=Path, help="pinned integrations for the packaged ordinary VCS adapter")
     up.add_argument(
         "--compose-wait-seconds",
         type=_positive_bounded_seconds,

@@ -1,0 +1,19 @@
+{
+  "runtime_version": "0.161.0",
+  "executables": [{
+    "identity": "codex-code-mode-host",
+    "filename": "codex-code-mode-host",
+    "platform": "linux-aarch64",
+    "archive": {
+      "version": "0.161.0",
+      "tag": "rust-v0.161.0",
+      "archive_url": "https://github.com/openai/codex/releases/download/rust-v0.161.0/codex-code-mode-host-aarch64-unknown-linux-musl.tar.gz",
+      "sha256": "aaf902c8586ce82c201b5467042994efe89974a718d6079cd7ffc354ab4384ad",
+      "archive_max_bytes": 30000000,
+      "executable": "codex-code-mode-host-aarch64-unknown-linux-musl",
+      "expanded_max_bytes": 134217728,
+      "file_max_bytes": 134217728,
+      "member_max_count": 4
+    }
+  }]
+}

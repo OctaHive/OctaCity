@@ -86,6 +86,20 @@ class LocalStandServerBuildTests(unittest.TestCase):
         self.assertNotIn("target-feature=+crt-static", dockerfile)
         self.assertNotIn("docker/dockerfile:", dockerfile)
 
+    def test_reuse_rejects_an_image_without_the_vcs_adapter(self):
+        import subprocess
+        results = [
+            subprocess.CompletedProcess([], 0, json.dumps({"User": "65532:65532", "Labels": {
+                "org.opencontainers.image.version": "0.1.0", "org.opencontainers.image.revision": "a" * 40}})),
+            subprocess.CompletedProcess([], 0, "octacity-server 0.1.0"),
+            subprocess.CompletedProcess([], 0, "server configuration is valid"),
+            subprocess.CompletedProcess([], 0, '{"manual_model":true,"models":[]}'),
+            subprocess.CalledProcessError(127, ["docker", "run"]),
+        ]
+        with mock.patch.object(BUILDER.subprocess, "run", side_effect=results):
+            with self.assertRaises(subprocess.CalledProcessError):
+                BUILDER.verify_image("local:test", Path("fixture.toml"), "0.1.0", "a" * 40)
+
     def test_reuse_rejects_an_image_without_the_model_catalog_plugin(self):
         import subprocess
         results = [

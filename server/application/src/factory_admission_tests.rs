@@ -215,6 +215,43 @@ impl RevisionResolver for UnavailableResolver {
 }
 
 #[test]
+fn missing_vcs_resolution_is_a_configuration_failure_without_transient_retries() {
+  run_ready(async {
+    let project = ProjectId::generate();
+    let configuration = FactoryConfigurationId::generate();
+    let repository_id = RepositoryId::generate();
+    let store = seeded_store(
+      project,
+      configuration,
+      repository(project, repository_id, Some("refs/heads/main".parse().unwrap())),
+    );
+    let error = admit(
+      &FactoryAdmissionHandlers::new(store, Arc::new(UnavailableResolver)),
+      command(project, configuration, repository_id),
+    )
+    .await
+    .unwrap_err();
+    assert!(matches!(
+      error,
+      crate::ApplicationError::SourceDependency {
+        class: octacity_server_store::WorkSourceFailure::InvalidConfiguration,
+        ..
+      }
+    ));
+    let schedule = crate::source_scan_schedule(
+      None,
+      time(10),
+      std::time::Duration::from_secs(1),
+      crate::DurableRetryPolicy::new(8, 1000, 10000).unwrap(),
+      Some(&error),
+    )
+    .unwrap();
+    assert!(schedule.exhausted);
+    assert_eq!(schedule.attempts, 1);
+  });
+}
+
+#[test]
 fn replay_after_handler_restart_retains_the_original_intent_when_vcs_is_unavailable() {
   run_ready(async {
     let project = ProjectId::generate();

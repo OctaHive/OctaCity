@@ -575,6 +575,44 @@ where
   .unwrap()
 }
 #[test]
+fn role_reserves_only_its_authorized_output_capacity() {
+  crate::factory_admission_tests::run_ready(async {
+    let (intent, admitted, installed, package, bytes) = fixture_for_work_mode(
+      fixtures::work(),
+      |profile| {
+        profile.budget = BudgetLimit::new(1, 1000, 100, 1000, 1024).unwrap();
+        let mut grants = serde_json::to_value(&profile.permissions).unwrap();
+        grants["outputs"]["max_artifact_bytes"] = json!(512);
+        grants["outputs"]["max_report_bytes"] = json!(512);
+        profile.permissions = serde_json::from_value(grants).unwrap();
+      },
+      BTreeMap::new(),
+      factory_role_task_digest,
+      true,
+    );
+    let (materializer, _) = materializer_fixture(&intent, &installed, bytes);
+    let role = FactoryRoleInvocation::new(package, None, BTreeMap::new()).unwrap();
+    let accepted = materializer
+      .with_role_invocation_source(Arc::new(RoleSource(role)))
+      .materialize(
+        &intent,
+        &admitted,
+        FactoryClaimOwnership::new(intent.node().owner().clone(), intent.node().claim()),
+        Timestamp::from_unix_millis(41).unwrap(),
+      )
+      .await
+      .unwrap();
+    accepted.validate_fresh().unwrap();
+    let limits = accepted.jobs[0].job_spec_template.output_limits();
+    assert_eq!(limits.artifact_count, 8);
+    assert_eq!(limits.artifact_bytes, 512);
+    assert_eq!(limits.report_count, 4);
+    assert_eq!(limits.report_bytes, 512);
+    assert_eq!(limits.single_output_bytes, 512);
+  });
+}
+
+#[test]
 fn role_package_materializer_uses_the_existing_publisher_and_ordinary_job_contract() {
   crate::factory_admission_tests::run_ready(async {
     let (intent, admitted, installed, package, bytes) = fixture();

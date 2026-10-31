@@ -336,9 +336,13 @@ pub(super) fn installed_source_scope(
 pub(super) fn map_revision_error(error: RevisionResolutionError) -> ApplicationError {
   match error {
     RevisionResolutionError::NotFound | RevisionResolutionError::Invalid => ApplicationError::invalid(),
-    RevisionResolutionError::Transient | RevisionResolutionError::Cancelled | RevisionResolutionError::Unavailable => {
-      ApplicationError::unavailable()
-    }
+    // Missing resolver/integration support is an installation prerequisite, not
+    // a transient provider failure that another identical scan can repair.
+    RevisionResolutionError::Unavailable => ApplicationError::SourceDependency {
+      class: octacity_server_store::WorkSourceFailure::InvalidConfiguration,
+      retry_after_millis: None,
+    },
+    RevisionResolutionError::Transient | RevisionResolutionError::Cancelled => ApplicationError::unavailable(),
   }
 }
 

@@ -14,6 +14,8 @@ import types
 import unittest
 from unittest import mock
 import uuid
+import threading
+from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
 import test_configure_local_stand_agent as fixtures
 import factory_local_stand as stand
@@ -31,6 +33,34 @@ class FactoryStandRecoveryTests(unittest.TestCase):
         self.root = self.fixture.root.resolve()
         self.profiles, self.policy = self.fixture._factory_update_inputs()
         self.project = "10000000-0000-4000-8000-000000000001"
+        self.source_records, self.source_diagnostics, self.source_publications = [], {}, []
+        fixture = self
+
+        class Management(BaseHTTPRequestHandler):
+            def log_message(self, *_):
+                pass
+            def reply(self, value):
+                contents = json.dumps(value).encode()
+                self.send_response(200)
+                self.send_header("Content-Length", str(len(contents)))
+                self.end_headers()
+                self.wfile.write(contents)
+            def do_GET(self):
+                if "/diagnostics" in self.path:
+                    self.reply(fixture.source_diagnostics[self.path.split("/factory-source-inputs/")[1].split("/")[0]])
+                else:
+                    self.reply({"items": fixture.source_records, "next_cursor": None})
+            def do_POST(self):
+                fixture.source_publications.append((self.path, self.headers.get("If-Match"),
+                    json.loads(self.rfile.read(int(self.headers["Content-Length"])))))
+                self.reply({"publication": {"inputs": []}})
+
+        self.management = ThreadingHTTPServer(("127.0.0.1", 0), Management)
+        threading.Thread(target=self.management.serve_forever, daemon=True).start()
+        self.addCleanup(self.management.server_close)
+        self.addCleanup(self.management.shutdown)
+        self.management_client = stand.bootstrap.BootstrapClient(stand.BootstrapTransport(self.management.server_port),
+            stand.bootstrap.RetryPolicy(attempts=1, timeout_seconds=2, initial_delay_seconds=0))
         self.readers = self._readers("initial", "ab")
         self._update(self.readers)
         integrations.configure_integrations(self.root, "Example/Tickets", native_repository_id="1234", adapter_digest="ab" * 32,
@@ -86,6 +116,7 @@ class FactoryStandRecoveryTests(unittest.TestCase):
                 mock.patch.object(updates, "validate_factory_installation"), \
                 mock.patch.object(stand.launcher.bootstrapper, "bootstrap", return_value=types.SimpleNamespace(state="registered")), \
                 mock.patch.object(stand.launcher.agent_starter, "start_agent", side_effect=start_agent), \
+                mock.patch.object(stand.integration, "LocalStandClient", return_value=self.management_client), \
                 mock.patch.object(subprocess, "run", side_effect=artifact_process), \
                 redirect_stdout(output), redirect_stderr(errors):
             code = stand.main(["--root", str(self.root), *arguments])
@@ -100,6 +131,74 @@ class FactoryStandRecoveryTests(unittest.TestCase):
         self._resume()
         self.assertEqual(path.read_bytes(), before)
 
+    def test_first_publication_starts_with_the_same_pinned_vcs_bundle_as_its_bootstrap(self):
+        import tomllib
+        (self.root / "evidence/factory-triage.json").unlink()
+        # Resource preparation is resumable before the first pipeline publication.
+        # The initial private bundle is created by the real configurator below.
+        import shutil
+        shutil.rmtree(self.root / "config/server")
+        shutil.rmtree(self.root / "config/integrations")
+        settings = self.root / "triage/runtime-settings.json"
+        stand._private_json(settings, {"permissions": {}})
+        assets = self.root / "evidence/factory-triage-assets.json"
+        value = json.loads(assets.read_text())
+        value["runtime_settings"] = str(settings)
+        assets.write_text(json.dumps(value))
+        published = {"configuration": self.receipt["configuration"]}
+        self.receipt = {"schema_version": 1, "origin": stand.bootstrap.DEFAULT_ORIGIN,
+            "project": self.project, "profiles": {}, "context": {}, **published}
+        with mock.patch.object(stand, "install_repository", side_effect=lambda root, repository, **_:
+                integrations.configure_integrations(root, repository, native_repository_id="1234", adapter_digest="ab" * 32,
+                    preparation_mapping=stand.triage.preparation_mapping(self.project))), \
+                mock.patch.object(stand, "ensure_github_connection", return_value={}), \
+                mock.patch.object(stand, "publish_triage_roles", return_value={}), \
+                mock.patch.object(stand, "publish_triage_context", return_value={}), \
+                mock.patch.object(stand.triage, "preset_selection", return_value={}), \
+                mock.patch.object(stand, "publish_triage", return_value=published):
+            self._resume("--github-repository", "Example/Tickets")
+        configured = tomllib.loads((self.root / "config/server/server.toml").read_text())
+        self.assertEqual(configured["vcs_integrations"][0]["integration_id"],
+            str(uuid.uuid5(uuid.UUID(self.installation["namespace"]), "source")))
+
+    def test_default_resume_adds_pinned_vcs_without_replacing_existing_resources_or_credentials(self):
+        import tomllib
+        before = self.receipt.copy()
+        credential = self.fixture.credential.read_bytes()
+        self._resume()
+        configured = tomllib.loads((self.root / "config/server/server.toml").read_text())
+        self.assertEqual(configured["vcs_adapter_registry"], "/usr/local/lib/octacity/vcs")
+        self.assertEqual(configured["vcs_integrations"], [{
+            "integration_id": str(uuid.uuid5(uuid.UUID(self.installation["namespace"]), "source")),
+            "adapter_id": "git", "adapter_sha256": "ab" * 32, "credential_handle": "anonymous"}])
+        self.assertEqual(json.loads((self.root / "evidence/factory-triage.json").read_text()), before)
+        self.assertEqual(self.fixture.credential.read_bytes(), credential)
+        integrated = tomllib.loads((self.root / "config/integrations/server.toml").read_text())
+        self.assertEqual(integrated["vcs_integrations"], configured["vcs_integrations"])
+        self._resume()
+        self.assertEqual(tomllib.loads((self.root / "config/server/server.toml").read_text()), configured)
+
+    def test_vcs_upgrade_retries_exhausted_enabled_source_through_versioned_publication(self):
+        definition = {"enabled": True, "target": {"id": self.receipt["configuration"]["id"], "version": 2},
+            "predicate": {"state": "open", "all_of": ["triage-test"]}, "reporter": None}
+        for number, enabled, exhausted in ((1, True, True), (2, False, True), (3, True, False), (4, True, True)):
+            identity = str(uuid.uuid5(uuid.NAMESPACE_OID, str(number)))
+            self.source_records.append({"kind": "input", "definition": {"id": identity, "version": 4,
+                "project_id": self.project, "definition": {**definition, "enabled": enabled}}})
+            self.source_diagnostics[identity] = {"scan": {"schedule": {"exhausted": exhausted, "failure": "transient"}}}
+        self.source_records.append({"kind": "group", "definition": {
+            "members": [self.source_records[-1]["definition"]]}})
+        self._resume()
+        self.assertEqual(len(self.source_publications), 1)
+        path, precondition, request = self.source_publications[0]
+        original = self.source_records[0]["definition"]
+        self.assertIn(original["id"], path)
+        self.assertEqual(precondition, '"4"')
+        self.assertEqual(request, {"intent": {"project_id": self.project, "group": None, "inputs": [{
+            "id": original["id"], "expected_version": 4, "definition": definition}]}})
+        self._resume()
+        self.assertEqual(len(self.source_publications), 1, "unchanged installation must not reset attempts repeatedly")
+
     def test_resume_rejects_an_explicitly_different_code_repository_without_replacing_the_selection(self):
         path = self.root / "evidence/factory-triage-installation.json"
         before = path.read_bytes()
@@ -111,6 +210,7 @@ class FactoryStandRecoveryTests(unittest.TestCase):
         self.assertEqual(path.read_bytes(), before)
 
     def test_default_resume_keeps_the_current_reviewed_installation_after_an_explicit_update(self):
+        self._resume()
         renewed = self._readers("renewed", "cd")
         updated_policy = self.policy.with_name("renewed-agent-policy.toml")
         updated_policy.write_text(self.policy.read_text().replace("mcp.example", "reviewed.mcp.example"))

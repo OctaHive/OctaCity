@@ -195,6 +195,30 @@ def _connector_files(index: int) -> tuple[tuple[str, str, int], ...]:
     )
 
 
+def _vcs_configuration(catalog: Path) -> tuple[bytes, bytes, bytes]:
+    """Render explicit pinned integrations for the packaged ordinary Git adapter."""
+    contents = _validate_regular_file(catalog, "VCS integrations", MAX_POLICY_BYTES,
+        frozenset({PRIVATE_FILE_MODE}))
+    document = _load_json_object(contents, "VCS integrations")
+    fields = {"integration_id", "adapter_id", "adapter_sha256", "credential_handle"}
+    integrations = document.get("integrations")
+    if set(document) != {"version", "integrations"} or type(document["version"]) is not int or document["version"] != 1 or not isinstance(integrations, list) or not 1 <= len(integrations) <= 128:
+        raise ServerConfigurationError("VCS integration catalog is invalid")
+    seen, rows = set(), []
+    for item in integrations:
+        if not isinstance(item, dict) or set(item) != fields or any(
+                not isinstance(v, str) or not v or len(v) > 4096 or v.strip() != v or any(ord(c) < 32 for c in v)
+                for v in item.values()):
+            raise ServerConfigurationError("VCS integration is invalid")
+        identity = str(uuid.UUID(item["integration_id"]))
+        if identity in seen or identity != item["integration_id"] or not re.fullmatch(r"[0-9a-f]{64}", item["adapter_sha256"]):
+            raise ServerConfigurationError("VCS integration identity is invalid")
+        seen.add(identity)
+        rows.append("\n[[vcs_integrations]]\n" + "".join(
+            f"{key} = {json.dumps(item[key])}\n" for key in sorted(fields)))
+    return b'vcs_adapter_registry = "/usr/local/lib/octacity/vcs"\n', "".join(rows).encode(), contents
+
+
 def preflight_issue_mcp_readers(catalog: Path) -> None:
     """Validate the explicit scope and private credential references before creating a stand."""
     _issue_mcp_bundle(catalog.expanduser())
@@ -415,6 +439,7 @@ def generate_server_configuration(
     factory_delivery_bundle: Path | None = None,
     factory_runtime_bundle: Path | None = None,
     factory_issue_mcp_readers: Path | None = None,
+    vcs_integrations: Path | None = None,
 ) -> dict[str, str]:
     """Validate inputs and atomically publish an idempotent server bundle."""
 
@@ -452,6 +477,10 @@ def generate_server_configuration(
         suffix, files = _issue_mcp_bundle(factory_issue_mcp_readers.expanduser())
         expected[SERVER_BUNDLE_FILES["config"]] += suffix
         expected.update(files)
+    if vcs_integrations is not None:
+        prefix, suffix, contents = _vcs_configuration(vcs_integrations.expanduser())
+        expected[SERVER_BUNDLE_FILES["config"]] = prefix + expected[SERVER_BUNDLE_FILES["config"]] + suffix
+        expected["vcs-integrations.json"] = contents
     executables = frozenset()
     for name, source in (("factory-delivery", factory_delivery_bundle), ("factory-runtime", factory_runtime_bundle)):
         if source is not None:
@@ -498,6 +527,7 @@ def parse_arguments() -> argparse.Namespace:
     parser.add_argument("--factory-delivery-bundle", type=Path, help="separate private installed Delivery adapter directory")
     parser.add_argument("--factory-runtime-bundle", type=Path, help="separate private installed model runtime directory")
     parser.add_argument("--factory-issue-mcp-readers", type=Path, help="explicit Project-scoped Issue MCP reader installations")
+    parser.add_argument("--vcs-integrations", type=Path, help="explicit pinned ordinary VCS integration catalog")
     return parser.parse_args()
 
 
@@ -513,6 +543,7 @@ def main() -> int:
             factory_delivery_bundle=arguments.factory_delivery_bundle,
             factory_runtime_bundle=arguments.factory_runtime_bundle,
             factory_issue_mcp_readers=arguments.factory_issue_mcp_readers,
+            vcs_integrations=arguments.vcs_integrations,
         )
     except (OSError, UnicodeError, ValueError, ServerConfigurationError) as error:
         raise SystemExit(f"local stand server configuration failed: {error}") from error
