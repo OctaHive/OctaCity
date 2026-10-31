@@ -256,17 +256,16 @@ impl<S: FactoryConfigurationStore + octacity_server_store::FactoryRoleProfileSto
         result.diagnostics.push(required(format!("/context/{alias}")));
         continue;
       }
-      for (name, artifact) in [
-        ("goals".to_owned(), selection.goals.as_ref().unwrap()),
-        ("rules".to_owned(), selection.rules.as_ref().unwrap()),
-      ]
-      .into_iter()
-      .chain(
-        selection
-          .documents
-          .iter()
-          .map(|(key, value)| (format!("documents/{key}"), value)),
-      ) {
+      for (name, artifact) in [("goals", selection.goals.as_ref()), ("rules", selection.rules.as_ref())]
+        .into_iter()
+        .filter_map(|(name, artifact)| artifact.map(|artifact| (name.to_owned(), artifact)))
+        .chain(
+          selection
+            .documents
+            .iter()
+            .map(|(key, value)| (format!("documents/{key}"), value)),
+        )
+      {
         let visible = crate::factory_configuration_choices::require_visible_reference(
           self.policy.as_ref(),
           context,

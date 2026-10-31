@@ -189,6 +189,8 @@ export const enMessages = {
   'triage.context': 'Project context',
   'triage.goals': 'Project goals',
   'triage.rules': 'Project rules',
+  'triage.rulesHelp':
+    'Project rules are optional. Selected rules remain controlling inputs for this stage.',
   'triage.repository': 'Code Repository',
   'triage.repositoryMissing': 'Select a visible code Repository independently of the task Source.',
   'triage.retainedDocument': 'Retained exact document',
@@ -206,6 +208,9 @@ export const enMessages = {
   'triage.close': 'Close triage setup',
   'triage.reviewPrerequisites': 'Review triage prerequisites',
   'triage.completion': 'Process completion criteria',
+  'triage.completionSummary':
+    'Triage retains a fit and duplicate decision, followed by classification for eligible tasks. Missing information is recorded for clarification or review.',
+  'triage.viewCompletion': 'View completion criteria',
   'triage.completionHelp':
     'These criteria describe completion of triage. They do not replace missing implementation acceptance in the original task.',
   'triage.dependencies': 'Setup dependencies',

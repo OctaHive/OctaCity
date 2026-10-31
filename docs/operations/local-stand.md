@@ -486,7 +486,10 @@ explicit selected Context and accepted predecessor results through Server.
 
 Open the Console at `https://octacity.localhost:8443` after installing the
 public stand CA as described below. In the Project's Factory page, choose
-**Set up triage → Review triage prerequisites**. Under **Retained Project
+**Set up triage → Review triage prerequisites**. The completion section shows a
+short summary; **View completion criteria** opens the exact reviewed text.
+New selections use the concise `v2` document, while retained `v1` inputs preserve
+their original bytes. Under **Retained Project
 document**, select **OctaCity project goals**, then **Open document for viewing
 or editing**. Review an edit and confirm **Publish document**. This creates an
 immutable new revision; select it explicitly for each intended stage and
@@ -495,6 +498,13 @@ to reference the original bytes. Project documents and the MCP token expire
 after 30 days: renew credentials through the existing private installation
 updater, publish fresh documents and review their selection before admitting
 new work. Startup does not silently renew or retarget accepted references.
+
+Project rules are optional. The default installation publishes only Project
+goals and creates no separate triage-rules document. Selecting rules explicitly
+keeps them as controlling policy with the normal Artifact checks. Existing
+installations keep their published documents, Profiles and Configuration pins;
+removing a previous rules requirement requires an explicitly reviewed Profile
+and Configuration publication, not a restart or deletion of retained data.
 
 Before enabling intake, inspect the exact Configuration readiness and preview
 in Console. Resolve every blocked/unknown dependency, confirm separate stage

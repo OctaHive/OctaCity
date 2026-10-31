@@ -5,7 +5,7 @@
 `TriageProjectContextDraft` compiles operator-reviewed immutable goals, rules and
 supporting document references into the existing `FlowContextBinding`. It does
 not resolve current documents, read bytes, create another context journal or
-grant authority. Goals/rules are required; supporting documents use closed
+grant authority. Goals are required and rules are optional; supporting documents use closed
 `document.<alias>` names. The ordinary binding and Context Manifest retain their
 existing count, encoded-size and aggregate-byte bounds.
 
@@ -20,8 +20,9 @@ role package preserves exact instructions, inputs and provenance. Project rules
 remain controlling policy; goals and supporting documents remain data. Names do
 not dispatch behavior or add tool/credential permissions.
 
-Missing goals/rules and a foreign draft Project return distinct actionable draft
-problems. Document ownership, publication, digest, byte length and retention stay
+Missing goals and a foreign draft Project return distinct actionable draft
+problems. Absent rules create no policy input. Explicitly selected rules retain
+their controlling-policy meaning. Document ownership, publication, digest, byte length and retention stay
 with the existing readers. Context preparation/consumption now preserves a failed
 selection's logical name and safe original `ApplicationFailure` class in
 `ContextInputUnavailable`. No backend diagnostic or document body is retained in
@@ -33,6 +34,10 @@ lookup (4.2), isolated two-stage Agent execution (4.3), complete graph (5.1) or
 Console setup (7.4). No live model, provider write or paid request was used.
 
 ## TDD evidence
+
+This section records the original task 4.1 qualification, including its former
+mandatory-rules behavior. The optional-rules correction below supersedes that
+requirement without rewriting already published bindings or historical results.
 
 All Cargo commands use `CARGO_PROFILE_DEV_DEBUG=0 CARGO_PROFILE_TEST_DEBUG=0
 CARGO_INCREMENTAL=0 CARGO_BUILD_JOBS=2`, `--locked` and `-j2`.
@@ -84,3 +89,57 @@ Free disk space remained about 16 GiB, above the 10 GB cleanup threshold. No cac
 or stand data deletion was needed. No new containers, migrations, credentials or
 dependencies were introduced, and no commit was created.
 Local outputs use `/tmp/octacity-triage-4-1-*.log`.
+
+## Optional Project rules correction (2026-10-30)
+
+Project goals remain mandatory. Omitted and null rules now compile without a
+`project-rules` policy entry or placeholder Artifact. Explicitly selected rules
+still retain their exact policy provenance and ordinary visibility, integrity
+and retention checks. Custom Profile requirements remain enforced by ordinary
+Flow publication and execution.
+
+The default stand publishes only initial goals and no longer ships
+`deployment/local-stand/triage-rules.md`. Its two published Profiles require
+`task`, `completion` and `project-goals`. Runtime capabilities still permit
+explicit rules; responsibility templates retain their existing name/instructions
+contract. No installation, accepted Run or published document is rewritten by
+startup. Existing installations need explicit reviewed Profile/Configuration
+versions to remove a former requirement. The wire shape was already nullable
+and omittable, so no new API, migration or generated-client change is needed.
+
+Observed Red/Green cycles, using the Cargo environment above:
+
+- `cargo test --locked -j2 -p octacity-server-application --test triage_context project_goals_without_rules`:
+  Red returned `MissingProjectRules`; Green selects exactly task, completion and
+  goals for both omitted and null rules. All seven Context tests pass, including
+  mandatory goals, explicit policy, frozen references, Project scope and bounds.
+- `cargo test --locked -j2 -p octacity-server-api-rest --test v1_handlers preset_resolution_without_project_rules`:
+  Red panicked on the resolver's optional-rules `unwrap`; Green resolves both
+  stages without placeholder policy. All 236 HTTP tests pass. The metadata test
+  now separately checks that forged selected goals and optional rules both
+  prevent a Flow draft, without object-byte reads.
+- `PYTHONPATH=tools/tests:tools python3 -m unittest test_factory_stand_triage`:
+  the goals-only publication test first rejected the extra rules document with
+  HTTP 422; the Profile publication test first observed four mandatory inputs
+  instead of the required three. Both pass after removing the extra publication
+  and selecting the actual Profile requirements. Related tools regression:
+  47 tests, eight explicit opt-in/platform skips, no failures.
+- `pnpm --dir ui exec vitest run src/features/factory/FactoryTriageSetup.test.tsx -t 'Project rules are optional'`:
+  both locales first lacked the optional-rules explanation. Green and the related
+  setup/readiness/API tests pass: 21 tests. Existing goals-only selection tests
+  preserve null rules and independent stage choices.
+
+The existing seed-contract regression caught an attempted execution field in a
+responsibility template. That field was removed; default requirements are set
+when publishing complete stand Profiles. All 18 triage-template tests then
+passed with the original template schema. A test-fixture lookup error during
+development was corrected and is not behavioral Red evidence.
+
+Final regression: Context/Artifact readers 13 tests; ordinary role materialization
+66 tests (including triage isolation and controlling-policy cases); triage
+templates 18 tests; HTTP 236 tests; UI 21 tests; tools 47 tests with eight explicit
+skips. `cargo clippy --locked -j2 -p octacity-server-application -p
+octacity-server-api-rest --all-targets --all-features -- -D warnings`, Cargo
+format, UI typecheck/scoped ESLint/Prettier, architecture, strict OpenSpec and
+diff checks passed. Approximately 23 GiB remained free, above the 10 GiB reserve.
+No live stand data, provider/model calls, commits or new dependencies were involved.

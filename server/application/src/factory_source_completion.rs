@@ -5,7 +5,7 @@ use octacity_server_factory::{FactoryArtifactReference, FactoryDigest, Immutable
 use serde::{Deserialize, Serialize};
 
 /// Bundled versioned process-completion draft; review is explicit and creates no publication.
-pub const TRIAGE_COMPLETION_PRESET: &[u8] = include_bytes!("../../../config/factory/presets/triage/completion-v1.json");
+pub const TRIAGE_COMPLETION_PRESET: &[u8] = include_bytes!("../../../config/factory/presets/triage/completion-v2.json");
 
 /// Reviewed immutable completion content; ticket data cannot select this policy.
 #[derive(Clone, Eq, PartialEq, Serialize, Deserialize)]

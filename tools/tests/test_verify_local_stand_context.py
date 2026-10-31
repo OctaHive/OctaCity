@@ -92,24 +92,25 @@ class LocalStandContextTests(unittest.TestCase):
 
     def test_compiled_factory_presets_are_available_without_opening_operator_configuration(self):
         rules = VERIFY.validate_dockerignore(REPOSITORY / ".dockerignore")
-        for name in ("completion-v1.json", "ticket-input-v1.json"):
+        for name in ("completion-v1.json", "completion-v2.json", "ticket-input-v1.json"):
             with self.subTest(name=name):
                 self.assertTrue(VERIFY.docker_path_included(f"config/factory/presets/triage/{name}", rules))
         for path in ("config/factory/profiles.json", "config/factory/presets/triage/private.json",
                      "config/factory/presets/other/ticket-input-v1.json"):
             with self.subTest(path=path):
                 self.assertFalse(VERIFY.docker_path_included(path, rules))
-        with tempfile.TemporaryDirectory() as temporary:
-            root = Path(temporary)
-            shutil.copyfile(REPOSITORY / ".dockerignore", root / ".dockerignore")
-            for relative in VERIFY.REQUIRED_CONTEXT_PATHS:
-                if relative == "config/factory/presets/triage/completion-v1.json":
-                    continue
-                destination = root / relative
-                destination.parent.mkdir(parents=True, exist_ok=True)
-                shutil.copyfile(REPOSITORY / relative, destination)
-            with self.assertRaisesRegex(VERIFY.ContextError, "completion-v1.json"):
-                VERIFY.validate_repository(root)
+        for missing in ("completion-v1.json", "completion-v2.json"):
+            with self.subTest(missing=missing), tempfile.TemporaryDirectory() as temporary:
+                root = Path(temporary)
+                shutil.copyfile(REPOSITORY / ".dockerignore", root / ".dockerignore")
+                for relative in VERIFY.REQUIRED_CONTEXT_PATHS:
+                    if relative == f"config/factory/presets/triage/{missing}":
+                        continue
+                    destination = root / relative
+                    destination.parent.mkdir(parents=True, exist_ok=True)
+                    shutil.copyfile(REPOSITORY / relative, destination)
+                with self.assertRaisesRegex(VERIFY.ContextError, missing):
+                    VERIFY.validate_repository(root)
 
     def test_released_triage_manifest_and_parts_survive_the_build_context_filter(self):
         rules = VERIFY.validate_dockerignore(REPOSITORY / ".dockerignore")

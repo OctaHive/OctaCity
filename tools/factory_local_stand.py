@@ -271,16 +271,10 @@ def publish_triage_context(client, project: str, namespace: uuid.UUID) -> dict:
     These are immutable publication references, not mutable launcher-owned
     state. The Console publishes later revisions through the same contract.
     """
-    directory = launcher.REPOSITORY / "deployment/local-stand"
-    context = {"project_id": project, "documents": {}}
-    for kind, name, filename in (
-        ("goals", "OctaCity project goals", "project-goals.md"),
-        ("rules", "OctaCity triage rules", "triage-rules.md"),
-    ):
-        published = client.post(f"/api/v1/projects/{project}/input-documents",
-            f"{namespace}-triage-{kind}", {"name": name, "content": (directory / filename).read_text()})
-        context[kind] = published["artifact"]
-    return context
+    goals = launcher.REPOSITORY / "deployment/local-stand/project-goals.md"
+    published = client.post(f"/api/v1/projects/{project}/input-documents",
+        f"{namespace}-triage-goals", {"name": "OctaCity project goals", "content": goals.read_text()})
+    return {"project_id": project, "goals": published["artifact"], "documents": {}}
 
 
 def publish_triage_roles(client, project: str, namespace: uuid.UUID, *,
@@ -306,6 +300,7 @@ def publish_triage_roles(client, project: str, namespace: uuid.UUID, *,
              "profiles": []})["role"]["reference"]
         definition = copy.deepcopy(ceiling)
         definition.update(seed["profiles"]["default"])
+        definition["context_requirements"] = ["task", "completion", "project-goals"]
         if stage == "classification":
             execution = definition["execution"]
             execution["mcp_servers"] = {}

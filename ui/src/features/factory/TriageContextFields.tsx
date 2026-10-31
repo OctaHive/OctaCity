@@ -82,6 +82,7 @@ export function TriageContextFields({
           </label>
         );
       })}
+      <p>{t('triage.rulesHelp')}</p>
       <SupportingDocuments
         documents={documents}
         context={context}

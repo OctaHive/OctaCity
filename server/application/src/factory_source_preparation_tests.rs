@@ -1126,50 +1126,68 @@ fn source_preparation_binds_an_exact_project_completion_document_without_build_p
 #[test]
 fn packaged_triage_completion_prepares_title_only_input_without_a_prior_build_or_upload() {
   run_ready(async {
-    let (store, retained, claim) = reserved_with_snapshot("github", |snapshot| {
-      snapshot.body = None;
-      snapshot.fields.clear();
-    })
-    .await;
-    let preset = crate::TRIAGE_COMPLETION_PRESET;
-    let document = crate::SourceCompletionDocument::review_preset(retained.input.project_id(), preset).unwrap();
-    let mut settings = settings(&retained);
-    settings.mapping.require_body = false;
-    settings.mapping.acceptance = crate::SourceAcceptanceMapping::ProcessCompletion(document);
-    let bytes = Arc::new(Bytes::default());
-    let preparer = FactoryWorkSourcePreparer::new(store.clone(), bytes.clone(), Arc::new(Clock(AtomicI64::new(11))));
-    let SourcePreparationOutcome::Prepared(intent) = preparer.prepare(claim, retained.id, settings).await.unwrap()
-    else {
-      panic!("reviewed preset criteria permit title-only triage");
-    };
-    let objects = bytes.objects.lock().unwrap();
-    assert_eq!(
-      objects.len(),
-      2,
-      "only the ordinary task and acceptance-role inputs are published"
-    );
-    let task: serde_json::Value = serde_json::from_slice(&objects[&intent.artifacts.task().artifact_id()].1).unwrap();
-    let completion: serde_json::Value =
-      serde_json::from_slice(&objects[&intent.artifacts.acceptance().artifact_id()].1).unwrap();
-    assert!(task["body"].is_null());
-    assert_eq!(task["fields"], serde_json::json!({}));
-    assert!(task.get("acceptance").is_none());
-    assert_eq!(completion["purpose"], "process_completion");
-    assert_eq!(
-      completion["completion_document"]["preset"]["identity"],
-      "triage-completion"
-    );
-    assert_eq!(completion["completion_document"]["preset"]["version"], "v1");
-    let reviewed: serde_json::Value = serde_json::from_slice(preset).unwrap();
-    assert_eq!(completion["criteria"], reviewed["content"]);
-    assert_eq!(completion["completion_document"]["preset"], reviewed["preset"]);
-    assert!(completion["criteria"].as_str().unwrap().contains("Project"));
-    assert!(completion["criteria"].as_str().unwrap().contains("Systems analyst"));
-    assert!(
-      completion["criteria"]
-        .as_str()
-        .unwrap()
-        .contains("implementation acceptance")
-    );
+    for (preset, version) in [
+      (crate::TRIAGE_COMPLETION_PRESET, "v2"),
+      (
+        include_bytes!("../../../config/factory/presets/triage/completion-v1.json").as_slice(),
+        "v1",
+      ),
+    ] {
+      let (store, retained, claim) = reserved_with_snapshot("github", |snapshot| {
+        snapshot.body = None;
+        snapshot.fields.clear();
+      })
+      .await;
+      let document = crate::SourceCompletionDocument::review_preset(retained.input.project_id(), preset).unwrap();
+      let mut settings = settings(&retained);
+      settings.mapping.require_body = false;
+      settings.mapping.acceptance = crate::SourceAcceptanceMapping::ProcessCompletion(document);
+      let bytes = Arc::new(Bytes::default());
+      let preparer = FactoryWorkSourcePreparer::new(store.clone(), bytes.clone(), Arc::new(Clock(AtomicI64::new(11))));
+      let SourcePreparationOutcome::Prepared(intent) = preparer.prepare(claim, retained.id, settings).await.unwrap()
+      else {
+        panic!("reviewed preset criteria permit title-only triage");
+      };
+      let objects = bytes.objects.lock().unwrap();
+      assert_eq!(
+        objects.len(),
+        2,
+        "only the ordinary task and acceptance-role inputs are published"
+      );
+      let task: serde_json::Value = serde_json::from_slice(&objects[&intent.artifacts.task().artifact_id()].1).unwrap();
+      let completion: serde_json::Value =
+        serde_json::from_slice(&objects[&intent.artifacts.acceptance().artifact_id()].1).unwrap();
+      assert!(task["body"].is_null());
+      assert_eq!(task["fields"], serde_json::json!({}));
+      assert!(task.get("acceptance").is_none());
+      assert_eq!(completion["purpose"], "process_completion");
+      assert_eq!(
+        completion["completion_document"]["preset"]["identity"],
+        "triage-completion"
+      );
+      assert_eq!(completion["completion_document"]["preset"]["version"], version);
+      if version == "v2" {
+        assert!(
+          completion["criteria"].as_str().unwrap().len() < 1000,
+          "the default criteria describe results concisely, without runtime or storage instructions"
+        );
+      } else {
+        assert_eq!(
+          completion["completion_document"]["preset"]["digest"],
+          "e7b2be2ac5320ce209e819c7e95787ead1ff1a64465cd5a342b3f7c0052158ed"
+        );
+      }
+      let reviewed: serde_json::Value = serde_json::from_slice(preset).unwrap();
+      assert_eq!(completion["criteria"], reviewed["content"]);
+      assert_eq!(completion["completion_document"]["preset"], reviewed["preset"]);
+      assert!(completion["criteria"].as_str().unwrap().contains("Project"));
+      assert!(completion["criteria"].as_str().unwrap().contains("Systems analyst"));
+      assert!(
+        completion["criteria"]
+          .as_str()
+          .unwrap()
+          .contains("implementation acceptance")
+      );
+    }
   });
 }

@@ -13,6 +13,7 @@ for (const language of ['en', 'ru'] as const) {
         ? {
             open: 'Set up triage',
             review: 'Review triage prerequisites',
+            criteria: 'View completion criteria',
             name: 'Document name',
             content: 'Document text',
             publication: 'Review document publication',
@@ -31,6 +32,7 @@ for (const language of ['en', 'ru'] as const) {
         : {
             open: 'Настроить триаж',
             review: 'Проверить условия триажа',
+            criteria: 'Посмотреть критерии завершения',
             name: 'Название документа',
             content: 'Текст документа',
             publication: 'Проверить публикацию документа',
@@ -163,6 +165,13 @@ for (const language of ['en', 'ru'] as const) {
     await page.keyboard.press('Enter');
     await page.getByRole('button', { name: text.review, exact: true }).focus();
     await page.keyboard.press('Enter');
+    const criteria = page.getByText('Frozen reviewed process criteria', { exact: true });
+    await expect(criteria).toBeHidden();
+    await page.getByText(text.criteria, { exact: true }).focus();
+    await page.keyboard.press('Enter');
+    await expect(criteria).toBeVisible();
+    await page.keyboard.press('Enter');
+    await expect(criteria).toBeHidden();
     const project = page.getByRole('region', { name: text.project, exact: true });
     const analyst = page.getByRole('region', { name: text.analyst, exact: true });
     await expect(project).toBeVisible();

@@ -368,6 +368,42 @@ async fn selected_preset_profiles_resolve_to_an_ordinary_immutable_flow_draft() 
 }
 
 #[tokio::test]
+async fn preset_resolution_without_project_rules_preserves_each_stages_goals_without_policy_placeholders() {
+  let (router, project, store) = preset_router();
+  let mut parameters = selected_parameters(&router, project, &store).await;
+  parameters["context"]["eligibility"]
+    .as_object_mut()
+    .unwrap()
+    .remove("rules");
+  parameters["context"]["classification"]["rules"] = serde_json::Value::Null;
+  let response = router
+    .oneshot(json_request(
+      "POST",
+      &format!("/api/v1/projects/{project}/factory-presets/resolve"),
+      "goals-only",
+      None,
+      &parameters.to_string(),
+    ))
+    .await
+    .unwrap();
+  assert_eq!(response.status(), StatusCode::OK);
+  let result = json(response).await;
+  assert_eq!(result["diagnostics"], serde_json::json!([]));
+  let nodes = result["flow"]["root"]["nodes"].as_array().unwrap();
+  for alias in ["eligibility", "classification"] {
+    let node = nodes.iter().find(|node| node["key"] == alias).unwrap();
+    let entries = node["context_binding"]["entries"].as_object().unwrap();
+    assert_eq!(entries.len(), 3);
+    assert!(!entries.contains_key("project-rules"));
+    assert_eq!(
+      entries["project-goals"]["source"]["value"]["fields"]["value"]["value"],
+      parameters["context"][alias]["goals"]
+    );
+  }
+  assert_json_matches_component(&openapi_document(), "FactoryPresetResolution", &result);
+}
+
+#[tokio::test]
 async fn preset_resolution_rejects_a_forged_repository_pin_without_publication() {
   use testing::MutationEvidenceProbe;
   let (router, project, store) = preset_router();
@@ -420,25 +456,29 @@ fn repository(project: ProjectId) -> RepositoryProjection {
 #[tokio::test]
 async fn preset_resolution_checks_exact_context_metadata_without_fetching_object_bytes() {
   let (router, project, store) = preset_router();
-  let mut parameters = selected_parameters(&router, project, &store).await;
-  parameters["context"]["eligibility"]["goals"]["content_digest"] = serde_json::json!("f".repeat(64));
-  let response = router
-    .oneshot(json_request(
-      "POST",
-      &format!("/api/v1/projects/{project}/factory-presets/resolve"),
-      "read",
-      None,
-      &parameters.to_string(),
-    ))
-    .await
-    .unwrap();
-  assert_eq!(response.status(), StatusCode::OK);
-  let result = json(response).await;
-  assert_eq!(
-    result["diagnostics"],
-    serde_json::json!([{"path":"/context/eligibility/goals","reason":"unavailable"}])
-  );
-  assert!(result["flow"].is_null());
+  let parameters = selected_parameters(&router, project, &store).await;
+  for field in ["goals", "rules"] {
+    let mut parameters = parameters.clone();
+    parameters["context"]["eligibility"][field]["content_digest"] = serde_json::json!("f".repeat(64));
+    let response = router
+      .clone()
+      .oneshot(json_request(
+        "POST",
+        &format!("/api/v1/projects/{project}/factory-presets/resolve"),
+        "read",
+        None,
+        &parameters.to_string(),
+      ))
+      .await
+      .unwrap();
+    assert_eq!(response.status(), StatusCode::OK);
+    let result = json(response).await;
+    assert_eq!(
+      result["diagnostics"],
+      serde_json::json!([{"path":format!("/context/eligibility/{field}"),"reason":"unavailable"}])
+    );
+    assert!(result["flow"].is_null());
+  }
 }
 
 struct PresetArtifacts(ProjectId, Option<Arc<std::sync::atomic::AtomicBool>>);

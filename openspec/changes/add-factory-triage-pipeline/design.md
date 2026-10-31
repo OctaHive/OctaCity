@@ -143,6 +143,12 @@ original title/body and absence of body/acceptance remain visible provenance.
 Title-only tickets can enter triage; insufficient details lead to `needs_input`
 or review rather than fabricated facts. Oversized content fails without truncation.
 
+The current bundled criteria are concise `triage-completion` v2. The v1 file and
+already retained inputs keep their original bytes and digest. Console shows a
+localized result summary by default and reveals the exact reviewed document on
+explicit expansion. Authentication and MCP/Reporter guidance is shown with
+execution readiness rather than the completion criteria.
+
 Existing field/body/heading mappings remain strict. There is no fallback from a
 missing required ticket acceptance to the triage document. Exact preparation
 policy and authorized document references select the mode. Replacement after
@@ -225,8 +231,15 @@ with unknown cost cannot be used as declared admission reservations. Native
 login recognition and accounting support alone do not establish entitlement or
 complete the packaged deployment qualification.
 
-The reviewed setup selects Project goals/rules/documents and their immutable
-references, the ticket source scope and independently selected code Repository.
+The reviewed setup selects required Project goals, optional Project rules and
+supporting documents with their immutable references, the ticket source scope
+and independently selected code Repository. The stand publishes only initial
+goals; it does not manufacture a triage-rules document. Omitted rules add no
+Context policy entry. Explicitly selected rules retain their controlling-policy
+meaning and normal ownership, integrity and retention checks. The stand's stage
+Profiles require task, completion and goals; a custom Profile's explicit rules
+requirement remains enforced. Existing published Profiles and accepted Runs are
+not rewritten when these defaults change.
 Project assessment receives the frozen ticket and declared Project context, then
 uses selected read-only MCP tools to investigate duplicates. The model chooses
 and refines queries and reads candidate details across the permitted sources.

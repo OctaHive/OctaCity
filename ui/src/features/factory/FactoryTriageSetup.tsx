@@ -151,11 +151,14 @@ export function FactoryTriageSetup({
       {resolution ? (
         <>
           <h3>{t('triage.completion')}</h3>
-          <p>{t('triage.completionHelp')}</p>
+          <p>{t('triage.completionSummary')}</p>
           {resolution.completion.kind === 'draft' ? (
-            <p style={{ whiteSpace: 'pre-wrap' }}>{resolution.completion.content}</p>
+            <details>
+              <summary>{t('triage.viewCompletion')}</summary>
+              <p>{t('triage.completionHelp')}</p>
+              <p style={{ whiteSpace: 'pre-wrap' }}>{resolution.completion.content}</p>
+            </details>
           ) : null}
-          <p>{t('triage.authority')}</p>
           <ProjectDocumentPublisher api={documents} projectId={projectId} />
           {workSources ? (
             <TriageCodeRepository

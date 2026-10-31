@@ -336,13 +336,32 @@ function fixture({
 }
 
 it.each(['en', 'ru'] as const)(
+  'explains that Project rules are optional in %s',
+  async (language) => {
+    fixture({ language });
+    const text =
+      language === 'en'
+        ? {
+            review: 'Review triage prerequisites',
+            help: 'Project rules are optional. Selected rules remain controlling inputs for this stage.',
+          }
+        : {
+            review: 'Проверить условия триажа',
+            help: 'Правила проекта необязательны. Выбранные правила сохраняют силу для этого этапа.',
+          };
+    await userEvent.click(await screen.findByRole('button', { name: text.review }));
+    expect(screen.getAllByText(text.help)).toHaveLength(2);
+  },
+);
+
+it.each(['en', 'ru'] as const)(
   'explains resolution blockers and their setup handoffs in %s',
   async (language) => {
     const { profile } = fixture({
       language,
       diagnostics: [
         { path: '/profiles/eligibility/build', reason: 'unavailable' },
-        { path: '/context/classification/rules', reason: 'required' },
+        { path: '/context/classification/goals', reason: 'required' },
         { path: '/effects', reason: 'unavailable' },
       ],
     });
@@ -354,7 +373,7 @@ it.each(['en', 'ru'] as const)(
             project: 'Project analyst',
             analyst: 'Systems analyst',
             build: 'Exact installed Build binding',
-            rules: 'Project rules',
+            goals: 'Project goals',
             effects: 'Accepted outcome effects',
             required: 'Review and select this dependency.',
             unavailable: 'The selected dependency is unavailable or incompatible.',
@@ -367,7 +386,7 @@ it.each(['en', 'ru'] as const)(
             project: 'Аналитик проекта',
             analyst: 'Системный аналитик',
             build: 'Точная установленная привязка Build',
-            rules: 'Правила проекта',
+            goals: 'Цели проекта',
             effects: 'Эффекты принятых результатов',
             required: 'Проверьте и выберите эту зависимость.',
             unavailable: 'Выбранная зависимость недоступна или несовместима.',
@@ -376,16 +395,16 @@ it.each(['en', 'ru'] as const)(
           };
     await userEvent.click(await screen.findByRole('button', { name: text.review }));
     const diagnostics = within(await screen.findByRole('list', { name: text.diagnostics }));
-    const [build, rules, effects] = diagnostics.getAllByRole('listitem');
+    const [build, goals, effects] = diagnostics.getAllByRole('listitem');
     expect(build!.textContent).toContain(text.project);
     expect(build!.textContent).toContain(text.build);
     expect(build!.textContent).toContain(text.unavailable);
     expect(within(build!).getByRole('link', { name: text.runtime }).getAttribute('href')).toBe(
       `/ai-settings?project_id=${profile.reference.project_id}&view=runtimes`,
     );
-    expect(rules!.textContent).toContain(text.analyst);
-    expect(rules!.textContent).toContain(text.rules);
-    expect(rules!.textContent).toContain(text.required);
+    expect(goals!.textContent).toContain(text.analyst);
+    expect(goals!.textContent).toContain(text.goals);
+    expect(goals!.textContent).toContain(text.required);
     expect(effects!.textContent).toContain(text.effects);
     expect(effects!.textContent).toContain(text.unavailable);
     expect(
@@ -449,10 +468,10 @@ it('selects independent exact stage profiles and reviews MCP read scope separate
   expect(project.getByText('Read-only MCP access')).toBeTruthy();
   expect(analyst.queryByText('agent-private · project/issues-read')).toBeNull();
   expect(
-    screen.getByText(
+    screen.queryByText(
       /AI-provider authentication and server Source\/Reporter access are independent/,
     ),
-  ).toBeTruthy();
+  ).toBeNull();
   expect(
     screen.getAllByRole('link', { name: 'Configure Runtime' })[0]?.getAttribute('href'),
   ).toContain('view=runtimes');

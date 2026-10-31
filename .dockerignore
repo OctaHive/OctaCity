@@ -100,6 +100,7 @@ config/factory/presets/*
 !config/factory/presets/triage/
 config/factory/presets/triage/*
 !config/factory/presets/triage/completion-v1.json
+!config/factory/presets/triage/completion-v2.json
 !config/factory/presets/triage/ticket-input-v1.json
 !config/factory/presets/triage/v1.json
 !config/factory/presets/triage/inputs-v1.json

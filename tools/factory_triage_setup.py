@@ -99,7 +99,7 @@ def preparation_mapping(project: str) -> dict:
     repository = POLICY.parents[2]
     source = json.loads((POLICY.parent / "source-policy.json").read_text())
     mapping = source["reader"]["preparation"]["mapping"]
-    completion = json.loads((repository / "config/factory/presets/triage/completion-v1.json").read_text())
+    completion = json.loads((repository / "config/factory/presets/triage/completion-v2.json").read_text())
     document = {"kind": "draft", "project_id": str(uuid.UUID(project)), **completion}
     mapping.update(require_body=False, acceptance={"kind": "process_completion", "value": document})
     return mapping

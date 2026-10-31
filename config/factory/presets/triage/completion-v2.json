@@ -1,0 +1,8 @@
+{
+  "preset": {
+    "identity": "triage-completion",
+    "version": "v2",
+    "digest": "2fda1c1cc2188bde8662376803468fa5292e7c862ea469a38d088ecca90bb159"
+  },
+  "content": "# Triage completion\n\nRetain a decision with bounded reasons and observed evidence.\n\n- Project: assess fit against Project goals and any selected rules, and identify duplicate candidates.\n- Systems analyst: classify eligible tasks by priority, kind, size, severity, component, risk, dependencies, reproducibility and recommended route.\n- Review or needs-input: record missing facts and unresolved evidence.\n\nDistinguish verified facts from assessments. Keep unverified reproduction unresolved. Report configured provider delivery separately.\n\nThese criteria complete triage; they are not ticket-authored implementation acceptance or proof of a delivered fix.\n"
+}

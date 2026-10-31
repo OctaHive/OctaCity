@@ -22,6 +22,14 @@ The Project stage SHALL receive the frozen source ticket and required reviewed P
 - **WHEN** a ticket is selected but required Project goals cannot be resolved under the reviewed configuration
 - **THEN** the configured readiness or stage policy reports the missing context or routes to review without recording a fabricated fit assessment
 
+#### Scenario: The Project has no additional rules
+- **WHEN** reviewed Project goals are selected and Project rules are omitted or null
+- **THEN** the preset can resolve both stages without a `project-rules` Context entry or placeholder document, and its default Profiles require only task, completion and Project goals
+
+#### Scenario: Explicitly selected rules are unavailable
+- **WHEN** the operator selects Project rules whose exact Artifact is unavailable or unauthorized
+- **THEN** resolution or execution reports that selected dependency instead of silently dropping its policy; a custom Profile that explicitly requires rules cannot execute without them
+
 #### Scenario: Duplicate lookup is incomplete
 - **WHEN** an authorized lookup returns a bounded page with more candidates remaining
 - **THEN** the retained assessment names the consumed scope and coverage and cannot claim that no duplicate exists globally

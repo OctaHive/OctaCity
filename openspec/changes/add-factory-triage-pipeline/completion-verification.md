@@ -113,3 +113,42 @@ Disk space stayed about 14 GiB during 3.1 checks, above the 10 GB cleanup thresh
 Debug/incremental artifacts stayed disabled and Cargo concurrency was two. No
 personal stand, provider/model endpoint or durable data was changed. No commit
 was created.
+
+## Concise criteria and setup disclosure (2026-10-30)
+
+New preset resolution and stand preparation select `triage-completion` v2:
+658 UTF-8 bytes instead of v1's 1680. The text describes retained eligibility,
+classification, missing facts, evidence and separate reporting results.
+Runtime/storage instructions remain with their existing owners. The v1 file,
+digest and retained selections remain unchanged; no existing Work is rewritten.
+
+Console shows a localized result summary. Native `details`/`summary` reveals the
+exact reviewed criteria on demand, initially collapsed. AI/MCP/Reporter access
+guidance now belongs to execution readiness.
+
+Observed Red/Green:
+
+- `pnpm --dir ui exec playwright test tests/browser/factory-triage.spec.ts`:
+  both locales initially exposed the complete text before disclosure. Green:
+  both narrow keyboard journeys open and close the exact frozen text and pass
+  the existing document-publication/private-draft checks (two tests).
+- `pnpm --dir ui exec vitest run src/features/factory/FactoryTriageSetup.test.tsx src/features/factory/TriageReadiness.test.tsx`:
+  Red found the access explanation in setup and absent from readiness; Green:
+  all 19 tests pass after moving the same guidance to its relevant section.
+- `cargo test --locked -j2 -p octacity-server-application --lib packaged_triage_completion_prepares_title_only_input`:
+  Red returned v1 instead of the required concise v2. Green prepares title-only
+  tasks under both v2 and the unchanged v1, retaining distinct process purpose,
+  exact bytes/pins and absent ticket-authored implementation acceptance.
+- `PYTHONPATH=tools/tests:tools python3 -m unittest test_factory_source_installation test_verify_local_stand_context`:
+  Red found the stand still selecting v1, Docker excluding v2 and the context
+  verifier accepting its absence. Green selects the exact v2 digest, explicitly
+  includes that one public file and requires both released documents without
+  admitting private configuration. Related tools regression: 55 tests pass.
+
+The broader installed-Source suite passes 62 tests and REST passes 236 tests.
+UI typecheck, scoped ESLint/Prettier, Cargo format, all-target/all-feature Clippy
+for application/REST with `-D warnings`, architecture, build-context
+validation and strict OpenSpec validation pass. Cargo uses the reduced-debug,
+non-incremental, two-job environment recorded above. Live stand state and model/
+provider endpoints were not changed; no commit was created. Free space stayed
+about 23 GiB, above the 10 GiB reserve.

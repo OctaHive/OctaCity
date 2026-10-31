@@ -71,6 +71,7 @@ export function TriageReadiness({
   return (
     <section aria-label={t('triage.readiness')}>
       <h3>{t('triage.readiness')}</h3>
+      <p>{t('triage.authority')}</p>
       <button type="button" disabled={pending || !repository} onClick={() => void check()}>
         {t('triage.checkReadiness')}
       </button>

@@ -97,7 +97,7 @@ fn reviewed_project_context_freezes_goals_rules_documents_and_the_original_ticke
 #[test]
 fn unresolved_project_context_reports_the_selection_to_review() {
   let project = ProjectId::generate();
-  let mut draft: TriageProjectContextDraft = serde_json::from_value(json!({
+  let draft: TriageProjectContextDraft = serde_json::from_value(json!({
     "project_id":project, "goals":artifact("Reviewed goals"),
     "rules":artifact("Reviewed rules"), "documents":{}
   }))
@@ -106,11 +106,42 @@ fn unresolved_project_context_reports_the_selection_to_review() {
     draft.bind(ProjectId::generate()).unwrap_err().to_string(),
     "select context from the same Project"
   );
-  draft.rules = None;
-  assert_eq!(
-    draft.bind(project).unwrap_err().to_string(),
-    "select the required Project rules document"
-  );
+}
+
+#[test]
+fn project_goals_without_rules_select_only_the_original_ticket_completion_and_goals() {
+  let project = ProjectId::generate();
+  let goals = artifact("Coordinate reproducible execution.");
+  let ticket = artifact("Original ticket.");
+  let completion = artifact("Complete the reviewed assessment.");
+  for rules in [None, Some(serde_json::Value::Null)] {
+    let mut wire = json!({"project_id":project,"goals":goals,"documents":{}});
+    if let Some(rules) = rules {
+      wire["rules"] = rules;
+    }
+    let draft: TriageProjectContextDraft = serde_json::from_value(wire).unwrap();
+    let selected = draft
+      .bind(project)
+      .unwrap()
+      .selected_sources(&payload(&ticket, &completion))
+      .unwrap();
+    let expected = [
+      ("task", ContextSourceKind::Task, ticket.clone()),
+      ("completion", ContextSourceKind::Specification, completion.clone()),
+      ("project-goals", ContextSourceKind::Specification, goals.clone()),
+    ];
+    assert_eq!(
+      selected.len(),
+      3,
+      "absent rules must not create a placeholder policy input"
+    );
+    for (name, kind, reference) in expected {
+      assert_eq!(
+        selected[&FactoryKey::new(name).unwrap()],
+        (kind, FactoryContextReference::Artifact(reference))
+      );
+    }
+  }
 }
 
 #[test]

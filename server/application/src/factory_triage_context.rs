@@ -17,9 +17,6 @@ pub enum TriageContextProblem {
   /// Select an immutable Project goals document before compiling the Project stage.
   #[error("select the required Project goals document")]
   MissingProjectGoals,
-  /// Select the controlling Project rules instead of inferring them from Role instructions.
-  #[error("select the required Project rules document")]
-  MissingProjectRules,
   /// Review the selection in the Project that owns this stage.
   #[error("select context from the same Project")]
   ForeignProject,
@@ -37,7 +34,7 @@ pub struct TriageProjectContextDraft {
   pub project_id: ProjectId,
   /// Required goals; absence remains an actionable draft problem rather than invented context.
   pub goals: Option<FactoryArtifactReference>,
-  /// Exact controlling Project rules document.
+  /// Optional exact controlling Project rules document; absence adds no policy input.
   pub rules: Option<FactoryArtifactReference>,
   /// Explicitly selected supporting documents under operator-owned aliases.
   pub documents: BTreeMap<FactoryKey, FactoryArtifactReference>,
@@ -58,7 +55,6 @@ impl TriageProjectContextDraft {
     if self.project_id != project {
       return Err(TriageContextProblem::ForeignProject);
     }
-    let rules = self.rules.as_ref().ok_or(TriageContextProblem::MissingProjectRules)?;
     let mut entries = BTreeMap::new();
     for (name, kind, source) in [
       (
@@ -80,14 +76,17 @@ impl TriageProjectContextDraft {
           value: serde_json::json!(goals),
         },
       ),
+    ]
+    .into_iter()
+    .chain(self.rules.iter().map(|rules| {
       (
         "project-rules",
         ContextSourceKind::Policy,
         FlowValueMapping::Constant {
           value: serde_json::json!(rules),
         },
-      ),
-    ] {
+      )
+    })) {
       entries.insert(
         FactoryKey::new(name).map_err(|_| TriageContextProblem::InvalidSelection)?,
         selection(kind, source)?,

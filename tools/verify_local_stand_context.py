@@ -45,6 +45,7 @@ REQUIRED_CONTEXT_PATHS = (
     "shared/octacity-protocol/src/lib.rs",
     "shared/protocol-fixtures/coordinator/register-request-v1.json",
     "config/factory/presets/triage/completion-v1.json",
+    "config/factory/presets/triage/completion-v2.json",
     "config/factory/presets/triage/ticket-input-v1.json",
     "config/factory/presets/triage/v1.json",
     "config/factory/presets/triage/inputs-v1.json",

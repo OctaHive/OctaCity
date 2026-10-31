@@ -1,5 +1,5 @@
 // @vitest-environment jsdom
-import { act, cleanup, fireEvent, render, screen } from '@testing-library/react';
+import { act, cleanup, fireEvent, render, screen, within } from '@testing-library/react';
 import { MemoryRouter } from 'react-router-dom';
 import { afterEach, expect, it, vi } from 'vitest';
 import { configurationFixture } from '../../../tests/fixtures/factory';
@@ -39,6 +39,11 @@ it('expires an observed readiness report without promoting native writes or prob
       />
     </MemoryRouter>,
   );
+  expect(
+    within(screen.getByRole('region', { name: 'Execution readiness' })).getByText(
+      /AI-provider authentication and server Source\/Reporter access are independent/,
+    ),
+  ).toBeTruthy();
   await act(async () => {
     fireEvent.click(screen.getByRole('button', { name: 'Check execution readiness' }));
   });

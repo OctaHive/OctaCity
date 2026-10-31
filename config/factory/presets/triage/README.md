@@ -360,7 +360,7 @@ Models return `assessment` and `claims`, without server-generated references or
 verification metadata. A different reviewed native tool contract requires updating
 both the selected Profile instructions and policy before a new publication.
 
-Fit remains a Project assessment under the selected required goals/rules and
+Fit remains a Project assessment under the required goals, any selected rules and
 reviewed acceptance rule, rather than an independently proven semantic fact.
 Every gate result retains its finite decision, eligibility flag, bounded reason
 and exact evidence references. The analyst handoff projects only these declared
@@ -379,11 +379,18 @@ provide credentials or enable a write tool.
 
 ## Completion document
 
-`completion-v1.json` is the versioned, reviewable process-completion draft for
-Project → Systems analyst triage. Its immutable reference hashes the exact UTF-8
+`completion-v2.json` is the concise process-completion draft for Project → Systems
+analyst triage. It describes retained decisions, classification and unresolved
+facts; execution instructions remain in Roles/Profiles and enforced contracts.
+`completion-v1.json` remains unchanged for previously reviewed selections.
+Each immutable reference hashes the exact UTF-8
 `content`, including line endings. `SourceCompletionDocument::review_preset`
 binds it to a Project without publishing bytes or creating a Build. A later
 explicit Source preparation selection publishes ordinary private Work inputs.
+
+Console shows a short localized summary and keeps the exact criteria under
+**View completion criteria**, collapsed by default. AI/MCP/Reporter access guidance
+belongs to execution readiness.
 
 The resulting acceptance-role Artifact has `purpose: process_completion`; its
 provenance identifies this document separately from the original ticket. A raw
@@ -398,9 +405,11 @@ by the subsequent tasks of `add-factory-triage-pipeline`.
 ## Reviewed Project context
 
 `TriageProjectContextDraft` compiles a reviewed same-Project selection to an
-ordinary `FlowContextBinding`. Goals and controlling rules are required exact
-Artifact references; supporting documents use explicitly selected aliases.
-Missing goals/rules and a foreign draft Project have distinct safe diagnostics.
+ordinary `FlowContextBinding`. Goals are required exact Artifact references;
+controlling Project rules are optional and supporting documents use explicitly
+selected aliases. Missing goals and a foreign draft Project have distinct safe diagnostics.
+Omitted or null rules add no policy entry or placeholder document. Explicitly
+selected rules retain their normal ownership, integrity and retention checks.
 The common binding and Context Manifest enforce their existing size/count bounds.
 Compilation performs no document I/O and grants no read or execution authority.
 The common Artifact reader still checks ownership, exact content, publication
@@ -415,12 +424,13 @@ that input binding. For a custom template with just the two Artifact fields,
 and `completion` come only from the admitted Work, while the selected code
 Repository/revision stays in the immutable Work/node subject. A source ticket
 repository, ticket text or prior model output cannot replace that subject.
-The latter fixes `project-goals` as specification data, `project-rules` as
-controlling policy and each supporting `document.<alias>` as specification data.
+The latter fixes `project-goals` as specification data, any selected `project-rules`
+as controlling policy and each supporting `document.<alias>` as specification data.
 All selections are unconditional; a document alias cannot replace `task`.
 
-Declare the same required identities in the selected Profile's ordinary
-`context_requirements`. The role package retains those exact inputs and rules;
+The default stand Profiles require only `task`, `completion` and `project-goals` in their
+ordinary `context_requirements`. A reviewed custom Profile may explicitly require
+rules; it still cannot execute without that selected input. The role package retains exact inputs and rules;
 Role display names and supporting text grant no tools, credentials or permission
 to waive controlling rules. Changing a draft requires a newly reviewed ordinary
 publication; retained bindings/packages keep their original identities.

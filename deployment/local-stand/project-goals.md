@@ -14,9 +14,3 @@ Keep execution fenced, idempotent and recoverable after interruptions. Preserve
 the exact source, configuration and evidence references accepted for each Run.
 Expose useful status, retained results and editable versioned Project context
 in the Console without making the browser an owner of execution state.
-
-This triage pipeline first assesses Project fit and bounded duplicate evidence,
-then classifies eligible tickets. It retains uncertainty and missing information
-for review. Its completion criteria describe a completed triage process;
-implementation acceptance remains the original ticket author's separate data.
-Development, research and delivery require their own reviewed workflows.
