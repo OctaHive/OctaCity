@@ -32,9 +32,9 @@ test('copied Factory Run filters survive search, collapse and resize, and the vi
   ).toBeVisible();
   await page.getByRole('button', { name: 'Inspect Flow Definition · v1' }).click();
   await page.getByRole('button', { name: 'Edit Flow draft' }).click();
-  await expect(page.getByRole('textbox', { name: 'Node name' })).toHaveValue('implement');
+  await expect(page.getByRole('textbox', { name: 'Step name' })).toHaveValue('implement');
   await page.getByRole('heading', { name: 'Flow graph editor' }).scrollIntoViewIfNeeded();
-  await page.getByRole('textbox', { name: 'Node name' }).fill('visible_operator_draft');
+  await page.getByRole('textbox', { name: 'Step name' }).fill('visible_operator_draft');
   expect(page.url()).not.toContain('visible_operator_draft');
   expect(await page.evaluate(() => JSON.stringify(localStorage))).not.toContain(
     'visible_operator_draft',

@@ -69,6 +69,27 @@ pub fn installed_role_execution_choices(
   (choices, definition)
 }
 
+/// Installed ordinary command compiler for clean-state HTTP authoring conformance.
+pub fn installed_command_execution_choices(project: ProjectId) -> octacity_server_factory::FactoryConfigurationChoices {
+  use octacity_server_factory::*;
+  let (installed, _) = installed_role_execution_choices(project);
+  let mut compiler = installed.build_pipeline_contracts()[0].clone();
+  compiler.compilation.as_mut().unwrap().role_profiles = false;
+  FactoryConfigurationChoices::try_new(installed.entries())
+    .unwrap()
+    .with_build_pipeline_contract(compiler)
+    .unwrap()
+    .with_choice_metadata(
+      FactoryChoiceKind::NodeCapability,
+      "dependency-1".parse().unwrap(),
+      FactoryChoiceMetadata {
+        node_kinds: vec![FlowNodeKind::BuildCommand],
+        ..Default::default()
+      },
+    )
+    .unwrap()
+}
+
 /// Compatible installed profile data reused by application and HTTP authoring contracts.
 pub fn installed_role_choices(
   project: ProjectId,

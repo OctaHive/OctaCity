@@ -1,3 +1,5 @@
+import { validationFieldLabel, LimitFailure } from './ValidationIssue';
+import { ConstraintReview } from './ConstraintReview';
 import { focusFactoryField } from './fieldFocus';
 import { useRef, useState } from 'react';
 import { useQueryClient } from '@tanstack/react-query';
@@ -148,9 +150,14 @@ export function FactoryPublication({
           {displayedIssues.map((issue) => (
             <li key={`${issue.field}:${issue.code}`}>
               <button type="button" onClick={() => focusFactoryField(issue.field)}>
-                {issue.field}
+                {validationFieldLabel(issue.field, t)}
               </button>{' '}
               · {t(ISSUE_LABELS[issue.code])}
+              <LimitFailure issue={issue} />
+              <details>
+                <summary>{t('factory.routeDetails')}</summary>
+                <code>{issue.field}</code>
+              </details>
             </li>
           ))}
         </ul>
@@ -292,14 +299,17 @@ function ValidationPreview({ preview }: { preview: Preview }) {
     <section>
       <h4>{t('factory.normalized')}</h4>
       <p>{t('factory.definitionCount', { count: flow.closure.definitions.length })}</p>
-      <dl>
-        {Object.entries(flow.limits.budget).map(([key, value]) => (
-          <div key={key}>
-            <dt>{key}</dt>
-            <dd>{value}</dd>
-          </div>
-        ))}
-      </dl>
+      <details>
+        <summary>{t('factory.admissionLimitsDetails')}</summary>
+        <dl>
+          {Object.entries(flow.limits.budget).map(([key, value]) => (
+            <div key={key}>
+              <dt>{key}</dt>
+              <dd>{value}</dd>
+            </div>
+          ))}
+        </dl>
+      </details>
       <p>{t('factory.authorityNarrowing')}</p>
       {diagnostics ? (
         <>
@@ -317,27 +327,7 @@ function ValidationPreview({ preview }: { preview: Preview }) {
               <li key={capability}>{capability}</li>
             ))}
           </ul>
-          <h4>{t('factory.effectivePermissions')}</h4>
-          {diagnostics.effective_permissions.map((item) => (
-            <section key={`${item.definition.id}:${item.node}`}>
-              <h5>{item.node}</h5>
-              <dl>
-                {Object.entries(item.permissions.resources).map(([key, value]) => (
-                  <div key={key}>
-                    <dt>{key}</dt>
-                    <dd>{value}</dd>
-                  </div>
-                ))}
-              </dl>
-              <p>
-                {t('factory.permissionCounts', {
-                  plugins: item.permissions.plugins.length,
-                  tools: item.permissions.tools.length,
-                  hosts: item.permissions.network_hosts.length,
-                })}
-              </p>
-            </section>
-          ))}
+          <ConstraintReview diagnostics={diagnostics} />
         </>
       ) : null}
     </section>

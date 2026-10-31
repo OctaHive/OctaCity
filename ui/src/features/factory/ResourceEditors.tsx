@@ -1,3 +1,4 @@
+import { factoryFieldId } from './fieldFocus';
 import type { components } from '../../../.generated/api/schema';
 import { usePresentation } from '../../app/presentation/PresentationProvider';
 import type { MessageKey } from '../../app/presentation/messages';
@@ -42,7 +43,7 @@ function permissionOptions<T>(
 const referenceKey = (reference: Permissions['tools'][number]) =>
   JSON.stringify([reference.identity, reference.version, reference.digest]);
 
-const BUDGET_LABELS = {
+export const BUDGET_LABELS = {
   max_attempts: 'factory.maxAttempts',
   max_elapsed_millis: 'factory.maxElapsed',
   max_tokens: 'factory.maxTokens',
@@ -55,21 +56,28 @@ export function BudgetEditor({
   onChange,
   label,
   ceiling,
+  fieldPath,
 }: {
   value: Budget;
   onChange: (value: Budget) => void;
   label: string;
   ceiling?: Budget;
+  fieldPath?: string;
 }) {
   const { t } = usePresentation();
   return (
-    <fieldset>
+    <fieldset
+      id={fieldPath ? factoryFieldId(fieldPath) : undefined}
+      data-factory-field={fieldPath}
+      tabIndex={fieldPath ? -1 : undefined}
+    >
       <legend>{label}</legend>
       <div className={styles.numericGrid}>
         {(Object.keys(BUDGET_LABELS) as (keyof Budget)[]).map((key) => (
           <label key={key}>
             {label} · {t(BUDGET_LABELS[key])}
             <input
+              id={fieldPath ? factoryFieldId(`${fieldPath}/${key}`) : undefined}
               type="number"
               min={0}
               max={ceiling?.[key] ?? Number.MAX_SAFE_INTEGER}
@@ -89,10 +97,12 @@ export function PermissionEditor({
   onChange,
   label,
   ceiling,
+  fieldPath,
   enforcement,
 }: {
   value: Permissions;
   ceiling?: Permissions;
+  fieldPath?: string;
   enforcement?: readonly PermissionCategory[];
   choices: PermissionChoices;
   onChange: (value: Permissions) => void;
@@ -185,7 +195,11 @@ export function PermissionEditor({
     );
   }
   return (
-    <fieldset>
+    <fieldset
+      id={fieldPath ? factoryFieldId(fieldPath) : undefined}
+      data-factory-field={fieldPath}
+      tabIndex={fieldPath ? -1 : undefined}
+    >
       <legend>{label}</legend>
       {(['plugins', 'executables', 'tools'] as const).map((field) =>
         referenceChoices(field).length ? (

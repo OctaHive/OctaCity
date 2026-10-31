@@ -1,0 +1,28 @@
+.graph {
+  display: grid;
+  gap: var(--space-sm);
+  min-width: 0;
+}
+.toolbar {
+  display: flex;
+  gap: var(--space-sm);
+  flex-wrap: wrap;
+  align-items: end;
+}
+.selected {
+  outline: 2px solid var(--color-brand-action);
+  outline-offset: 2px;
+}
+.terminal {
+  border-style: dashed;
+}
+
+.routeLabel {
+  position: absolute;
+  transform: translate(-50%, -50%);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  background: var(--color-surface);
+  color: var(--color-text-primary);
+}

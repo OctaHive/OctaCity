@@ -3,18 +3,13 @@ import { readFileSync } from 'node:fs';
 import { cleanup, render, screen, within, waitFor } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { createMemoryRouter } from 'react-router-dom';
-import { afterEach, beforeAll, expect, it, vi } from 'vitest';
+import { afterEach, expect, it, vi } from 'vitest';
 import type { components } from '../../../.generated/api/schema';
 import { App } from '../../App';
 import type { IssueWorkflowsApi, WorkflowResource } from '../../api/issueWorkflows';
 import { createConsoleQueryClient, queryKeys } from '../../app/query';
 import { createConsoleRoutes } from '../../app/router';
 import { fakeProjectsApi, project } from '../projects/ProjectTestSupport';
-
-// jsdom has no pointer capture; actual capture and dragging are verified in Playwright.
-beforeAll(() => {
-  HTMLElement.prototype.setPointerCapture = () => {};
-});
 
 type Definition = components['schemas']['IssueWorkflowDefinition'];
 const definition: Definition = JSON.parse(

@@ -33,10 +33,12 @@ export const MANAGEMENT_ERROR_CODES = {
 export type ManagementApiFailureCode =
   ManagementErrorCode | 'invalid_response' | 'transport_failure';
 
-export interface ManagementValidationIssue {
-  readonly field: string;
-  readonly code: components['schemas']['FactoryValidationDiagnostics']['errors'][number]['code'];
-}
+type FactoryValidationIssue =
+  components['schemas']['FactoryValidationDiagnostics']['errors'][number];
+export type ManagementValidationIssue = Pick<
+  FactoryValidationIssue,
+  'field' | 'code' | 'ceiling' | 'resource' | 'requested' | 'maximum'
+>;
 
 interface ManagementApiErrorOptions {
   validationIssues?: readonly ManagementValidationIssue[];
@@ -245,7 +247,38 @@ function publicValidationIssues(value: unknown): readonly ManagementValidationIs
         issue.code !== 'concurrency_exceeds_ceiling')
     )
       return [];
-    return [{ field: issue.field, code: issue.code }];
+    const ceiling =
+      'ceiling' in issue
+        ? (
+            ['flow_definition', 'flow_admission', 'configuration', 'configuration_wip'] as const
+          ).find((value) => value === issue.ceiling)
+        : undefined;
+    const resource =
+      'resource' in issue
+        ? (
+            ['attempts', 'elapsed_time', 'tokens', 'cost', 'output_bytes', 'active_nodes'] as const
+          ).find((value) => value === issue.resource)
+        : undefined;
+    return [
+      {
+        field: issue.field,
+        code: issue.code,
+        ...(ceiling ? { ceiling } : {}),
+        ...(resource ? { resource } : {}),
+        ...('requested' in issue &&
+        typeof issue.requested === 'number' &&
+        Number.isSafeInteger(issue.requested) &&
+        issue.requested >= 0
+          ? { requested: issue.requested }
+          : {}),
+        ...('maximum' in issue &&
+        typeof issue.maximum === 'number' &&
+        Number.isSafeInteger(issue.maximum) &&
+        issue.maximum >= 0
+          ? { maximum: issue.maximum }
+          : {}),
+      },
+    ];
   });
 }
 

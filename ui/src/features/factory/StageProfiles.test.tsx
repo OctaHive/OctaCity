@@ -1,7 +1,7 @@
 // @vitest-environment jsdom
 import { useState } from 'react';
 import { QueryClientProvider } from '@tanstack/react-query';
-import { cleanup, render, screen } from '@testing-library/react';
+import { cleanup, render, screen, within, waitFor } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { afterEach, expect, it, vi } from 'vitest';
 import { createConsoleQueryClient } from '../../app/query';
@@ -21,7 +21,7 @@ function setup(
   const config = factoryProfileConfigurationFixture().configuration.flow;
   const { reference: _reference, ...root } = config.closure.definitions[0]!;
   void _reference;
-  const { role, profile } = factoryRoleFixture();
+  const { role, profile, choice } = factoryRoleFixture();
   if (staticStage) {
     root.nodes[0]!.build = root.nodes[0]!.profile_selection!.candidates.default!.build;
     root.nodes[0]!.profile_selection = null;
@@ -64,6 +64,14 @@ function setup(
         next_cursor: null,
       }),
       getProfile: async (_project: string, id: string) => (id === pro.reference.id ? pro : profile),
+      listCapabilities: async () => ({ items: [choice], total: 1, next_cursor: null }),
+      resolveExecutionBinding: vi.fn(async () => ({
+        build: {
+          ...(root.nodes[0]!.build ?? root.nodes[0]!.profile_selection!.candidates.default!.build),
+          task_digest: 'c'.repeat(64),
+        },
+        incompatibility: null,
+      })),
     },
   };
   const changed = vi.fn();
@@ -93,6 +101,30 @@ function setup(
   );
   return { changed, root };
 }
+
+async function selectCandidate(name: string) {
+  await userEvent.click(screen.getByRole('button', { name: 'Add profile candidate' }));
+  const picker = within(await screen.findByRole('group', { name: 'Candidate executor' }));
+  await userEvent.click(await picker.findByRole('combobox', { name: 'Role' }));
+  await userEvent.click(await screen.findByRole('option', { name: 'Code specialist · v1' }));
+  await userEvent.click(await picker.findByRole('combobox', { name: 'Profile' }));
+  await userEvent.click(await screen.findByRole('option', { name: `${name} · v1` }));
+  await picker.findByRole('combobox', { name: 'Execution runtime' });
+  await userEvent.click(picker.getByRole('button', { name: 'Use this profile' }));
+  await waitFor(() =>
+    expect(screen.queryByRole('group', { name: 'Candidate executor' })).toBeNull(),
+  );
+}
+
+it('resolves a fresh server binding when adding a candidate instead of copying another profile task digest', async () => {
+  const { changed } = setup(true);
+  await selectCandidate('pro');
+  expect(
+    Object.values(changed.mock.lastCall?.[0].root.nodes[0].profile_selection.candidates)[0],
+  ).toMatchObject({
+    build: { task_digest: 'c'.repeat(64) },
+  });
+});
 it('edits a retained manual candidate and explicit reserve without changing static execution', async () => {
   const { changed, root } = setup();
   await userEvent.click(screen.getByRole('combobox', { name: 'Profile selection mode' }));
@@ -136,15 +168,13 @@ it('authors ordered typed rules and pins an installed profile-purpose policy wit
 
 it('converts a static reasoning binding to role selection through authorized exact profiles without retaining a competing static executor', async () => {
   const { changed, root } = setup(true);
-  await userEvent.click(screen.getByRole('button', { name: 'Add profile candidate' }));
-  await userEvent.click(await screen.findByRole('button', { name: 'Code specialist' }));
-  await userEvent.click(await screen.findByRole('button', { name: 'default · v1' }));
+  await selectCandidate('default');
   const next = changed.mock.lastCall?.[0].root.nodes[0];
   expect(next.build).toBeNull();
   const { profile } = factoryRoleFixture();
   expect(next.profile_selection.role).toEqual(profile.role);
   expect(Object.values(next.profile_selection.candidates)).toEqual([
-    { profile, build: root.nodes[0]!.build },
+    { profile, build: { ...root.nodes[0]!.build, task_digest: 'c'.repeat(64) } },
   ]);
 });
 
@@ -227,24 +257,18 @@ function selectorChoices(): components['schemas']['FactoryConfigurationChoiceRes
 
 it('maps newly selected exact profiles to the installed selector answers and preserves explicit reserve recovery', async () => {
   const { changed } = setup(true, selectorChoices());
-  await userEvent.click(screen.getByRole('button', { name: 'Add profile candidate' }));
-  await userEvent.click(await screen.findByRole('button', { name: 'Code specialist' }));
-  await userEvent.click(await screen.findByRole('button', { name: 'default · v1' }));
+  await selectCandidate('default');
   await userEvent.click(screen.getByRole('combobox', { name: 'Selection failure policy' }));
   await userEvent.click(screen.getByRole('option', { name: 'Reserve profile' }));
   await userEvent.click(screen.getByRole('combobox', { name: 'Profile selection mode' }));
   await userEvent.click(screen.getByRole('option', { name: 'Decision API' }));
   await userEvent.click(screen.getByRole('combobox', { name: 'Selector answer · default' }));
   await userEvent.click(screen.getByRole('option', { name: 'default' }));
-  await userEvent.click(screen.getByRole('button', { name: 'Add profile candidate' }));
-  await userEvent.click(await screen.findByRole('button', { name: 'Code specialist' }));
-  await userEvent.click(await screen.findByRole('button', { name: 'default · v1' }));
+  await selectCandidate('default');
   expect(
     Object.keys(changed.mock.lastCall?.[0].root.nodes[0].profile_selection.candidates),
   ).toEqual(['default']);
-  await userEvent.click(screen.getByRole('button', { name: 'Add profile candidate' }));
-  await userEvent.click(await screen.findByRole('button', { name: 'Code specialist' }));
-  await userEvent.click(await screen.findByRole('button', { name: 'pro · v1' }));
+  await selectCandidate('pro');
   await userEvent.click(screen.getByRole('combobox', { name: 'Selector answer · pro' }));
   expect(screen.queryByRole('option', { name: 'default' })).toBeNull();
   await userEvent.click(screen.getByRole('option', { name: 'pro' }));

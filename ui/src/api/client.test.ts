@@ -260,3 +260,52 @@ it.each(['budget_exceeds_ceiling', 'concurrency_exceeds_ceiling'])(
     expect(error.validationIssues).toEqual([{ field: '/execution/budget', code }]);
   },
 );
+
+it('retains only closed bound metadata needed to explain an authoritative execution ceiling', async () => {
+  const client = createManagementApiClient(async () =>
+    jsonResponse(
+      {
+        code: 'invalid_request',
+        message: 'private remote message',
+        request_id: REQUEST_ID,
+        diagnostics: {
+          errors: [
+            {
+              field: '/budget',
+              node: 'private-node',
+              code: 'budget_exceeds_ceiling',
+              ceiling: 'flow_definition',
+              resource: 'tokens',
+              requested: 150000,
+              maximum: 100000,
+              secret: 'private-token',
+            },
+            {
+              field: '/budget',
+              code: 'invalid_contract',
+              node: 'private user text!',
+              ceiling: 'private provider data',
+              resource: 'unknown',
+              requested: 'private',
+              maximum: -1,
+            },
+          ],
+        },
+      },
+      400,
+    ),
+  );
+  const error = await captureApiError(client.GET(OPENAPI_PATH));
+  expect(error.validationIssues).toEqual([
+    {
+      field: '/budget',
+      code: 'budget_exceeds_ceiling',
+      ceiling: 'flow_definition',
+      resource: 'tokens',
+      requested: 150000,
+      maximum: 100000,
+    },
+    { field: '/budget', code: 'invalid_contract' },
+  ]);
+  expect(JSON.stringify(error.validationIssues)).not.toContain('private');
+});

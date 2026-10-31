@@ -4,6 +4,7 @@ export function factoryAuthoringSchemas(document) {
     'FactoryRuntimeSettingsRequest',
     'FactoryConfigurationDefinition',
     'FactoryFlowDefinitionDraft',
+    'ValidateFactoryGateProgramRequest',
     'AdmitManualFactoryWorkRequest',
     'FactoryNodeOperationRequest',
     'FactoryNodeResponseRequest',

@@ -19,6 +19,15 @@ export type FactoryFilters = Omit<
   'after' | 'limit'
 >;
 export interface FactoryApi extends FactoryNodeControlApi {
+  getAuthoringCapabilities(
+    projectId: string,
+    signal?: AbortSignal,
+  ): Promise<components['schemas']['FactoryAuthoringCapabilities']>;
+  normalizeGateProgram(
+    projectId: string,
+    request: components['schemas']['ValidateFactoryGateProgramRequest'],
+    signal?: AbortSignal,
+  ): Promise<components['schemas']['FactoryFlowGate']>;
   readiness(
     id: string,
     version: number,
@@ -126,6 +135,27 @@ export interface FactoryApi extends FactoryNodeControlApi {
 
 /** Authorization-filtered, bounded same-origin Factory reads. */
 export const factoryApi: FactoryApi = {
+  async getAuthoringCapabilities(projectId, signal) {
+    const { data } = await managementApi.GET(
+      '/api/v1/projects/{project_id}/factory-authoring-capabilities',
+      {
+        params: { path: { project_id: projectId } },
+        signal: signal ?? null,
+      },
+    );
+    return requireManagementResponse(data);
+  },
+  async normalizeGateProgram(projectId, body, signal) {
+    const { data } = await managementApi.POST(
+      '/api/v1/projects/{project_id}/factory-gate-programs/validate',
+      {
+        params: { path: { project_id: projectId } },
+        body,
+        signal: signal ?? null,
+      },
+    );
+    return requireManagementResponse(data);
+  },
   async readiness(id, version, body, signal) {
     const { data } = await managementApi.POST(
       '/api/v1/factory-configurations/{factory_configuration_id}/versions/{version}/readiness',

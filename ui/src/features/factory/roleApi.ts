@@ -8,6 +8,21 @@ import type { components } from '../../../.generated/api/schema';
 /** AI-agent content uses Project Role/Profile contracts, independently of worker enrollment. */
 export function createFactoryRolesApi(client = managementApi) {
   return {
+    async resolveExecutionBinding(
+      project: string,
+      body: components['schemas']['ResolveFactoryExecutionBindingRequest'],
+      signal?: AbortSignal,
+    ) {
+      return requireManagementResponse(
+        (
+          await client.POST('/api/v1/projects/{project_id}/factory-execution-bindings/resolve', {
+            params: { path: { project_id: project } },
+            body,
+            signal: signal ?? null,
+          })
+        ).data,
+      );
+    },
     async deleteRole(
       project: string,
       role: string,

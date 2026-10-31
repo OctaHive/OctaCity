@@ -33,7 +33,7 @@ it('selects exact Project documents with independent instruction and reference r
   expect(read).not.toHaveBeenCalled();
   await userEvent.click(section.getByRole('button', { name: 'Remove document Priorities' }));
   expect(Object.keys(draft().root.nodes[0]!.context_binding!.entries)).toHaveLength(2);
-  await userEvent.click(screen.getByRole('button', { name: 'classify' }));
+  await userEvent.click(screen.getByRole('button', { name: 'Edit step: classify' }));
   const sibling = within(screen.getByRole('group', { name: 'Documents' }));
   expect(sibling.getByRole('checkbox', { name: 'Goals' })).toHaveProperty('checked', false);
   await userEvent.click(sibling.getByRole('checkbox', { name: 'Goals' }));

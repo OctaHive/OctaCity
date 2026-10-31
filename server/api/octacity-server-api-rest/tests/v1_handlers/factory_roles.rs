@@ -5,6 +5,36 @@ use octacity_server_application::*;
 use std::sync::atomic::AtomicBool;
 
 #[tokio::test]
+async fn installed_command_compiler_facts_match_the_public_authoring_contract() {
+  let project = ProjectId::generate();
+  let store = Arc::new(testing::InMemoryFactoryConfigurationStore::new());
+  store.seed_project(project).unwrap();
+  let choices = testing::installed_command_execution_choices(project);
+  store.enable_project(project, choices).unwrap();
+  let policy = Arc::new(TrustedNetworkManagementPolicy);
+  let handlers = Arc::new(FactoryRoleProfileHandlers::with_policy(store, policy.clone()));
+  let peer = Arc::new(RecordingApplication::default());
+  let app =
+    recording_management_application(peer.clone(), peer).with_factory_roles(FactoryRoleManagementApplication::new(
+      Arc::new(AuthorizedCommandHandler::new(policy.clone(), handlers.clone())),
+      Arc::new(AuthorizedQueryHandler::new(policy, handlers)),
+    ));
+  let router = management_router_with_application(|| true, app);
+  let response = router
+    .oneshot(empty_request(
+      "GET",
+      &format!("/api/v1/projects/{project}/factory-authoring-capabilities"),
+      None,
+    ))
+    .await
+    .unwrap();
+  assert_eq!(response.status(), StatusCode::OK);
+  let body = json_response(response).await;
+  assert_eq!(body["commands"][0]["execution"]["task_digest"], "49".repeat(32));
+  assert_json_matches_component(&openapi_document(), "FactoryAuthoringCapabilities", &body);
+}
+
+#[tokio::test]
 async fn normalizes_a_custom_gate_program_without_client_hashes_or_business_outcomes() {
   let (router, project, _) = role_router();
   let program = serde_json::json!({
@@ -59,6 +89,11 @@ async fn empty_project_discovers_builtin_gate_contracts_without_saved_nodes() {
   assert_eq!(response.status(), StatusCode::OK);
   assert_eq!(response.headers()["cache-control"], "no-store");
   let body = json_response(response).await;
+  assert_eq!(
+    body["commands"],
+    serde_json::json!([]),
+    "built-in gates need no installed command compiler"
+  );
   assert_json_matches_component(&openapi_document(), "FactoryAuthoringCapabilities", &body);
   assert_eq!(
     body["deterministic_gate"]["policy"]["identity"],

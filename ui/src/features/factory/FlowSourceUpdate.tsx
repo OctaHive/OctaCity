@@ -1,4 +1,3 @@
-import { useState } from 'react';
 import { useInfiniteQuery, useQuery } from '@tanstack/react-query';
 import { Link } from 'react-router-dom';
 import type { components } from '../../../.generated/api/schema';
@@ -13,11 +12,29 @@ import { sourceBindingKey, sourceReferenceKey } from '../../shared/sourceReferen
 type Node = components['schemas']['FactoryFlowNodeDefinition'];
 type Parameters = components['schemas']['FactoryWorkStatusActionParameters'];
 export type FlowSourceServices = { api: FactorySourcesApi; projectId: string };
-type Props = { node: Node; services: FlowSourceServices; onChange: (node: Node) => void };
+export type SourceUpdateDraft = {
+  attempts: number;
+  delay: number;
+  connectionId: string;
+  connectionVersion: number | undefined;
+  sourceKey: string;
+  writerKey: string;
+  writerPin: string | null;
+  preset: string;
+  effects: components['schemas']['WorkSourceStatusMapping'] | null;
+};
+type Props = {
+  draft?: SourceUpdateDraft | undefined;
+  onDraftChange: (draft: SourceUpdateDraft | undefined) => void;
+  node: Node;
+  services: FlowSourceServices;
+  onChange: (node: Node, schemas?: components['schemas']['FactoryFlowDataSchema'][]) => void;
+};
 /** Configures the ordinary action; only the admitted Work supplies the native target. */
 export function FlowSourceUpdate(props: Props) {
   const { t } = usePresentation();
-  const parameters = props.node.action?.parameters;
+  if (!props.node.action) return <SourceUpdateForm {...props} parameters={null} />;
+  const parameters = props.node.action.parameters;
   if (
     !parameters ||
     typeof parameters !== 'object' ||
@@ -35,10 +52,34 @@ function SourceUpdateForm({
   services,
   onChange,
   parameters,
-}: Props & { parameters: Parameters }) {
+  draft: editing,
+  onDraftChange,
+}: Props & { parameters: Parameters | null }) {
   const { t } = usePresentation();
-  const original = parameters.source_update;
-  const [connectionId, setConnectionId] = useState(original?.connection?.id ?? '');
+  const original = parameters?.source_update;
+  const form: SourceUpdateDraft = editing ?? {
+    attempts: parameters?.outbox?.max_attempts ?? 1,
+    delay: parameters?.outbox?.retry_delay_millis ?? 0,
+    connectionId: original?.connection?.id ?? '',
+    connectionVersion: original?.connection?.version,
+    sourceKey: original ? sourceBindingKey(original.source) : '',
+    writerKey: original ? sourceBindingKey(original.reporter) : '',
+    writerPin: null,
+    preset: '0',
+    effects: original ? { statuses: [original.effects] } : null,
+  };
+  const {
+    attempts,
+    delay,
+    connectionId,
+    connectionVersion,
+    sourceKey,
+    writerKey,
+    writerPin,
+    preset,
+    effects: draft,
+  } = form;
+  const edit = (patch: Partial<SourceUpdateDraft>) => onDraftChange({ ...form, ...patch });
   const connections = useInfiniteQuery({
     queryKey: queryKeys.factorySourceConnections,
     queryFn: ({ pageParam, signal }) => services.api.connections(pageParam, signal),
@@ -47,7 +88,7 @@ function SourceUpdateForm({
   });
   const connection = connections.data?.pages
     .flatMap((page) => page.items)
-    .find((item) => item.id === connectionId);
+    .find((item) => item.id === connectionId && item.version === connectionVersion);
   const choices = useQuery({
     queryKey: queryKeys.factorySourceChoices(
       services.projectId,
@@ -58,14 +99,8 @@ function SourceUpdateForm({
       services.api.choices(services.projectId, connectionId, connection!.version, signal),
     enabled: !!connection,
   });
-  const [sourceKey, setSourceKey] = useState(() =>
-    original ? sourceBindingKey(original.source) : '',
-  );
   const source = choices.data?.items.find(
     (item) => item.purpose === 'task_read' && sourceBindingKey(item.binding) === sourceKey,
-  );
-  const [writerKey, setWriterKey] = useState(() =>
-    original ? sourceBindingKey(original.reporter) : '',
   );
   const writers =
     choices.data?.items.filter(
@@ -73,19 +108,53 @@ function SourceUpdateForm({
         item.purpose === 'task_update' &&
         item.reporting?.editable &&
         source &&
-        sourceReferenceKey(item.binding.capability) === sourceReferenceKey(node.action!.plugin) &&
+        (node.action
+          ? sourceReferenceKey(item.binding.capability) === sourceReferenceKey(node.action.plugin)
+          : item.reporting.action &&
+            sourceReferenceKey(item.reporting.action.plugin) ===
+              sourceReferenceKey(item.binding.capability)) &&
         sourceReferenceKey(item.binding.installation) ===
           sourceReferenceKey(source.binding.installation) &&
         sourceReferenceKey(item.binding.resource) === sourceReferenceKey(source.binding.resource),
     ) ?? [];
   const writer = writers.find((item) => sourceBindingKey(item.binding) === writerKey);
-  const [preset, setPreset] = useState('0');
-  const [draft, setDraft] = useState<components['schemas']['WorkSourceStatusMapping'] | null>(
-    original ? { statuses: [original.effects] } : null,
-  );
+  const offered = writer?.reporting?.action;
+  const writerSnapshot =
+    writer && choices.data
+      ? JSON.stringify([
+          choices.data.access_version,
+          writer.connection_configuration,
+          writer.reporting,
+        ])
+      : null;
+  const staleWriter = writerPin !== null && writerPin !== writerSnapshot;
+  const contract =
+    offered &&
+    sourceReferenceKey(offered.plugin) === sourceReferenceKey(writer.binding.capability) &&
+    sourceReferenceKey(offered.output.reference) === sourceReferenceKey(offered.outcome.schema)
+      ? offered
+      : null;
+  const conflict =
+    !node.action &&
+    contract &&
+    node.outcomes.some(
+      (outcome) =>
+        outcome.key === contract.outcome.key &&
+        sourceReferenceKey(outcome.schema) !== sourceReferenceKey(contract.outcome.schema),
+    );
   const effects = draft?.statuses[0] ?? writer?.reporting?.mapping.statuses[Number(preset)];
   const editable = writer?.reporting?.editable;
   const valid =
+    (node.action || contract) &&
+    !conflict &&
+    !staleWriter &&
+    Number.isSafeInteger(attempts) &&
+    attempts > 0 &&
+    Number.isSafeInteger(delay) &&
+    delay >= 0 &&
+    (!contract ||
+      (attempts <= contract.parameters.max_attempts &&
+        delay <= contract.parameters.max_retry_delay_millis)) &&
     connection &&
     sourceKey !== '' &&
     writerKey !== '' &&
@@ -136,10 +205,16 @@ function SourceUpdateForm({
           .flatMap((page) => page.items)
           .map((item) => ({ value: item.id, label: item.definition.name })) ?? [],
         (value) => {
-          setConnectionId(value);
-          setSourceKey('');
-          setWriterKey('');
-          setDraft(null);
+          edit({
+            connectionId: value,
+            connectionVersion: connections.data?.pages
+              .flatMap((page) => page.items)
+              .find((item) => item.id === value)?.version,
+            writerPin: null,
+            sourceKey: '',
+            writerKey: '',
+            effects: null,
+          });
         },
       )}
       {connections.hasNextPage ? (
@@ -161,9 +236,7 @@ function SourceUpdateForm({
             : [],
         ) ?? [],
         (value) => {
-          setSourceKey(value);
-          setWriterKey('');
-          setDraft(null);
+          edit({ sourceKey: value, writerKey: '', writerPin: null, effects: null });
         },
       )}
       {select(
@@ -174,9 +247,20 @@ function SourceUpdateForm({
           label: item.binding.configuration.identity,
         })),
         (value) => {
-          setWriterKey(value);
-          setPreset('0');
-          setDraft(null);
+          const chosen = writers.find((item) => sourceBindingKey(item.binding) === value);
+          edit({
+            writerKey: value,
+            writerPin:
+              chosen && choices.data
+                ? JSON.stringify([
+                    choices.data.access_version,
+                    chosen.connection_configuration,
+                    chosen.reporting,
+                  ])
+                : null,
+            preset: '0',
+            effects: null,
+          });
         },
       )}
       {writerKey !== '' && writer?.reporting ? (
@@ -189,8 +273,7 @@ function SourceUpdateForm({
               label: effect.status,
             }))}
             onValueChange={(value) => {
-              setPreset(value);
-              setDraft(null);
+              edit({ preset: value, effects: null });
             }}
           />
           <SourceReporting
@@ -198,37 +281,88 @@ function SourceUpdateForm({
             mapping={effects ? { statuses: [effects] } : undefined}
             policy={editable}
             draft={draft}
-            onChange={setDraft}
+            onChange={(effects) => edit({ effects })}
           />
         </>
+      ) : null}
+      {contract ? (
+        <fieldset>
+          <legend>{t('factory.reportDeliveryLimits')}</legend>
+          <label>
+            {t('factory.reportDeliveryAttempts')}
+            <input
+              type="number"
+              min={1}
+              max={contract.parameters.max_attempts}
+              value={attempts}
+              onChange={(event) => edit({ attempts: Number(event.target.value) })}
+            />
+          </label>
+          <label>
+            {t('factory.reportRetryDelay')}
+            <input
+              type="number"
+              min={0}
+              max={contract.parameters.max_retry_delay_millis}
+              value={delay}
+              onChange={(event) => edit({ delay: Number(event.target.value) })}
+            />
+          </label>
+        </fieldset>
+      ) : null}
+      {staleWriter ? <p role="alert">{t('factory.staleReporterChoices')}</p> : null}
+      {connectionId && !connection ? (
+        <p role="alert">{t('factory.staleSourceConnection')}</p>
+      ) : null}
+      {conflict ? (
+        <p role="alert">{t('factory.actionOutcomeConflict', { name: contract!.outcome.key })}</p>
       ) : null}
       <button
         type="button"
         disabled={!valid}
         onClick={() => {
-          if (!valid || !node.action) return;
-          onChange({
-            ...node,
-            action: {
-              ...node.action,
-              parameters: {
-                ...parameters,
-                status: effects.status,
-                source_update: {
-                  source: source.binding,
-                  reporter: writer.binding,
-                  effects,
-                  connection: {
-                    id: connection.id,
-                    version: connection.version,
-                    access_version: choices.data!.access_version,
-                    source_configuration: source.connection_configuration,
-                    reporter_configuration: writer.connection_configuration,
+          if (!valid) return;
+          const action =
+            node.action ??
+            (contract
+              ? { action: contract.action, plugin: contract.plugin, parameters: {} }
+              : null);
+          if (!action) return;
+          onDraftChange(undefined);
+          onChange(
+            {
+              ...node,
+              ...(!node.action && contract
+                ? {
+                    outcomes: [
+                      ...node.outcomes.filter((outcome) => outcome.key !== contract.outcome.key),
+                      contract.outcome,
+                    ],
+                  }
+                : {}),
+              action: {
+                ...action,
+                parameters: {
+                  ...parameters,
+                  outbox: { max_attempts: attempts, retry_delay_millis: delay },
+                  status: effects.status,
+                  source_update: {
+                    source: source.binding,
+                    reporter: writer.binding,
+                    effects,
+                    connection: {
+                      id: connection.id,
+                      version: connection.version,
+                      access_version: choices.data!.access_version,
+                      source_configuration: source.connection_configuration,
+                      reporter_configuration: writer.connection_configuration,
+                    },
                   },
                 },
               },
             },
-          });
+            !node.action && contract ? [contract.output] : undefined,
+          );
         }}
       >
         {t('factory.useSourceEffects')}
@@ -245,7 +379,7 @@ function SourceUpdateForm({
         <button
           type="button"
           onClick={() => {
-            const { source_update: _removed, ...rest } = parameters;
+            const { source_update: _removed, ...rest } = parameters!;
             void _removed;
             if (node.action) onChange({ ...node, action: { ...node.action, parameters: rest } });
           }}

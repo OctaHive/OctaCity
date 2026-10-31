@@ -1,6 +1,8 @@
 import { QueryClient } from '@tanstack/react-query';
 
 export const queryKeys = {
+  factoryAuthoringCapabilities: (projectId: string) =>
+    ['factory', 'authoring-capabilities', projectId] as const,
   projectInputDocuments: (projectId: string) => ['project-input-documents', projectId] as const,
   factoryRuntimeChoices: (project: string) => ['factory', 'runtime-choices', project] as const,
   factoryRuntime: (project: string, alias: string) =>

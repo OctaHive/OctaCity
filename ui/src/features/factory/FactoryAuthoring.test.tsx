@@ -128,8 +128,8 @@ it('authors and confirms a first Flow through guided controls, generating identi
     schema.reference.version,
   );
   await userEvent.click(screen.getByRole('button', { name: 'Add schema' }));
-  await userEvent.click(await screen.findByRole('button', { name: 'Add node' }));
-  await userEvent.type(screen.getByRole('textbox', { name: 'Node name' }), 'operator_decision');
+  await userEvent.click(await screen.findByRole('button', { name: 'Add step' }));
+  await userEvent.type(screen.getByRole('textbox', { name: 'Step name' }), 'operator_decision');
   await userEvent.click(screen.getByRole('button', { name: 'Add outcome' }));
   await userEvent.type(screen.getByRole('textbox', { name: 'Outcome name' }), 'accepted');
   await userEvent.click(screen.getByRole('button', { name: 'Flow settings' }));
@@ -193,19 +193,19 @@ it('retains concurrent graph edits after schema normalization', async () => {
       <RouterProvider router={router} />
     </QueryClientProvider>,
   );
-  await screen.findByRole('button', { name: 'Add node' });
+  await screen.findByRole('button', { name: 'Add step' });
   await userEvent.type(screen.getByRole('textbox', { name: 'Schema name' }), 'concurrent_schema');
   await userEvent.type(screen.getByRole('textbox', { name: 'Schema version' }), 'v1');
   await userEvent.click(screen.getByRole('button', { name: 'Add schema' }));
-  const name = screen.getByRole('textbox', { name: 'Node name' });
+  const name = screen.getByRole('textbox', { name: 'Step name' });
   await userEvent.clear(name);
   await userEvent.type(name, 'edited_while_pending');
-  expect(screen.getByRole('textbox', { name: 'Node name' })).toHaveProperty(
+  expect(screen.getByRole('textbox', { name: 'Step name' })).toHaveProperty(
     'value',
     'edited_while_pending',
   );
   await act(async () => resolveSchema(flow.data_schemas[0]!));
-  expect(screen.getByRole('textbox', { name: 'Node name' })).toHaveProperty(
+  expect(screen.getByRole('textbox', { name: 'Step name' })).toHaveProperty(
     'value',
     'edited_while_pending',
   );

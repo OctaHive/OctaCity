@@ -258,8 +258,8 @@ it('offers setup guidance instead of empty permission frames or editable deny-al
       'This Runtime has no configurable permissions. Configure its allowed capabilities before selecting them in a profile.',
     ),
   ).toBeTruthy();
-  expect(editor.queryByRole('group', { name: 'Requested node permissions' })).toBeNull();
-  expect(editor.queryByRole('spinbutton', { name: /Requested node permissions/ })).toBeNull();
+  expect(editor.queryByRole('group', { name: 'Step access request' })).toBeNull();
+  expect(editor.queryByRole('spinbutton', { name: /Step access request/ })).toBeNull();
   expect(editor.getByRole('link', { name: 'Configure Runtime' })).toBeTruthy();
 });
 
@@ -421,7 +421,7 @@ it('retains revoked permission selections for individual removal without resetti
     'checked',
     true,
   );
-  const selections = within(editor.getByRole('group', { name: 'Requested node permissions' }));
+  const selections = within(editor.getByRole('group', { name: 'Step access request' }));
   expect(selections.getAllByRole('checkbox', { checked: true })).toHaveLength(9);
   expect(
     selections.getAllByText(/No longer available; remove this retained permission\./),

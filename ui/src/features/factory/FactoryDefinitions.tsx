@@ -56,6 +56,8 @@ export function FactoryDefinitions({
       items: page.items.map((item) => ({ ...item, id: item.flow.closure.root.id })),
     };
   });
+  const hasPublishedFlow =
+    flows.data?.pages.some((page) => page.items.length > 0) && !flows.isError;
   const selectedConfiguration = factoryResourceId(params.get('configuration_id'));
   const selectedFlow = factoryResourceId(params.get('flow_definition_id'));
   const currentConfiguration = useQuery({
@@ -146,17 +148,20 @@ export function FactoryDefinitions({
       ) : null}
       <button
         type="button"
-        disabled={!canAuthor || authoring !== null}
+        disabled={!canAuthor || authoring !== null || !hasPublishedFlow}
         onClick={() => setAuthoring({ kind: 'configuration', id: null, version: null })}
       >
         {t('factory.createConfiguration')}
       </button>
+      {flows.data && !hasPublishedFlow && !flows.isError ? (
+        <p>{t('factory.pipelineNeedsGraph')}</p>
+      ) : null}
       <button
         type="button"
         disabled={!canAuthor || authoring !== null}
         onClick={() => setAuthoring({ kind: 'flow', id: null, version: null })}
       >
-        {t('factory.createFlow')}
+        {t('factory.addPipeline')}
       </button>
       <button
         type="button"
@@ -174,6 +179,7 @@ export function FactoryDefinitions({
         />
       ) : authoring?.kind !== 'work' && authoring?.id === null ? (
         <FactoryAuthoring
+          repositories={workSources}
           workflows={workflows}
           key={authoring.kind}
           api={api}
@@ -268,6 +274,7 @@ export function FactoryDefinitions({
                 </button>
                 {selectedFlow === item.id ? (
                   <FlowDetails
+                    repositories={workSources}
                     workflows={workflows}
                     key={`${item.id}:${params.get('flow_version')}`}
                     api={api}
@@ -365,6 +372,7 @@ function ConfigurationDetails({
       </dl>
       {editing ? (
         <FactoryAuthoring
+          repositories={repositories}
           workflows={workflows}
           api={api}
           baseline={query.data}
@@ -387,6 +395,7 @@ function ConfigurationDetails({
 }
 
 function FlowDetails({
+  repositories,
   api,
   workflows,
   summary,
@@ -397,6 +406,7 @@ function FlowDetails({
   onDiscard,
   canAuthor,
 }: {
+  repositories?: FactoryWorkSources | undefined;
   api: FactoryApi;
   workflows?: IssueWorkflowsApi | undefined;
   summary: FactoryFlowDetails;
@@ -427,6 +437,7 @@ function FlowDetails({
       />
       {editing ? (
         <FactoryAuthoring
+          repositories={repositories}
           workflows={workflows}
           api={api}
           baseline={query.data}

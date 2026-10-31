@@ -40,9 +40,49 @@ pub(super) fn insert(schemas: &mut Map<String, Value>) {
     ),
   );
   schemas.insert(
+    "FactoryCommandExecutionContract".into(),
+    object(
+      [
+        (
+          "build_configuration",
+          schema_ref("FactoryBuildConfigurationReferenceResource"),
+        ),
+        ("tool", reference()),
+        ("plugin", reference()),
+        ("model_or_tool", reference()),
+        ("task_digest", digest()),
+        ("result_output", key()),
+        ("result_output_kind", json!({"enum":["report","artifact"]})),
+      ],
+      &[
+        "build_configuration",
+        "tool",
+        "plugin",
+        "model_or_tool",
+        "task_digest",
+        "result_output",
+        "result_output_kind",
+      ],
+    ),
+  );
+  schemas.insert(
+    "FactoryCommandAuthoringContract".into(),
+    object(
+      [
+        ("alias", key()),
+        ("execution", schema_ref("FactoryCommandExecutionContract")),
+      ],
+      &["alias", "execution"],
+    ),
+  );
+  schemas.insert(
     "FactoryAuthoringCapabilities".into(),
     object(
       [
+        (
+          "commands",
+          bounded_array(schema_ref("FactoryCommandAuthoringContract"), b.choice_entries),
+        ),
         (
           "deterministic_gate",
           object(
@@ -91,6 +131,7 @@ pub(super) fn insert(schemas: &mut Map<String, Value>) {
         ),
       ],
       &[
+        "commands",
         "deterministic_gate",
         "human_gates",
         "build_resource_modes",

@@ -50,6 +50,10 @@ function setup() {
       ]),
     ),
     getProfile: vi.fn(async () => profile),
+    resolveExecutionBinding: vi.fn(async () => ({
+      build: null,
+      incompatibility: 'build_unavailable' as const,
+    })),
     listCapabilities: vi.fn(async () => page([choice])),
     getCapability: vi.fn(async () => capability),
     refreshCapability: vi.fn(async () => capability),

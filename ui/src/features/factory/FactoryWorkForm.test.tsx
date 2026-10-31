@@ -1,11 +1,12 @@
 // @vitest-environment jsdom
 import { QueryClientProvider } from '@tanstack/react-query';
-import { cleanup, render, screen, within } from '@testing-library/react';
+import { act, cleanup, render, screen, within, waitFor } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { createMemoryRouter, RouterProvider } from 'react-router-dom';
 import { afterEach, expect, it, vi } from 'vitest';
 import { ManagementApiError } from '../../api/client';
 import { createConsoleQueryClient, queryKeys } from '../../app/query';
+import { projectDocumentsApi } from '../../api/projectDocuments';
 import { factoryApi, type FactoryApi } from './api';
 import { FactoryWorkForm, type FactoryWorkSources } from './FactoryWorkForm';
 import { App } from '../../App';
@@ -303,5 +304,134 @@ it('admits an exact optional stage override from the pinned configuration withou
       ],
     }),
     expect.anything(),
+  );
+});
+
+it('admits manual Project input from exact Project documents without existing Builds or a repository', async () => {
+  const { admitWork, sources, queryClient, configuration } = renderWork();
+  const doc = (id: string, name: string) => ({
+    project_id: configuration.project_id,
+    name,
+    artifact: { artifact_id: id, content_digest: 'd'.repeat(64), encoded_size: 30 },
+    published_at: 1,
+    expires_at: Date.now() + 60000,
+  });
+  const task = doc('project-task', 'Requested work');
+  const criteria = doc('process-criteria', 'Process criteria');
+  vi.spyOn(projectDocumentsApi, 'list').mockResolvedValue({
+    items: [task, criteria],
+    next_cursor: null,
+  });
+  await userEvent.type(
+    await screen.findByRole('textbox', { name: 'Work label' }),
+    'manual assessment',
+  );
+  await userEvent.click(screen.getByRole('combobox', { name: 'Work subject' }));
+  await userEvent.click(screen.getByRole('option', { name: 'Project input — no repository' }));
+  await userEvent.click(screen.getByRole('combobox', { name: 'Input origin' }));
+  await userEvent.click(screen.getByRole('option', { name: 'Project documents' }));
+  const inputs = within(await screen.findByRole('group', { name: 'Manual input documents' }));
+  await userEvent.click(await inputs.findByRole('combobox', { name: 'Task document' }));
+  await userEvent.click(screen.getByRole('option', { name: 'Requested work' }));
+  await userEvent.click(inputs.getByRole('combobox', { name: 'Completion criteria document' }));
+  await userEvent.click(screen.getByRole('option', { name: 'Process criteria' }));
+  queryClient.setQueryData(queryKeys.factoryWorkSources(configuration.project_id, 'builds'), {
+    pages: [{ items: [], next_cursor: null }],
+    pageParams: [null],
+  });
+  await userEvent.click(screen.getByRole('button', { name: 'Review Work admission' }));
+  const dialog = within(await screen.findByRole('dialog'));
+  expect(admitWork).not.toHaveBeenCalled();
+  await userEvent.click(dialog.getByRole('button', { name: 'Confirm Work admission' }));
+  expect(await screen.findByText('Admitted Run')).toBeTruthy();
+  const request = admitWork.mock.calls[0]![1];
+  expect(request.source).toEqual({ kind: 'project_input_v1' });
+  expect(request).not.toHaveProperty('repository_id');
+  expect(request).not.toHaveProperty('repository_version');
+  expect(request.artifacts).toEqual({
+    task: task.artifact,
+    acceptance: criteria.artifact,
+    specifications: [],
+  });
+  expect(sources.listBuildArtifacts).not.toHaveBeenCalledWith('project-task', expect.anything());
+});
+
+it('requires explicit re-selection when the chosen Configuration version advances before manual input review', async () => {
+  const { queryClient, configuration, admitWork } = renderWork();
+  await userEvent.type(
+    await screen.findByRole('textbox', { name: 'Work label' }),
+    'exact configuration',
+  );
+  await userEvent.click(await screen.findByRole('combobox', { name: 'Task Artifact' }));
+  await userEvent.click(screen.getByRole('option', { name: 'Requested task' }));
+  await userEvent.click(screen.getByRole('combobox', { name: 'Acceptance Artifact' }));
+  await userEvent.click(screen.getByRole('option', { name: 'Acceptance criteria' }));
+  expect(screen.getByRole('button', { name: 'Review Work admission' })).toHaveProperty(
+    'disabled',
+    false,
+  );
+  await act(async () => {
+    queryClient.setQueryData(queryKeys.factoryConfigurations(configuration.project_id), {
+      pages: [
+        {
+          items: [
+            {
+              ...configuration,
+              version: configuration.version + 1,
+              enabled: true,
+              published_at_unix_ms: 1,
+              created_at_unix_ms: 1,
+            },
+          ],
+          total: 1,
+          next_cursor: null,
+        },
+      ],
+      pageParams: [null],
+    });
+  });
+  await waitFor(() =>
+    expect(screen.getByRole('button', { name: 'Review Work admission' })).toHaveProperty(
+      'disabled',
+      true,
+    ),
+  );
+  expect(screen.getAllByText(/Selected version is no longer offered/).length).toBeGreaterThan(0);
+  expect(admitWork).not.toHaveBeenCalled();
+});
+
+it('withdraws confirmation when an already reviewed input loses current authorization', async () => {
+  const { sources, queryClient } = renderWork();
+  await userEvent.type(
+    await screen.findByRole('textbox', { name: 'Work label' }),
+    'reviewed input',
+  );
+  await userEvent.click(await screen.findByRole('combobox', { name: 'Task Artifact' }));
+  await userEvent.click(screen.getByRole('option', { name: 'Requested task' }));
+  await userEvent.click(screen.getByRole('combobox', { name: 'Acceptance Artifact' }));
+  await userEvent.click(screen.getByRole('option', { name: 'Acceptance criteria' }));
+  await userEvent.click(screen.getByRole('button', { name: 'Review Work admission' }));
+  const dialog = within(await screen.findByRole('dialog'));
+  expect(dialog.getByRole('button', { name: 'Confirm Work admission' })).toHaveProperty(
+    'disabled',
+    false,
+  );
+  vi.mocked(sources.getRepository).mockRejectedValue(
+    new ManagementApiError({
+      code: 'forbidden',
+      message: 'Unavailable',
+      requestId: null,
+      status: 403,
+      retryAfterMilliseconds: null,
+    }),
+  );
+  await act(async () => {
+    await queryClient.invalidateQueries({ queryKey: queryKeys.repository('repo', 2) });
+  });
+  await waitFor(() =>
+    expect(dialog.getByRole('button', { name: 'Confirm Work admission' })).toHaveProperty(
+      'disabled',
+      true,
+    ),
   );
 });

@@ -516,7 +516,7 @@ test('edits a stage source action with the keyboard and discards its unpublished
   await page.goto(`/factory?project_id=${project}`);
   await page.getByRole('button', { name: 'Inspect Flow Definition · v1' }).click();
   await page.getByRole('button', { name: 'Edit Flow draft' }).click();
-  await page.getByRole('button', { name: node.key, exact: true }).click();
+  await page.getByRole('button', { name: `Edit step: ${node.key}`, exact: true }).click();
   await choose(page, 'Source connection', 'Tracker');
   await choose(
     page,

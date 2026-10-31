@@ -42,6 +42,13 @@ type Contract = {
 };
 const contracts: Readonly<Record<string, Contract>> = FACTORY_AUTHORING_SCHEMAS;
 const pointer = (value: string) => value.replaceAll('~', '~0').replaceAll('/', '~1');
+/** Reads retained declarative parameters using the generated contract, without claiming server approval. */
+export function isFactoryGateProgram(
+  value: unknown,
+): value is components['schemas']['FactoryDeclarativeGateParameters'] {
+  return validateContract(value, contracts.FactoryDeclarativeGateParameters!, '').length === 0;
+}
+
 /** Early usability checks only. The authoritative server validates again before publication. */
 export function validateFlowDraft(value: Draft): DraftIssue[] {
   const issues = validateContract(value, contracts.FactoryFlowDefinitionDraft!, '');
@@ -162,7 +169,8 @@ export function validateFlowDraft(value: Draft): DraftIssue[] {
         if (successor?.input_schema && !successor.input_binding) {
           const from = schemas.get(referenceKey(edge.schema)),
             to = schemas.get(referenceKey(successor.input_schema));
-          if (from && to && !compatible(from, to)) add(`${field}/schema`, 'incompatible_schema');
+          if (from && to && !compatibleFactoryShape(from, to))
+            add(`${field}/schema`, 'incompatible_schema');
         }
       }
     });
@@ -291,7 +299,8 @@ function validateContract(
   }
   return [];
 }
-function compatible(
+/** Structural usability hint; publication and execution still validate the exact schemas. */
+export function compatibleFactoryShape(
   from: components['schemas']['FactoryFlowValueSchema'],
   to: components['schemas']['FactoryFlowValueSchema'],
 ): boolean {
@@ -319,7 +328,7 @@ function compatible(
     return (
       from.min_items >= to.min_items &&
       from.max_items <= to.max_items &&
-      compatible(from.item, to.item)
+      compatibleFactoryShape(from.item, to.item)
     );
   if (from.type === 'externally_tagged' && to.type === 'externally_tagged')
     return Object.entries(from.variants).every(([name, shape]) => {
@@ -327,7 +336,7 @@ function compatible(
       const target = to.variants[name];
       return shape === null
         ? target === null
-        : target !== null && target !== undefined && compatible(shape, target);
+        : target !== null && target !== undefined && compatibleFactoryShape(shape, target);
     });
   if (from.type === 'object' && to.type === 'object')
     return (
@@ -335,7 +344,8 @@ function compatible(
       Object.entries(to.fields).every(([key, field]) => {
         const source = Object.hasOwn(from.fields, key) ? from.fields[key] : undefined;
         return source
-          ? (!field.required || source.required) && compatible(source.value, field.value)
+          ? (!field.required || source.required) &&
+              compatibleFactoryShape(source.value, field.value)
           : !field.required;
       })
     );

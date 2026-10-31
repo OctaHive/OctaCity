@@ -10,9 +10,13 @@ export function InstructionFields({
   value,
   onChange,
   label,
+  legend = label,
+  help,
 }: {
   value: components['schemas']['FactoryInstructions'];
   label: string;
+  legend?: string;
+  help?: string;
   onChange: (value: string[]) => void;
 }) {
   const { t } = usePresentation();
@@ -20,7 +24,8 @@ export function InstructionFields({
   const keys = useDraftRowKeys(rows);
   return (
     <fieldset>
-      <legend>{label}</legend>
+      <legend>{legend}</legend>
+      {help ? <p>{help}</p> : null}
       {rows.map((text, index) => (
         <div key={keys[index]}>
           <label>

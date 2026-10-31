@@ -27,6 +27,10 @@ it('declares a bounded summary and Work input source through typed controls with
     );
   }
   render(<Harness />);
+  expect(
+    screen.getByRole('button', { name: 'Add Context entry' }).closest('details'),
+  ).toHaveProperty('open', false);
+  await userEvent.click(screen.getByText('Advanced input and Context mappings'));
   await userEvent.click(screen.getByRole('button', { name: 'Add Context entry' }));
   await userEvent.type(
     screen.getByRole('textbox', { name: 'Context entry name' }),

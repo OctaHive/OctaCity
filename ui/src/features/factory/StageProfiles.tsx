@@ -6,7 +6,7 @@ import { SelectMenu } from '../../shared/SelectMenu';
 import { useDraftRowKeys } from '../../shared/useDraftRowKeys';
 import { ValueMappingEditor } from './ValueMappingEditor';
 import { PredicateEditor } from './PredicateEditor';
-import { ProfileCandidatePicker } from './ProfileCandidatePicker';
+import { ExecutorPicker } from './ExecutorPicker';
 import type { FactoryRolesApi } from './roleApi';
 
 type Schema = components['schemas'];
@@ -34,9 +34,9 @@ export function StageProfiles({
   const execution = node.build ?? Object.values(binding?.candidates ?? {})[0]?.build;
   const update = (patch: Partial<Binding>) =>
     binding && onChange({ profile_selection: { ...binding, ...patch } });
-  const candidates = Object.keys(binding?.candidates ?? {}).map((name) => ({
+  const candidates = Object.entries(binding?.candidates ?? {}).map(([name, candidate]) => ({
     value: name,
-    label: name,
+    label: `${candidate.profile.definition.name} · v${candidate.profile.reference.version}`,
   }));
   const first = candidates[0]?.value ?? '';
   const policies = choices.filter(
@@ -73,49 +73,50 @@ export function StageProfiles({
         </button>
       ) : null}
       {adding && services && execution ? (
-        <ProfileCandidatePicker
-          services={services}
-          onSelect={(profile) => {
-            if (!execution) return;
-            if (
-              Object.values(binding?.candidates ?? {}).some(
-                (candidate) =>
-                  candidate.profile.reference.id === profile.reference.id &&
-                  candidate.profile.reference.version === profile.reference.version,
-              )
-            ) {
-              setAdding(false);
-              return;
-            }
-            const alias = profile.reference.id;
-            const build = {
-              ...structuredClone(execution),
-              plugin: profile.definition.toolchain.plugin,
-              tool: profile.definition.toolchain.executable,
-              model_or_tool: profile.definition.toolchain.model,
-              build_configuration: profile.definition.build_configuration,
-            };
-            onChange({
-              build: null,
-              profile_selection: binding
-                ? { ...binding, candidates: { ...binding.candidates, [alias]: { profile, build } } }
-                : {
-                    role: profile.role,
-                    candidates: { [alias]: { profile, build } },
-                    policy: { mode: 'manual', candidate: null },
-                    failure: { kind: 'manual_selection' },
-                    selection_budget: {
-                      attempts: 0,
-                      elapsed_millis: 0,
-                      tokens: 0,
-                      cost_micro_units: 0,
-                      output_bytes: 0,
+        <fieldset>
+          <legend>{t('factory.candidateExecutor')}</legend>
+          <ExecutorPicker
+            node={node}
+            services={services}
+            requiredRole={binding?.role}
+            onResolved={(profile, build) => {
+              if (!execution) return;
+              if (
+                Object.values(binding?.candidates ?? {}).some(
+                  (candidate) =>
+                    candidate.profile.reference.id === profile.reference.id &&
+                    candidate.profile.reference.version === profile.reference.version,
+                )
+              ) {
+                setAdding(false);
+                return;
+              }
+              const alias = profile.reference.id;
+              onChange({
+                build: null,
+                profile_selection: binding
+                  ? {
+                      ...binding,
+                      candidates: { ...binding.candidates, [alias]: { profile, build } },
+                    }
+                  : {
+                      role: profile.role,
+                      candidates: { [alias]: { profile, build } },
+                      policy: { mode: 'manual', candidate: null },
+                      failure: { kind: 'manual_selection' },
+                      selection_budget: {
+                        attempts: 0,
+                        elapsed_millis: 0,
+                        tokens: 0,
+                        cost_micro_units: 0,
+                        output_bytes: 0,
+                      },
                     },
-                  },
-            });
-            setAdding(false);
-          }}
-        />
+              });
+              setAdding(false);
+            }}
+          />
+        </fieldset>
       ) : null}
       {binding ? (
         <>
@@ -163,7 +164,7 @@ export function StageProfiles({
                     update({ candidates: next });
                   }}
                 >
-                  {t('factory.removeCandidate', { name: alias })}
+                  {t('factory.removeCandidate', { name: candidate.profile.definition.name })}
                 </button>
               </li>
             ))}

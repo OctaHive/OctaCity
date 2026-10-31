@@ -1,0 +1,52 @@
+.canvas {
+  min-width: 0;
+  max-width: 100%;
+  overflow: clip;
+  position: relative;
+  height: clamp(20rem, 55vh, 40rem);
+  align-self: start;
+  touch-action: none;
+  cursor: grab;
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-medium);
+  background-color: var(--color-surface);
+  background-image: radial-gradient(var(--color-border) 1px, transparent 1px);
+  background-size: 24px 24px;
+}
+.surface {
+  position: absolute;
+  top: 0;
+  left: 0;
+  transform-origin: 0 0;
+  /* Camera transforms follow input directly, including under global motion preferences. */
+  transition-property: none;
+}
+.surface svg {
+  display: block;
+  color: var(--color-brand-action);
+}
+.edgeLabel {
+  height: 100%;
+  padding: var(--space-xs);
+  overflow: hidden;
+  border-radius: var(--radius-small);
+  color: var(--color-text-muted);
+  background: var(--color-surface);
+  font-size: 0.75rem;
+  text-align: center;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.node {
+  position: absolute;
+  display: flex;
+  flex-direction: column;
+  justify-content: space-between;
+  gap: var(--space-sm);
+  box-sizing: border-box;
+  padding: var(--space-md);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-medium);
+  background: var(--color-surface);
+  color: var(--color-text-primary);
+}

@@ -293,3 +293,28 @@
   white-space: pre-wrap;
   overflow-wrap: anywhere;
 }
+
+.constraintTable {
+  overflow-x: auto;
+  max-width: 100%;
+}
+.constraintTable table {
+  min-width: 42rem;
+}
+
+/* Keep usable text fields after the persistent mobile navigation and nested inspectors. */
+@media (max-width: 40rem) {
+  .workspace:has(.editor) {
+    padding: var(--space-sm);
+  }
+  .editor fieldset {
+    padding: var(--space-sm);
+  }
+  .editor textarea {
+    min-height: 6rem;
+  }
+  .editor > fieldset[data-factory-field^='/root/nodes/'] {
+    border: 0;
+    padding: 0;
+  }
+}

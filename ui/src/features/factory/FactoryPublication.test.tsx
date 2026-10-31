@@ -9,6 +9,7 @@ import { createConsoleQueryClient } from '../../app/query';
 import { ManagementApiError } from '../../api/client';
 import type { FactoryApi } from './api';
 import { factoryApi } from './api';
+import { FlowGraphEditor } from './FlowGraphEditor';
 import { FactoryPublication } from './FactoryPublication';
 import { configurationFixture } from '../../../tests/fixtures/factory';
 afterEach(cleanup);
@@ -501,3 +502,181 @@ it('validates a role-backed reasoning stage through the server and reviews exact
   expect(dialog.textContent).toContain('manual_selection');
   expect(createFlow).not.toHaveBeenCalled();
 });
+
+it('shows server-reported requested and effective budget scopes without inventing unresolved concurrency', async () => {
+  const { config, request } = setup();
+  const budget = {
+    max_attempts: 10,
+    max_elapsed_millis: 120000,
+    max_tokens: 50000,
+    max_cost_micro_units: 3000000,
+    max_output_bytes: 4096,
+  };
+  const api = {
+    ...factoryApi,
+    validateFlow: vi.fn<FactoryApi['validateFlow']>(async () => ({
+      ...config.flow,
+      diagnostics: {
+        errors: [],
+        effective_permissions: [],
+        required_node_capabilities: [],
+        required_agent_capabilities: [],
+        required_backend_capabilities: [],
+        unavailable_references: [],
+        warnings: [],
+        constraints: {
+          run_budget: {
+            definition: null,
+            node: null,
+            profile: null,
+            scope: 'run_total',
+            requested: budget,
+            effective: { ...budget, max_tokens: 12000 },
+            retry_charging: 'cumulative_in_run',
+            sources: [
+              {
+                source: 'configuration',
+                scope: 'run_total',
+                limit: { ...budget, max_tokens: 12000 },
+              },
+            ],
+          },
+          node_budgets: [],
+          concurrency: [
+            {
+              definition: null,
+              scope: 'configuration_runs',
+              source: 'configuration_wip',
+              requested: null,
+              effective: null,
+              unresolved: 'configuration_required',
+            },
+          ],
+        },
+      },
+    })),
+  };
+  render(
+    <QueryClientProvider client={createConsoleQueryClient()}>
+      <RouterProvider
+        router={createMemoryRouter([
+          {
+            path: '*',
+            element: <FactoryPublication api={api} subject={{ kind: 'flow', request }} />,
+          },
+        ])}
+      />
+    </QueryClientProvider>,
+  );
+  await userEvent.click(screen.getByRole('button', { name: 'Validate draft' }));
+  const review = within(await screen.findByRole('region', { name: 'Effective constraints' }));
+  expect(review.getByRole('columnheader', { name: 'Requested' })).toBeTruthy();
+  expect(review.getByRole('columnheader', { name: 'Effective' })).toBeTruthy();
+  expect(review.getByText('50,000')).toBeTruthy();
+  expect(review.getByText('12,000')).toBeTruthy();
+  expect(review.getAllByText(/^Configuration run budget ·/)).toHaveLength(5);
+  expect(review.getByText('Choose a Configuration to resolve this limit.')).toBeTruthy();
+  expect(
+    review.getByText('Attempts and retries are charged cumulatively to this Run.'),
+  ).toBeTruthy();
+});
+
+it('names the rejected resource and ceiling while keeping technical field paths under Details', async () => {
+  const { request } = setup();
+  const api = {
+    ...factoryApi,
+    validateFlow: vi.fn<FactoryApi['validateFlow']>(async () => {
+      throw new ManagementApiError({
+        code: 'invalid_request',
+        message: 'Limit rejected',
+        requestId: null,
+        status: 400,
+        retryAfterMilliseconds: null,
+        validationIssues: [
+          {
+            field: '/execution/budget',
+            code: 'budget_exceeds_ceiling',
+            resource: 'tokens',
+            ceiling: 'flow_definition',
+            requested: 150000,
+            maximum: 100000,
+          },
+        ],
+      });
+    }),
+  };
+  render(
+    <QueryClientProvider client={createConsoleQueryClient()}>
+      <RouterProvider
+        router={createMemoryRouter([
+          {
+            path: '*',
+            element: <FactoryPublication api={api} subject={{ kind: 'flow', request }} />,
+          },
+        ])}
+      />
+    </QueryClientProvider>,
+  );
+  await userEvent.click(screen.getByRole('button', { name: 'Validate draft' }));
+  expect(
+    await screen.findByText(
+      'Tokens: requested 150,000; maximum 100,000. Limit: Flow execution policy.',
+    ),
+  ).toBeTruthy();
+  expect(screen.getByRole('button', { name: 'Execution limits' })).toBeTruthy();
+  expect(screen.queryByRole('button', { name: '/execution/budget' })).toBeNull();
+  expect(screen.getByText('/execution/budget', { exact: true }).closest('details')).toHaveProperty(
+    'open',
+    false,
+  );
+  expect(screen.getByRole('button', { name: 'Review publication' })).toHaveProperty(
+    'disabled',
+    true,
+  );
+});
+
+it.each([
+  ['/limits/budget/max_tokens', 'Admission budget · Maximum tokens'],
+  ['/execution/budget/max_tokens', 'Run budget · Maximum tokens'],
+])(
+  'opens the rejected budget control %s from a visible validation blocker',
+  async (field, label) => {
+    const { request } = setup();
+    const api = {
+      ...factoryApi,
+      validateFlow: vi.fn<FactoryApi['validateFlow']>(async () => {
+        throw new ManagementApiError({
+          code: 'invalid_request',
+          message: 'Rejected',
+          requestId: null,
+          status: 400,
+          retryAfterMilliseconds: null,
+          validationIssues: [{ field, code: 'budget_exceeds_ceiling' }],
+        });
+      }),
+    };
+    function Harness() {
+      const [value, setValue] = useState(request.definition);
+      return (
+        <>
+          <FlowGraphEditor value={value} choices={[]} subflows={[]} onChange={setValue} />
+          <FactoryPublication
+            api={api}
+            subject={{ kind: 'flow', request: { ...request, definition: value } }}
+          />
+        </>
+      );
+    }
+    render(
+      <QueryClientProvider client={createConsoleQueryClient()}>
+        <RouterProvider router={createMemoryRouter([{ path: '*', element: <Harness /> }])} />
+      </QueryClientProvider>,
+    );
+    await userEvent.click(screen.getByRole('button', { name: 'Validate draft' }));
+    await screen.findByText('Rejected');
+    await userEvent.click(screen.getByRole('button', { name: 'Execution limits' }));
+    const input = screen.getByRole('spinbutton', { name: label });
+    if (field.startsWith('/limits')) expect(input.closest('details')).toHaveProperty('open', true);
+    expect(document.activeElement).toBe(input);
+  },
+);

@@ -647,7 +647,7 @@ it('reviews installed policy choices and explicit budgets without enabling publi
   await userEvent.click(screen.getByRole('option', { name: 'reviewed-admission · v1' }));
   await userEvent.click(screen.getByRole('combobox', { name: 'Permission ceiling' }));
   await userEvent.click(screen.getByRole('option', { name: 'reviewed-permissions · v1' }));
-  const tokens = screen.getByRole('spinbutton', { name: 'Flow execution budget · Maximum tokens' });
+  const tokens = screen.getByRole('spinbutton', { name: 'Run budget · Maximum tokens' });
   await userEvent.clear(tokens);
   await userEvent.type(tokens, '500');
   await userEvent.click(screen.getByRole('button', { name: 'Resolve reviewed triage' }));
@@ -831,7 +831,7 @@ it('preserves an edited Flow when an exact parent becomes unavailable and blocks
     },
   });
   await userEvent.click(screen.getByRole('button', { name: 'Resolve reviewed triage' }));
-  const tokens = await screen.findByRole('spinbutton', { name: 'Node budget · Maximum tokens' });
+  const tokens = await screen.findByRole('spinbutton', { name: 'Step budget · Maximum tokens' });
   await userEvent.clear(tokens);
   await userEvent.type(tokens, '777');
   api.resolvePreset.mockResolvedValue({
@@ -840,7 +840,7 @@ it('preserves an edited Flow when an exact parent becomes unavailable and blocks
   });
   await userEvent.click(screen.getByRole('button', { name: 'Resolve reviewed triage' }));
   expect(
-    await screen.findByRole('spinbutton', { name: 'Node budget · Maximum tokens' }),
+    await screen.findByRole('spinbutton', { name: 'Step budget · Maximum tokens' }),
   ).toHaveProperty('value', '777');
   expect(screen.getByRole('button', { name: 'Validate draft' })).toHaveProperty('disabled', true);
   expect(

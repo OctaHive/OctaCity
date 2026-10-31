@@ -1,6 +1,7 @@
 //! Read-only contracts of common interpreter primitives, independent of saved Flows.
 use crate::*;
 use octacity_server_factory::*;
+use octacity_server_store::FactoryConfigurationStore;
 
 /// Normalizes an operator-owned finite program through the common evaluator contract.
 #[derive(Clone, Debug)]
@@ -81,9 +82,37 @@ pub struct FactoryHumanGateContract {
   /// Human responses consume retained input without a code workspace.
   pub resource_modes: Vec<&'static str>,
 }
+/// Exact ordinary command compiler facts. Routing is authored separately in the Flow.
+#[derive(Clone, Debug, serde::Serialize)]
+pub struct FactoryCommandExecutionContract {
+  /// Exact installed ordinary Build configuration.
+  pub build_configuration: BuildConfigurationRef,
+  /// Installed executable capability.
+  pub tool: ImmutableReference,
+  /// Installed task plugin.
+  pub plugin: ImmutableReference,
+  /// Installed command configuration, without argv or credential values.
+  pub model_or_tool: ImmutableReference,
+  /// Native compiler task identity; clients do not derive it.
+  pub task_digest: FactoryDigest,
+  /// Exact primary result output.
+  pub result_output: FactoryKey,
+  /// Exact publication category of the output.
+  pub result_output_kind: EvidenceOutputKind,
+}
+/// A visible installed command choice, independent of saved Flow nodes.
+#[derive(Clone, Debug, serde::Serialize)]
+pub struct FactoryCommandAuthoringContract {
+  /// Existing authorized Build configuration alias.
+  pub alias: FactoryKey,
+  /// Exact compiler facts without an implied logical outcome.
+  pub execution: FactoryCommandExecutionContract,
+}
 /// Technical installation facts only; Source/Reporter choices retain action authority.
 #[derive(Clone, Debug, serde::Serialize)]
 pub struct FactoryAuthoringCapabilities {
+  /// Commands explicitly declared by visible installed compilers; an empty list grants nothing.
+  pub commands: Vec<FactoryCommandAuthoringContract>,
   /// Common deterministic interpreter, requiring no installed external policy adapter.
   pub deterministic_gate: FactoryDeterministicGateContract,
   /// Common durable human responses, requiring no external executor.
@@ -94,11 +123,13 @@ pub struct FactoryAuthoringCapabilities {
   pub source_free_incompatibility: Option<&'static str>,
 }
 #[async_trait::async_trait]
-impl<S: Send + Sync> ManagementQueryUseCase<GetFactoryAuthoringCapabilitiesQuery> for FactoryRoleProfileHandlers<S> {
+impl<S: FactoryConfigurationStore> ManagementQueryUseCase<GetFactoryAuthoringCapabilitiesQuery>
+  for FactoryRoleProfileHandlers<S>
+{
   type Error = ApplicationError;
   async fn execute_management_query(
     &self,
-    _: &ManagementRequestContext,
+    context: &ManagementRequestContext,
     grant: &ManagementAuthorizationGrant,
     query: GetFactoryAuthoringCapabilitiesQuery,
   ) -> Result<FactoryAuthoringCapabilities, ApplicationError> {
@@ -147,7 +178,20 @@ impl<S: Send + Sync> ManagementQueryUseCase<GetFactoryAuthoringCapabilitiesQuery
         resource_modes: vec!["none"],
       });
     }
+    let commands = match crate::factory_configuration_choices::visible_installed_factory_choices(
+      self.store.as_ref(),
+      self.policy.as_ref(),
+      context,
+      query.project_id,
+    )
+    .await
+    {
+      Ok(choices) => command_contracts(&choices),
+      Err(ApplicationError::CapabilityUnavailable) => vec![],
+      Err(error) => return Err(error),
+    };
     Ok(FactoryAuthoringCapabilities {
+      commands,
       deterministic_gate: FactoryDeterministicGateContract {
         policy: gate.policy().clone(),
         parameter_contract: "declarative_gate_v1",
@@ -159,4 +203,46 @@ impl<S: Send + Sync> ManagementQueryUseCase<GetFactoryAuthoringCapabilitiesQuery
       source_free_incompatibility: Some("executor_support_required"),
     })
   }
+}
+
+fn command_contracts(choices: &FactoryConfigurationChoices) -> Vec<FactoryCommandAuthoringContract> {
+  let entries = choices.entries();
+  choices
+    .build_pipeline_contracts()
+    .iter()
+    .filter_map(|installed| {
+      let compiler = installed
+        .compilation
+        .as_ref()
+        .filter(|compiler| !compiler.role_profiles)?;
+      let declared = entries.references.iter().any(|entry| {
+        entry.kind == FactoryChoiceKind::NodeCapability
+          && entry.reference == installed.tool
+          && choices
+            .choice_metadata(entry.kind, &entry.alias)
+            .is_some_and(|metadata| metadata.node_kinds.contains(&FlowNodeKind::BuildCommand))
+      });
+      if !declared {
+        return None;
+      }
+      let alias = entries
+        .build_configurations
+        .iter()
+        .find(|(_, reference)| reference == &installed.build_configuration)?
+        .0
+        .clone();
+      Some(FactoryCommandAuthoringContract {
+        alias,
+        execution: FactoryCommandExecutionContract {
+          build_configuration: installed.build_configuration.clone(),
+          tool: installed.tool.clone(),
+          plugin: installed.plugin.clone(),
+          model_or_tool: installed.model_or_tool.clone(),
+          task_digest: compiler.task_digest,
+          result_output: compiler.result_output.clone(),
+          result_output_kind: compiler.result_output_kind,
+        },
+      })
+    })
+    .collect()
 }

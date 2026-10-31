@@ -1,5 +1,5 @@
 import { useRef, useState, type FocusEvent, type KeyboardEvent, type PointerEvent } from 'react';
-import type { WorkflowPoint, WorkflowBounds } from './workflowGraph';
+import type { GraphPoint, GraphBounds } from './directedGraph';
 
 const MIN_ZOOM = 0.005;
 const MAX_ZOOM = 2;
@@ -8,7 +8,7 @@ const PAN_STEP = 40;
 const FIT_PADDING = 16;
 
 /** Transient camera state; coordinates never enter the workflow definition. */
-export function useWorkflowViewport(bounds: WorkflowBounds, anchor?: WorkflowPoint) {
+export function useGraphViewport(bounds: GraphBounds, anchor?: GraphPoint) {
   const ref = useRef<HTMLDivElement>(null);
   const [view, setView] = useState({ x: 0, y: 0, scale: 1 });
   const panRef = useRef<{
@@ -62,7 +62,7 @@ export function useWorkflowViewport(bounds: WorkflowBounds, anchor?: WorkflowPoi
       !event.isPrimary ||
       event.button !== 0 ||
       (event.target instanceof Element &&
-        event.target.closest('[data-workflow-status], [role="button"]'))
+        event.target.closest('[data-graph-node], button, [role="button"]'))
     )
       return;
     event.currentTarget.focus({ preventScroll: true });
@@ -86,7 +86,7 @@ export function useWorkflowViewport(bounds: WorkflowBounds, anchor?: WorkflowPoi
   function onKeyDown(event: KeyboardEvent<HTMLDivElement>) {
     if (event.target !== event.currentTarget || event.altKey || event.ctrlKey || event.metaKey)
       return;
-    const steps: Record<string, WorkflowPoint> = {
+    const steps: Record<string, GraphPoint> = {
       ArrowLeft: { x: PAN_STEP, y: 0 },
       ArrowRight: { x: -PAN_STEP, y: 0 },
       ArrowUp: { x: 0, y: PAN_STEP },

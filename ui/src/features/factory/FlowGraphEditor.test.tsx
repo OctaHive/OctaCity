@@ -5,6 +5,7 @@ import { useState } from 'react';
 import { afterEach, expect, it } from 'vitest';
 import type { components } from '../../../.generated/api/schema';
 import { configurationFixture } from '../../../tests/fixtures/factory';
+import { ConfigurationEditor } from './ConfigurationEditor';
 import { FlowGraphEditor } from './FlowGraphEditor';
 import { emptyFlowDraft } from './emptyFlowDraft';
 
@@ -161,13 +162,13 @@ it('selects a visible published execution profile with exact model and task prov
     );
   }
   render(<Harness />);
-  await userEvent.click(screen.getByRole('button', { name: 'Add node' }));
+  await userEvent.click(screen.getByRole('button', { name: 'Add step' }));
   await userEvent.type(
-    screen.getByRole('textbox', { name: 'Node name' }),
+    screen.getByRole('textbox', { name: 'Step name' }),
     'another_reasoning_call',
   );
-  await userEvent.click(screen.getByRole('combobox', { name: 'Node kind' }));
-  await userEvent.click(screen.getByRole('option', { name: 'Reasoning call' }));
+  await userEvent.click(screen.getByRole('combobox', { name: 'Step type' }));
+  await userEvent.click(screen.getByRole('option', { name: 'AI agent' }));
   await userEvent.click(screen.getByRole('combobox', { name: 'Execution profile' }));
   await userEvent.click(
     screen.getByRole('option', {
@@ -228,7 +229,7 @@ it('keeps node budgets separate and selects permission references only from visi
     );
   }
   render(<Harness />);
-  const attempts = screen.getByRole('spinbutton', { name: 'Node budget · Maximum attempts' });
+  const attempts = screen.getByRole('spinbutton', { name: 'Step budget · Maximum attempts' });
   await userEvent.clear(attempts);
   await userEvent.type(attempts, '2');
   expect(observed.root.nodes.find((node) => node.key === root.entry)?.budget.max_attempts).toBe(2);
@@ -271,8 +272,8 @@ it('adds typed outcomes and control transitions without implicitly granting cont
     );
   }
   render(<Harness />);
-  await userEvent.click(screen.getByRole('button', { name: 'Add node' }));
-  await userEvent.type(screen.getByRole('textbox', { name: 'Node name' }), 'custom_check');
+  await userEvent.click(screen.getByRole('button', { name: 'Add step' }));
+  await userEvent.type(screen.getByRole('textbox', { name: 'Step name' }), 'custom_check');
   await userEvent.click(screen.getByRole('button', { name: 'Add outcome' }));
   await userEvent.type(screen.getByRole('textbox', { name: 'Outcome name' }), 'observed');
   const schema = published.data_schemas[0]?.reference;
@@ -328,15 +329,15 @@ it('edits arbitrary logical nodes through the closed grammar without modifying t
     );
   }
   render(<Harness />);
-  const name = screen.getByRole('textbox', { name: 'Node name' });
+  const name = screen.getByRole('textbox', { name: 'Step name' });
   await userEvent.clear(name);
   await userEvent.type(name, 'accessibility_audit');
   expect(changes.at(-1)?.root.entry).toBe('accessibility_audit');
   expect(
     changes.at(-1)?.root.transitions.some((edge) => edge.predecessor === 'accessibility_audit'),
   ).toBe(true);
-  await userEvent.click(screen.getByRole('combobox', { name: 'Node kind' }));
-  await userEvent.click(screen.getByRole('option', { name: 'Human gate' }));
+  await userEvent.click(screen.getByRole('combobox', { name: 'Step type' }));
+  await userEvent.click(screen.getByRole('option', { name: 'Operator decision' }));
   expect(changes.at(-1)?.root.nodes.find((node) => node.key === 'accessibility_audit')?.kind).toBe(
     'human_gate',
   );
@@ -391,9 +392,9 @@ it('pins a nested Flow selected from a visible exact published closure', async (
     );
   }
   render(<Harness />);
-  await userEvent.click(screen.getByRole('button', { name: 'Add node' }));
-  await userEvent.click(screen.getByRole('combobox', { name: 'Node kind' }));
-  await userEvent.click(screen.getByRole('option', { name: 'Subflow call' }));
+  await userEvent.click(screen.getByRole('button', { name: 'Add step' }));
+  await userEvent.click(screen.getByRole('combobox', { name: 'Step type' }));
+  await userEvent.click(screen.getByRole('option', { name: 'Nested Flow' }));
   await userEvent.click(screen.getByRole('combobox', { name: 'Nested Flow' }));
   await userEvent.click(screen.getByRole('option', { name: 'child_entry · v7' }));
   expect(observed.root.nodes.at(-1)?.subflow).toEqual(child.closure.root);
@@ -479,7 +480,7 @@ it('removes a selected node and its graph edges while retaining unrelated node d
     );
   }
   render(<Harness />);
-  await userEvent.click(screen.getByRole('button', { name: 'Remove node' }));
+  await userEvent.click(screen.getByRole('button', { name: 'Remove step' }));
   expect(observed.root.nodes.some((node) => node.key === removed)).toBe(false);
   expect(observed.root.entry).toBe('');
   expect(observed.root.nodes.find((node) => node.key === untouched.key)).toEqual(untouched);
@@ -608,9 +609,9 @@ it('imports distinct child contracts when selecting a visible nested Flow', asyn
     );
   }
   render(<Harness />);
-  await userEvent.click(screen.getByRole('button', { name: 'Add node' }));
-  await userEvent.click(screen.getByRole('combobox', { name: 'Node kind' }));
-  await userEvent.click(screen.getByRole('option', { name: 'Subflow call' }));
+  await userEvent.click(screen.getByRole('button', { name: 'Add step' }));
+  await userEvent.click(screen.getByRole('combobox', { name: 'Step type' }));
+  await userEvent.click(screen.getByRole('option', { name: 'Nested Flow' }));
   await userEvent.click(screen.getByRole('combobox', { name: 'Nested Flow' }));
   await userEvent.click(screen.getByRole('option', { name: `${definition.entry} · v7` }));
   expect(observed.root.nodes.at(-1)?.subflow).toEqual(child.closure.root);
@@ -646,4 +647,103 @@ it('keeps removed admission permissions selectable when reopening settings', asy
       name: 'Network host · api.allowed.example',
     }),
   ).not.toBeNull();
+});
+
+it('separates queue, limits and access while preserving distinct admission and per-Run controls', async () => {
+  let observed = emptyFlowDraft();
+  function Harness() {
+    const [value, setValue] = useState(observed);
+    return (
+      <FlowGraphEditor
+        value={value}
+        choices={[]}
+        subflows={[]}
+        onChange={(next) => {
+          observed = next;
+          setValue(next);
+        }}
+      />
+    );
+  }
+  render(<Harness />);
+  await userEvent.click(screen.getByRole('button', { name: 'Flow settings' }));
+  expect(screen.getByRole('group', { name: 'Start and queue' })).toBeTruthy();
+  expect(screen.getByRole('group', { name: 'Execution limits' })).toBeTruthy();
+  expect(screen.getByRole('group', { name: 'Pipeline access' })).toBeTruthy();
+  const before = structuredClone(observed.limits.budget);
+  const tokens = screen.getByRole('spinbutton', { name: 'Run budget · Maximum tokens' });
+  await userEvent.clear(tokens);
+  await userEvent.type(tokens, '123456');
+  expect(observed.root.execution.budget.max_tokens).toBe(123456);
+  expect(observed.limits.budget).toEqual(before);
+});
+
+it('keeps Configuration queue concurrency separate from the Flow run budget and access ceiling', () => {
+  const config = configurationFixture().configuration;
+  const value = {
+    enabled: false,
+    admission_policy: 'admission',
+    permission_ceiling: 'ceiling',
+    flow: config.flow,
+    hard_budget: config.hard_budget,
+    wip_limits: config.wip_limits,
+  };
+  render(<ConfigurationEditor value={value} choices={[]} flows={[]} onChange={() => {}} />);
+  expect(
+    within(screen.getByRole('group', { name: 'Start and queue' })).getByRole('checkbox', {
+      name: 'Enabled',
+    }),
+  ).toHaveProperty('checked', false);
+  expect(
+    within(screen.getByRole('group', { name: 'Execution limits' })).getByRole('group', {
+      name: 'Configuration run budget',
+    }),
+  ).toBeTruthy();
+  expect(
+    within(screen.getByRole('group', { name: 'Pipeline access' })).getByRole('combobox', {
+      name: 'Permission ceiling',
+    }),
+  ).toBeTruthy();
+});
+
+it('renames an explicit accepted code candidate reference together with its producing step', async () => {
+  const flow = configurationFixture().configuration.flow;
+  let observed = emptyFlowDraft();
+  const original = flow.closure.definitions[0]!.nodes[0]!;
+  observed.root.entry = 'first';
+  observed.root.nodes = [
+    { ...structuredClone(original), key: 'first', code: { kind: 'none' } },
+    {
+      ...structuredClone(original),
+      key: 'second',
+      code: {
+        kind: 'source',
+        source: 'code_1',
+        revision: { kind: 'accepted_candidate', node: 'first', outcome: 'accepted' },
+        access: 'read_only',
+        scope: { kind: 'repository' },
+      },
+    },
+  ];
+  function Harness() {
+    const [value, setValue] = useState(observed);
+    return (
+      <FlowGraphEditor
+        value={value}
+        choices={[]}
+        subflows={[]}
+        onChange={(next) => {
+          observed = next;
+          setValue(next);
+        }}
+      />
+    );
+  }
+  render(<Harness />);
+  const name = screen.getByRole('textbox', { name: 'Step name' });
+  await userEvent.clear(name);
+  await userEvent.type(name, 'producer');
+  expect(observed.root.nodes[1]!.code).toMatchObject({
+    revision: { kind: 'accepted_candidate', node: 'producer', outcome: 'accepted' },
+  });
 });

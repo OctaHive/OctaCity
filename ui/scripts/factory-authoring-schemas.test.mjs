@@ -3,6 +3,7 @@ import assert from 'node:assert/strict';
 import test from 'node:test';
 import { factoryAuthoringSchemas, factorySetupSchemas } from './factory-authoring-schemas.mjs';
 const commandSchemas = {
+  ValidateFactoryGateProgramRequest: {},
   FactoryRuntimeSettingsRequest: {},
   AdmitManualFactoryWorkRequest: {},
   FactoryNodeOperationRequest: {},
@@ -135,4 +136,21 @@ test('keeps setup-only schemas out of ordinary document editor exports', () => {
   assert.equal(Object.hasOwn(ordinary, 'FactoryPresetResolutionRequest'), false);
   assert.equal(Object.hasOwn(ordinary, 'FactoryReadinessSelection'), false);
   assert.equal(Object.hasOwn(ordinary, 'SourceAcceptanceMapping'), false);
+});
+
+test('exports the installed declarative gate grammar and its server-owned bounds for typed editing', () => {
+  const schemas = {
+    ...commandSchemas,
+    FactoryConfigurationDefinition: {},
+    FactoryFlowDefinitionDraft: {},
+    ValidateFactoryGateProgramRequest: {
+      $ref: '#/components/schemas/FactoryDeclarativeGateParameters',
+    },
+    FactoryDeclarativeGateParameters: {
+      type: 'object',
+      properties: { rules: { type: 'array', maxItems: 11 } },
+    },
+  };
+  const result = factoryAuthoringSchemas({ components: { schemas } });
+  assert.equal(result.FactoryDeclarativeGateParameters?.properties.rules.maxItems, 11);
 });

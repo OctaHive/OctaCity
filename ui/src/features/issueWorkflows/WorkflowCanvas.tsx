@@ -2,14 +2,9 @@ import { useEffect, useId, useRef, useState, type PointerEvent } from 'react';
 import { usePresentation } from '../../app/presentation/PresentationProvider';
 import type { WorkflowDefinition } from '../../api/issueWorkflows';
 import styles from './WorkflowCanvas.module.css';
-import {
-  workflowGraph,
-  NODE_WIDTH,
-  NODE_HEIGHT,
-  EDGE_LABEL_HEIGHT,
-  type WorkflowPoint,
-} from './workflowGraph';
-import { useWorkflowViewport } from './useWorkflowViewport';
+import { workflowGraph, NODE_WIDTH, NODE_HEIGHT, EDGE_LABEL_HEIGHT } from './workflowGraph';
+import { useGraphNodePositions } from '../../shared/useGraphNodePositions';
+import { useGraphViewport } from '../../shared/useGraphViewport';
 import { WorkflowInspector, type WorkflowSelection } from './WorkflowInspector';
 import { ISSUE_WORKFLOW_CONSTRAINTS as bounds } from '../../../.generated/api/issue-workflow';
 
@@ -33,15 +28,8 @@ export function WorkflowCanvas({
     x: number;
     y: number;
   } | null>(null);
-  const [positions, setPositions] = useState(() => new Map<string, WorkflowPoint>());
-  const movingRef = useRef<{
-    id: string;
-    pointerId: number;
-    clientX: number;
-    clientY: number;
-    origin: WorkflowPoint;
-    previous: WorkflowPoint | undefined;
-  } | null>(null);
+  const placement = useGraphNodePositions();
+  const positions = placement.positions;
   const surfaceRef = useRef<HTMLDivElement>(null);
   const nodeButtonsRef = useRef(new Map<string, HTMLButtonElement>());
   const addStatusButtonRef = useRef<HTMLButtonElement>(null);
@@ -54,11 +42,7 @@ export function WorkflowCanvas({
   }, [definition.statuses, selection]);
   function removeStatus(id: string) {
     if (!onChange) return;
-    setPositions((current) => {
-      const next = new Map(current);
-      next.delete(id);
-      return next;
-    });
+    placement.remove(id);
     const statuses = definition.statuses.filter((item) => item.id !== id);
     onChange({
       ...definition,
@@ -112,21 +96,8 @@ export function WorkflowCanvas({
     setConnectionSource(null);
     setSelection(element);
   }
-  function cancelMove() {
-    const moving = movingRef.current;
-    movingRef.current = null;
-    if (!moving) return;
-    setPositions((current) => {
-      const next = new Map(current);
-      if (moving.previous && nodeButtonsRef.current.has(moving.id))
-        next.set(moving.id, moving.previous);
-      else next.delete(moving.id);
-      return next;
-    });
-    nodeButtonsRef.current.get(moving.id)?.focus();
-  }
   function cancelPointer(event: PointerEvent<HTMLDivElement>) {
-    if (movingRef.current?.pointerId === event.pointerId) cancelMove();
+    placement.cancelPointer(event);
     if (drawing?.pointerId === event.pointerId) setDrawing(null);
   }
   function cancelConnection() {
@@ -141,14 +112,14 @@ export function WorkflowCanvas({
     : selection?.kind === 'transition'
       ? edges.get(selection.id)?.label
       : undefined;
-  const viewport = useWorkflowViewport(contentBounds, anchor);
+  const viewport = useGraphViewport(contentBounds, anchor);
   return (
     <div
       className={styles.workspace}
       onKeyDown={(event) => {
-        if (!event.defaultPrevented && event.key === 'Escape' && movingRef.current) {
+        if (!event.defaultPrevented && event.key === 'Escape' && placement.isMoving()) {
           event.preventDefault();
-          cancelMove();
+          placement.cancel();
         } else if (
           !event.defaultPrevented &&
           event.key === 'Escape' &&
@@ -159,16 +130,7 @@ export function WorkflowCanvas({
         }
       }}
       onPointerMove={(event) => {
-        const moving = movingRef.current;
-        if (moving && moving.pointerId === event.pointerId) {
-          setPositions((current) =>
-            new Map([...current].filter(([id]) => nodes.has(id))).set(moving.id, {
-              x: moving.origin.x + (event.clientX - moving.clientX) / viewport.scale,
-              y: moving.origin.y + (event.clientY - moving.clientY) / viewport.scale,
-            }),
-          );
-          return;
-        }
+        if (placement.move(event, viewport.scale, nodes)) return;
         if (!drawing || event.pointerId !== drawing.pointerId) return;
         const rect = surfaceRef.current!.getBoundingClientRect();
         setDrawing({
@@ -178,7 +140,7 @@ export function WorkflowCanvas({
         });
       }}
       onPointerUp={(event) => {
-        if (movingRef.current?.pointerId === event.pointerId) movingRef.current = null;
+        placement.finish(event);
         if (!drawing || event.pointerId !== drawing.pointerId) return;
         // Pointer capture keeps a drag alive outside its source; resolve the actual drop card.
         const target = document
@@ -335,6 +297,7 @@ export function WorkflowCanvas({
             <article
               key={status.id}
               aria-label={status.name}
+              data-graph-node
               data-workflow-status={status.id}
               className={styles.node}
               style={{
@@ -352,16 +315,7 @@ export function WorkflowCanvas({
                 }}
                 className={styles.nodeSelect}
                 onPointerDown={(event) => {
-                  if (!event.isPrimary || event.button !== 0) return;
-                  event.currentTarget.setPointerCapture(event.pointerId);
-                  movingRef.current = {
-                    id: status.id,
-                    pointerId: event.pointerId,
-                    clientX: event.clientX,
-                    clientY: event.clientY,
-                    origin: nodes.get(status.id)!,
-                    previous: positions.get(status.id),
-                  };
+                  placement.begin(event, status.id, nodes.get(status.id)!);
                 }}
                 aria-label={t('workflow.selectStatus', {
                   name: status.name || t('workflow.unnamedStatus'),

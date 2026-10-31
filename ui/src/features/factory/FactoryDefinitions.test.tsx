@@ -1,6 +1,6 @@
 // @vitest-environment jsdom
 import { QueryClientProvider } from '@tanstack/react-query';
-import { cleanup, render, screen, within } from '@testing-library/react';
+import { cleanup, render, screen, within, waitFor } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { createMemoryRouter, RouterProvider } from 'react-router-dom';
 import { afterEach, expect, it, vi } from 'vitest';
@@ -12,6 +12,45 @@ import { ManagementApiError } from '../../api/client';
 import { configurationFixture } from '../../../tests/fixtures/factory';
 
 afterEach(cleanup);
+
+it('opens Add pipeline as an empty graph without a template, prior Flow or publication', async () => {
+  const api: FactoryApi = {
+    ...factoryApi,
+    listConfigurations: vi.fn(async () => ({ items: [], total: 0, next_cursor: null })),
+    listFlows: vi.fn(async () => ({ items: [], total: 0, next_cursor: null })),
+    listChoices: vi.fn(async () => ({ items: [], total: 0, next_cursor: null })),
+    resolvePreset: vi.fn(),
+    createFlow: vi.fn(),
+    createConfiguration: vi.fn(),
+  };
+  render(
+    <QueryClientProvider client={createConsoleQueryClient()}>
+      <RouterProvider
+        router={createMemoryRouter([
+          { path: '*', element: <FactoryDefinitions api={api} projectId="delivery" /> },
+        ])}
+      />
+    </QueryClientProvider>,
+  );
+  const add = await screen.findByRole('button', { name: 'Add pipeline' });
+  await waitFor(() => expect(add).toHaveProperty('disabled', false));
+  expect(screen.getByRole('button', { name: 'Create configuration draft' })).toHaveProperty(
+    'disabled',
+    true,
+  );
+  expect(
+    screen.getByText('Publish a step graph before configuring how the pipeline starts.'),
+  ).toBeTruthy();
+  await userEvent.click(add);
+  expect(await screen.findByRole('img', { name: 'Flow graph' })).toBeTruthy();
+  expect(screen.queryByRole('textbox', { name: 'Step name' })).toBeNull();
+  expect(
+    screen.getByText(/Publish the step graph.*configure how the pipeline starts/i),
+  ).toBeTruthy();
+  expect(api.resolvePreset).not.toHaveBeenCalled();
+  expect(api.createFlow).not.toHaveBeenCalled();
+  expect(api.createConfiguration).not.toHaveBeenCalled();
+});
 
 it('blocks draft creation when the server has no Factory capabilities while keeping published Flows readable', async () => {
   const configuration = configurationFixture().configuration;
@@ -49,10 +88,7 @@ it('blocks draft creation when the server has no Factory capabilities while keep
     'disabled',
     true,
   );
-  expect(screen.getByRole('button', { name: 'Create Flow draft' })).toHaveProperty(
-    'disabled',
-    true,
-  );
+  expect(screen.getByRole('button', { name: 'Add pipeline' })).toHaveProperty('disabled', true);
   expect(screen.getByRole('button', { name: 'Admit Work' })).toHaveProperty('disabled', true);
   expect(screen.getByRole('link', { name: 'AI agents' }).getAttribute('href')).toBe(
     `/ai-settings?project_id=${projectId}&view=agents`,
@@ -190,14 +226,14 @@ it('opens memory-only configuration and Flow drafts from visible resources and d
     await screen.findByRole('button', { name: 'Inspect Flow Definition · v1' }),
   );
   await userEvent.click(await screen.findByRole('button', { name: 'Edit Flow draft' }));
-  const name = await screen.findByRole('textbox', { name: 'Node name' });
+  const name = await screen.findByRole('textbox', { name: 'Step name' });
   await userEvent.clear(name);
   await userEvent.type(name, 'draft_only_name');
   expect(router.state.location.search).not.toContain('draft_only_name');
   expect(JSON.stringify(localStorage)).not.toContain('draft_only_name');
   await userEvent.click(screen.getByRole('button', { name: 'Discard draft' }));
   await userEvent.click(screen.getByRole('button', { name: 'Edit Flow draft' }));
-  expect(await screen.findByRole('textbox', { name: 'Node name' })).toHaveProperty(
+  expect(await screen.findByRole('textbox', { name: 'Step name' })).toHaveProperty(
     'value',
     'implement',
   );
@@ -259,7 +295,7 @@ it('keeps the graph editable without installed capabilities and loads older immu
   );
   await userEvent.click(screen.getByRole('button', { name: 'Inspect Flow Definition · v1' }));
   await userEvent.click(await screen.findByRole('button', { name: 'Edit Flow draft' }));
-  expect(await screen.findByRole('textbox', { name: 'Node name' })).toBeTruthy();
+  expect(await screen.findByRole('textbox', { name: 'Step name' })).toBeTruthy();
   expect(screen.getByText('No resource choices are visible.')).toBeTruthy();
 });
 
@@ -285,7 +321,7 @@ it('starts first-publication drafts without typing identifiers and exposes valid
       <RouterProvider router={router} />
     </QueryClientProvider>,
   );
-  await userEvent.click(await screen.findByRole('button', { name: 'Create Flow draft' }));
+  await userEvent.click(await screen.findByRole('button', { name: 'Add pipeline' }));
   expect(await screen.findByRole('button', { name: 'Validate draft' })).toHaveProperty(
     'disabled',
     true,
@@ -294,7 +330,7 @@ it('starts first-publication drafts without typing identifiers and exposes valid
     'disabled',
     true,
   );
-  expect(screen.getByRole('button', { name: 'Add node' })).toBeTruthy();
+  expect(screen.getByRole('button', { name: 'Add step' })).toBeTruthy();
   expect(screen.queryByRole('textbox', { name: 'Resource identifier' })).toBeNull();
   expect(router.state.location.search).toBe('');
 });
@@ -341,7 +377,7 @@ it('owns only one authoring draft at a time and discards it when another immutab
   expect(await screen.findByRole('combobox', { name: 'Admission policy' })).toBeTruthy();
   await userEvent.click(screen.getByRole('button', { name: 'Inspect Flow Definition · v1' }));
   await userEvent.click(await screen.findByRole('button', { name: 'Edit Flow draft' }));
-  expect(await screen.findByRole('textbox', { name: 'Node name' })).toBeTruthy();
+  expect(await screen.findByRole('textbox', { name: 'Step name' })).toBeTruthy();
   expect(screen.queryByRole('combobox', { name: 'Admission policy' })).toBeNull();
   expect(screen.getAllByRole('button', { name: 'Discard draft' })).toHaveLength(1);
 });
@@ -373,10 +409,10 @@ it('links a field error to its existing control without copying draft values int
     await screen.findByRole('button', { name: 'Inspect Flow Definition · v1' }),
   );
   await userEvent.click(await screen.findByRole('button', { name: 'Edit Flow draft' }));
-  const input = await screen.findByRole('textbox', { name: 'Node name' });
+  const input = await screen.findByRole('textbox', { name: 'Step name' });
   await userEvent.clear(input);
   await userEvent.type(input, 'Bad name');
-  await userEvent.click(screen.getByRole('button', { name: '/root/nodes/1/key' }));
+  await userEvent.click(screen.getByRole('button', { name: 'Step 2 · Step name' }));
   expect(document.activeElement).toBe(input);
   expect(router.state.location.hash).toBe('');
   expect(router.state.location.search).not.toContain('Bad');
@@ -513,10 +549,7 @@ it('opens Project triage setup and reviews frozen process criteria without publi
     </QueryClientProvider>,
   );
   await userEvent.click(screen.getByRole('button', { name: 'Set up triage' }));
-  expect(screen.getByRole('button', { name: 'Create Flow draft' })).toHaveProperty(
-    'disabled',
-    true,
-  );
+  expect(screen.getByRole('button', { name: 'Add pipeline' })).toHaveProperty('disabled', true);
   expect(screen.getByRole('button', { name: 'Create configuration draft' })).toHaveProperty(
     'disabled',
     true,

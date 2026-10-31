@@ -1,5 +1,6 @@
 import type { components } from '../../../.generated/api/schema';
 import { FACTORY_AUTHORING_SCHEMAS } from '../../../.generated/api/factory-authoring';
+import type { MessageKey } from '../../app/presentation/messages';
 import { usePresentation } from '../../app/presentation/PresentationProvider';
 import { SelectMenu } from '../../shared/SelectMenu';
 import { useDraftRowKeys } from '../../shared/useDraftRowKeys';
@@ -13,6 +14,23 @@ const operations = FACTORY_AUTHORING_SCHEMAS.FactoryFlowPredicate.oneOf.map(
 );
 const comparisons =
   FACTORY_AUTHORING_SCHEMAS.FactoryFlowPredicate.oneOf[1].properties.comparison.enum;
+const operationLabels = {
+  exists: 'factory.condition.exists',
+  absent: 'factory.condition.absent',
+  compare: 'factory.condition.compare',
+  all: 'factory.condition.all',
+  any: 'factory.condition.any',
+  not: 'factory.condition.not',
+  for_each: 'factory.condition.for_each',
+} satisfies Record<Predicate['operation'], MessageKey>;
+const comparisonLabels = {
+  equal: 'factory.compare.equal',
+  exact_value: 'factory.compare.exact_value',
+  repository_path_within: 'factory.compare.repository_path_within',
+  repository_path_within_any: 'factory.compare.repository_path_within_any',
+  greater: 'factory.compare.greater',
+  less_or_equal: 'factory.compare.less_or_equal',
+} satisfies Record<Extract<Predicate, { operation: 'compare' }>['comparison'], MessageKey>;
 /** A typed AST editor only; predicates are evaluated by the existing Factory owner. */
 export function PredicateEditor({
   value,
@@ -35,7 +53,7 @@ export function PredicateEditor({
         value={value.operation}
         options={operations
           .filter((operation) => !bounded || ['absent', 'compare', 'exists'].includes(operation))
-          .map((operation) => ({ value: operation, label: operation }))}
+          .map((operation) => ({ value: operation, label: t(operationLabels[operation]) }))}
         onValueChange={(operation) => {
           switch (operation) {
             case 'exists':
@@ -90,7 +108,10 @@ export function PredicateEditor({
           <SelectMenu
             ariaLabel={t('factory.comparison')}
             value={value.comparison}
-            options={comparisons.map((comparison) => ({ value: comparison, label: comparison }))}
+            options={comparisons.map((comparison) => ({
+              value: comparison,
+              label: t(comparisonLabels[comparison]),
+            }))}
             onValueChange={(comparison) => onChange({ ...value, comparison })}
           />
           <OperandEditor value={value.left} onChange={(left) => onChange({ ...value, left })} />

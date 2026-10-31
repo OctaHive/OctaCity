@@ -28,106 +28,151 @@ export function FlowSettings({
   return (
     <fieldset data-factory-field="/limits" tabIndex={-1}>
       <legend>{t('factory.flowSettings')}</legend>
-      <SelectMenu
-        ariaLabel={t('factory.entry')}
-        value={value.root.entry}
-        options={value.root.nodes.map((node) => ({ value: node.key, label: node.key }))}
-        onValueChange={(entry) => onChange({ ...value, root: { ...value.root, entry } })}
-      />
-      <SelectMenu
-        ariaLabel={t('factory.flowInputSchema')}
-        value={String(
-          value.data_schemas.findIndex(
-            (schema) => schema.reference.digest === value.root.input_schema?.digest,
-          ),
-        )}
-        options={[
-          { value: '-1', label: t('factory.none') },
-          ...value.data_schemas.map((schema, index) => ({
-            value: String(index),
-            label: `${schema.reference.identity} · ${schema.reference.version}`,
-          })),
-        ]}
-        onValueChange={(index) =>
-          onChange({
-            ...value,
-            root: {
-              ...value.root,
-              input_schema: value.data_schemas[Number(index)]?.reference ?? null,
-            },
-          })
-        }
-      />
-      {(Object.keys(LIMITS) as (keyof typeof LIMITS)[]).map((key) => (
-        <label key={key}>
-          {t('factory.admission')} · {t(LIMITS[key])}
-          <input
-            type="number"
-            min={0}
-            max={Number.MAX_SAFE_INTEGER}
-            value={value.limits[key]}
-            onChange={(event) =>
-              onChange({ ...value, limits: { ...value.limits, [key]: Number(event.target.value) } })
-            }
-          />
-        </label>
-      ))}
-      <BudgetEditor
-        label={t('factory.admissionBudget')}
-        value={value.limits.budget}
-        onChange={(budget) => onChange({ ...value, limits: { ...value.limits, budget } })}
-      />
-      <PermissionEditor
-        label={t('factory.admissionPermissions')}
-        value={value.limits.permissions}
-        ceiling={permissionDeclarations}
-        choices={choices}
-        onChange={(permissions) => onChange({ ...value, limits: { ...value.limits, permissions } })}
-      />
-      <BudgetEditor
-        label={t('factory.executionBudget')}
-        value={value.root.execution.budget}
-        ceiling={value.limits.budget}
-        onChange={(budget) =>
-          onChange({
-            ...value,
-            root: { ...value.root, execution: { ...value.root.execution, budget } },
-          })
-        }
-      />
-      <PermissionEditor
-        label={t('factory.executionPermissions')}
-        value={value.root.execution.permissions}
-        ceiling={value.limits.permissions}
-        choices={choices}
-        onChange={(permissions) =>
-          onChange({
-            ...value,
-            root: { ...value.root, execution: { ...value.root.execution, permissions } },
-          })
-        }
-      />
-      <label>
-        {t('factory.activeNodes')}
-        <input
-          type="number"
-          min={1}
-          max={value.limits.max_wip}
-          value={value.root.execution.max_active_nodes}
-          onChange={(event) =>
+      <fieldset>
+        <legend>{t('factory.startAndQueue')}</legend>
+        <p>{t('factory.runQueueHelp')}</p>
+        <SelectMenu
+          ariaLabel={t('factory.entry')}
+          value={value.root.entry}
+          options={value.root.nodes.map((node) => ({ value: node.key, label: node.key }))}
+          onValueChange={(entry) => onChange({ ...value, root: { ...value.root, entry } })}
+        />
+        <SelectMenu
+          ariaLabel={t('factory.flowInputSchema')}
+          value={String(
+            value.data_schemas.findIndex(
+              (schema) => schema.reference.digest === value.root.input_schema?.digest,
+            ),
+          )}
+          options={[
+            { value: '-1', label: t('factory.none') },
+            ...value.data_schemas.map((schema, index) => ({
+              value: String(index),
+              label: `${schema.reference.identity} · ${schema.reference.version}`,
+            })),
+          ]}
+          onValueChange={(index) =>
             onChange({
               ...value,
               root: {
                 ...value.root,
-                execution: {
-                  ...value.root.execution,
-                  max_active_nodes: Number(event.target.value),
-                },
+                input_schema: value.data_schemas[Number(index)]?.reference ?? null,
               },
             })
           }
         />
-      </label>
+        <label>
+          {t('factory.activeNodes')}
+          <input
+            type="number"
+            min={1}
+            max={value.limits.max_wip}
+            value={value.root.execution.max_active_nodes}
+            onChange={(event) =>
+              onChange({
+                ...value,
+                root: {
+                  ...value.root,
+                  execution: {
+                    ...value.root.execution,
+                    max_active_nodes: Number(event.target.value),
+                  },
+                },
+              })
+            }
+          />
+        </label>
+        <label>
+          {t('factory.runNodeCeiling')}
+          <input
+            type="number"
+            min={1}
+            max={Number.MAX_SAFE_INTEGER}
+            value={value.limits.max_wip}
+            onChange={(event) =>
+              onChange({
+                ...value,
+                limits: { ...value.limits, max_wip: Number(event.target.value) },
+              })
+            }
+          />
+        </label>
+      </fieldset>
+      <fieldset>
+        <legend>{t('factory.executionLimits')}</legend>
+        <p>{t('factory.runBudgetHelp')}</p>
+        <BudgetEditor
+          fieldPath="/root/execution/budget"
+          label={t('factory.executionBudget')}
+          value={value.root.execution.budget}
+          ceiling={value.limits.budget}
+          onChange={(budget) =>
+            onChange({
+              ...value,
+              root: { ...value.root, execution: { ...value.root.execution, budget } },
+            })
+          }
+        />
+        <details>
+          <summary>{t('factory.admissionLimitsDetails')}</summary>
+          <p>{t('factory.admissionCeilingHelp')}</p>
+          {(Object.keys(LIMITS) as (keyof typeof LIMITS)[])
+            .filter((key) => key !== 'max_wip')
+            .map((key) => (
+              <label key={key}>
+                {t('factory.admission')} · {t(LIMITS[key])}
+                <input
+                  type="number"
+                  min={0}
+                  max={Number.MAX_SAFE_INTEGER}
+                  value={value.limits[key]}
+                  onChange={(event) =>
+                    onChange({
+                      ...value,
+                      limits: { ...value.limits, [key]: Number(event.target.value) },
+                    })
+                  }
+                />
+              </label>
+            ))}
+          <BudgetEditor
+            fieldPath="/limits/budget"
+            label={t('factory.admissionBudget')}
+            value={value.limits.budget}
+            onChange={(budget) => onChange({ ...value, limits: { ...value.limits, budget } })}
+          />
+        </details>
+      </fieldset>
+      <fieldset>
+        <legend>{t('factory.pipelineAccess')}</legend>
+        <p>{t('factory.pipelineAccessHelp')}</p>
+        <PermissionEditor
+          fieldPath="/root/execution/permissions"
+          label={t('factory.executionPermissions')}
+          value={value.root.execution.permissions}
+          ceiling={value.limits.permissions}
+          choices={choices}
+          onChange={(permissions) =>
+            onChange({
+              ...value,
+              root: { ...value.root, execution: { ...value.root.execution, permissions } },
+            })
+          }
+        />
+        <details>
+          <summary>{t('factory.admissionAccessDetails')}</summary>
+          <PermissionEditor
+            fieldPath="/limits/permissions"
+            label={t('factory.admissionPermissions')}
+            value={value.limits.permissions}
+            ceiling={permissionDeclarations}
+            choices={choices}
+            onChange={(permissions) =>
+              onChange({ ...value, limits: { ...value.limits, permissions } })
+            }
+          />
+        </details>
+      </fieldset>
       <h4>{t('factory.terminals')}</h4>
       <button
         type="button"

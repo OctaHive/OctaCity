@@ -247,3 +247,35 @@ it('validates without mutation headers and publishes immutable configuration and
     ['POST', `/api/v1/flow-definitions/${flow.id}/versions`, headers['Idempotency-Key'], '"7"'],
   ]);
 });
+
+it('discovers installed primitives and normalizes operator gate rules without a mutation or saved Flow', async () => {
+  const requests: Request[] = [];
+  vi.stubGlobal(
+    'fetch',
+    vi.fn(async (request: Request) => {
+      requests.push(request);
+      return Response.json({});
+    }),
+  );
+  const { factoryApi } = await import('./api');
+  await factoryApi.getAuthoringCapabilities('delivery');
+  const program = {
+    rules: [
+      {
+        outcome: 'accepted',
+        when: {
+          operation: 'exists' as const,
+          operand: { source: 'path' as const, path: '/evidence' },
+        },
+      },
+    ],
+    fallback: 'review',
+  };
+  await factoryApi.normalizeGateProgram('delivery', { program });
+  expect(requests.map((request) => [request.method, new URL(request.url).pathname])).toEqual([
+    ['GET', '/api/v1/projects/delivery/factory-authoring-capabilities'],
+    ['POST', '/api/v1/projects/delivery/factory-gate-programs/validate'],
+  ]);
+  expect(await requests[1]!.json()).toEqual({ program });
+  expect(requests.every((request) => !request.headers.has('Idempotency-Key'))).toBe(true);
+});

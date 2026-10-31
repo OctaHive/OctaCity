@@ -56,7 +56,7 @@ it('narrows visible declared network, mount and output permissions without enter
         value={value}
         ceiling={ceiling}
         choices={[]}
-        label="Requested node permissions"
+        label="Step access request"
         onChange={(next) => {
           observed = next;
           setValue(next);
@@ -109,7 +109,7 @@ it('explains an empty Runtime permission ceiling without showing empty groups or
       value={ceiling}
       ceiling={ceiling}
       choices={ceiling}
-      label="Requested node permissions"
+      label="Step access request"
       onChange={() => {}}
     />,
   );

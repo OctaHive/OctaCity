@@ -420,19 +420,17 @@ async fn visible_factory_choices_from<S: octacity_server_store::FactoryConfigura
       }
     }
   }
-  // Retain selector constraints for validation of visible policies. This is not a
+  // Retain primitive declarations and selector constraints for visible policies. This is not a
   // discovery response; its separate projection still filters private dependencies.
   for entry in visible.entries().references {
-    if let Some(selector) = choices
-      .choice_metadata(entry.kind, &entry.alias)
-      .and_then(|metadata| metadata.profile_selection.as_ref())
-    {
+    if let Some(metadata) = choices.choice_metadata(entry.kind, &entry.alias) {
       visible = visible
         .with_choice_metadata(
           entry.kind,
           entry.alias,
           octacity_server_factory::FactoryChoiceMetadata {
-            profile_selection: Some(selector.clone()),
+            node_kinds: metadata.node_kinds.clone(),
+            profile_selection: metadata.profile_selection.clone(),
             ..Default::default()
           },
         )

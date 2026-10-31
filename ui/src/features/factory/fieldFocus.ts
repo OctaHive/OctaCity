@@ -2,10 +2,13 @@
 export function factoryFieldId(field: string) {
   return `factory-field-${encodeURIComponent(field)}`;
 }
-export function focusFactoryField(field: string) {
+export function focusFactoryField(requestedField: string) {
+  const field = /^\/(?:entry|input_schema|execution|nodes|terminals)(?:\/|$)/u.test(requestedField)
+    ? `/root${requestedField}`
+    : requestedField;
   const exact = document.getElementById(factoryFieldId(field));
   if (exact) {
-    exact.focus();
+    revealAndFocus(exact);
     return;
   }
   const node = /^\/root\/nodes\/(\d+)(?:\/|$)/u.exec(field);
@@ -20,7 +23,7 @@ export function focusFactoryField(field: string) {
   queueMicrotask(() => {
     const exact = document.getElementById(factoryFieldId(field));
     if (exact) {
-      exact.focus();
+      revealAndFocus(exact);
       return;
     }
     const sections = [...document.querySelectorAll<HTMLElement>('[data-factory-field]')]
@@ -31,6 +34,12 @@ export function focusFactoryField(field: string) {
       .sort(
         (a, b) => (b.dataset.factoryField?.length ?? 0) - (a.dataset.factoryField?.length ?? 0),
       );
-    sections[0]?.focus();
+    if (sections[0]) revealAndFocus(sections[0]);
   });
+}
+
+function revealAndFocus(element: HTMLElement) {
+  for (let ancestor = element.parentElement; ancestor; ancestor = ancestor.parentElement)
+    if (ancestor instanceof HTMLDetailsElement) ancestor.open = true;
+  element.focus();
 }

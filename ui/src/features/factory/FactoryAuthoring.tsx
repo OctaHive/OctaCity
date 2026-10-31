@@ -15,10 +15,13 @@ import { factoryRolesApi } from './roleApi';
 import { factorySourcesApi } from './sourceApi';
 import { projectDocumentsApi } from '../../api/projectDocuments';
 
+import type { SourceRepositories } from './SourceInputEditor';
+
 type Choice = components['schemas']['FactoryConfigurationChoiceResource'];
 /** Entire editor state is owned here and discarded when its immutable baseline or Project changes. */
 export function FactoryAuthoring({
   api,
+  repositories,
   workflows,
   baseline,
   onDiscard,
@@ -27,6 +30,7 @@ export function FactoryAuthoring({
   currentVersion,
 }: {
   api: FactoryApi;
+  repositories?: SourceRepositories | undefined;
   workflows?: IssueWorkflowsApi | undefined;
   baseline?: FactoryConfigurationDetails | FactoryFlowDetails;
   projectId?: string;
@@ -38,6 +42,7 @@ export function FactoryAuthoring({
   const configuration = baseline && 'configuration' in baseline ? baseline.configuration : null;
   const [newId] = useState(() => globalThis.crypto.randomUUID());
   const [processEditing, setProcessEditing] = useState(false);
+  const [stepEditing, setStepEditing] = useState(false);
   const projectId =
     configuration?.reference.project_id ??
     (baseline && 'project_id' in baseline ? baseline.project_id : (newProjectId ?? ''));
@@ -73,6 +78,7 @@ export function FactoryAuthoring({
   const visibleFlows = flows.data?.pages.flatMap((page) => page.items) ?? [];
   return (
     <section>
+      {kind === 'flow' ? <p>{t('factory.pipelineAuthoringHelp')}</p> : null}
       <p>{t('factory.memoryDraft')}</p>
       <button type="button" onClick={onDiscard}>
         {t('factory.discardDraft')}
@@ -128,6 +134,9 @@ export function FactoryAuthoring({
         ) : draft ? (
           <>
             <FlowGraphEditor
+              codeResources={repositories ? { projectId, repositories } : undefined}
+              authoring={{ api, projectId }}
+              onStepEditingChange={setStepEditing}
               onProcessEditingChange={setProcessEditing}
               documents={{ api: projectDocumentsApi, projectId }}
               issueStatus={workflows ? { api: workflows, projectId } : undefined}
@@ -140,7 +149,7 @@ export function FactoryAuthoring({
             />
             <FactoryPublication
               api={api}
-              ready={!processEditing}
+              ready={!processEditing && !stepEditing}
               subject={{
                 kind: 'flow',
                 request: {

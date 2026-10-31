@@ -1,3 +1,4 @@
+import { WorkProjectInputs, type WorkProjectSelection } from './WorkProjectInputs';
 import { WorkProfileOverrides } from './WorkProfileOverrides';
 import { useState } from 'react';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
@@ -66,6 +67,14 @@ export function FactoryWorkForm({
     configuration: string;
     value: NonNullable<Request['profile_overrides']>;
   }>({ configuration: '', value: [] });
+  const [repositoryFree, setRepositoryFree] = useState(false);
+  const [inputOrigin, setInputOrigin] = useState('build');
+  const [projectInputs, setProjectInputs] = useState<WorkProjectSelection>({
+    task: null,
+    acceptance: null,
+    specifications: [],
+  });
+  const [projectInputsReady, setProjectInputsReady] = useState(false);
   const [buildId, setBuildId] = useState('');
   const [label, setLabel] = useState('');
   const [taskId, setTaskId] = useState('');
@@ -82,24 +91,31 @@ export function FactoryWorkForm({
     queryKey: queryKeys.project(projectId),
     queryFn: ({ signal }) => sources.getProject(projectId, signal),
   });
-  const targetSelection = usePipelineTarget(projectId, {
-    ...sources,
-    listConfigurations: api.listConfigurations,
-  });
+  const targetSelection = usePipelineTarget(
+    projectId,
+    {
+      ...sources,
+      listConfigurations: api.listConfigurations,
+    },
+    { repositoryFree },
+  );
   const { configuration, repository, details: repositoryDetails } = targetSelection;
   const configurationKey = configuration ? `${configuration.id}:${configuration.version}` : '';
   const profileOverrides = overrides.configuration === configurationKey ? overrides.value : [];
-  const source = targetSelection.target?.source ?? null;
+  const source: Request['source'] | null = repositoryFree
+    ? { kind: 'project_input_v1' }
+    : (targetSelection.target?.source ?? null);
   const builds = useCursorPage(
     queryKeys.factoryWorkSources(projectId, 'builds'),
     (cursor, signal) =>
       sources.listBuilds(projectId, { configurationId: null, state: null }, cursor, signal),
+    { enabled: inputOrigin === 'build' },
   );
   const buildItems = builds.data?.pages.flatMap((page) => page.items) ?? [];
   const build = buildItems.find((item) => item.id === buildId) ?? buildItems[0];
   const artifacts = useQuery({
     queryKey: queryKeys.buildArtifacts(build?.id ?? ''),
-    enabled: build !== undefined,
+    enabled: inputOrigin === 'build' && build !== undefined,
     queryFn: ({ signal }) => {
       if (!build) throw new Error('Build selection is missing');
       return sources.listBuildArtifacts(build.id, signal);
@@ -115,17 +131,17 @@ export function FactoryWorkForm({
     project.data &&
     project.error === null &&
     configuration &&
-    repository &&
-    repositoryDetails.data?.project_id === projectId &&
-    task &&
-    acceptance &&
+    (repositoryFree || (repository && repositoryDetails.data?.project_id === projectId)) &&
+    (inputOrigin === 'project' ? projectInputsReady : task && acceptance) &&
     source &&
     label.trim().length > 0 &&
     new TextEncoder().encode(label).length <= workBounds.external_identity.maxLength &&
     Number.isSafeInteger(priority) &&
     priority >= classification.priority.minimum &&
     priority <= classification.priority.maximum &&
-    ![builds.error, repositoryDetails.error, artifacts.error].some(Boolean);
+    !(repositoryFree ? false : repositoryDetails.error) &&
+    !(inputOrigin === 'build' && (builds.error || artifacts.error)) &&
+    !targetSelection.configurations.error;
   const labels = (name: string) => ({
     failure: name,
     loading: name,
@@ -169,7 +185,33 @@ export function FactoryWorkForm({
             autoComplete="off"
           />
         </label>
+        <SelectMenu
+          ariaLabel={t('factory.workSubject')}
+          value={repositoryFree ? 'project' : 'repository'}
+          options={[
+            { value: 'repository', label: t('factory.repositoryWorkSubject') },
+            { value: 'project', label: t('factory.projectInputSubject') },
+          ]}
+          onValueChange={(value) => setRepositoryFree(value === 'project')}
+        />
         <PipelineTargetFields selection={targetSelection} />
+        <SelectMenu
+          ariaLabel={t('factory.inputOrigin')}
+          value={inputOrigin}
+          options={[
+            { value: 'build', label: t('factory.buildArtifactsOrigin') },
+            { value: 'project', label: t('factory.projectDocumentsOrigin') },
+          ]}
+          onValueChange={setInputOrigin}
+        />
+        {inputOrigin === 'project' ? (
+          <WorkProjectInputs
+            projectId={projectId}
+            value={projectInputs}
+            onChange={setProjectInputs}
+            onValidityChange={setProjectInputsReady}
+          />
+        ) : null}
         {configuration ? (
           <WorkProfileOverrides
             key={configurationKey}
@@ -179,73 +221,77 @@ export function FactoryWorkForm({
             onChange={(value) => setOverrides({ configuration: configurationKey, value })}
           />
         ) : null}
-        <PagedExplorerBranch
-          query={builds}
-          empty={t('factory.noInputBuilds')}
-          labels={labels(t('factory.inputBuild'))}
-        >
-          {(items) => (
-            <SelectMenu
-              ariaLabel={t('factory.inputBuild')}
-              value={build?.id ?? ''}
-              onValueChange={setBuildId}
-              options={items.map((item) => ({
-                value: item.id,
-                label: `${new Date(item.created_at_unix_ms).toLocaleString(locale)} · ${item.state} · ${item.id}`,
-              }))}
-            />
-          )}
-        </PagedExplorerBranch>
-        {artifacts.data ? (
-          <QueryBackgroundNotice
-            label={t('factory.workArtifacts')}
-            error={artifacts.error}
-            fetching={artifacts.isFetching}
-            onRetry={artifacts.refetch}
-          />
-        ) : artifacts.error ? (
-          <QueryFailureNotice
-            title={t('factory.workArtifacts')}
-            error={artifacts.error}
-            onRetry={artifacts.refetch}
-          />
-        ) : build && artifacts.isPending ? (
-          <QueryLoadingNotice label={t('factory.workArtifacts')} />
-        ) : null}
-        <SelectMenu
-          ariaLabel={t('factory.taskArtifact')}
-          value={taskId}
-          onValueChange={setTaskId}
-          options={artifactItems.map((item) => ({ value: item.id, label: item.name }))}
-        />
-        <SelectMenu
-          ariaLabel={t('factory.acceptanceArtifact')}
-          value={acceptanceId}
-          onValueChange={setAcceptanceId}
-          options={artifactItems.map((item) => ({ value: item.id, label: item.name }))}
-        />
-        <fieldset>
-          <legend>{t('factory.specificationArtifacts')}</legend>
-          {artifactItems.map((item) => (
-            <label key={item.id}>
-              <input
-                type="checkbox"
-                checked={specificationIds.includes(item.id)}
-                disabled={
-                  !specificationIds.includes(item.id) &&
-                  specifications.length >= specificationMaximum
-                }
-                onChange={(event) => {
-                  const checked = event.currentTarget.checked;
-                  setSpecificationIds((current) =>
-                    checked ? [...current, item.id] : current.filter((id) => id !== item.id),
-                  );
-                }}
+        {inputOrigin === 'build' ? (
+          <>
+            <PagedExplorerBranch
+              query={builds}
+              empty={t('factory.noInputBuilds')}
+              labels={labels(t('factory.inputBuild'))}
+            >
+              {(items) => (
+                <SelectMenu
+                  ariaLabel={t('factory.inputBuild')}
+                  value={build?.id ?? ''}
+                  onValueChange={setBuildId}
+                  options={items.map((item) => ({
+                    value: item.id,
+                    label: `${new Date(item.created_at_unix_ms).toLocaleString(locale)} · ${item.state} · ${item.id}`,
+                  }))}
+                />
+              )}
+            </PagedExplorerBranch>
+            {artifacts.data ? (
+              <QueryBackgroundNotice
+                label={t('factory.workArtifacts')}
+                error={artifacts.error}
+                fetching={artifacts.isFetching}
+                onRetry={artifacts.refetch}
               />
-              {item.name}
-            </label>
-          ))}
-        </fieldset>
+            ) : artifacts.error ? (
+              <QueryFailureNotice
+                title={t('factory.workArtifacts')}
+                error={artifacts.error}
+                onRetry={artifacts.refetch}
+              />
+            ) : build && artifacts.isPending ? (
+              <QueryLoadingNotice label={t('factory.workArtifacts')} />
+            ) : null}
+            <SelectMenu
+              ariaLabel={t('factory.taskArtifact')}
+              value={taskId}
+              onValueChange={setTaskId}
+              options={artifactItems.map((item) => ({ value: item.id, label: item.name }))}
+            />
+            <SelectMenu
+              ariaLabel={t('factory.acceptanceArtifact')}
+              value={acceptanceId}
+              onValueChange={setAcceptanceId}
+              options={artifactItems.map((item) => ({ value: item.id, label: item.name }))}
+            />
+            <fieldset>
+              <legend>{t('factory.specificationArtifacts')}</legend>
+              {artifactItems.map((item) => (
+                <label key={item.id}>
+                  <input
+                    type="checkbox"
+                    checked={specificationIds.includes(item.id)}
+                    disabled={
+                      !specificationIds.includes(item.id) &&
+                      specifications.length >= specificationMaximum
+                    }
+                    onChange={(event) => {
+                      const checked = event.currentTarget.checked;
+                      setSpecificationIds((current) =>
+                        checked ? [...current, item.id] : current.filter((id) => id !== item.id),
+                      );
+                    }}
+                  />
+                  {item.name}
+                </label>
+              ))}
+            </fieldset>
+          </>
+        ) : null}
         <label>
           {t('factory.workPriority')}
           <input
@@ -269,31 +315,45 @@ export function FactoryWorkForm({
           type="button"
           disabled={!valid}
           onClick={(event) => {
-            if (!valid || !configuration || !repository || !task || !acceptance || !source) return;
+            if (!valid || !configuration || !source) return;
+            const inputs =
+              inputOrigin === 'project' && projectInputs.task && projectInputs.acceptance
+                ? {
+                    task: projectInputs.task.artifact,
+                    acceptance: projectInputs.acceptance.artifact,
+                    specifications: projectInputs.specifications.map((item) => item.artifact),
+                  }
+                : task && acceptance
+                  ? {
+                      task: artifactReference(task),
+                      acceptance: artifactReference(acceptance),
+                      specifications: specifications.map(artifactReference),
+                    }
+                  : null;
+            if (!inputs) return;
             const request: Request = {
               ...(profileOverrides.length
                 ? { profile_overrides: structuredClone(profileOverrides) }
                 : {}),
               configuration_id: configuration.id,
               configuration_version: configuration.version,
-              repository_id: repository.id,
-              repository_version: repository.version,
+              ...(!repositoryFree && repository
+                ? { repository_id: repository.id, repository_version: repository.version }
+                : {}),
               external_identity: label.trim(),
               source,
-              artifacts: {
-                task: artifactReference(task),
-                acceptance: artifactReference(acceptance),
-                specifications: specifications.map(artifactReference),
-              },
+              artifacts: inputs,
               classification: { priority, risk, metadata: {} },
             };
             const reviewedSource =
               source.kind === 'default_reference'
                 ? repositoryDetails.data?.definition.selection.default_reference
-                : source.value;
+                : source.kind === 'project_input_v1'
+                  ? t('factory.projectInputSubject')
+                  : source.value;
             setReview({
               returnFocus: event.currentTarget,
-              consequence: `${t('factory.workConsequence')} · ${t('factory.configurationVersion', { version: request.configuration_version })} · ${request.configuration_id} · ${repository.name} · v${request.repository_version} · ${reviewedSource} · ${task.name} · ${acceptance.name} · ${specifications.map((item) => item.name).join(' · ')} · ${profileOverrides.map((item) => `${[...item.stage.calls, item.stage.node].join('/')} → ${item.profile.id} v${item.profile.version}`).join(' · ')}`,
+              consequence: `${t('factory.workConsequence')} · ${t('factory.configurationVersion', { version: request.configuration_version })} · ${request.configuration_id} · ${repositoryFree ? t('factory.projectInputSubject') : `${repository?.name} · v${request.repository_version}`}  · ${reviewedSource} · ${inputOrigin === 'project' ? projectInputs.task?.name : task?.name} · ${inputOrigin === 'project' ? projectInputs.acceptance?.name : acceptance?.name} · ${(inputOrigin === 'project' ? projectInputs.specifications : specifications).map((item) => item.name).join(' · ')} · ${profileOverrides.map((item) => `${[...item.stage.calls, item.stage.node].join('/')} → ${item.profile.id} v${item.profile.version}`).join(' · ')}`,
               request,
             });
           }}
@@ -303,6 +363,7 @@ export function FactoryWorkForm({
       </fieldset>
       {review ? (
         <ConfirmedCommand
+          ready={!!valid}
           title={t('factory.confirmWorkTitle')}
           consequence={review.consequence}
           confirmLabel={t('factory.confirmWork')}

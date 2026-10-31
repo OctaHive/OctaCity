@@ -147,7 +147,7 @@ it('keeps process recipients attached to the same logical step when it is rename
       },
     };
   });
-  const name = screen.getByRole('textbox', { name: 'Node name' });
+  const name = screen.getByRole('textbox', { name: 'Step name' });
   await userEvent.clear(name);
   await userEvent.type(name, 'inspect');
   expect(draft().root.process?.criteria?.recipients).toEqual(['inspect']);
@@ -155,7 +155,7 @@ it('keeps process recipients attached to the same logical step when it is rename
     'checked',
     true,
   );
-  await userEvent.click(screen.getByRole('button', { name: 'Remove node' }));
+  await userEvent.click(screen.getByRole('button', { name: 'Remove step' }));
   expect(draft().root.process?.criteria?.recipients).toEqual([]);
   expect(draft().root.nodes.map((node) => node.key)).toEqual(['classify']);
 });

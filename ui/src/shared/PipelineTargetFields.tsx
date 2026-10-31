@@ -31,10 +31,16 @@ export interface PipelineTargetSources {
 }
 
 /** Pins visible configuration/repository versions and applies the repository's source policy. */
-export function usePipelineTarget(projectId: string, sources: PipelineTargetSources) {
+export function usePipelineTarget(
+  projectId: string,
+  sources: PipelineTargetSources,
+  options: { repositoryFree?: boolean } = {},
+) {
   const { t } = usePresentation();
-  const [configurationId, setConfigurationId] = useState('');
-  const [repositoryId, setRepositoryId] = useState('');
+  const [configurationPin, setConfigurationPin] = useState<{ id: string; version: number } | null>(
+    null,
+  );
+  const [repositoryPin, setRepositoryPin] = useState<{ id: string; version: number } | null>(null);
   const [sourceSelection, setSourceSelection] = useState('');
   const [revision, setRevision] = useState('');
   const configurations = useCursorPage(
@@ -53,13 +59,37 @@ export function usePipelineTarget(projectId: string, sources: PipelineTargetSour
     repositories.data?.pages
       .flatMap((page) => page.items)
       .filter((item) => item.project_id === projectId) ?? [];
-  // Do not silently substitute a different target after a selection disappears on refresh.
-  const configuration = configurationId
-    ? configurationItems.find((item) => item.id === configurationId)
-    : configurationItems[0];
-  const repository = repositoryId
-    ? repositoryItems.find((item) => item.id === repositoryId)
-    : repositoryItems[0];
+  // Capture defaults once as well as explicit choices: refresh must never repin a mounted draft.
+  const firstConfiguration = configurationItems[0];
+  const firstRepository = repositoryItems[0];
+  if (!configurationPin && firstConfiguration)
+    setConfigurationPin({ id: firstConfiguration.id, version: firstConfiguration.version });
+  if (!options.repositoryFree && !repositoryPin && firstRepository)
+    setRepositoryPin({ id: firstRepository.id, version: firstRepository.version });
+  const configuration = configurationPin
+    ? configurationItems.find(
+        (item) => item.id === configurationPin.id && item.version === configurationPin.version,
+      )
+    : firstConfiguration;
+  const repository = options.repositoryFree
+    ? undefined
+    : repositoryPin
+      ? repositoryItems.find(
+          (item) => item.id === repositoryPin.id && item.version === repositoryPin.version,
+        )
+      : firstRepository;
+  const setConfigurationId = (id: string, version?: number) => {
+    const item = configurationItems.find(
+      (item) => item.id === id && (version === undefined || item.version === version),
+    );
+    if (item) setConfigurationPin({ id: item.id, version: item.version });
+  };
+  const setRepositoryId = (id: string, version?: number) => {
+    const item = repositoryItems.find(
+      (item) => item.id === id && (version === undefined || item.version === version),
+    );
+    if (item) setRepositoryPin({ id: item.id, version: item.version });
+  };
   const details = useQuery({
     queryKey: queryKeys.repository(repository?.id ?? '', repository?.version ?? 0),
     enabled: !!repository,
@@ -123,6 +153,8 @@ export function usePipelineTarget(projectId: string, sources: PipelineTargetSour
     configurations,
     repositories,
     details,
+    configurationPin,
+    repositoryPin,
     configurationItems,
     repositoryItems,
     configuration,
@@ -136,6 +168,7 @@ export function usePipelineTarget(projectId: string, sources: PipelineTargetSour
     setRevision,
     target,
     summary,
+    repositoryFree: options.repositoryFree ?? false,
   };
 }
 
@@ -165,70 +198,126 @@ export function PipelineTargetFields({
           selection.configurationItems.length ? (
             <SelectMenu
               ariaLabel={t('factory.configurations')}
-              value={selection.configuration?.id ?? ''}
-              onValueChange={selection.setConfigurationId}
-              options={selection.configurationItems.map((item) => ({
-                value: item.id,
-                label: `${t('factory.configurationVersion', { version: item.version })} · ${item.id}`,
-              }))}
+              value={
+                selection.configurationPin
+                  ? `${selection.configurationPin.id}:${selection.configurationPin.version}`
+                  : ''
+              }
+              onValueChange={(key) => {
+                const item = selection.configurationItems.find(
+                  (item) => `${item.id}:${item.version}` === key,
+                );
+                if (item) selection.setConfigurationId(item.id, item.version);
+              }}
+              options={[
+                ...(selection.configurationPin && !selection.configuration
+                  ? [
+                      {
+                        value: `${selection.configurationPin.id}:${selection.configurationPin.version}`,
+                        label: t('factory.targetVersionUnavailable', {
+                          version: selection.configurationPin.version,
+                        }),
+                      },
+                    ]
+                  : []),
+                ...selection.configurationItems.map((item) => ({
+                  value: `${item.id}:${item.version}`,
+                  label: `${t('factory.configurationVersion', { version: item.version })} · ${item.id}`,
+                })),
+              ]}
             />
           ) : (
             <p>{t('factory.unconfigured')}</p>
           )
         }
       </PagedExplorerBranch>
-      <PagedExplorerBranch
-        query={repositories}
-        empty={t('factory.noRepositories')}
-        labels={labels(t('factory.repository'))}
-      >
-        {() =>
-          selection.repositoryItems.length ? (
-            <SelectMenu
-              ariaLabel={t('factory.repository')}
-              value={selection.repository?.id ?? ''}
-              onValueChange={selection.setRepositoryId}
-              options={selection.repositoryItems.map((item) => ({
-                value: item.id,
-                label: `${item.name} · v${item.version}`,
-              }))}
-            />
-          ) : (
-            <p>{t('factory.noRepositories')}</p>
-          )
-        }
-      </PagedExplorerBranch>
-      {details.data ? (
-        <QueryBackgroundNotice
-          label={t('factory.repository')}
-          error={details.error}
-          fetching={details.isFetching}
-          onRetry={details.refetch}
-        />
-      ) : details.error ? (
-        <QueryFailureNotice
-          title={t('factory.repository')}
-          error={details.error}
-          onRetry={details.refetch}
-        />
-      ) : selection.repository ? (
-        <QueryLoadingNotice label={t('factory.repository')} />
+      {selection.configurationPin && !selection.configuration ? (
+        <p role="alert">
+          {t('factory.targetVersionUnavailable', { version: selection.configurationPin.version })}
+        </p>
       ) : null}
-      <SelectMenu
-        ariaLabel={t('manualBuild.source')}
-        value={selection.selectedSource ?? ''}
-        onValueChange={selection.setSourceSelection}
-        options={selection.sourceOptions}
-      />
-      {selection.selectedSource === 'exact' ? (
-        <label>
-          {t('manualBuild.exactRevision')}
-          <input
-            value={selection.revision}
-            onChange={(event) => selection.setRevision(event.currentTarget.value)}
-            autoComplete="off"
+      {!selection.repositoryFree ? (
+        <>
+          <PagedExplorerBranch
+            query={repositories}
+            empty={t('factory.noRepositories')}
+            labels={labels(t('factory.repository'))}
+          >
+            {() =>
+              selection.repositoryItems.length ? (
+                <SelectMenu
+                  ariaLabel={t('factory.repository')}
+                  value={
+                    selection.repositoryPin
+                      ? `${selection.repositoryPin.id}:${selection.repositoryPin.version}`
+                      : ''
+                  }
+                  onValueChange={(key) => {
+                    const item = selection.repositoryItems.find(
+                      (item) => `${item.id}:${item.version}` === key,
+                    );
+                    if (item) selection.setRepositoryId(item.id, item.version);
+                  }}
+                  options={[
+                    ...(selection.repositoryPin && !selection.repository
+                      ? [
+                          {
+                            value: `${selection.repositoryPin.id}:${selection.repositoryPin.version}`,
+                            label: t('factory.targetVersionUnavailable', {
+                              version: selection.repositoryPin.version,
+                            }),
+                          },
+                        ]
+                      : []),
+                    ...selection.repositoryItems.map((item) => ({
+                      value: `${item.id}:${item.version}`,
+                      label: `${item.name} · v${item.version}`,
+                    })),
+                  ]}
+                />
+              ) : (
+                <p>{t('factory.noRepositories')}</p>
+              )
+            }
+          </PagedExplorerBranch>
+          {selection.repositoryPin && !selection.repository ? (
+            <p role="alert">
+              {t('factory.targetVersionUnavailable', { version: selection.repositoryPin.version })}
+            </p>
+          ) : null}
+          {details.data ? (
+            <QueryBackgroundNotice
+              label={t('factory.repository')}
+              error={details.error}
+              fetching={details.isFetching}
+              onRetry={details.refetch}
+            />
+          ) : details.error ? (
+            <QueryFailureNotice
+              title={t('factory.repository')}
+              error={details.error}
+              onRetry={details.refetch}
+            />
+          ) : selection.repository ? (
+            <QueryLoadingNotice label={t('factory.repository')} />
+          ) : null}
+          <SelectMenu
+            ariaLabel={t('manualBuild.source')}
+            value={selection.selectedSource ?? ''}
+            onValueChange={selection.setSourceSelection}
+            options={selection.sourceOptions}
           />
-        </label>
+          {selection.selectedSource === 'exact' ? (
+            <label>
+              {t('manualBuild.exactRevision')}
+              <input
+                value={selection.revision}
+                onChange={(event) => selection.setRevision(event.currentTarget.value)}
+                autoComplete="off"
+              />
+            </label>
+          ) : null}
+        </>
       ) : null}
     </>
   );

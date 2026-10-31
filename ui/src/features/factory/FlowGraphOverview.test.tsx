@@ -55,7 +55,7 @@ it('renders arbitrary graph identities and distinct control, Context and data ed
 it('starts at the declared entry, labels grouped outcomes and follows a selected target without interpreting names', async () => {
   const root = configurationFixture().configuration.flow.closure.definitions[0]!;
   render(<FlowGraphOverview value={root} />);
-  const node = screen.getByRole('combobox', { name: 'Graph node' });
+  const node = screen.getByRole('combobox', { name: 'Graph step' });
   expect(node.textContent).toContain(root.entry);
   const routes = screen.getByRole('table', { name: 'Declared routes' });
   expect(within(routes).getAllByText('retryable')).not.toHaveLength(0);
