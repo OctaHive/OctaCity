@@ -48,6 +48,85 @@ fn node_observation_fixture() -> (
 }
 
 #[test]
+fn codex_nullable_transport_preserves_optional_flow_fields_and_required_validation() {
+  use crate::{FactoryCodexNodeRunContract, verify_codex_node_run};
+  use octacity_server_factory::{FlowDataSchema, FlowFieldSchema, FlowValueSchema};
+  use std::collections::BTreeMap;
+  let (mut fixture, profile, _) = node_observation_fixture();
+  let key = |name| FactoryKey::new(name).unwrap();
+  let note = FlowFieldSchema::optional(FlowValueSchema::String {
+    min_bytes: 1,
+    max_bytes: 32,
+  });
+  let schema = FlowDataSchema::new(
+    key("optional-result"),
+    key("v1"),
+    FlowValueSchema::Object {
+      fields: BTreeMap::from([
+        (
+          key("count"),
+          FlowFieldSchema::required(FlowValueSchema::Integer {
+            minimum: 0,
+            maximum: 100,
+          }),
+        ),
+        (key("note"), note.clone()),
+        (
+          key("nullable"),
+          FlowFieldSchema::optional(FlowValueSchema::Enum {
+            values: vec![Value::Null, json!(true)],
+          }),
+        ),
+        (
+          key("items"),
+          FlowFieldSchema::required(FlowValueSchema::Array {
+            item: Box::new(FlowValueSchema::Object {
+              fields: BTreeMap::from([(key("note"), note)]),
+            }),
+            min_items: 0,
+            max_items: 2,
+          }),
+        ),
+      ]),
+    },
+  )
+  .unwrap();
+  let envelope = fixture.envelope.clone();
+  let expected = || FactoryCodexNodeRunContract {
+    model_identifier: None,
+    usage_policy: &crate::FactoryCodexUsagePolicy::ReportedCost,
+    profile: &profile,
+    schema: &schema,
+    prompt_digest: envelope.digests().prompt_provenance,
+    source_revision: envelope.subject().exact().base_revision(),
+    budget: envelope.budget(),
+    execution_window: Timestamp::from_unix_millis(1000).unwrap()..=Timestamp::from_unix_millis(1010).unwrap(),
+  };
+  let mut result: Value = serde_json::from_slice(&fixture.documents[0].bytes).unwrap();
+  result["structured_result"] =
+    json!({"count":9,"note":null,"nullable":null,"items":[{"note":null},{"note":"retained"}]});
+  fixture.replace_document("codex-run-result", result.clone());
+  let observed = verify_codex_node_run(expected(), &fixture.documents).unwrap();
+  assert_eq!(
+    observed.data.unwrap().payload().value(),
+    &json!({"count":9,"nullable":null,"items":[{},{"note":"retained"}]})
+  );
+  result["structured_result"]["count"] = Value::Null;
+  fixture.replace_document("codex-run-result", result.clone());
+  assert!(
+    verify_codex_node_run(expected(), &fixture.documents).is_err(),
+    "required null cannot become missing or a fabricated default"
+  );
+  result["structured_result"]["count"] = json!(9);
+  result["structured_result"]["undeclared"] = Value::Null;
+  fixture.replace_document("codex-run-result", result);
+  assert!(
+    verify_codex_node_run(expected(), &fixture.documents).is_err(),
+    "unknown fields remain invalid even when null"
+  );
+}
+
+#[test]
 fn codex_node_usage_prices_reported_tokens_under_the_frozen_exact_model_policy() {
   use crate::{FactoryCodexNodeRunContract, FactoryCodexUsagePolicy, verify_codex_node_run};
   let (mut fixture, profile, schema) = node_observation_fixture();

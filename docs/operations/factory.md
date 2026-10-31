@@ -469,6 +469,15 @@ invocations bypass the role source and keep their previous documents and identit
 
 Internal Task Envelopes additionally support `observe` with `flow_v1` for ordinary
 Flow observations; the immutable Flow outcome supplies the actual result schema.
+
+For native Codex Structured Outputs, optional Flow properties are emitted as
+required nullable properties, as required by the
+[provider contract](https://developers.openai.com/api/docs/guides/structured-outputs#all-fields-must-be-required).
+The adapter restores omitted optional values before domain validation, including
+nested objects and arrays. Explicitly permitted enum nulls remain values;
+required nulls and undeclared fields are still validated normally. Retained raw
+records and the immutable Flow schema are unchanged.
+
 This does not claim an independent candidate evaluation or relax existing
 implementation/evaluation contracts. JobSpec v3 and Agent wire schemas are
 unchanged. Stage selection and dispatch use the retained selection contracts below;

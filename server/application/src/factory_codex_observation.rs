@@ -68,8 +68,10 @@ pub fn project_codex_node_output(
   if result.format_version != 1 || result.outcome != records::HarnessOutcomeWire::Completed {
     return Err(crate::ApplicationError::invalid());
   }
+  let mut value = result.structured_result;
+  crate::factory_codex_schema::restore_optional_fields(schema.shape(), &mut value);
   document.data = Some(
-    octacity_server_factory::FlowVerifiedBuildData::new(schema.clone(), result.structured_result)
+    octacity_server_factory::FlowVerifiedBuildData::new(schema.clone(), value)
       .map_err(|_| crate::ApplicationError::invalid())?,
   );
   Ok(())

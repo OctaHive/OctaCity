@@ -961,7 +961,19 @@ async fn prepared_role_options(options: PreparedRoleOptions) -> SourceFixture {
     );
     assert_eq!(
       schema["properties"]["claims"]["items"]["required"],
-      serde_json::json!(["arguments_json", "connection", "pointer", "tool", "value_json"])
+      serde_json::json!([
+        "arguments_json",
+        "connection",
+        "json_text",
+        "pointer",
+        "tool",
+        "value_json"
+      ])
+    );
+    assert_eq!(
+      schema["properties"]["claims"]["items"]["properties"]["json_text"],
+      serde_json::json!({"anyOf":[{"type":"integer","minimum":0,"maximum":i64::MAX},{"type":"null"}]}),
+      "native structured outputs require optional values to be explicitly nullable"
     );
   }
   let mut fixture = finish_prepared_source(PreparedSourceInput {

@@ -1,10 +1,11 @@
 //! Codex compilation from the common, admitted node contract.
 use super::*;
+use crate::factory_codex_schema::json_schema;
 use crate::{FactoryCodexToolRiskPolicy, FactoryCodexUsagePolicy};
 use octacity_protocol::{CHANGE_SET_BUNDLE_OUTPUT, CHANGE_SET_MANIFEST_OUTPUT, CHANGE_SET_PATCH_OUTPUT};
 use octacity_server_domain::ArtifactId;
 use octacity_server_factory::{
-  AdmittedFlow, EvidenceOutputKind, FactoryContextReference, FactoryText, FlowBuildIntent, FlowValueSchema,
+  AdmittedFlow, EvidenceOutputKind, FactoryContextReference, FactoryText, FlowBuildIntent,
 };
 
 /// Freezes installed instructions, credential purpose and explicit cost basis.
@@ -675,46 +676,6 @@ fn compile_flow_task(
     return Err(CodexCompilationError::NodeBindings);
   }
   Ok(compiled)
-}
-
-fn json_schema(shape: &FlowValueSchema) -> Result<Value, CodexCompilationError> {
-  Ok(match shape {
-    FlowValueSchema::Reference { .. } => return Err(CodexCompilationError::NodeBindings),
-    FlowValueSchema::Object { fields } => {
-      let properties = fields
-        .iter()
-        .map(|(name, field)| Ok((name.as_str().to_owned(), json_schema(field.value())?)))
-        .collect::<Result<BTreeMap<_, _>, CodexCompilationError>>()?;
-      let required = fields
-        .iter()
-        .filter(|(_, field)| field.is_required())
-        .map(|(name, _)| name.as_str())
-        .collect::<Vec<_>>();
-      json!({"type":"object", "properties":properties, "required":required, "additionalProperties":false})
-    }
-    // JSON Schema counts Unicode code points; the authoritative Flow payload
-    // validator still enforces UTF-8 byte bounds after verified result decoding.
-    FlowValueSchema::String { min_bytes, max_bytes } => {
-      json!({"type":"string", "minLength":min_bytes.div_ceil(4), "maxLength":max_bytes})
-    }
-    FlowValueSchema::Integer { minimum, maximum } => json!({"type":"integer", "minimum":minimum, "maximum":maximum}),
-    FlowValueSchema::Boolean => json!({"type":"boolean"}),
-    FlowValueSchema::Array {
-      item,
-      min_items,
-      max_items,
-    } => json!({"type":"array", "items":json_schema(item)?, "minItems":min_items, "maxItems":max_items}),
-    FlowValueSchema::Enum { values } => json!({"enum":values}),
-    FlowValueSchema::ExternallyTagged { variants } => {
-      let alternatives = variants.iter().map(|(name, shape)| {
-        Ok(match shape {
-          None => json!({"type":"string", "const":name}),
-          Some(shape) => json!({"type":"object", "properties":{name:json_schema(shape)?}, "required":[name], "additionalProperties":false}),
-        })
-      }).collect::<Result<Vec<_>, CodexCompilationError>>()?;
-      json!({"oneOf":alternatives})
-    }
-  })
 }
 
 /// Shared ordered prompt rendering before and after freezing a role package.

@@ -89,7 +89,8 @@ pub fn verify_codex_mcp_node_run(
     documents,
   )?;
   let bound = capture.bind_mcp_connections(expected.role, expected.compiled, expected.configurations)?;
-  let records = verified_records(execution, documents)?;
+  let mut records = verified_records(execution, documents)?;
+  crate::factory_codex_schema::restore_optional_fields(execution.schema.shape(), &mut records.value);
   let data = if records.outcome == CodexHarnessOutcome::Completed {
     Some(
       FlowVerifiedBuildData::new(execution.schema.clone(), bound.verify_conclusion(records.value)?)
@@ -111,7 +112,8 @@ pub fn verify_codex_node_run(
   expected: FactoryCodexNodeRunContract<'_>,
   documents: &[FactoryCodexOutputDocument],
 ) -> Result<FactoryCodexNodeRunObservation, ApplicationError> {
-  let records = verified_records(&expected, documents)?;
+  let mut records = verified_records(&expected, documents)?;
+  crate::factory_codex_schema::restore_optional_fields(expected.schema.shape(), &mut records.value);
   let data = if records.outcome == CodexHarnessOutcome::Completed {
     Some(FlowVerifiedBuildData::new(expected.schema.clone(), records.value).map_err(|_| ApplicationError::invalid())?)
   } else {

@@ -146,6 +146,7 @@ pub use factory_promotion::FactoryPromotionBuildAdapter;
 mod factory_codex;
 mod factory_codex_candidate_context;
 mod factory_codex_materializer;
+mod factory_codex_schema;
 pub use factory_codex_candidate_context::FactoryCodexCandidateContextSource;
 mod factory_codex_output_source;
 mod factory_codex_review_build;
