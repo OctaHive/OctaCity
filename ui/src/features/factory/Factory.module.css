@@ -77,7 +77,7 @@
   display: grid;
   gap: var(--space-lg);
 }
-.definitions > ul {
+.workspace .definitionList {
   list-style: none;
   padding: 0;
 }

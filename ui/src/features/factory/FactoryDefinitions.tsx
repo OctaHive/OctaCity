@@ -203,7 +203,7 @@ export function FactoryDefinitions({
         empty={t('factory.unconfigured')}
       >
         {(items) => (
-          <ul>
+          <ul className={styles.definitionList}>
             {items.map((item) => (
               <li key={item.id}>
                 <button
@@ -263,7 +263,7 @@ export function FactoryDefinitions({
         empty={t('factory.noFlows')}
       >
         {(items) => (
-          <ul>
+          <ul className={styles.definitionList}>
             {items.map((item) => (
               <li key={item.id}>
                 <button
