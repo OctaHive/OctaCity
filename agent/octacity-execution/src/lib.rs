@@ -936,12 +936,15 @@ mod tests {
 
   #[test]
   fn selected_companions_keep_explicit_guest_names_without_renaming_other_executables() {
-    let mut program =
-      ExecutionProgram::standalone(PathBuf::from("/release"), PathBuf::from("/release/runner")).unwrap();
+    let temporary = tempfile::tempdir().unwrap();
+    let root = temporary.path().canonicalize().unwrap();
+    let release = root.join("release");
+    let tools = root.join("tools");
+    let mut program = ExecutionProgram::standalone(release.clone(), release.join("runner")).unwrap();
     program.external_executables = BTreeMap::from([
-      ("A_TOOL".to_owned(), PathBuf::from("/tools/main")),
-      ("B_TOOL".to_owned(), PathBuf::from("/tools/companion")),
-      ("C_TOOL".to_owned(), PathBuf::from("/tools/previous-tool")),
+      ("A_TOOL".to_owned(), tools.join("main")),
+      ("B_TOOL".to_owned(), tools.join("companion")),
+      ("C_TOOL".to_owned(), tools.join("previous-tool")),
     ]);
     program
       .external_executable_names
