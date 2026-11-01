@@ -25,7 +25,7 @@ pub(super) fn prepare(
   // untrusted checkout's filenames before enforcing the deadline or copying.
   enum Visit {
     Entry(PathBuf),
-    Directory(PathBuf, fs::ReadDir),
+    Directory(PathBuf, Box<fs::ReadDir>),
   }
   for (index, selected) in scope.selections.iter().enumerate() {
     let mut pending = vec![Visit::Entry(PathBuf::from(&selected.path))];
@@ -65,7 +65,7 @@ pub(super) fn prepare(
       if metadata.is_dir() && selected.lines.is_none() {
         create_view_directory(view, &relative)?;
         let entries = fs::read_dir(&path).map_err(|error| filesystem("list selected source", &path, error))?;
-        pending.push(Visit::Directory(relative, entries));
+        pending.push(Visit::Directory(relative, Box::new(entries)));
         continue;
       } else if metadata.is_file() {
         let mut contents = reader
