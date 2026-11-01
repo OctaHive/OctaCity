@@ -227,13 +227,13 @@ pub(crate) async fn candidate_context_fixture_with_consumer(
 }
 
 /// Composes caller-owned action/gate contracts around the same retained producer.
-pub(crate) async fn candidate_context_fixture_with_definition(
+/// Forward directly to avoid another large async polling frame in composed fixtures.
+pub(crate) fn candidate_context_fixture_with_definition(
   profile: ReadonlyCandidateFixtureProfile,
   consumer: Option<(FlowNodeKind, FlowBuildBinding)>,
   configure: impl FnOnce(&mut FlowDefinitionInput),
-) -> CandidateContextFixture {
+) -> impl std::future::Future<Output = CandidateContextFixture> {
   candidate_context_fixture_with_preparation(profile, consumer, configure, vec![], None, async |_, _, _, _| time(32))
-    .await
 }
 
 /// Runs explicit caller-owned metadata steps before preparing the retained consumer.

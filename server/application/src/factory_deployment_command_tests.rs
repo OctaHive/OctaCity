@@ -225,6 +225,26 @@ impl FactoryExecutionClock for Clock {
 }
 
 #[test]
+fn deployment_compilation_does_not_exhaust_a_bounded_test_stack() {
+  // Isolate stack-overflow aborts so this remains a normal regression failure.
+  let output = std::process::Command::new(std::env::current_exe().unwrap())
+    .args([
+      "--exact",
+      "factory_deployment_command_tests::deployment_compilation_requires_the_explicit_promotion_role_and_exact_single_environment",
+      "--nocapture",
+    ])
+    .env("RUST_MIN_STACK", "1048576")
+    .output()
+    .unwrap();
+  assert!(
+    output.status.success(),
+    "deployment compilation must fit a 1 MiB test stack: {}",
+    String::from_utf8_lossy(&output.stderr)
+  );
+  assert!(String::from_utf8_lossy(&output.stdout).contains("1 passed"));
+}
+
+#[test]
 fn deployment_compilation_requires_the_explicit_promotion_role_and_exact_single_environment() {
   crate::factory_admission_tests::run_ready(async {
     let (intent, admitted, command, approved, authority) = fixture_for_environment("substituted.environment").await;

@@ -1214,12 +1214,16 @@ pub(crate) async fn retained_promotion_command_fixture() -> (
   retained_promotion_command_fixture_with_profile(|_, _| {}).await
 }
 
-pub(crate) async fn retained_promotion_command_fixture_with_profile(
+// Construct and heap-pin the lifecycle before polling it so setup temporaries
+// and large future moves do not stack with nested journal/node validation.
+pub(crate) fn retained_promotion_command_fixture_with_profile(
   configure: impl FnOnce(&mut FactoryCommandBuildProfile, &mut FactoryPermissionSet),
-) -> (
-  FactoryCommandBuildProfile,
-  crate::factory_candidate_context_test_support::CandidateContextFixture,
-) {
+) -> impl std::future::Future<
+  Output = (
+    FactoryCommandBuildProfile,
+    crate::factory_candidate_context_test_support::CandidateContextFixture,
+  ),
+> {
   let work = fixtures::work();
   let (_, _, mut profile) = crate::factory_command_tests::command_fixture();
   profile.executor = profile.plugin.clone();
@@ -1293,9 +1297,8 @@ pub(crate) async fn retained_promotion_command_fixture_with_profile(
       definition.nodes[1] = consumer;
       definition.nodes.push(criterion);
     },
-  )
-  .await;
-  (profile, candidate)
+  );
+  Box::pin(async move { (profile, candidate.await) })
 }
 
 struct ProjectionOnlyContext;
