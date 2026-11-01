@@ -1555,6 +1555,7 @@ fn factory_build_contract_request(
           node_attempt_id: intent.node().id().to_string(),
           input_digest: input.digest().unwrap().to_string(),
           subject_digest: input.subject().digest().to_string(),
+          source_scope: None,
           source_write_paths: capture_paths.map(|paths| paths.iter().map(|path| (*path).to_owned()).collect()),
           change_set_capture: capture_paths.map(|paths| octacity_protocol::ChangeSetCaptureV3 {
             author_name: "Factory fixture".to_owned(),

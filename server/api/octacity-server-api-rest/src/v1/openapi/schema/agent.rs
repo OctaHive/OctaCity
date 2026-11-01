@@ -86,6 +86,7 @@ pub(super) fn insert_agent_detail_schemas(schemas: &mut Map<String, Value>) {
       "read_only_protected_inputs",
       "workspace_separation",
       "managed_octa_execution",
+      "source_visibility_v1",
     ]),
   );
   schemas.insert(

@@ -4,8 +4,7 @@ use octacity_server_job::JobSpecTemplate;
 use octacity_server_store::TriggerAcceptanceStore;
 use octacity_server_store_postgres::PostgresAuthoritativeStore;
 
-#[path = "authoritative_fixture.rs"]
-mod prerequisites;
+use super::authoritative_fixture as prerequisites;
 
 pub async fn accept(
   pool: &sqlx::PgPool,

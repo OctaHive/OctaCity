@@ -1,0 +1,40 @@
+--- a/crates/agentd/lib/init.rs
++++ b/crates/agentd/lib/init.rs
+@@ -759,18 +759,23 @@
+                 })?;
+             }
+-
++
+-            // 4. Create the target file (touch) as a bind mount target.
+-            fs::OpenOptions::new()
+-                .create(true)
+-                .truncate(false)
+-                .write(true)
+-                .open(&spec.guest_path)
+-                .map_err(|e| {
+-                    AgentdError::Init(format!(
+-                        "failed to create bind target {}: {e}",
+-                        spec.guest_path
+-                    ))
+-                })?;
++            // 4. Existing regular targets need no write access. In particular,
++            // a writable file can overlay a file in a read-only parent mount.
++            match fs::symlink_metadata(guest) {
++                Ok(metadata) if metadata.is_file() => {},
++                Ok(_) => return Err(AgentdError::Init(format!(
++                    "bind target {} is not a regular file", spec.guest_path
++                ))),
++                Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
++                    fs::OpenOptions::new().create_new(true).write(true)
++                        .open(guest).map_err(|e| AgentdError::Init(format!(
++                            "failed to create bind target {}: {e}", spec.guest_path
++                        )))?;
++                },
++                Err(error) => return Err(AgentdError::Init(format!(
++                    "failed to inspect bind target {}: {error}", spec.guest_path
++                ))),
++            }
+-
++
+             // 5. Bind mount the file from staging to the guest path.
+             let source_path = format!("{staging_path}/{}", spec.filename);

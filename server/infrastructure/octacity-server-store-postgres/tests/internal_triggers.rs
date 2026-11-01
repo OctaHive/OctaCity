@@ -1,5 +1,4 @@
-#[path = "support/authoritative_fixture.rs"]
-mod authoritative_fixture;
+use support::authoritative_fixture;
 mod support;
 
 use std::sync::Arc;
@@ -131,7 +130,18 @@ async fn terminal_build_outbox_is_claimed_once_and_restart_safe() {
   assert_eq!(claims.len(), 1);
   let claim = claims.pop().unwrap();
   assert_eq!(claim.source_build_id, fixture.request.build.id);
-  assert_eq!(claim.source_revision, fixture.request.build.immutable_revision);
+  assert_eq!(
+    claim.source,
+    octacity_server_domain::BuildSourceSelection::Repository(
+      octacity_server_domain::RepositorySourceSelection::ExactRevision(
+        fixture
+          .request
+          .build
+          .immutable_revision
+          .expect("repository-backed internal trigger fixture")
+      )
+    )
+  );
   assert_eq!(claim.source_target, target);
   assert_eq!(
     claim.source_origin,

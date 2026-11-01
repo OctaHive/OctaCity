@@ -162,6 +162,7 @@ fn v3_spec() -> JobSpecV3 {
       node_attempt_id: "00000000-0000-0000-0000-000000000003".to_owned(),
       input_digest: DIGEST.to_owned(),
       subject_digest: DIGEST.to_owned(),
+      source_scope: None,
       source_write_paths: None,
       change_set_capture: None,
       change_set_materialization: None,
@@ -648,6 +649,76 @@ fn verifies_v3_only_after_signature_and_strict_semantic_validation() {
     ),
     Err(JobSpecError::Json(_))
   ));
+}
+
+#[test]
+fn signed_selected_source_requires_qualified_visibility_enforcement() {
+  let key = SigningKey::from_bytes(&[41; 32]);
+  let keys = BTreeMap::from([("test-key".to_owned(), key.verifying_key())]);
+  let mut wire = serde_json::to_value(v3_spec()).unwrap();
+  wire["permissions"]["mounts"][3]["mode"] = serde_json::json!("read_only");
+  wire["factory"]["source_scope"] = serde_json::json!({
+    "resource_digest": DIGEST,
+    "selections": [
+      {"path": "docs/public"},
+      {"path": "src/config.rs", "lines": {"first": 3, "last": 5}}
+    ]
+  });
+  wire["required_enforcement"]
+    .as_array_mut()
+    .unwrap()
+    .push(serde_json::json!("source_visibility_v1"));
+  let verify = |wire: &serde_json::Value| {
+    verify_compatible_job_spec(
+      &signed_envelope(wire, &key),
+      &keys,
+      JobBinding {
+        job_id: "job-1",
+        attempt: 1,
+        now: 100,
+      },
+    )
+  };
+  assert!(
+    verify(&wire).is_ok(),
+    "a qualified reader must accept a signed selected view"
+  );
+  let mut missing = wire.clone();
+  missing["required_enforcement"].as_array_mut().unwrap().pop();
+  assert!(verify(&missing).is_err(), "visibility cannot rely on a legacy Agent");
+  for path in [".", "../private", "/outside", "src/../private"] {
+    let mut invalid = wire.clone();
+    invalid["factory"]["source_scope"]["selections"][0]["path"] = serde_json::json!(path);
+    assert!(verify(&invalid).is_err(), "invalid scope: {path}");
+  }
+  let mut writable = wire.clone();
+  writable["permissions"]["mounts"][3]["mode"] = serde_json::json!("read_write");
+  assert!(verify(&writable).is_err(), "line views cannot grant source writes");
+}
+
+#[test]
+fn signed_source_write_overlays_cannot_escape_selected_visibility() {
+  let mut wire = serde_json::to_value(v3_spec()).unwrap();
+  wire["factory"]["source_scope"] = serde_json::json!({
+    "resource_digest": DIGEST, "selections": [{"path":"docs/public"}]
+  });
+  wire["required_enforcement"]
+    .as_array_mut()
+    .unwrap()
+    .push(serde_json::json!("source_visibility_v1"));
+  for allowed in ["docs/public", "docs/public/notes"] {
+    wire["factory"]["source_write_paths"] = serde_json::json!([allowed]);
+    let selected: JobSpecV3 = serde_json::from_value(wire.clone()).unwrap();
+    assert!(selected.validate(&binding(&spec())).is_ok());
+  }
+  for forbidden in ["docs", "docs/private", "docs/public-other"] {
+    wire["factory"]["source_write_paths"] = serde_json::json!([forbidden]);
+    let selected: JobSpecV3 = serde_json::from_value(wire.clone()).unwrap();
+    assert!(
+      selected.validate(&binding(&spec())).is_err(),
+      "write overlay escapes selected scope: {forbidden}"
+    );
+  }
 }
 
 #[test]

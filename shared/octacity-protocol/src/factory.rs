@@ -292,8 +292,11 @@ pub struct FactoryCausalityV3 {
   pub node_attempt_id: String,
   /// Digest of the complete frozen node input and selected context.
   pub input_digest: String,
-  /// Digest of the exact subject revision and repository identity.
+  /// Digest of Work correlation; node resource identity is independent.
   pub subject_digest: String,
+  /// Optional exact selected-source visibility, requiring explicit Agent enforcement.
+  #[serde(default, skip_serializing_if = "Option::is_none")]
+  pub source_scope: Option<FactorySourceScopeV1>,
   /// Optional canonical disjoint directory roots writable beneath source.
   /// Narrows an explicit source read/write grant; absent retains its mount mode.
   /// This is independent of the ChangeSet filter, which may select files.
@@ -326,6 +329,9 @@ impl FactoryCausalityV3 {
     }
     digest("factory.input_digest", &self.input_digest)?;
     digest("factory.subject_digest", &self.subject_digest)?;
+    if let Some(scope) = &self.source_scope {
+      scope.validate()?;
+    }
     if let Some(paths) = &self.source_write_paths {
       if paths.is_empty() || paths.len() > MAX_FACTORY_PERMISSION_ENTRIES {
         return Err("source write root count is outside protocol bounds".to_owned());
@@ -348,6 +354,60 @@ impl FactoryCausalityV3 {
     }
     if let Some(materialization) = &self.change_set_materialization {
       materialization.validate(inputs)?;
+    }
+    Ok(())
+  }
+}
+
+/// Qualified path/line visibility over one frozen node resource.
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(deny_unknown_fields)]
+pub struct FactorySourceScopeV1 {
+  /// Digest of the exact selected node resource, independently of Work correlation.
+  pub resource_digest: String,
+  /// Canonically ordered, nonempty relative paths and optional inclusive line views.
+  pub selections: Vec<FactorySourceSelectionV1>,
+}
+
+/// One visible file/subtree, or a read-only line interval within a file.
+#[derive(Clone, Debug, Deserialize, Eq, Ord, PartialEq, PartialOrd, Serialize)]
+#[serde(deny_unknown_fields)]
+pub struct FactorySourceSelectionV1 {
+  /// Canonical strict repository-relative path; never the whole source root.
+  pub path: String,
+  /// Absent exposes the selected file/subtree; present exposes only these lines.
+  #[serde(default, skip_serializing_if = "Option::is_none")]
+  pub lines: Option<FactorySourceLinesV1>,
+}
+
+/// Inclusive one-based line interval, preserving original line numbering.
+#[derive(Clone, Copy, Debug, Deserialize, Eq, Ord, PartialEq, PartialOrd, Serialize)]
+#[serde(deny_unknown_fields)]
+pub struct FactorySourceLinesV1 {
+  /// First visible line.
+  pub first: u32,
+  /// Last visible line.
+  pub last: u32,
+}
+
+impl FactorySourceScopeV1 {
+  fn validate(&self) -> Result<(), String> {
+    digest("factory.source_scope.resource_digest", &self.resource_digest)?;
+    if self.selections.is_empty() || self.selections.len() > MAX_FACTORY_PERMISSION_ENTRIES {
+      return Err("source visibility selection count is outside protocol bounds".to_owned());
+    }
+    if self.selections.windows(2).any(|pair| pair[0] >= pair[1]) {
+      return Err("source visibility selections must be strictly ordered".to_owned());
+    }
+    for selected in &self.selections {
+      portable_repository_path_prefix(&selected.path)?;
+      if selected.path == "."
+        || selected
+          .lines
+          .is_some_and(|lines| lines.first == 0 || lines.last < lines.first)
+      {
+        return Err("source visibility requires strict paths and valid inclusive lines".to_owned());
+      }
     }
     Ok(())
   }
@@ -1134,6 +1194,8 @@ pub enum FactoryEnforcementCapabilityV3 {
   WorkspaceSeparation,
   /// Server-owned Octafile and task selection.
   ManagedOctaExecution,
+  /// Exact selected path/line visibility, never an unrestricted checkout mount.
+  SourceVisibilityV1,
 }
 
 impl FactoryEnforcementCapabilityV3 {
@@ -1173,7 +1235,12 @@ pub(crate) fn validate_factory_execution(
   if runtime.target.mode == ExecutionMode::Host {
     return Err("JobSpec v3 requires an isolation or virtualization boundary".to_owned());
   }
-  if required != FactoryEnforcementCapabilityV3::ALL {
+  let scoped = factory.and_then(|value| value.source_scope.as_ref());
+  let mut expected = FactoryEnforcementCapabilityV3::ALL.to_vec();
+  if scoped.is_some() {
+    expected.push(FactoryEnforcementCapabilityV3::SourceVisibilityV1);
+  }
+  if required != expected {
     return Err("JobSpec v3 requires the complete ordered enforcement vocabulary".to_owned());
   }
   let source_mode = permissions
@@ -1181,6 +1248,30 @@ pub(crate) fn validate_factory_execution(
     .iter()
     .find(|mount| mount.root == FACTORY_SOURCE_ROOT)
     .map(|mount| mount.mode);
+  if let Some(scope) = scoped {
+    if factory
+      .and_then(|factory| factory.source_write_paths.as_ref())
+      .is_some_and(|paths| {
+        paths.iter().any(|path| {
+          !scope.selections.iter().any(|selected| {
+            selected.lines.is_none()
+              && (path == &selected.path
+                || path
+                  .strip_prefix(&selected.path)
+                  .is_some_and(|tail| tail.starts_with('/')))
+          })
+        })
+      })
+    {
+      return Err("source write overlays exceed selected visibility".to_owned());
+    }
+    if source_mode.is_none()
+      || source_mode == Some(FactoryMountModeV3::ReadWrite)
+        && scope.selections.iter().any(|selected| selected.lines.is_some())
+    {
+      return Err("selected source requires a mount and line views are read-only".to_owned());
+    }
+  }
   if factory.is_some_and(|factory| {
     factory.change_set_capture.is_some()
       || factory.source_write_paths.is_some()

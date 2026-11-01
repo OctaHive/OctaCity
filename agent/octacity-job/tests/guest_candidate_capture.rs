@@ -128,6 +128,7 @@ async fn real_guest_change_is_confined_and_roundtrips_through_trusted_git() {
         disk_accounting: octacity_execution::ExecutionDiskAccounting::WholeJob,
         protected_inputs: protected.clone(),
         source: source.clone(),
+        source_view: None,
         source_visible: true,
         source_read_only: true,
         source_writable_paths: vec![allowed],

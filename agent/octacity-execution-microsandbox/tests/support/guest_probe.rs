@@ -74,6 +74,7 @@ impl GuestProbe {
         disk_accounting: octacity_execution::ExecutionDiskAccounting::WholeJob,
         protected_inputs: protected,
         source,
+        source_view: None,
         source_visible: false,
         source_read_only: true,
         source_writable_paths: vec![],

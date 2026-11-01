@@ -399,6 +399,7 @@ async fn fixture_with_capability(capability: &str) -> Fixture {
       node_attempt_id: intent.node().id().to_string(),
       input_digest: intent.input().digest().unwrap().to_string(),
       subject_digest: work.subject().digest().to_string(),
+      source_scope: None,
       source_write_paths: None,
       change_set_capture: None,
       change_set_materialization: None,

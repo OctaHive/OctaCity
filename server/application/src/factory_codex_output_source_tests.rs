@@ -1124,6 +1124,7 @@ async fn finish_prepared_source(input: PreparedSourceInput) -> SourceFixture {
       node_attempt_id: intent.node().id().to_string(),
       input_digest: intent.input().digest().unwrap().to_string(),
       subject_digest: intent.input().subject().digest().to_string(),
+      source_scope: None,
       source_write_paths: crate::factory_build_materialization::factory_capture_source_paths(
         &intent,
         profile.capture.as_ref().map(FactoryCodexCapturePolicy::instruction),

@@ -618,6 +618,57 @@ impl FactoryExecutionClock for Clock {
   }
 }
 type TestMaterializer = FactoryCodexBuildMaterializer<Context, Inputs, Bytes>;
+
+#[test]
+fn selected_repository_is_checked_before_reading_a_private_role_package() {
+  struct PrivateRole;
+  #[async_trait::async_trait]
+  impl FactoryRoleInvocationSource for PrivateRole {
+    async fn invocation(
+      &self,
+      _: &FlowBuildIntent,
+      _: Timestamp,
+      _: Timestamp,
+    ) -> Result<Option<FactoryRoleInvocation>, ApplicationError> {
+      panic!("reject an incompatible source before reading private role instructions");
+    }
+  }
+  crate::factory_admission_tests::run_ready(async {
+    let (intent, admitted, installed, _, bytes) = fixture();
+    let mut context = managed_context(
+      &installed.build_configuration,
+      &installed.pipeline_node,
+      &installed.toolchain.plugin,
+      &intent,
+    );
+    context.configuration.definition.repository_id = Some(octacity_server_domain::RepositoryId::generate());
+    let inputs = Arc::new(Inputs::default());
+    let materializer = FactoryCodexBuildMaterializer::new(
+      Arc::new(Context(context)),
+      Arc::new(FactoryExecutionInputPublisher::new(
+        inputs.clone(),
+        Arc::new(Bytes),
+        Arc::new(Clock),
+      )),
+      vec![installed],
+      Arc::new(ContextBytes(bytes)),
+      Arc::new(Clock),
+    )
+    .unwrap()
+    .with_role_invocation_source(Arc::new(PrivateRole));
+    let result = materializer
+      .materialize(
+        &intent,
+        &admitted,
+        FactoryClaimOwnership::new(intent.node().owner().clone(), intent.node().claim()),
+        Timestamp::from_unix_millis(41).unwrap(),
+      )
+      .await;
+    assert!(matches!(result, Err(OrdinaryBuildApplicationError::Invalid)));
+    assert!(inputs.0.lock().unwrap().is_empty());
+  });
+}
+
 fn materializer_fixture(
   intent: &FlowBuildIntent,
   installed: &FactoryCodexBuildProfile,

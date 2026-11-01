@@ -103,6 +103,141 @@ fn context(profile: &FactoryCommandBuildProfile, intent: &FlowBuildIntent) -> Bu
     intent,
   )
 }
+
+#[test]
+fn selected_repository_mismatch_is_rejected_before_publishing_private_command_inputs() {
+  crate::factory_admission_tests::run_ready(async {
+    let (_, _, mut profile) = crate::factory_command_tests::command_fixture();
+    let work = crate::factory_node_test_support::fixtures::work();
+    crate::factory_command_output_source_tests::configure_profile(&mut profile, &work);
+    let mut binding = crate::factory_node_test_support::fixtures::binding(work.subject().project_id());
+    binding.build_configuration = profile.build_configuration.clone();
+    binding.task_digest = profile.task_digest();
+    let (_, admitted, _, input, node) = crate::factory_node_test_support::fixtures::execution_fixture_with_permissions(
+      FlowNodeKind::BuildCommand,
+      work,
+      binding,
+      None,
+      profile.project_permissions.clone(),
+    );
+    let intent = FlowBuildIntent::new(input, &admitted, node, Default::default(), 0).unwrap();
+    let mut context = context(&profile, &intent);
+    context.configuration.definition.repository_id = Some(RepositoryId::generate());
+    let inputs = Arc::new(Inputs::default());
+    let compiler = FactoryCommandBuildMaterializer::new(
+      Arc::new(Context(context)),
+      Arc::new(FactoryExecutionInputPublisher::new(
+        inputs.clone(),
+        Arc::new(Bytes),
+        Arc::new(Clock),
+      )),
+      vec![profile],
+      Arc::new(Clock),
+    )
+    .unwrap();
+    let owner = FactoryClaimOwnership::new(intent.node().owner().clone(), intent.node().claim());
+    let result = compiler.materialize(&intent, &admitted, owner, at(41)).await;
+    assert!(matches!(result, Err(OrdinaryBuildApplicationError::Invalid)));
+    assert!(
+      inputs.0.lock().unwrap().is_empty(),
+      "reject an incompatible Build/source binding before publishing invocation documents"
+    );
+  });
+}
+#[test]
+fn selected_code_scope_is_frozen_in_ordinary_signed_job_intent() {
+  crate::factory_admission_tests::run_ready(async {
+    let (_, _, mut profile) = crate::factory_command_tests::command_fixture();
+    let work = crate::factory_node_test_support::fixtures::work();
+    crate::factory_command_output_source_tests::configure_profile(&mut profile, &work);
+    let mut grants = serde_json::to_value(&profile.project_permissions).unwrap();
+    grants["resources"]["elapsed_millis"] = serde_json::json!(1000);
+    profile.project_permissions = serde_json::from_value(grants).unwrap();
+    profile.local_permissions = LocalPermissionCeiling::fully_enforced(profile.project_permissions.clone());
+    let mut binding = crate::factory_node_test_support::fixtures::binding(work.subject().project_id());
+    binding.build_configuration = profile.build_configuration.clone();
+    binding.task_digest = profile.task_digest();
+    let scope = serde_json::from_value(serde_json::json!({"kind":"selected","entries":[
+      {"kind":"path","path":"docs/public"},
+      {"kind":"range","path":"src/config.rs","lines":{"first_line":3,"last_line":4}}
+    ]}))
+    .unwrap();
+    let (_, admitted, _, input, node) = crate::factory_node_test_support::fixtures::execution_fixture_with_code_scope(
+      FlowNodeKind::BuildCommand,
+      work,
+      binding,
+      profile.project_permissions.clone(),
+      scope,
+    );
+    let intent = FlowBuildIntent::new(input, &admitted, node, Default::default(), 0).unwrap();
+    let inputs = Arc::new(Inputs::default());
+    let compiler = FactoryCommandBuildMaterializer::new(
+      Arc::new(Context(context(&profile, &intent))),
+      Arc::new(FactoryExecutionInputPublisher::new(
+        inputs.clone(),
+        Arc::new(Bytes),
+        Arc::new(Clock),
+      )),
+      vec![profile],
+      Arc::new(Clock),
+    )
+    .unwrap();
+    let owner = FactoryClaimOwnership::new(intent.node().owner().clone(), intent.node().claim());
+    let accepted = compiler
+      .materialize(&intent, &admitted, owner, at(41))
+      .await
+      .unwrap_or_else(|error| {
+        panic!(
+          "materialization failed: {error:?}; published {} input sets",
+          inputs.0.lock().unwrap().len()
+        )
+      });
+    accepted.validate_fresh().unwrap();
+    let managed = accepted.jobs[0].job_spec_template.managed_intent().unwrap();
+    let scope = managed
+      .factory()
+      .unwrap()
+      .source_scope
+      .as_ref()
+      .expect("ordinary Job must carry selected visibility");
+    assert_eq!(
+      serde_json::to_value(&scope.selections).unwrap(),
+      serde_json::json!([
+        {"path":"docs/public"}, {"path":"src/config.rs","lines":{"first":3,"last":4}}
+      ])
+    );
+    assert_eq!(
+      scope.resource_digest,
+      FactoryDigest::content_sha256(&serde_json::to_vec(&intent.input().task_subject().unwrap()).unwrap()).to_string()
+    );
+    assert!(
+      accepted.jobs[0]
+        .job_spec_template
+        .required_factory_enforcement()
+        .unwrap()
+        .contains(&octacity_protocol::FactoryEnforcementCapabilityV3::SourceVisibilityV1)
+    );
+    for alteration in ["omitted", "broader", "foreign-resource"] {
+      let mut forged = accepted.clone();
+      let mut wire = serde_json::to_value(&forged.jobs[0].job_spec_template).unwrap();
+      let managed = &mut wire["execution"];
+      match alteration {
+        "omitted" => {
+          managed["factory"].as_object_mut().unwrap().remove("source_scope");
+          managed["required_enforcement"].as_array_mut().unwrap().pop();
+        }
+        "broader" => managed["factory"]["source_scope"]["selections"] = serde_json::json!([{"path":"docs"}]),
+        _ => managed["factory"]["source_scope"]["resource_digest"] = serde_json::json!("a".repeat(64)),
+      }
+      forged.jobs[0].job_spec_template = serde_json::from_value(wire).unwrap();
+      assert!(
+        forged.validate().is_err(),
+        "atomic acceptance must reject {alteration} selected visibility"
+      );
+    }
+  });
+}
+
 /// Reuses the same published ordinary configuration for independently installed adapters.
 pub(crate) fn managed_context(
   configuration: &BuildConfigurationRef,

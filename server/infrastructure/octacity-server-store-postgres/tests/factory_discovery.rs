@@ -36,6 +36,39 @@ use support::TestDatabase;
 
 #[tokio::test]
 #[ignore = "requires an explicitly configured disposable PostgreSQL service"]
+async fn selected_resource_input_and_accepted_result_survive_an_independent_postgres_pool() {
+  let database = TestDatabase::migrated().await;
+  let fixture = octacity_server_store::testing::factory_selected_source_journal_fixture();
+  let (postgres, repository) = seed_projection_admission(&database, &fixture.admission).await;
+  let definition = fixture
+    .admission
+    .flow
+    .closure()
+    .definition(fixture.input.definition())
+    .unwrap();
+  let build = definition.node(fixture.input.node()).unwrap().build().unwrap();
+  support::factory_build::seed_factory_build(
+    &database.pool,
+    fixture.input.exact_resource().unwrap(),
+    repository.version,
+    build.build_configuration.id(),
+    fixture.execution.build_id(),
+    fixture.execution.attempt_id(),
+    fixture.execution.jobs()[0],
+  )
+  .await;
+  let pool = sqlx::PgPool::connect_with((*database.pool.connect_options()).clone())
+    .await
+    .unwrap();
+  let restarted = PostgresStore::new(pool.clone());
+  octacity_server_store::testing::verify_factory_node_journal_contract(&postgres, &restarted, &fixture).await;
+  drop(restarted);
+  pool.close().await;
+  database.cleanup().await;
+}
+
+#[tokio::test]
+#[ignore = "requires an explicitly configured disposable PostgreSQL service"]
 async fn configured_unknown_node_journal_matches_memory_and_survives_restart() {
   assert_configured_node_discovery("candidate").await;
 }
@@ -1042,7 +1075,7 @@ async fn seed_plan_rows(pool: &sqlx::PgPool, project_id: ProjectId, repository_i
        (id, project_id, factory_configuration_id, factory_configuration_version, source_kind, \
         security_scope_digest, external_identity, repository_id, repository_version, exact_revision, \
         intent_digest, envelope_digest, envelope, admitted_at) \
-     VALUES ($1, $2, $3, 1, 'manual', $4, 'plan-work', $5, 1, 'revision', $6, $7, '{}', to_timestamp(2))",
+     VALUES ($1, $2, $3, 1, 'manual', $4, 'plan-work', $5, 1, 'revision', $6, $7, $8, to_timestamp(2))",
   )
   .bind(work_id(601).as_uuid())
   .bind(project_id.as_uuid())
@@ -1051,6 +1084,9 @@ async fn seed_plan_rows(pool: &sqlx::PgPool, project_id: ProjectId, repository_i
   .bind(repository_id.as_uuid())
   .bind(digest(22).as_bytes().as_slice())
   .bind(digest(23).as_bytes().as_slice())
+  .bind(Json(serde_json::json!({"subject": {
+    "project_id": project_id, "repository_id": repository_id, "base_revision": "revision"
+  }})))
   .execute(&mut *transaction)
   .await
   .unwrap();
@@ -2234,6 +2270,37 @@ async fn seed_projection_admission(
   database: &TestDatabase,
   admission: &octacity_server_store::PublishedFactoryAdmission,
 ) -> (PostgresStore, PublishedRepository) {
+  let (postgres, repository) = seed_projection_configuration(database, admission).await;
+  let work = &admission.work;
+  postgres
+    .admit_factory_work(management_mutation_with_request(
+      AdmitFactoryWork {
+        probe: FactoryAdmissionProbe {
+          source_scope: FactoryWorkSourceScope {
+            source: key("manual"),
+            security_scope: octacity_server_store::ManagementSecurityScope::trusted_network(),
+          },
+          external_identity: work.external_identity().clone(),
+          intent_digest: digest(1),
+          idempotency_key: idempotency(&format!("generic-node-intake-{}", work.id())),
+        },
+        repository_version: Some(repository.version),
+        work: work.clone(),
+        run: admission.run.clone(),
+        flow: admission.flow.clone(),
+        admitted_at: time(1),
+      },
+      "generic-node-intake",
+    ))
+    .await
+    .unwrap();
+  (postgres, repository)
+}
+
+async fn seed_projection_configuration(
+  database: &TestDatabase,
+  admission: &octacity_server_store::PublishedFactoryAdmission,
+) -> (PostgresStore, PublishedRepository) {
   use octacity_server_factory::FactoryFlowConfiguration;
   let postgres = PostgresStore::new(database.pool.clone());
   let work = &admission.work;
@@ -2288,29 +2355,6 @@ async fn seed_projection_admission(
         configuration,
       },
       "generic-node-configuration",
-    ))
-    .await
-    .unwrap();
-  postgres
-    .admit_factory_work(management_mutation_with_request(
-      AdmitFactoryWork {
-        probe: FactoryAdmissionProbe {
-          source_scope: FactoryWorkSourceScope {
-            source: key("manual"),
-            security_scope: octacity_server_store::ManagementSecurityScope::trusted_network(),
-          },
-          external_identity: work.external_identity().clone(),
-          intent_digest: digest(1),
-          idempotency_key: idempotency(&format!("generic-node-intake-{}", work.id())),
-        },
-        repository_version: Some(repository.version),
-
-        work: work.clone(),
-        run: admission.run.clone(),
-        flow: admission.flow.clone(),
-        admitted_at: time(1),
-      },
-      "generic-node-intake",
     ))
     .await
     .unwrap();

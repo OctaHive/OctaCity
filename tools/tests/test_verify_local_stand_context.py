@@ -25,6 +25,12 @@ AGENT_REVISION = "a" * 40
 
 
 class LocalStandContextTests(unittest.TestCase):
+    def test_runtime_qualification_pin_is_compiled_without_guest_build_inputs(self):
+        rules = VERIFY.validate_dockerignore(REPOSITORY / ".dockerignore")
+        prefix = "config/runtime/microsandbox-agentd-v1/"
+        self.assertTrue(VERIFY.docker_path_included(prefix+"SHA256SUMS",rules))
+        for name in ("Cargo.lock","inputs.json","readonly-file-mount.patch"):
+            self.assertFalse(VERIFY.docker_path_included(prefix+name,rules))
     def staging_fixture(self, root: Path, entries):
         immutable = json.loads(
             (REPOSITORY / "deployment/local-stand/inputs.json").read_text(encoding="utf-8")
@@ -284,6 +290,7 @@ console.log(JSON.stringify(factoryAuthoringSchemas({components: {schemas: {
   FactoryRuntimeSettingsRequest: {type: 'object'},
   FactoryConfigurationDefinition: {type: 'object'},
   FactoryFlowDefinitionDraft: {type: 'object'},
+  ValidateFactoryGateProgramRequest: {type: 'object'},
   AdmitManualFactoryWorkRequest: {type: 'object'},
   FactoryNodeOperationRequest: {type: 'object'},
   FactoryNodeResponseRequest: {type: 'object'},
@@ -297,6 +304,7 @@ console.log(JSON.stringify(factoryAuthoringSchemas({components: {schemas: {
                 "FactoryRuntimeSettingsRequest": {"type": "object"},
                 "FactoryConfigurationDefinition": {"type": "object"},
                 "FactoryFlowDefinitionDraft": {"type": "object"},
+                "ValidateFactoryGateProgramRequest": {"type": "object"},
                 "AdmitManualFactoryWorkRequest": {"type": "object"},
                 "FactoryNodeOperationRequest": {"type": "object"},
                 "FactoryNodeResponseRequest": {"type": "object"},

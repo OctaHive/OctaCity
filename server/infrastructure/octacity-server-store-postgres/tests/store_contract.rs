@@ -1,5 +1,6 @@
-#[path = "support/authoritative_fixture.rs"]
-mod authoritative_fixture;
+#[path = "store_contract/source_free_lifecycle.rs"]
+mod source_free_lifecycle;
+use support::authoritative_fixture;
 mod support;
 
 use std::{fmt::Debug, str::FromStr, sync::Arc};

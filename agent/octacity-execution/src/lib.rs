@@ -341,13 +341,16 @@ pub struct FactoryExecutionLayout {
   pub disk_accounting: ExecutionDiskAccounting,
   /// Immutable host directory projected at [`FACTORY_PROTECTED_INPUT_ROOT`].
   pub protected_inputs: PathBuf,
-  /// Exact private host checkout, projected at [`FACTORY_SOURCE_ROOT`] only when visible.
+  /// Trusted exact checkout; projected directly only when visible and no selected view is supplied.
   pub source: PathBuf,
+  /// Optional filtered read-only source view; the trusted checkout stays private.
+  pub source_view: Option<PathBuf>,
   /// Whether the workload receives any source mount; false keeps host source private.
   pub source_visible: bool,
   /// Whether the base source projection rejects writes outside explicit overlays.
   pub source_read_only: bool,
-  /// Canonical directory overlays writable within an otherwise read-only source.
+  /// Canonical writable overlays within an otherwise read-only source.
+  /// A selected source view also permits an exact regular-file overlay.
   /// Empty means no exception. Paths must be disjoint strict descendants; they
   /// narrow a signed capture policy, never grant authority beyond admission.
   pub source_writable_paths: Vec<PathBuf>,
@@ -365,6 +368,12 @@ pub struct FactoryExecutionLayout {
 }
 
 impl FactoryExecutionLayout {
+  /// Host root projected at the canonical guest source path. The complete
+  /// checkout remains private when a selected view is present.
+  #[must_use]
+  pub fn projected_source(&self) -> &Path {
+    self.source_view.as_deref().unwrap_or(&self.source)
+  }
   fn validate(&self, workspace_root: &Path, workspace: &Path, data_dir: &Path) -> Result<(), ExecutionError> {
     if self.process_limit == 0 {
       return Err(ExecutionError::Invalid(
@@ -400,12 +409,15 @@ impl FactoryExecutionLayout {
         ));
       }
       let mut resolved = source.clone();
-      for component in relative.components() {
+      let count = relative.components().count();
+      for (index, component) in relative.components().enumerate() {
         resolved.push(component);
         let metadata = std::fs::symlink_metadata(&resolved).map_err(ExecutionError::Io)?;
-        if !metadata.is_dir() || metadata.file_type().is_symlink() {
+        if !(metadata.is_dir() || self.source_view.is_some() && index + 1 == count && metadata.is_file())
+          || metadata.file_type().is_symlink()
+        {
           return Err(ExecutionError::Invalid(
-            "source write path must contain only directories".to_owned(),
+            "source write path requires directories and an explicitly selected final file".to_owned(),
           ));
         }
         #[cfg(windows)]
@@ -422,6 +434,19 @@ impl FactoryExecutionLayout {
     let Some(job_root) = source.parent() else {
       return Err(ExecutionError::Invalid("Factory source has no job root".to_owned()));
     };
+    if let Some(view) = &self.source_view {
+      let view = canonical_directory(view, "Factory source view")?;
+      if self.source_view.as_ref() != Some(&view)
+        || !self.source_visible
+        || !self.source_read_only
+        || view.parent() != Some(job_root)
+        || [&source, &scratch, &output, &protected].contains(&&view)
+      {
+        return Err(ExecutionError::Invalid(
+          "selected source view must be a separate read-only sibling within the Job".to_owned(),
+        ));
+      }
+    }
     let roots = [
       source.as_path(),
       scratch.as_path(),
@@ -1063,6 +1088,7 @@ mod tests {
       disk_accounting: crate::ExecutionDiskAccounting::WholeJob,
       protected_inputs: protected.canonicalize().unwrap(),
       source: source.canonicalize().unwrap(),
+      source_view: None,
       source_visible: true,
       source_read_only: false,
       source_writable_paths: Vec::new(),
@@ -1094,6 +1120,36 @@ mod tests {
       network: NetworkAccess::Disabled,
     };
     (temporary, request, writable_protected)
+  }
+
+  #[cfg(unix)]
+  #[test]
+  fn selected_source_view_cannot_alias_another_job_root_or_writable_input() {
+    let (_temporary, mut request, _guard) = factory_execution_fixture();
+    let view = request.workspace.parent().unwrap().join("source-view");
+    std::fs::create_dir(&view).unwrap();
+    let layout = request.factory.as_mut().unwrap();
+    layout.source_read_only = true;
+    layout.source_view = Some(view.clone());
+    assert!(request.validate().is_ok());
+    let alias = view.with_file_name("view-link");
+    std::os::unix::fs::symlink(&view, &alias).unwrap();
+    request.factory.as_mut().unwrap().source_view = Some(alias);
+    assert!(
+      request.validate().is_err(),
+      "a re-resolvable link cannot carry selected source authority"
+    );
+    for invalid in [
+      request.workspace.clone(),
+      request.data_dir.parent().unwrap().to_owned(),
+      view.parent().unwrap().parent().unwrap().to_owned(),
+    ] {
+      request.factory.as_mut().unwrap().source_view = Some(invalid);
+      assert!(request.validate().is_err());
+    }
+    request.factory.as_mut().unwrap().source_view = Some(view);
+    request.factory.as_mut().unwrap().source_read_only = false;
+    assert!(request.validate().is_err());
   }
 
   #[test]

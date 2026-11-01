@@ -873,7 +873,7 @@ mod tests {
 mod factory_node_journal_testing;
 
 mod factory_job_policy;
-pub use factory_job_policy::factory_job_permissions;
+pub use factory_job_policy::{factory_job_permissions, factory_job_source_scope};
 
 mod factory_flow_definition;
 pub use factory_flow_definition::{

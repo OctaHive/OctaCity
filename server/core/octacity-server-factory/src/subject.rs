@@ -3,7 +3,7 @@ use serde::{Deserialize, Serialize};
 
 use crate::FactoryDigest;
 
-/// Exact immutable repository subject shared across one Factory Run.
+/// Exact immutable repository base, independent of Work correlation and sibling node resources.
 #[derive(Clone, Debug, Deserialize, Eq, Hash, PartialEq, Serialize)]
 #[serde(deny_unknown_fields)]
 pub struct ExactSubject {

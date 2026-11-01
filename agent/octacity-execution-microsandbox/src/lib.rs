@@ -128,6 +128,38 @@ pub struct MicrosandboxEngineConfig {
 }
 
 impl MicrosandboxEngine {
+  /// Qualifies the actual SDK-selected guest payload for filtered source views
+  /// and file overlays. A version string or ambient feature flag is insufficient.
+  /// Rechecking also prevents a changed installation from starting another VM.
+  #[must_use]
+  pub fn supports_selected_source_visibility(&self) -> bool {
+    if !cfg!(unix) {
+      return false;
+    }
+    let Some(local) = self.backend.as_local() else {
+      return false;
+    };
+    let Some(path) = &local.config().paths.agentd else {
+      return false;
+    };
+    // Match the SDK's maximum guest payload size; contents are never Job data.
+    let Ok(bytes) = octacity_private_fs::read_bounded_regular_file(path, 128 * 1024 * 1024) else {
+      return false;
+    };
+    let digest = hex::encode(Sha256::digest(bytes));
+    let architecture = match GUEST_PLATFORM {
+      Some("linux-aarch64") => "agentd-aarch64",
+      Some("linux-x86_64") => "agentd-x86_64",
+      _ => return false,
+    };
+    include_str!("../../../config/runtime/microsandbox-agentd-v1/SHA256SUMS")
+      .lines()
+      .any(|line| {
+        let mut fields = line.split_whitespace();
+        fields.next() == Some(digest.as_str()) && fields.next() == Some(architecture) && fields.next().is_none()
+      })
+  }
+
   /// Validates operator-owned runtime paths and initializes an isolated SDK backend.
   pub fn new(config: MicrosandboxEngineConfig) -> Result<Self, ExecutionError> {
     let MicrosandboxEngineConfig {
@@ -225,6 +257,16 @@ impl OciEngine for MicrosandboxEngine {
     }
     runner.validate()?;
     request.validate()?;
+    if request
+      .factory
+      .as_ref()
+      .is_some_and(|layout| layout.source_view.is_some())
+      && !self.supports_selected_source_visibility()
+    {
+      return Err(unavailable(
+        "Microsandbox selected-source visibility requires the qualified guest agent",
+      ));
+    }
     let deadline = Instant::now()
       .checked_add(request.max_duration)
       .ok_or_else(|| invalid("Microsandbox execution timeout is too large"))?;

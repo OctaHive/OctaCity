@@ -332,6 +332,7 @@ mod start_boundary {
           disk_accounting: ExecutionDiskAccounting::WholeJob,
           protected_inputs: protected.clone(),
           source,
+          source_view: None,
           source_visible: true,
           source_read_only: true,
           source_writable_paths: vec![],

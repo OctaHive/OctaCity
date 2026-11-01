@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from contextlib import redirect_stdout
+from contextlib import redirect_stderr, redirect_stdout
 import io
 import json
 import os
@@ -69,6 +69,44 @@ class FakeOwner:
 
 
 class LocalStandLauncherTests(unittest.TestCase):
+    def test_cli_reports_an_unqualified_guest_without_a_traceback(self):
+        diagnostic = io.StringIO()
+        with (
+            mock.patch.object(launcher, "run", side_effect=launcher.guest_runtime.StageError(
+                "repaired guest checksum mismatch"
+            )),
+            redirect_stderr(diagnostic),
+        ):
+            self.assertEqual(launcher.main(["up"]), 1)
+        self.assertIn("repaired guest checksum mismatch", diagnostic.getvalue())
+        self.assertNotIn("Traceback", diagnostic.getvalue())
+
+    @unittest.skipUnless(os.name == "posix" and shutil.which("openssl"),"requires the real stand initializer")
+    def test_up_connects_the_qualified_guest_producer_to_native_installation(self):
+        import stage_microsandbox_agentd as guest_runtime
+        installed = []
+        produced = []
+        def build_guest(architecture, output, **kwargs):
+            self.assertEqual(architecture,"aarch64")
+            output.parent.mkdir(parents=True,exist_ok=True)
+            output.write_bytes(b"qualified external build fixture")
+            produced.append(output)
+            return output.resolve()
+        def install(*args, **kwargs):
+            installed.append(kwargs)
+            raise RuntimeError("stop at native installation boundary")
+        # Stop at external installation; launch orchestration, initialization
+        # and policy loading remain real and no shared services are touched.
+        with (
+            mock.patch.object(guest_runtime,"stage_repaired_agentd",side_effect=build_guest),
+            mock.patch.object(launcher.native_stager,"prepare_inputs"),
+            mock.patch.object(launcher.native_stager,"install_native_bundle",side_effect=install),
+            self.assertRaisesRegex(RuntimeError,"native installation boundary"),
+        ):
+            launcher.run(self.arguments("up"))
+        self.assertEqual(len(produced),1)
+        self.assertEqual(installed[0]["guest_agent"],produced[0].resolve())
+
     def integration_configuration(self) -> Path:
         bundle = self.root / "config/integrations"
         bundle.mkdir(parents=True, mode=0o700)

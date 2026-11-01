@@ -24,7 +24,29 @@ pub(super) async fn validate_sources(
   policy: &dyn ManagementAuthorizationPolicy,
   context: &ManagementRequestContext,
 ) -> Result<(), ApplicationError> {
+  let source_root = octacity_server_factory::FactoryPath::new(octacity_protocol::FACTORY_SOURCE_ROOT)
+    .map_err(|_| ApplicationError::invalid())?;
   for definition in closure.definitions() {
+    for node in definition.nodes() {
+      for mount in node
+        .permissions()
+        .mounts()
+        .filter(|mount| source_root.contains(mount.root()) || mount.root().contains(&source_root))
+      {
+        match node.code() {
+          Some(octacity_server_factory::FlowCodeBinding::None) => {
+            return Err(invalid_binding(node.key(), "/code/access"));
+          }
+          Some(octacity_server_factory::FlowCodeBinding::Source {
+            access: octacity_server_factory::MountMode::ReadOnly,
+            ..
+          }) if mount.mode() == octacity_server_factory::MountMode::ReadWrite => {
+            return Err(invalid_binding(node.key(), "/code/access"));
+          }
+          _ => (),
+        }
+      }
+    }
     for (alias, source) in definition.code_sources().into_iter().flatten() {
       let field = format!("/code_sources/{alias}/repository");
       let reference = &source.repository;

@@ -543,6 +543,8 @@ jobs:
           toolchain: 1.99.0
       - name: Set up Microsandbox guest agent
         uses: ./octacity/.github/actions/setup-microsandbox-agentd
+        with:
+          repaired: 'true'
       - uses: taiki-e/install-action@83ac0ad63c0167e6f06796fab0fce28db1bf3db0 # v2.87.22
         with:
           tool: protoc
@@ -560,6 +562,11 @@ jobs:
           cargo test -p octacity-job --test backend_contract
           microsandbox_backend_satisfies_the_real_runner_contract -- --ignored --exact --nocapture
         working-directory: octacity
+      - name: Run selected-source Microsandbox contracts
+        working-directory: octacity
+        run: |
+          set -euo pipefail
+          cargo test --locked -p octacity-job --test backend_contract selected_ -- --ignored --test-threads=1
       - name: Package the server and Agent release candidates
         id: release-candidate
         uses: ./octacity/.github/actions/package-release-candidate
@@ -605,6 +612,8 @@ jobs:
           toolchain: 1.99.0
       - name: Set up Microsandbox guest agent
         uses: ./octacity/.github/actions/setup-microsandbox-agentd
+        with:
+          repaired: 'true'
       - uses: taiki-e/install-action@83ac0ad63c0167e6f06796fab0fce28db1bf3db0 # v2.87.22
         with:
           tool: protoc
@@ -613,6 +622,11 @@ jobs:
           cargo test -p octacity-job --test backend_contract
           microsandbox_backend_satisfies_the_real_runner_contract -- --ignored --exact --nocapture
         working-directory: octacity
+      - name: Run selected-source Microsandbox contracts
+        working-directory: octacity
+        run: |
+          set -euo pipefail
+          cargo test --locked -p octacity-job --test backend_contract selected_ -- --ignored --test-threads=1
       - name: Package the server and Agent release candidates
         id: release-candidate
         uses: ./octacity/.github/actions/package-release-candidate

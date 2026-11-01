@@ -34,6 +34,7 @@ import verify_local_stand_context as context
 import verify_local_stand_inputs as inputs
 import validate_octa_release_contract as release_contract
 import local_stand_state as state
+import stage_microsandbox_agentd as guest_runtime
 
 
 REPOSITORY = Path(__file__).resolve().parents[1]
@@ -594,6 +595,7 @@ def _verify_installation_manifest(
     inputs_root: Path,
     revision: str,
     protected_reader: dict[str, str] | None = None,
+    guest_digest: str | None = None,
 ) -> None:
     manifest = _json_object(root / "installation-manifest.json")
     expected_inputs = {
@@ -605,6 +607,7 @@ def _verify_installation_manifest(
         "agent_version": document["native"]["octacity_agent"]["version"],
         "octa_revision": document["native"]["octa"]["source_revision"],
         "microsandbox_version": document["native"]["microsandbox"]["version"],
+        "microsandbox_agentd_sha256": guest_digest,
         "inputs": expected_inputs,
     }
     if manifest.get("protected_reader") != protected_reader:
@@ -669,9 +672,23 @@ def install_native_bundle(
     fixture: Path,
     *,
     protected_reader_root: Path | None = None,
+    guest_agent: Path | None = None,
 ) -> Path:
     """Install verified inputs and an optional independent reader atomically."""
 
+    guest_bytes = None
+    guest_digest = None
+    if guest_agent is not None:
+        guest_bytes = state.read_regular_file(
+            guest_agent, "Microsandbox guest agent", max_bytes=128 * 1024**2,
+            modes=frozenset({0o400, 0o444, 0o500, 0o555, 0o600, 0o644, 0o700, 0o755}),
+        )
+        guest_digest = hashlib.sha256(guest_bytes).hexdigest()
+        if guest_digest != guest_runtime.qualified_digest(
+            "aarch64", guest_runtime.REPAIR_ROOT / "SHA256SUMS"
+        ):
+            raise NativeStageError("Microsandbox guest agent is not the qualified repair")
+        destination = destination.with_name(destination.name + "-agentd-" + guest_digest[:12])
     reader = None if protected_reader_root is None else _protected_reader_pin(protected_reader_root)
     if reader is not None:
         destination = destination.with_name(destination.name + "-reader-" + reader["sha256"][:12])
@@ -679,7 +696,7 @@ def install_native_bundle(
     policy_helper = inputs_root / entries[POLICY_HELPER_ROLE]["filename"]
     validate_policy_helper(policy_helper, document)
     if destination.is_dir() and not destination.is_symlink():
-        _verify_installation_manifest(destination, document, entries, inputs_root, revision, reader)
+        _verify_installation_manifest(destination, document, entries, inputs_root, revision, reader, guest_digest)
         validate_native_installation(destination, document, revision, fixture)
         _verify_job_spec_policy(destination, document, policy_helper)
         return destination.resolve()
@@ -705,6 +722,10 @@ def install_native_bundle(
         )
         _install_microsandbox(raw, root / "microsandbox")
         shutil.rmtree(raw)
+        if guest_bytes is not None:
+            guest_path = root / "microsandbox/lib/agentd"
+            guest_path.write_bytes(guest_bytes)
+            guest_path.chmod(0o755)
         if reader is not None:
             _copy_protected_reader(protected_reader_root, root, reader)
         validate_native_installation(root, document, revision, fixture)
@@ -723,6 +744,8 @@ def install_native_bundle(
         }
         if reader is not None:
             manifest["protected_reader"] = reader
+        if guest_digest is not None:
+            manifest["microsandbox_agentd_sha256"] = guest_digest
         (root / "installation-manifest.json").write_text(
             json.dumps(manifest, indent=2, sort_keys=True) + "\n", encoding="utf-8"
         )
@@ -750,9 +773,12 @@ def main() -> int:
     parser.add_argument("--agent-revision")
     parser.add_argument("--protected-reader-root", type=Path,
                         help="optional separately pinned guest reader distribution; install/all only")
+    parser.add_argument("--guest-agent",type=Path,help="optional checksum-qualified guest file-mount repair; install/all only")
     arguments = parser.parse_args()
     try:
         require_native_host()
+        if arguments.guest_agent is not None and arguments.command == "prepare":
+            raise NativeStageError("--guest-agent requires install or all")
         if arguments.protected_reader_root is not None:
             if arguments.command == "prepare":
                 raise NativeStageError("--protected-reader-root requires install or all")
@@ -779,6 +805,7 @@ def main() -> int:
                 revision,
                 arguments.fixture.resolve(),
                 protected_reader_root=arguments.protected_reader_root,
+                guest_agent=arguments.guest_agent,
             )
             print(path)
         else:

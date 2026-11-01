@@ -1,5 +1,10 @@
 import importlib.util
 import io
+import os
+import re
+import subprocess
+import tempfile
+import textwrap
 import unittest
 from pathlib import Path
 
@@ -12,6 +17,24 @@ SPEC.loader.exec_module(BACKEND_MATRIX)
 
 
 class BackendMatrixTests(unittest.TestCase):
+    @unittest.skipUnless(os.name == "posix","requires the real CI shell")
+    def test_microsandbox_source_contracts_run_on_both_jobs_and_fail_the_gate(self):
+        workflow = (REPOSITORY / ".github/workflows/backend-contracts.yml").read_text()
+        for name in ("linux-microsandbox","macos-microsandbox"):
+            with self.subTest(job=name):
+                job = re.search(rf"(?ms)^  {name}:\n(.*?)(?=^  [a-z][a-z0-9-]*:\n|\Z)",workflow).group(1)
+                self.assertIn("repaired: 'true'",job)
+                step = job.split("      - name: Run selected-source Microsandbox contracts\n",1)[1].split("      - name:",1)[0]
+                script = textwrap.dedent(step.split("        run: |\n",1)[1])
+                with tempfile.TemporaryDirectory() as temporary:
+                    log = Path(temporary) / "cargo-arguments"
+                    command = 'cargo() { printf "%s\\n" "$@" > "$ARG_LOG"; return 9; };\n'+script
+                    result = subprocess.run(["/bin/bash","-c",command],env={**os.environ,"ARG_LOG":str(log)},capture_output=True,text=True)
+                    self.assertEqual(result.returncode,9,result.stderr)
+                    args = log.read_text().splitlines()
+                    self.assertIn("selected_",args)
+                    self.assertIn("--ignored",args)
+                    self.assertIn("--test-threads=1",args)
     def test_workflow_consumes_every_planner_output(self):
         workflow = (REPOSITORY / ".github/workflows/backend-contracts.yml").read_text(
             encoding="utf-8"

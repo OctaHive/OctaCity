@@ -390,6 +390,7 @@ async fn projects_only_the_bounded_factory_roots() {
     tool_channel: None,
     protected_inputs: protected.clone(),
     source: source.clone(),
+    source_view: None,
     source_visible: true,
     source_read_only: false,
     source_writable_paths: Vec::new(),
@@ -443,6 +444,21 @@ async fn projects_only_the_bounded_factory_roots() {
   assert_eq!(read_only_plan.read_only_mounts.len(), 1);
   assert_eq!(read_only_plan.read_only_mounts[0].host, source);
   assert_eq!(read_only_plan.read_only_mounts[0].guest, FACTORY_SOURCE_ROOT);
+
+  let view = job_root.join("source-view");
+  fs::create_dir(&view).unwrap();
+  fs::write(view.join("selected.txt"), b"visible").unwrap();
+  request.factory.as_mut().unwrap().source_view = Some(view.clone());
+  let selected = SandboxPlan::build("agent-1", &runner(&release), &request)
+    .await
+    .unwrap();
+  assert_eq!(
+    selected.read_only_mounts[0].host, view,
+    "the guest must never receive the complete private checkout for a selected view"
+  );
+  assert!(selected.writable_mounts.iter().all(|mount| mount.host != source));
+  request.factory.as_mut().unwrap().source_view = None;
+  fs::remove_dir_all(view).unwrap();
 
   request.factory.as_mut().unwrap().source_visible = false;
   let black_box = SandboxPlan::build("agent-1", &runner(&release), &request)

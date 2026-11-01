@@ -246,6 +246,23 @@ class NativeAgentStartupTests(unittest.TestCase):
         self.assertNotIn("Authorization", transport.calls[0][2])
         self.assertFalse(any(key.endswith("_PROXY") for key in owner.launched[1]))
 
+    def test_qualified_guest_is_explicit_in_both_preflight_and_agent_runtime(self):
+        import stage_microsandbox_agentd as guest_runtime
+        guest = self.installation / "microsandbox/lib/agentd"
+        guest.write_bytes(b"qualified guest fixture")
+        digest = hashlib.sha256(guest.read_bytes()).hexdigest()
+        manifest = self.installation / "installation-manifest.json"
+        manifest.write_text(json.dumps({"microsandbox_version":"0.7.6","microsandbox_agentd_sha256":digest}))
+        identity = "microsandbox-0.7.6-linux-arm64-v1-agentd-"+digest
+        self.config.write_text(self.config.read_text().replace("microsandbox-0.7.6-linux-arm64-v1",identity))
+        policy = self.root / "guest-policy"; policy.mkdir()
+        (policy / "SHA256SUMS").write_text(f"{digest}  agentd-aarch64\n")
+        owner = FakeLifecycle(self.root)
+        with mock.patch.object(guest_runtime,"REPAIR_ROOT",policy):
+            _, _, doctor = self.start(owner,AgentTransport([self.online_page]))
+        self.assertEqual(owner.launched[1]["MSB_AGENTD_PATH"],str(guest))
+        self.assertEqual(doctor.call_args.kwargs["env"]["MSB_AGENTD_PATH"],str(guest))
+
     def test_registration_accepts_agent_page_with_admission_counts(self):
         page = {**self.online_page, "active_count": 1, "total_count": 1}
         owner = FakeLifecycle(self.root)

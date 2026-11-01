@@ -263,6 +263,46 @@ impl SourceMaterializer for NoVcsAccess {
   }
 }
 
+struct SelectedSourceProbe;
+#[async_trait]
+impl SourceMaterializer for SelectedSourceProbe {
+  fn verify(&self, _: &SourceSpec) -> Result<(), SourceError> {
+    Ok(())
+  }
+  async fn materialize(
+    &self,
+    source: &SourceSpec,
+    request: SourceMaterializationRequest,
+    timeout: Duration,
+    grace: Duration,
+    cancel: CancellationToken,
+  ) -> Result<MaterializedSource, SourceError> {
+    let root = request.destination.clone();
+    let result = FixtureSource { oci_probe: None }
+      .materialize(source, request, timeout, grace, cancel)
+      .await?;
+    std::fs::create_dir_all(root.join("docs/public")).unwrap();
+    std::fs::create_dir_all(root.join("docs/public/empty/nested")).unwrap();
+    std::fs::create_dir(root.join("docs/private-empty")).unwrap();
+    #[cfg(unix)]
+    {
+      use std::os::unix::fs::PermissionsExt;
+      let script = root.join("docs/public/check.sh");
+      std::fs::write(&script, "#!/bin/sh\nprintf selected-script\n").unwrap();
+      std::fs::set_permissions(script, std::fs::Permissions::from_mode(0o755)).unwrap();
+    }
+    std::fs::create_dir(root.join("src")).unwrap();
+    std::fs::write(root.join("docs/public/readme"), b"selected-guidance").unwrap();
+    std::fs::write(root.join("docs/private"), b"secret-canary").unwrap();
+    std::fs::write(
+      root.join("src/config.rs"),
+      b"secret-one\nsecret-two\nallowed-three\nallowed-four\nsecret-five\n",
+    )
+    .unwrap();
+    Ok(result)
+  }
+}
+
 /// Leaves host-only data in the unused source directory to qualify the real guest boundary.
 struct HiddenSourceProbe(Arc<dyn ExecutionBackend>);
 #[async_trait]
@@ -285,6 +325,48 @@ impl ExecutionBackend for HiddenSourceProbe {
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 #[ignore = "requires an isolated Microsandbox state/work root and a released Linux Octa bundle"]
 async fn source_free_ordinary_job_runs_retries_and_cancels_on_microsandbox() {
+  managed_source_contract(SourceContract::Absent).await;
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+#[ignore = "requires an isolated Microsandbox state/work root and a released Linux Octa bundle"]
+async fn selected_source_job_hides_unselected_paths_and_lines_on_microsandbox() {
+  managed_source_contract(SourceContract::ReadOnly).await;
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+#[ignore = "requires an isolated Microsandbox state/work root and a released Linux Octa bundle"]
+async fn selected_writable_source_hides_neighbors_and_retains_only_authorized_writes() {
+  managed_source_contract(SourceContract::Writable).await;
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+#[ignore = "requires an isolated Microsandbox state/work root and a released Linux Octa bundle"]
+async fn selected_writable_file_does_not_grant_its_parent_directory() {
+  managed_source_contract(SourceContract::WritableFile).await;
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+#[ignore = "requires an isolated Microsandbox state/work root and a released Linux Octa bundle"]
+async fn selected_new_writable_directory_keeps_its_parent_readonly() {
+  managed_source_contract(SourceContract::WritableEmptyDirectory).await;
+}
+
+#[derive(Clone, Copy)]
+enum SourceContract {
+  Absent,
+  ReadOnly,
+  Writable,
+  WritableFile,
+  WritableEmptyDirectory,
+}
+
+async fn managed_source_contract(case: SourceContract) {
+  let selected = !matches!(case, SourceContract::Absent);
+  let writable = matches!(
+    case,
+    SourceContract::Writable | SourceContract::WritableFile | SourceContract::WritableEmptyDirectory
+  );
   let work_root = required_path("OCTACITY_CONTRACT_MICROSANDBOX_WORK_ROOT");
   let bytes = required_u64("OCTACITY_CONTRACT_WORKSPACE_BYTES");
   let runner = RunnerInstallation::load(&required_path("OCTACITY_CONTRACT_OCTA_RELEASE_ROOT")).unwrap();
@@ -311,25 +393,141 @@ async fn source_free_ordinary_job_runs_retries_and_cancels_on_microsandbox() {
     &runner,
   );
   let body = b"version: 1\ntasks:\n  contract:\n    shell: |\n      set -eu\n      test ! -e /workspace/source/source-canary\n      test ! -e /workspace/source/.git\n      test ! -e /workspace/.git\n      test -r /octacity/protected/Octafile.yml\n      ! printf tamper >> /octacity/protected/Octafile.yml || exit 1\n      printf selected-input > /workspace/output/result\n      echo source-free-contract\n  wait:\n    shell: sleep 60\n".to_vec();
+  let body = if selected {
+    b"version: 1\ntasks:\n  contract:\n    shell: |\n      set -eu\n      test ! -e /workspace/source/Octafile.yml\n      test ! -e /workspace/source/docs/private\n      test ! -e /workspace/source/.git\n      test \"$(cat /workspace/source/docs/public/readme)\" = selected-guidance\n      test \"$(sed -n '3p' /workspace/source/src/config.rs)\" = allowed-three\n      test \"$(sed -n '4p' /workspace/source/src/config.rs)\" = allowed-four\n      test \"$(wc -l < /workspace/source/src/config.rs)\" -eq 4\n      ! grep secret /workspace/source/src/config.rs || exit 1\n      ! printf tamper >> /workspace/source/docs/public/readme || exit 1\n      printf selected-input > /workspace/output/result\n  wait:\n    shell: sleep 60\n".to_vec()
+  } else {
+    body
+  };
+  let body = if writable {
+    br#"version: 1
+tasks:
+  contract:
+    shell: |
+      set -eu
+      test ! -e /workspace/source/Octafile.yml
+      test ! -e /workspace/source/docs/private
+      test ! -e /workspace/source/src
+      test ! -e /workspace/source/.git
+      printf authorized-update > /workspace/source/docs/public/readme
+      test "$(cat /workspace/source/docs/public/readme)" = authorized-update
+      ! printf tamper > /workspace/source/docs/private || exit 1
+      ! mkdir /workspace/source/unselected || exit 1
+      printf selected-input > /workspace/output/result
+  wait:
+    shell: sleep 60
+"#
+    .to_vec()
+  } else {
+    body
+  };
+  let body = if matches!(case, SourceContract::WritableFile) {
+    String::from_utf8(body)
+      .unwrap()
+      .replace(
+        "printf selected-input",
+        "! printf tamper > /workspace/source/docs/public/neighbor || exit 1\n      printf selected-input",
+      )
+      .into_bytes()
+  } else {
+    body
+  };
+  let body = if matches!(case, SourceContract::ReadOnly) {
+    String::from_utf8(body)
+      .unwrap()
+      .replace(
+        "printf selected-input",
+        "test \"$(/workspace/source/docs/public/check.sh)\" = selected-script\n      test -d /workspace/source/docs/public/empty/nested\n      test ! -e /workspace/source/docs/private-empty\n      printf selected-input",
+      )
+      .into_bytes()
+  } else if matches!(case, SourceContract::WritableEmptyDirectory) {
+    br#"version: 1
+tasks:
+  contract:
+    shell: |
+      set -eu
+      test -d /workspace/source/generated/empty
+      test -z "$(ls -A /workspace/source/generated/empty)"
+      test ! -e /workspace/source/docs
+      printf authorized-update > /workspace/source/generated/empty/result
+      ! printf tamper > /workspace/source/generated/neighbor || exit 1
+      ! mkdir /workspace/source/unselected || exit 1
+      printf selected-input > /workspace/output/result
+  wait:
+    shell: sleep 60
+"#
+    .to_vec()
+  } else {
+    body
+  };
   let mut managed = oci_v3_specification(&ordinary, &runner, &body);
-  managed
-    .permissions
-    .mounts
-    .retain(|mount| mount.root != "/workspace/source");
-  let mut wire = serde_json::to_value(managed).unwrap();
-  wire["protocol_version"] = serde_json::json!(4);
-  wire["source"] = serde_json::json!({"kind": "source_free_v1"});
-  let spec: octacity_protocol::JobSpecV4 = serde_json::from_value(wire).unwrap();
-  spec
-    .validate(&octacity_protocol::JobBinding {
-      job_id: &spec.job_id,
-      attempt: 1,
-      now: spec.issued_at,
-    })
-    .unwrap();
-  assert!(spec.factory.is_none());
+  let spec: VerifiedJobSpec = if selected {
+    managed
+      .permissions
+      .mounts
+      .iter_mut()
+      .find(|mount| mount.root == "/workspace/source")
+      .unwrap()
+      .mode = if writable {
+      FactoryMountModeV3::ReadWrite
+    } else {
+      FactoryMountModeV3::ReadOnly
+    };
+    managed.factory = Some(serde_json::from_value(serde_json::json!({
+      "factory_run_id":"scope-contract-run","factory_configuration_id":"scope-contract-config",
+      "factory_configuration_version":1,"flow_run_id":"scope-contract-flow","workflow_cycle_id":"scope-contract-cycle",
+      "node_attempt_id":"scope-contract-node","input_digest":"0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef","subject_digest":"0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef",
+      "source_scope":{"resource_digest":"0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef","selections":[{"path":"docs/public"},{"path":"src/config.rs","lines":{"first":3,"last":4}}]}
+    })).unwrap());
+    if writable {
+      let selections = &mut managed
+        .factory
+        .as_mut()
+        .unwrap()
+        .source_scope
+        .as_mut()
+        .unwrap()
+        .selections;
+      selections.truncate(1);
+      selections[0].path = match case {
+        SourceContract::WritableFile => "docs/public/readme",
+        SourceContract::WritableEmptyDirectory => "generated/empty",
+        _ => "docs/public",
+      }
+      .to_owned();
+    }
+    managed
+      .required_enforcement
+      .push(FactoryEnforcementCapabilityV3::SourceVisibilityV1);
+    managed.into()
+  } else {
+    managed
+      .permissions
+      .mounts
+      .retain(|mount| mount.root != "/workspace/source");
+    let mut wire = serde_json::to_value(managed).unwrap();
+    wire["protocol_version"] = serde_json::json!(4);
+    wire["source"] = serde_json::json!({"kind":"source_free_v1"});
+    serde_json::from_value::<octacity_protocol::JobSpecV4>(wire)
+      .unwrap()
+      .into()
+  };
+  let (permissions, issued_at) = match &spec {
+    VerifiedJobSpec::V3(spec) => (spec.permissions.clone(), spec.issued_at),
+    VerifiedJobSpec::V4(spec) => (spec.permissions.clone(), spec.issued_at),
+    _ => unreachable!(),
+  };
+  let binding = octacity_protocol::JobBinding {
+    job_id: spec.job_id(),
+    attempt: 1,
+    now: issued_at,
+  };
+  match &spec {
+    VerifiedJobSpec::V3(spec) => spec.validate(&binding).unwrap(),
+    VerifiedJobSpec::V4(spec) => spec.validate(&binding).unwrap(),
+    _ => unreachable!(),
+  }
   let mut configuration = executor_config(work_root, bytes, false, vec![]);
-  configuration.factory_permissions = Some(spec.permissions.clone());
+  configuration.factory_permissions = Some(permissions);
   let capability = ExecutionCapabilityV2 {
     provider: ExecutionProviderId::new(MICROSANDBOX_ENGINE_NAME).unwrap(),
     mode: ExecutionMode::Virtualization,
@@ -338,17 +536,32 @@ async fn source_free_ordinary_job_runs_retries_and_cancels_on_microsandbox() {
     guarantees: guarantees_for(ExecutionMode::Virtualization),
     immutable_images: true,
   };
+  let backend: Arc<dyn ExecutionBackend> = Arc::new(OciBackend::new(vec![engine]).unwrap());
+  let backend: Arc<dyn ExecutionBackend> = if selected {
+    backend
+  } else {
+    Arc::new(HiddenSourceProbe(backend))
+  };
   let route = ExecutionBackendRoute::new(
     capability,
     ExecutionEnvironmentId::new("source-free-microsandbox-contract").unwrap(),
-    Arc::new(HiddenSourceProbe(Arc::new(OciBackend::new(vec![engine]).unwrap()))),
+    backend,
   )
   .unwrap()
-  .with_factory_enforcement(FactoryEnforcementCapabilityV3::ALL)
+  .with_factory_enforcement(
+    FactoryEnforcementCapabilityV3::ALL
+      .into_iter()
+      .chain(selected.then_some(FactoryEnforcementCapabilityV3::SourceVisibilityV1)),
+  )
   .unwrap();
+  let source: Arc<dyn SourceMaterializer> = if selected {
+    Arc::new(SelectedSourceProbe)
+  } else {
+    Arc::new(NoVcsAccess)
+  };
   let mut executor = JobExecutor::new(
     runner,
-    Arc::new(NoVcsAccess),
+    source,
     Arc::new(FileWorkloadIdentityProvider::new(BTreeMap::new())),
     BTreeMap::new(),
     configuration,
@@ -368,17 +581,22 @@ async fn source_free_ordinary_job_runs_retries_and_cancels_on_microsandbox() {
     // Each fresh executor view uses the same private-workspace and cleanup owner.
     executor = executor.with_protected_input_stager(stager);
     let mut next = spec.clone();
-    next.job_id = format!("source-free-attempt-{attempt}");
-    next.attempt = attempt;
     let cancelling = attempt == 3;
+    let (job, number, execution) = match &mut next {
+      VerifiedJobSpec::V3(spec) => (&mut spec.job_id, &mut spec.attempt, &mut spec.execution),
+      VerifiedJobSpec::V4(spec) => (&mut spec.job_id, &mut spec.attempt, &mut spec.execution),
+      _ => unreachable!(),
+    };
+    *job = format!("source-contract-attempt-{attempt}");
+    *number = attempt;
     if cancelling {
-      next.execution.tasks = vec!["wait".to_owned()];
+      execution.tasks = vec!["wait".to_owned()];
     }
     let cancellation = CancellationToken::new();
     let (sender, mut receiver) = mpsc::channel(128);
     let execute = executor.execute(
       ExecuteJobRequest {
-        spec: next.into(),
+        spec: next,
         source_credentials: BTreeMap::new(),
         cache_grant: None,
         protected_inputs: vec![protected_transfer(&body, &origin)],
@@ -407,17 +625,35 @@ async fn source_free_ordinary_job_runs_retries_and_cancels_on_microsandbox() {
       "{:?}",
       completed.runner()
     );
-    assert!(completed.source().is_none());
+    assert_eq!(completed.source().is_some(), selected);
     assert!(completed.change_set().is_none());
     assert_eq!(
       completed.execution().unwrap().provider.as_str(),
       MICROSANDBOX_ENGINE_NAME
     );
     assert!(!completed.workspace().join(".git").exists());
-    assert_eq!(
-      std::fs::read(completed.workspace().join("source-canary")).unwrap(),
-      b"host-only-fixture"
-    );
+    if selected {
+      assert_eq!(
+        std::fs::read(completed.workspace().join("docs/private")).unwrap(),
+        b"secret-canary"
+      );
+      if writable && !cancelling {
+        let retained = if matches!(case, SourceContract::WritableEmptyDirectory) {
+          "generated/empty/result"
+        } else {
+          "docs/public/readme"
+        };
+        assert_eq!(
+          std::fs::read(completed.workspace().join(retained)).unwrap(),
+          b"authorized-update"
+        );
+      }
+    } else {
+      assert_eq!(
+        std::fs::read(completed.workspace().join("source-canary")).unwrap(),
+        b"host-only-fixture"
+      );
+    }
     let root = completed.workspace().parent().unwrap().to_owned();
     if !cancelling {
       assert_eq!(std::fs::read(root.join("output/result")).unwrap(), b"selected-input");

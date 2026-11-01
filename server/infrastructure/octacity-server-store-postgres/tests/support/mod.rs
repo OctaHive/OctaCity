@@ -98,3 +98,8 @@ pub mod evidence;
 
 #[allow(dead_code)]
 pub mod protected_input_job;
+
+#[allow(dead_code)]
+pub mod authoritative_fixture;
+#[allow(dead_code)] // Only historical migration contracts construct these rows.
+pub mod legacy_factory_admission;

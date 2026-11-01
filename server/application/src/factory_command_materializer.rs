@@ -152,6 +152,7 @@ impl<C: BuildExecutionContextSource, S: FactoryExecutionInputStore, B: ArtifactB
       )
       .await
       .map_err(|_| Unavailable)?;
+    crate::factory_build_materialization::validate_factory_build_context(&context, intent)?;
     self.catalog.validate_dispatch(intent, &context.job_spec_toolchain)?;
     if !profile
       .pipeline_contract()

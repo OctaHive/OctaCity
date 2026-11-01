@@ -1,14 +1,14 @@
 use std::sync::Arc;
 
-use octacity_server_domain::{Timestamp, TriggerIdentity};
+use octacity_server_domain::{BuildSourceSelection, Timestamp, TriggerIdentity};
 use octacity_server_store::{
   ClaimInternalTriggerEvents, CompleteInternalTriggerEvent, InternalTriggerEventStore, WorkerOwner,
 };
 use thiserror::Error;
 
 use crate::{
-  InternalTriggerDefinition, InternalTriggerSourceStrategy, ManualSourceSelection, ManualTriggerCommand,
-  ManualTriggerError, ManualTriggerService,
+  InternalTriggerDefinition, InternalTriggerSourceStrategy, ManualTriggerCommand, ManualTriggerError,
+  ManualTriggerService,
 };
 
 /// Counts produced by one bounded internal-Trigger outbox pass.
@@ -91,7 +91,7 @@ where
               trigger: matched.trigger,
               target: matched.target,
               deduplication_identity,
-              source: downstream_source(definition.source, &claim.source_revision).into(),
+              source: downstream_source(definition.source, &claim.source),
               parameters: definition.parameters,
               priority: definition.priority,
               observed_at: claim.occurred_at,
@@ -117,13 +117,10 @@ where
   }
 }
 
-fn downstream_source(
-  strategy: InternalTriggerSourceStrategy,
-  upstream_revision: &octacity_server_domain::ImmutableRevision,
-) -> ManualSourceSelection {
+fn downstream_source(strategy: InternalTriggerSourceStrategy, upstream: &BuildSourceSelection) -> BuildSourceSelection {
   match strategy {
-    InternalTriggerSourceStrategy::InheritRevision => ManualSourceSelection::ExactRevision(upstream_revision.clone()),
-    InternalTriggerSourceStrategy::ResolveTarget(source) => source,
+    InternalTriggerSourceStrategy::InheritRevision => upstream.clone(),
+    InternalTriggerSourceStrategy::ResolveTarget(source) => source.into(),
   }
 }
 
@@ -163,8 +160,8 @@ mod tests {
 
   use super::*;
   use crate::{
-    ManualTriggerContext, ManualTriggerContextError, ManualTriggerContextProvider, RevisionResolutionError,
-    RevisionResolutionRequest, RevisionResolver,
+    ManualSourceSelection, ManualTriggerContext, ManualTriggerContextError, ManualTriggerContextProvider,
+    RevisionResolutionError, RevisionResolutionRequest, RevisionResolver,
   };
 
   #[test]
@@ -176,7 +173,7 @@ mod tests {
         claims: Mutex::new(vec![InternalTriggerEventClaim {
           event_identity: TriggerIdentity::new("00000000-0000-0000-0000-000000000099").unwrap(),
           source_build_id: id(2),
-          source_revision: ImmutableRevision::new("abc").unwrap(),
+          source: ManualSourceSelection::ExactRevision(ImmutableRevision::new("abc").unwrap()).into(),
           source_target: target(),
           source_origin: octacity_server_store::InternalTriggerSourceOrigin::Trigger(Box::new(
             source_occurrence.clone(),
@@ -222,8 +219,11 @@ mod tests {
   fn inherited_source_uses_the_upstream_immutable_revision() {
     let revision = ImmutableRevision::new("upstream-commit").unwrap();
     assert_eq!(
-      downstream_source(InternalTriggerSourceStrategy::InheritRevision, &revision),
-      ManualSourceSelection::ExactRevision(revision)
+      downstream_source(
+        InternalTriggerSourceStrategy::InheritRevision,
+        &ManualSourceSelection::ExactRevision(revision.clone()).into()
+      ),
+      ManualSourceSelection::ExactRevision(revision).into()
     );
   }
 

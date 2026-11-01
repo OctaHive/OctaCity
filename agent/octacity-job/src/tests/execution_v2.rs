@@ -987,6 +987,313 @@ impl SourceMaterializer for NoSourceAccess {
   }
 }
 
+/// System-boundary source fixture; the executor owns projection and cleanup.
+struct ScopedSource(Arc<dyn SourceMaterializer>);
+#[async_trait]
+impl SourceMaterializer for ScopedSource {
+  fn verify(&self, source: &SourceSpec) -> Result<(), SourceError> {
+    self.0.verify(source)
+  }
+  async fn materialize(
+    &self,
+    source: &SourceSpec,
+    request: SourceMaterializationRequest,
+    timeout: Duration,
+    grace: Duration,
+    cancel: CancellationToken,
+  ) -> Result<MaterializedSource, SourceError> {
+    let root = request.destination.clone();
+    let result = self.0.materialize(source, request, timeout, grace, cancel).await?;
+    fs::create_dir_all(root.join("docs/public")).unwrap();
+    fs::create_dir_all(root.join("docs/public/empty/nested")).unwrap();
+    fs::create_dir(root.join("docs/unselected-empty")).unwrap();
+    fs::create_dir_all(root.join("src")).unwrap();
+    fs::write(root.join("docs/public/readme"), "selected guidance").unwrap();
+    fs::write(root.join("docs/private"), "unselected canary").unwrap();
+    #[cfg(unix)]
+    {
+      use std::os::unix::fs::PermissionsExt;
+      let script = root.join("docs/public/check.sh");
+      fs::write(&script, "#!/bin/sh\nprintf selected-script\n").unwrap();
+      fs::set_permissions(&script, fs::Permissions::from_mode(0o6755)).unwrap();
+      let outside = root.parent().unwrap().join("unselected-tree");
+      fs::create_dir_all(outside.join("empty")).unwrap();
+      std::os::unix::fs::symlink(&outside, root.join("docs/redirect")).unwrap();
+    }
+    fs::write(
+      root.join("src/config.rs"),
+      "secret one\nsecret two\nallowed three\nallowed four\nsecret five\n",
+    )
+    .unwrap();
+    Ok(result)
+  }
+}
+struct ScopedBackend {
+  inner: Arc<dyn ExecutionBackend>,
+  writable: bool,
+}
+#[async_trait]
+impl ExecutionBackend for ScopedBackend {
+  async fn start(
+    &self,
+    runner: &RunnerProgram,
+    request: StartExecution,
+    cancel: CancellationToken,
+  ) -> Result<Box<dyn RunningExecution>, ExecutionError> {
+    let layout = request.factory.as_ref().unwrap();
+    let visible = layout.source_view.as_ref().unwrap_or(&layout.source);
+    assert!(
+      !visible.join("Octafile.yml").exists(),
+      "unselected repository content must stay private"
+    );
+    assert!(!visible.join("docs/private").exists());
+    assert!(visible.join("docs/public/empty/nested").is_dir());
+    assert!(!visible.join("docs/unselected-empty").exists());
+    assert_eq!(
+      fs::read_to_string(visible.join("docs/public/readme")).unwrap(),
+      "selected guidance"
+    );
+    if self.writable {
+      assert!(!visible.join("src/config.rs").exists());
+      assert_eq!(layout.source_writable_paths, [layout.source.join("docs/public")]);
+      fs::write(layout.source_writable_paths[0].join("readme"), "authorized update").unwrap();
+    } else {
+      assert_eq!(
+        fs::read_to_string(visible.join("src/config.rs")).unwrap(),
+        "\n\nallowed three\nallowed four\n"
+      );
+    }
+    assert!(layout.source_read_only);
+    #[cfg(unix)]
+    {
+      use std::os::unix::fs::PermissionsExt;
+      let script = visible.join("docs/public/check.sh");
+      let output = std::process::Command::new(&script)
+        .output()
+        .expect("a selected repository script must remain executable");
+      assert!(output.status.success());
+      assert_eq!(output.stdout, b"selected-script");
+      assert_eq!(fs::metadata(&script).unwrap().permissions().mode() & 0o6000, 0);
+      assert_eq!(
+        fs::metadata(visible.join("docs/public/readme"))
+          .unwrap()
+          .permissions()
+          .mode()
+          & 0o111,
+        0,
+        "ordinary source data must not gain execute permission"
+      );
+    }
+    self.inner.start(runner, request, cancel).await
+  }
+  async fn cleanup_orphans(&self) -> Result<(), ExecutionError> {
+    self.inner.cleanup_orphans().await
+  }
+}
+
+async fn selected_source_fixture() -> CredentialJobFixture {
+  let mut fixture =
+    credential_job_fixture_with_document(b"version: 1\ntasks:\n  implement:\n    shell: echo managed\n").await;
+  fixture.spec.execution.credential_profile = None;
+  fixture.spec.permissions.secret_profiles.clear();
+  fixture
+    .spec
+    .permissions
+    .mounts
+    .iter_mut()
+    .find(|mount| mount.root == FACTORY_SOURCE_ROOT)
+    .unwrap()
+    .mode = FactoryMountModeV3::ReadOnly;
+  let mut causality = capture_causality();
+  causality.change_set_capture = None;
+  causality.source_scope = Some(
+    serde_json::from_value(serde_json::json!({
+      "resource_digest": DIGEST,
+      "selections": [
+        {"path":"docs/public"}, {"path":"docs/public/readme"},
+        {"path":"src/config.rs","lines":{"first":3,"last":3}},
+        {"path":"src/config.rs","lines":{"first":4,"last":4}}
+      ]
+    }))
+    .unwrap(),
+  );
+  fixture.spec.factory = Some(causality);
+  fixture
+    .spec
+    .required_enforcement
+    .push(FactoryEnforcementCapabilityV3::SourceVisibilityV1);
+  fixture.executor.factory_permissions = Some(fixture.spec.permissions.clone());
+  fixture.executor.source = Arc::new(ScopedSource(fixture.executor.source.clone()));
+  fixture
+}
+
+#[tokio::test]
+async fn selected_source_paths_and_lines_reach_only_the_scoped_backend_view() {
+  let mut fixture = selected_source_fixture().await;
+  for route in fixture.executor.execution_backends.values_mut() {
+    route
+      .factory_enforcement
+      .insert(FactoryEnforcementCapabilityV3::SourceVisibilityV1);
+    route.backend = Arc::new(ScopedBackend {
+      inner: route.backend.clone(),
+      writable: false,
+    });
+  }
+  let (events, _receiver) = mpsc::channel(128);
+  let completion = fixture
+    .executor
+    .execute(
+      ExecuteJobRequest {
+        spec: fixture.spec.into(),
+        source_credentials: BTreeMap::new(),
+        cache_grant: None,
+        protected_inputs: fixture.inputs,
+      },
+      CancellationToken::new(),
+      &events,
+    )
+    .await
+    .unwrap();
+  assert!(
+    completion.workspace().join("docs/private").exists(),
+    "trusted checkout retains the exact revision"
+  );
+  assert_eq!(fixture.source_calls.load(Ordering::SeqCst), 1);
+  assert_eq!(fixture.starts.load(Ordering::SeqCst), 1);
+  completion.cleanup().await.unwrap();
+  fixture.server.abort();
+}
+
+#[tokio::test]
+async fn selected_writable_source_updates_only_its_declared_directory() {
+  let mut fixture = selected_source_fixture().await;
+  fixture
+    .spec
+    .factory
+    .as_mut()
+    .unwrap()
+    .source_scope
+    .as_mut()
+    .unwrap()
+    .selections
+    .truncate(1);
+  fixture
+    .spec
+    .permissions
+    .mounts
+    .iter_mut()
+    .find(|mount| mount.root == FACTORY_SOURCE_ROOT)
+    .unwrap()
+    .mode = FactoryMountModeV3::ReadWrite;
+  fixture.executor.factory_permissions = Some(fixture.spec.permissions.clone());
+  for route in fixture.executor.execution_backends.values_mut() {
+    route
+      .factory_enforcement
+      .insert(FactoryEnforcementCapabilityV3::SourceVisibilityV1);
+    route.backend = Arc::new(ScopedBackend {
+      inner: route.backend.clone(),
+      writable: true,
+    });
+  }
+  let (events, _receiver) = mpsc::channel(128);
+  let completion = fixture
+    .executor
+    .execute(
+      ExecuteJobRequest {
+        spec: fixture.spec.into(),
+        source_credentials: BTreeMap::new(),
+        cache_grant: None,
+        protected_inputs: fixture.inputs,
+      },
+      CancellationToken::new(),
+      &events,
+    )
+    .await
+    .unwrap();
+  assert_eq!(
+    fs::read_to_string(completion.workspace().join("docs/public/readme")).unwrap(),
+    "authorized update"
+  );
+  assert_eq!(
+    fs::read_to_string(completion.workspace().join("docs/private")).unwrap(),
+    "unselected canary"
+  );
+  completion.cleanup().await.unwrap();
+  fixture.server.abort();
+}
+
+#[tokio::test]
+async fn unqualified_selected_source_stops_before_private_downloads_or_vcs() {
+  let fixture = selected_source_fixture().await;
+  let (events, _receiver) = mpsc::channel(128);
+  let failure = fixture
+    .executor
+    .execute(
+      ExecuteJobRequest {
+        spec: fixture.spec.into(),
+        source_credentials: BTreeMap::new(),
+        cache_grant: None,
+        protected_inputs: fixture.inputs,
+      },
+      CancellationToken::new(),
+      &events,
+    )
+    .await
+    .unwrap_err();
+  assert!(matches!(
+    failure.error(),
+    JobError::FactoryPreflight(FactoryPreflightError::BackendCapability)
+  ));
+  assert_eq!(fixture.downloads.load(Ordering::SeqCst), 0);
+  assert_eq!(fixture.source_calls.load(Ordering::SeqCst), 0);
+  assert_eq!(fixture.starts.load(Ordering::SeqCst), 0);
+  failure.cleanup().await.unwrap();
+  fixture.server.abort();
+}
+
+#[cfg(unix)]
+#[tokio::test]
+async fn selected_directory_cannot_traverse_a_symlink_in_an_ancestor() {
+  let mut fixture = selected_source_fixture().await;
+  fixture
+    .spec
+    .factory
+    .as_mut()
+    .unwrap()
+    .source_scope
+    .as_mut()
+    .unwrap()
+    .selections = serde_json::from_value(serde_json::json!([{"path":"docs/redirect/empty"}])).unwrap();
+  for route in fixture.executor.execution_backends.values_mut() {
+    route
+      .factory_enforcement
+      .insert(FactoryEnforcementCapabilityV3::SourceVisibilityV1);
+  }
+  let (events, _receiver) = mpsc::channel(128);
+  let outcome = fixture
+    .executor
+    .execute(
+      ExecuteJobRequest {
+        spec: fixture.spec.into(),
+        source_credentials: BTreeMap::new(),
+        cache_grant: None,
+        protected_inputs: fixture.inputs,
+      },
+      CancellationToken::new(),
+      &events,
+    )
+    .await;
+  match outcome {
+    Ok(completed) => {
+      completed.cleanup().await.unwrap();
+      panic!("a selected empty directory through a symlink must fail before workload startup");
+    }
+    Err(failed) => failed.cleanup().await.unwrap(),
+  }
+  assert_eq!(fixture.starts.load(Ordering::SeqCst), 0);
+  fixture.server.abort();
+}
+
 struct SourceFreeBackend(Arc<dyn ExecutionBackend>);
 #[async_trait]
 impl ExecutionBackend for SourceFreeBackend {
@@ -1909,6 +2216,7 @@ fn capture_causality() -> FactoryCausalityV3 {
     node_attempt_id: "00000000-0000-0000-0000-000000000003".to_owned(),
     input_digest: DIGEST.to_owned(),
     subject_digest: DIGEST.to_owned(),
+    source_scope: None,
     source_write_paths: None,
     change_set_capture: Some(ChangeSetCaptureV3 {
       author_name: "OctaCity Factory".to_owned(),

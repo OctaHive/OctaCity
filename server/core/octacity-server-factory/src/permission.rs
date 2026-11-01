@@ -132,7 +132,10 @@ impl FactoryPath {
     &self.0
   }
 
-  fn contains(&self, other: &Self) -> bool {
+  /// Whether this canonical root covers the other path, including an exact match.
+  /// Directory boundaries matter: `/src` does not cover `/src-other`.
+  #[must_use]
+  pub fn contains(&self, other: &Self) -> bool {
     self == other
       || self.0 == "/"
       || other

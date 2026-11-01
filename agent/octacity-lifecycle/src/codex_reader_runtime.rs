@@ -266,6 +266,9 @@ impl ExecutionBackend for ControlledBackend {
     if !main_layout.source_writable_paths.is_empty() {
       return Err(execution_error());
     }
+    // Only the confined reader receives the same narrowed source view. The
+    // harness receives neither this view nor the private reconstruction tree.
+    let source_view = main_layout.source_view.take();
     main_layout.source_visible = false;
     main_layout.source_read_only = true;
     let job = source.parent().ok_or_else(execution_error)?;
@@ -295,6 +298,7 @@ impl ExecutionBackend for ControlledBackend {
       disk_accounting: octacity_execution::ExecutionDiskAccounting::WholeJob,
       protected_inputs: roots[2].clone(),
       source,
+      source_view,
       source_visible: true,
       source_read_only: true,
       source_writable_paths: vec![],

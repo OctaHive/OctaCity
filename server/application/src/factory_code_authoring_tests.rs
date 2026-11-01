@@ -2,6 +2,165 @@
 use super::*;
 
 #[test]
+fn readonly_step_code_rejects_a_writable_source_mount_before_publication() {
+  run_ready(async {
+    let project = ProjectId::generate();
+    let (repositories, inventory) = code_inventory(project).await;
+    let mut wire = serde_json::to_value(layout_draft()).unwrap();
+    wire["root"]["code_sources"] = serde_json::Value::Object(inventory);
+    for node in wire["root"]["nodes"].as_array_mut().unwrap() {
+      node["code"] = serde_json::json!({"kind":"none"});
+    }
+    wire["root"]["nodes"][0]["code"] = serde_json::json!({
+      "kind":"source", "source":"first", "access":"read_only",
+      "scope":{"kind":"repository"}, "revision":{"kind":"admitted_base"},
+    });
+    for (root, mode, permitted) in [
+      (octacity_protocol::FACTORY_SOURCE_ROOT.to_owned(), "read_write", false),
+      ("/workspace".to_owned(), "read_write", false),
+      (
+        format!("{}/nested", octacity_protocol::FACTORY_SOURCE_ROOT),
+        "read_write",
+        false,
+      ),
+      (octacity_protocol::FACTORY_SOURCE_ROOT.to_owned(), "read_only", true),
+      (
+        format!("{}-other", octacity_protocol::FACTORY_SOURCE_ROOT),
+        "read_write",
+        true,
+      ),
+      (octacity_protocol::FACTORY_SCRATCH_ROOT.to_owned(), "read_write", true),
+    ] {
+      let mut draft = wire.clone();
+      let mut permissions = serde_json::to_value(FactoryPermissionSet::deny_all()).unwrap();
+      permissions["mounts"] = serde_json::json!([{"root":root, "mode":mode}]);
+      draft["root"]["nodes"][0]["permissions"] = permissions.clone();
+      draft["root"]["execution"]["permissions"] = permissions.clone();
+      draft["limits"]["permissions"] = permissions.clone();
+      let result = code_queries(repositories.clone())
+        .handle_query(
+          &context(),
+          crate::ValidateFactoryFlowDefinitionQuery {
+            id: FlowDefinitionId::generate(),
+            project_id: project,
+            draft: serde_json::from_value(draft).unwrap(),
+          },
+        )
+        .await;
+      if permitted {
+        let flow = result.unwrap();
+        assert_eq!(
+          flow
+            .closure
+            .definition(flow.closure.root())
+            .unwrap()
+            .node(&key("measure_layout"))
+            .unwrap()
+            .permissions(),
+          &serde_json::from_value::<FactoryPermissionSet>(permissions).unwrap(),
+          "compatible requested authority must not be silently changed"
+        );
+      } else {
+        let Err(error) = result else {
+          panic!("a read-only attachment must not retain writable code authority");
+        };
+        let ManagementHandlerError::Application(crate::ApplicationError::FactoryValidation(report)) = error else {
+          panic!("expected an actionable code access diagnostic: {error:?}");
+        };
+        assert_eq!(report.errors[0].field, "/code/access");
+        assert_eq!(report.errors[0].node, Some(key("measure_layout")));
+      }
+    }
+  });
+}
+
+#[test]
+fn explicit_no_code_step_rejects_source_mount_authority() {
+  run_ready(async {
+    let project = ProjectId::generate();
+    let (repositories, _) = code_inventory(project).await;
+    for mode in ["read_only", "read_write"] {
+      let mut wire = serde_json::to_value(layout_draft()).unwrap();
+      wire["root"]["code_sources"] = serde_json::json!({});
+      for node in wire["root"]["nodes"].as_array_mut().unwrap() {
+        node["code"] = serde_json::json!({"kind":"none"});
+      }
+      let mut permissions = serde_json::to_value(FactoryPermissionSet::deny_all()).unwrap();
+      permissions["mounts"] = serde_json::json!([
+        {"root":octacity_protocol::FACTORY_SOURCE_ROOT, "mode":mode}
+      ]);
+      wire["root"]["nodes"][0]["permissions"] = permissions.clone();
+      wire["root"]["execution"]["permissions"] = permissions.clone();
+      wire["limits"]["permissions"] = permissions;
+      let error = code_queries(repositories.clone())
+        .handle_query(
+          &context(),
+          crate::ValidateFactoryFlowDefinitionQuery {
+            id: FlowDefinitionId::generate(),
+            project_id: project,
+            draft: serde_json::from_value(wire).unwrap(),
+          },
+        )
+        .await
+        .expect_err("explicit source absence cannot retain a source mount");
+      let ManagementHandlerError::Application(crate::ApplicationError::FactoryValidation(report)) = error else {
+        panic!("expected an actionable code access diagnostic: {error:?}");
+      };
+      assert_eq!(report.errors[0].field, "/code/access");
+      assert_eq!(report.errors[0].node, Some(key("measure_layout")));
+    }
+  });
+}
+
+#[test]
+fn selected_code_paths_retain_narrowed_visibility_under_readonly_mount_ceiling() {
+  run_ready(async {
+    let project = ProjectId::generate();
+    let (repositories, inventory) = code_inventory(project).await;
+    let mut wire = serde_json::to_value(layout_draft()).unwrap();
+    wire["root"]["code_sources"] = serde_json::Value::Object(inventory);
+    for node in wire["root"]["nodes"].as_array_mut().unwrap() {
+      node["code"] = serde_json::json!({"kind":"none"});
+    }
+    wire["root"]["nodes"][0]["code"] = serde_json::json!({
+      "kind":"source", "source":"first", "access":"read_only",
+      "scope":{"kind":"selected","entries":[{"kind":"path","path":"src/allowed"}]},
+      "revision":{"kind":"admitted_base"},
+    });
+    let mut permissions = serde_json::to_value(FactoryPermissionSet::deny_all()).unwrap();
+    permissions["mounts"] = serde_json::json!([
+      {"root":octacity_protocol::FACTORY_SOURCE_ROOT, "mode":"read_only"}
+    ]);
+    wire["root"]["nodes"][0]["permissions"] = permissions.clone();
+    wire["root"]["execution"]["permissions"] = permissions.clone();
+    wire["limits"]["permissions"] = permissions;
+    let normalized = code_queries(repositories)
+      .handle_query(
+        &context(),
+        crate::ValidateFactoryFlowDefinitionQuery {
+          id: FlowDefinitionId::generate(),
+          project_id: project,
+          draft: serde_json::from_value(wire).unwrap(),
+        },
+      )
+      .await
+      .expect("qualified signing carries selected visibility independently of the mount ceiling");
+    let definition = normalized.closure.definition(normalized.closure.root()).unwrap();
+    let selected = definition
+      .nodes()
+      .iter()
+      .find(|node| node.key() == &key("measure_layout"))
+      .unwrap();
+    assert_eq!(
+      serde_json::to_value(selected.code().unwrap()).unwrap()["scope"],
+      serde_json::json!({
+        "kind":"selected","entries":[{"kind":"path","path":"src/allowed"}]
+      })
+    );
+  });
+}
+
+#[test]
 fn common_flow_can_declare_an_empty_code_inventory_and_explicit_no_code_steps() {
   run_ready(async {
     let mut wire = serde_json::to_value(layout_draft()).unwrap();

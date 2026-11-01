@@ -622,6 +622,7 @@ async fn finish_prepared_with_primary(
       node_attempt_id: intent.node().id().to_string(),
       input_digest: intent.input().digest().unwrap().to_string(),
       subject_digest: intent.input().subject().digest().to_string(),
+      source_scope: None,
       source_write_paths: None,
       change_set_capture: None,
       change_set_materialization: match &source {

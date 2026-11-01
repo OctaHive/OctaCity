@@ -361,6 +361,7 @@ fn projects_the_factory_layout_without_a_writable_parent_mount() {
       tool_channel: None,
       protected_inputs: protected.clone(),
       source: source.clone(),
+      source_view: None,
       source_visible: true,
       source_read_only: false,
       source_writable_paths: Vec::new(),

@@ -67,6 +67,7 @@ def _run_doctor(
     msb: Path,
     libkrunfw: Path,
     state_root: Path,
+    guest_agent: Path | None = None,
 ) -> None:
     microsandbox_home = state_root / "microsandbox"
     try:
@@ -79,6 +80,8 @@ def _run_doctor(
                 "MSB_LIBKRUNFW_PATH": str(libkrunfw),
             }
         )
+        if guest_agent is not None:
+            environment["MSB_AGENTD_PATH"] = str(guest_agent)
         with owner.open_log("microsandbox-preflight") as output:
             result = subprocess.run(
                 [str(msb), "doctor"],
@@ -218,7 +221,7 @@ def _start_locked(
                 maximum_delay_seconds=0,
             ),
         )
-        _run_doctor(owner, plan.msb, plan.libkrunfw, plan.state_root)
+        _run_doctor(owner, plan.msb, plan.libkrunfw, plan.state_root, plan.guest_agent)
     except (configurator.AgentConfigurationError, bootstrap.BootstrapError, lifecycle.LifecycleError) as cause:
         raise AgentStartupError(str(cause)) from cause
 
@@ -231,6 +234,9 @@ def _start_locked(
             result_state = "already_running"
         else:
             registration_not_before = now_unix_ms
+            environment = _child_environment()
+            if plan.guest_agent is not None:
+                environment["MSB_AGENTD_PATH"] = str(plan.guest_agent)
             owner.launch(
                 AGENT_PROCESS_NAME,
                 [
@@ -240,7 +246,7 @@ def _start_locked(
                     "run",
                     str(plan.configuration),
                 ],
-                environment=_child_environment(),
+                environment=environment,
                 working_directory=root,
             )
             launched = True

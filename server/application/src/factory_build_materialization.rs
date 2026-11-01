@@ -146,46 +146,17 @@ pub fn materialize_factory_managed_build(
   materialize_factory_managed_build_with_source(input, FactoryManagedSourcePlan::default())
 }
 
-/// Compiles the published DAG with an explicitly verified source plan.
-/// Checkout uses the selected node resource's exact base, independently of Work
-/// correlation, and is absent for explicit no-code input. Candidate reconstruction
-/// is signed separately and cannot be inferred from a mutable lifecycle pointer.
-pub fn materialize_factory_managed_build_with_source(
-  input: FactoryManagedBuildInput,
-  source: FactoryManagedSourcePlan,
-) -> Result<AcceptFactoryBuild, OrdinaryBuildApplicationError> {
+/// Authorizes the exact ordinary Build/source closure before private input reads or publication.
+/// The final assembler repeats this same check; compiler adapters cannot weaken it.
+pub(crate) fn validate_factory_build_context(
+  context: &BuildExecutionContext,
+  intent: &FlowBuildIntent,
+) -> Result<(), OrdinaryBuildApplicationError> {
   use OrdinaryBuildApplicationError::Invalid;
-  let context = &input.context;
-  let repository = context.repository.as_ref();
   let configuration = &context.configuration;
   let definition = &configuration.definition;
-  let work_subject = input.intent.input().subject();
-  let project_id = work_subject.project_id();
-  let resource = input.intent.input().exact_resource().ok();
-  match (resource, repository, definition.source) {
-    (Some(subject), Some(repository), None)
-      if repository.id == subject.repository_id()
-        && repository.project_id == project_id
-        && Some(repository.id) == definition.repository_id
-        && Some(repository.version) == definition.repository_version
-        && repository.definition.selection.allow_exact_revision => {}
-    (None, None, Some(octacity_server_domain::BuildSourceMode::SourceFreeV1))
-      if matches!(
-        input.intent.input().code(),
-        Some(octacity_server_factory::FlowNodeCode::None)
-      ) => {}
-    _ => return Err(Invalid),
-  }
-  let profile = input.intent.profile();
-  let permissions = input.intent.permissions();
-  let selected = &input.intent.profile().build_configuration;
-  let builtin_command = source
-    .command
-    .as_ref()
-    .is_some_and(|proof| proof.verify(&input.intent, &input.programs));
-  if source.command.is_some() && !builtin_command {
-    return Err(Invalid);
-  }
+  let project_id = intent.input().subject().project_id();
+  let selected = &intent.profile().build_configuration;
   if !definition.enabled
     || configuration.id != selected.id()
     || configuration.version != selected.version()
@@ -199,12 +170,60 @@ pub fn materialize_factory_managed_build_with_source(
       .sources
       .last()
       .is_none_or(|source| source.project_id != project_id)
-    || input
-      .intent
-      .input()
-      .context()
-      .is_some_and(|context| context.subject().candidate().is_some())
-      != source.candidate.is_some()
+  {
+    return Err(Invalid);
+  }
+  match (
+    intent.input().exact_resource().ok(),
+    context.repository.as_ref(),
+    definition.source,
+  ) {
+    (Some(subject), Some(repository), None)
+      if repository.id == subject.repository_id()
+        && repository.project_id == project_id
+        && Some(repository.id) == definition.repository_id
+        && Some(repository.version) == definition.repository_version
+        && repository.definition.selection.allow_exact_revision => {}
+    (None, None, Some(octacity_server_domain::BuildSourceMode::SourceFreeV1))
+      if matches!(intent.input().code(), Some(octacity_server_factory::FlowNodeCode::None)) => {}
+    _ => return Err(Invalid),
+  }
+  definition.validate().map_err(|_| Invalid)?;
+  crate::build_configuration_policy::validate_configuration_policy(context).map_err(|_| Invalid)
+}
+
+/// Compiles the published DAG with an explicitly verified source plan.
+/// Checkout uses the selected node resource's exact base, independently of Work
+/// correlation, and is absent for explicit no-code input. Candidate reconstruction
+/// is signed separately and cannot be inferred from a mutable lifecycle pointer.
+pub fn materialize_factory_managed_build_with_source(
+  input: FactoryManagedBuildInput,
+  source: FactoryManagedSourcePlan,
+) -> Result<AcceptFactoryBuild, OrdinaryBuildApplicationError> {
+  use OrdinaryBuildApplicationError::Invalid;
+  validate_factory_build_context(&input.context, &input.intent)?;
+  let context = &input.context;
+  let repository = context.repository.as_ref();
+  let configuration = &context.configuration;
+  let definition = &configuration.definition;
+  let work_subject = input.intent.input().subject();
+  let project_id = work_subject.project_id();
+  let resource = input.intent.input().exact_resource().ok();
+  let profile = input.intent.profile();
+  let permissions = input.intent.permissions();
+  let builtin_command = source
+    .command
+    .as_ref()
+    .is_some_and(|proof| proof.verify(&input.intent, &input.programs));
+  if source.command.is_some() && !builtin_command {
+    return Err(Invalid);
+  }
+  if input
+    .intent
+    .input()
+    .context()
+    .is_some_and(|context| context.subject().candidate().is_some())
+    != source.candidate.is_some()
     || context.pipeline.dag.nodes().len() != input.programs.len()
     || context.pipeline.dag.nodes().len() > octacity_server_store::MAX_FACTORY_BUILD_JOBS
     || !permissions.plugins().any(|allowed| allowed == &profile.plugin)
@@ -218,7 +237,6 @@ pub fn materialize_factory_managed_build_with_source(
   {
     return Err(Invalid);
   }
-  definition.validate().map_err(|_| Invalid)?;
   let source_write_paths = factory_capture_source_paths(&input.intent, source.capture.as_ref())?;
   let candidate = source
     .candidate
@@ -229,7 +247,6 @@ pub fn materialize_factory_managed_build_with_source(
     let (instruction, protected) = candidate.wire_inputs();
     (Some(instruction), protected)
   });
-  crate::build_configuration_policy::validate_configuration_policy(context).map_err(|_| Invalid)?;
   let parameters = definition.parameters.resolve(&input.parameters).map_err(|_| Invalid)?;
   let allowed_pools: Vec<_> = definition
     .allowed_pools
@@ -307,6 +324,7 @@ pub fn materialize_factory_managed_build_with_source(
     node_attempt_id: input.intent.node().id().to_string(),
     input_digest: frozen.digest().map_err(|_| Invalid)?.to_string(),
     subject_digest: work_subject.digest().to_string(),
+    source_scope: octacity_server_store::factory_job_source_scope(frozen, permissions).map_err(|_| Invalid)?,
     source_write_paths,
     change_set_capture: source.capture,
     change_set_materialization: materialization,
@@ -329,6 +347,12 @@ pub fn materialize_factory_managed_build_with_source(
         .inputs
         .sort_by(|left, right| left.artifact_id.cmp(&right.artifact_id));
       protected_inputs.validate().map_err(|_| Invalid)?;
+      let mut required_enforcement = program.required_enforcement.clone();
+      if causality.source_scope.is_some()
+        && !required_enforcement.contains(&FactoryEnforcementCapabilityV3::SourceVisibilityV1)
+      {
+        required_enforcement.push(FactoryEnforcementCapabilityV3::SourceVisibilityV1);
+      }
       let template = derive_factory_managed_job_spec_template(FactoryManagedJobSpecInput {
         build: build_snapshot.clone(),
         pipeline_node_id: node.id().clone(),
@@ -336,7 +360,7 @@ pub fn materialize_factory_managed_build_with_source(
         causality: causality.clone(),
         protected_inputs,
         policy_layers: input.policy_layers.clone(),
-        required_enforcement: program.required_enforcement.clone(),
+        required_enforcement,
         policy: policy.clone(),
       })
       .map_err(|_| Invalid)?

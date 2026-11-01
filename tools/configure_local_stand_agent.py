@@ -122,6 +122,7 @@ class AgentLaunchPlan:
     agent: Path
     msb: Path
     libkrunfw: Path
+    guest_agent: Path | None = None
 
 
 class AgentConfigurationError(RuntimeError):
@@ -381,6 +382,7 @@ def _verified_installation(
             actual[relative] = digest
     if files != actual:
         raise AgentConfigurationError("native installation file inventory differs from its manifest")
+    _qualified_guest_agent(installation,manifest)
 
     required = {
         "agent": installation / "agent/bin/octacity-agent",
@@ -428,16 +430,37 @@ def _toml_inline_integer_table(values: dict[str, int]) -> str:
     return "{ " + ", ".join(f"{name} = {value}" for name, value in values.items()) + " }"
 
 
-def _environment_identity(microsandbox_version: str) -> str:
-    return f"microsandbox-{microsandbox_version}-linux-arm64-v1"
+def _environment_identity(microsandbox_version: str, guest_digest: str | None = None) -> str:
+    identity = f"microsandbox-{microsandbox_version}-linux-arm64-v1"
+    return identity if guest_digest is None else identity + "-agentd-" + guest_digest
+
+
+def _qualified_guest_agent(installation: Path, manifest: dict) -> Path | None:
+    """Resolve only the explicitly retained, qualified runtime payload."""
+    digest = manifest.get("microsandbox_agentd_sha256")
+    if digest is None:
+        return None
+    import stage_microsandbox_agentd as guest_runtime
+    if digest != guest_runtime.qualified_digest(
+        "aarch64", guest_runtime.REPAIR_ROOT / "SHA256SUMS"
+    ):
+        raise AgentConfigurationError("Microsandbox guest agent is not the qualified repair")
+    guest = installation / "microsandbox/lib/agentd"
+    data = _regular_file(
+        guest, "Microsandbox guest agent", max_bytes=128 * 1024**2,
+        modes=frozenset({0o400, 0o444, 0o500, 0o555, 0o600, 0o644, 0o700, 0o755}),
+    )
+    if hashlib.sha256(data).hexdigest() != digest:
+        raise AgentConfigurationError("Microsandbox guest agent differs from its retained digest")
+    return guest
 
 
 def _virtualization_provider(
-    installation: Path, microsandbox_version: str
+    installation: Path, microsandbox_version: str, guest_digest: str | None = None
 ) -> dict[str, object]:
     return {
         "provider": "microsandbox",
-        "environment_identity": _environment_identity(microsandbox_version),
+        "environment_identity": _environment_identity(microsandbox_version, guest_digest),
         "executable": str(installation / "microsandbox/bin/msb"),
         "libkrunfw": str(installation / "microsandbox/lib/libkrunfw.5.dylib"),
         "metrics_sample_interval_seconds": 1,
@@ -452,6 +475,7 @@ def _render_config(
     ca_certificate: Path,
     signing_public_key: str,
     microsandbox_version: str,
+    guest_digest: str | None = None,
     factory_profile: dict[str, Any] | None = None,
     temporary_state_root: Path | None = None,
 ) -> bytes:
@@ -469,7 +493,7 @@ def _render_config(
         "plugins": _toml_string(installation / "agent/source-plugins"),
         "msb": _toml_string(installation / "microsandbox/bin/msb"),
         "libkrunfw": _toml_string(installation / "microsandbox/lib/libkrunfw.5.dylib"),
-        "identity": _toml_string(_environment_identity(microsandbox_version)),
+        "identity": _toml_string(_environment_identity(microsandbox_version, guest_digest)),
         "signing_key": _toml_string(signing_public_key),
     }
     codex_fixture = installation / "agent/share/local-stand-codex-fixture"
@@ -637,7 +661,8 @@ def validated_launch_plan(
     version = manifest.get("microsandbox_version")
     if not isinstance(version, str):
         raise AgentConfigurationError("native installation manifest has no Microsandbox version")
-    expected_provider = _virtualization_provider(installation, version)
+    guest = _qualified_guest_agent(installation,manifest)
+    expected_provider = _virtualization_provider(installation, version,manifest.get("microsandbox_agentd_sha256"))
     if providers[0] != expected_provider:
         raise AgentConfigurationError("Agent configuration differs from the pinned Microsandbox provider")
     return AgentLaunchPlan(
@@ -646,6 +671,7 @@ def validated_launch_plan(
         installation / "agent/bin/octacity-agent",
         installation / "microsandbox/bin/msb",
         installation / "microsandbox/lib/libkrunfw.5.dylib",
+        guest,
     )
 
 
@@ -739,6 +765,7 @@ def preflight_factory_agent_profile(root: Path, installation: Path, profile_path
         signing_key = _regular_file(root / "pki/server-signing-public-key", "stand signing public key", max_bytes=MAX_PUBLIC_KEY_BYTES, modes=frozenset({0o644})).decode("ascii").strip()
         contents = _render_config(root=validation_root, installation=installation.resolve(), credential=credential,
             ca_certificate=ca, signing_public_key=signing_key, microsandbox_version=manifest["microsandbox_version"],
+            guest_digest=manifest.get("microsandbox_agentd_sha256"),
             factory_profile=profile, temporary_state_root=validation_root / "agent/state")
         config = validation_root / "agent.toml"
         config.write_bytes(contents)
@@ -858,6 +885,7 @@ def generate_agent_configuration(
             ca_certificate=trusted_ca,
             signing_public_key=encoded_key,
             microsandbox_version=manifest["microsandbox_version"],
+            guest_digest=manifest.get("microsandbox_agentd_sha256"),
             factory_profile=factory_profile,
         )
         destination = configuration_directory / "agent.toml"

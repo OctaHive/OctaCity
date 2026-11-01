@@ -377,6 +377,26 @@ class NativeStandStagingTests(unittest.TestCase):
                     installed,
                 )
 
+    def test_qualified_guest_is_installed_under_a_distinct_immutable_identity(self):
+        import stage_microsandbox_agentd as guest_runtime
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            inputs_root = root / "inputs"; inputs_root.mkdir()
+            document = self.create_inputs(inputs_root)
+            guest = root / "agentd"; guest.write_bytes(b"qualified guest fixture")
+            digest = hashlib.sha256(guest.read_bytes()).hexdigest()
+            policy = root / "guest-policy"; policy.mkdir()
+            (policy / "SHA256SUMS").write_text(f"{digest}  agentd-aarch64\n")
+            with mock.patch.object(guest_runtime,"REPAIR_ROOT",policy), self.native_processes():
+                installed = STAGER.install_native_bundle(inputs_root,root / "installed",document,self.entries,REVISION,
+                    REPOSITORY / "deployment/local-stand/fixtures/agent.toml.in",guest_agent=guest)
+                self.assertEqual(installed.name,"installed-agentd-"+digest[:12])
+                self.assertEqual((installed / "microsandbox/lib/agentd").read_bytes(),guest.read_bytes())
+                self.assertEqual((installed / "microsandbox/lib/agentd").stat().st_mode & 0o777,0o755)
+                manifest = json.loads((installed / "installation-manifest.json").read_text())
+                self.assertEqual(manifest["microsandbox_agentd_sha256"],digest)
+                self.assertEqual(manifest["files"]["microsandbox/lib/agentd"],digest)
+
     def reader_cli_fixture(self, root: Path):
         cache = root / "cache"
         inputs_root = cache / STAGER.input_set_name(self.document, REVISION)

@@ -508,4 +508,5 @@ mod tests {
   include!("protected_read_dispatcher_tests.rs");
   include!("protected_read_recipe_tests.rs");
   include!("rooted_read_backend_tests.rs");
+  include!("codex_reader_runtime_tests.rs");
 }

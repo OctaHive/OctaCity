@@ -169,6 +169,7 @@ async fn candidate_inputs_remain_host_readable_and_are_absent_from_the_real_gues
         disk_accounting: octacity_execution::ExecutionDiskAccounting::WholeJob,
         protected_inputs,
         source,
+        source_view: None,
         source_visible: true,
         source_read_only: true,
         source_writable_paths: vec![],

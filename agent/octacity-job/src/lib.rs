@@ -18,6 +18,7 @@
 mod execution_route;
 mod factory_preflight;
 mod protected_inputs;
+mod source_view;
 mod tool_action_gate;
 
 pub use execution_route::ExecutionBackendRoute;
@@ -767,14 +768,56 @@ impl JobExecutor {
       }
       let data_dir = scratch.as_ref().unwrap_or(&workspace).join(".octacity");
       create_private_directory(&data_dir)?;
+      let scoped_writes = managed
+        .as_ref()
+        .filter(|intent| {
+          intent
+            .permissions
+            .mounts
+            .iter()
+            .any(|mount| mount.root == FACTORY_SOURCE_ROOT && mount.mode == FactoryMountModeV3::ReadWrite)
+        })
+        .and_then(|intent| intent.factory.as_ref())
+        .and_then(|factory| factory.source_scope.as_ref())
+        .map(|scope| {
+          let mut paths: Vec<String> = Vec::new();
+          for entry in &scope.selections {
+            if !paths.iter().any(|parent| {
+              entry.path == *parent
+                || entry
+                  .path
+                  .strip_prefix(parent)
+                  .is_some_and(|tail| tail.starts_with('/'))
+            }) {
+              paths.push(entry.path.clone());
+            }
+          }
+          paths
+        });
       let source_writable_paths = match managed
         .as_ref()
         .and_then(|intent| intent.factory.as_ref())
         .and_then(|factory| factory.source_write_paths.as_ref())
+        .or(scoped_writes.as_ref())
       {
-        Some(paths) => prepare_source_write_paths(&workspace, paths)?,
+        Some(paths) => prepare_source_write_paths(&workspace, paths, scoped_writes.is_some())?,
         None => Vec::new(),
       };
+      let source_view = managed
+        .as_ref()
+        .and_then(|intent| intent.factory.as_ref())
+        .and_then(|factory| factory.source_scope.as_ref())
+        .map(|scope| {
+          source_view::prepare(
+            &workspace,
+            &job_root.join("source-view"),
+            scope,
+            spec.runtime.writable_disk_bytes().min(spec.runtime.memory_bytes()),
+            deadline,
+            &cancellation,
+          )
+        })
+        .transpose()?;
       let private_file = match (&managed, &scratch) {
         (Some(intent), Some(scratch)) => self.materialize_factory_credential_file(intent, scratch)?,
         _ => None,
@@ -843,12 +886,17 @@ impl JobExecutor {
               tool_channel: None,
               protected_inputs,
               source: workspace.clone(),
+              source_view,
               source_visible: intent
                 .permissions
                 .mounts
                 .iter()
                 .any(|mount| mount.root == FACTORY_SOURCE_ROOT),
-              source_read_only: !source_writable_paths.is_empty()
+              source_read_only: intent
+                .factory
+                .as_ref()
+                .is_some_and(|factory| factory.source_scope.is_some())
+                || !source_writable_paths.is_empty()
                 || !intent
                   .permissions
                   .mounts
@@ -1394,21 +1442,24 @@ fn map_runner_error(error: RunnerSupervisionError) -> JobError {
 #[cfg(test)]
 mod tests;
 
-// Explicit signed directory roots narrow the runner's source projection before
-// execution. Missing directories are created by the trusted Agent; repository
-// symlinks/reparse points never become guest writable mount destinations.
-fn prepare_source_write_paths(source: &Path, prefixes: &[String]) -> Result<Vec<PathBuf>, JobError> {
+// Explicit signed roots narrow the runner's source projection before execution.
+// Historical capture roots remain directories. A selected view may name a final
+// regular file; links/reparse points never become writable mount destinations.
+fn prepare_source_write_paths(source: &Path, prefixes: &[String], allow_files: bool) -> Result<Vec<PathBuf>, JobError> {
   prefixes
     .iter()
     .map(|prefix| {
       let mut path = source.to_owned();
-      for component in Path::new(prefix).components() {
+      let count = Path::new(prefix).components().count();
+      for (index, component) in Path::new(prefix).components().enumerate() {
         if !matches!(component, std::path::Component::Normal(_)) {
           return Err(JobError::Invalid("invalid source write prefix".to_owned()));
         }
         path.push(component);
         match fs::symlink_metadata(&path) {
-          Ok(metadata) if metadata.is_dir() && !metadata.file_type().is_symlink() =>
+          Ok(metadata)
+            if (metadata.is_dir() || allow_files && index + 1 == count && metadata.is_file())
+              && !metadata.file_type().is_symlink() =>
           {
             #[cfg(windows)]
             if octacity_private_fs::is_reparse_point(&path)
@@ -1421,7 +1472,7 @@ fn prepare_source_write_paths(source: &Path, prefixes: &[String]) -> Result<Vec<
           }
           Ok(_) => {
             return Err(JobError::Invalid(
-              "source write prefix must contain only directories".to_owned(),
+              "source write prefix requires directories and an explicitly selected final file".to_owned(),
             ));
           }
           Err(error) if error.kind() == std::io::ErrorKind::NotFound => create_private_directory(&path)?,

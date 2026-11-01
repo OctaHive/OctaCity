@@ -30,6 +30,24 @@ pub struct FactoryNodeJournalContractFixture {
 pub fn factory_node_journal_contract_fixture() -> FactoryNodeJournalContractFixture {
   factory_node_journal_contract_fixture_with_retries(0)
 }
+/// Frozen selected code visibility exercised through the ordinary node journal.
+#[must_use]
+pub fn factory_selected_source_journal_fixture() -> FactoryNodeJournalContractFixture {
+  let work = work();
+  let binding = binding(work.subject().project_id());
+  let scope = serde_json::from_value(serde_json::json!({"kind":"selected","entries":[
+    {"kind":"path","path":"docs/public"},
+    {"kind":"range","path":"src/config.rs","lines":{"first_line":3,"last_line":4}}
+  ]}))
+  .unwrap();
+  journal_fixture(execution_fixture_with_code_scope(
+    FlowNodeKind::Reasoning,
+    work,
+    binding,
+    FactoryPermissionSet::deny_all(),
+    scope,
+  ))
+}
 /// Qualifies explicit disclosure using an arbitrary configured result schema.
 #[must_use]
 pub fn factory_public_result_journal_fixture(

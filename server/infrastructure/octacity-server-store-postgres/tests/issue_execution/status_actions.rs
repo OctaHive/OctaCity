@@ -111,7 +111,11 @@ async fn linked_at_schema(
     .await
     .unwrap()
     .issue;
-  let repository = template.subject().repository_id();
+  let subject = template
+    .subject()
+    .repository()
+    .expect("repository-backed status-action fixture");
+  let repository = subject.repository_id();
   // Ordinary repository metadata only; no VCS/provider is dispatched by local status actions.
   sqlx::query("INSERT INTO repositories(id,project_id,name,created_at) VALUES($1,$2,'local',to_timestamp(0))")
     .bind(repository.as_uuid())
@@ -160,7 +164,7 @@ async fn linked_at_schema(
   let mut requested = request(&issue);
   requested.intent.target.configuration_id = configuration.reference().id();
   requested.intent.target.repository_id = repository;
-  requested.intent.target.source = RepositorySourceSelection::ExactRevision(template.subject().base_revision().clone());
+  requested.intent.target.source = RepositorySourceSelection::ExactRevision(subject.base_revision().clone());
   let reviewed = store
     .request_issue_execution(management_mutation(requested))
     .await

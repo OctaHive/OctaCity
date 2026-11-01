@@ -1,5 +1,4 @@
-#[path = "support/authoritative_fixture.rs"]
-mod authoritative_fixture;
+use support::authoritative_fixture;
 mod support;
 
 use authoritative_fixture::seed_authoritative_prerequisites;

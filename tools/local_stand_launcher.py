@@ -30,6 +30,7 @@ import local_stand_installation_update as installation_update
 import local_stand_state as state
 import stage_local_stand_native as native_stager
 import start_local_stand_agent as agent_starter
+import stage_microsandbox_agentd as guest_runtime
 from local_stand_build_inputs import (
     LocalStandBuildError,
     git_revision,
@@ -218,14 +219,18 @@ def _prepare_native_installation(root: Path) -> NativeInstallation:
         state.ensure_private_directory(install_root)
     inputs = cache_root / native_stager.input_set_name(document, revision)
     native_stager.prepare_inputs(inputs, document, entries, revision, REPOSITORY)
+    guest = guest_runtime.stage_repaired_agentd(
+        "aarch64", cache_root / "microsandbox-agentd-v1/agentd-aarch64"
+    )
     installation = install_root / native_stager.installation_name(document, revision)
-    native_stager.install_native_bundle(
+    installation = native_stager.install_native_bundle(
         inputs,
         installation,
         document,
         entries,
         revision,
         AGENT_FIXTURE,
+        guest_agent=guest,
     )
     return NativeInstallation(installation, document)
 
@@ -814,6 +819,7 @@ def main(arguments: Sequence[str] | None = None) -> int:
         bootstrapper.BootstrapError,
         lifecycle.LifecycleError,
         native_stager.NativeStageError,
+        guest_runtime.StageError,
         agent_configurator.AgentConfigurationError,
         server_configurator.ServerConfigurationError,
         state.StateError,

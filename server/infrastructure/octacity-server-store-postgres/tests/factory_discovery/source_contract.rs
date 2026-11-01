@@ -2024,10 +2024,7 @@ async fn source_migration_preserves_existing_manual_admission_and_its_replay() {
     .await
     .unwrap();
   let admission = admission_from_configuration(990, 991, "pre-source-manual-work", 10, &configuration, &repository);
-  let original = store
-    .admit_factory_work(management_mutation_with_request(admission.clone(), "pre-source-admit"))
-    .await
-    .unwrap();
+  let original = support::legacy_factory_admission::seed(&database.pool, admission.clone()).await;
   let before: (i64,i64,i64) = sqlx::query_as("SELECT (SELECT count(*) FROM factory_runs),(SELECT count(*) FROM audit_facts),(SELECT count(*) FROM idempotency_records)").fetch_one(&database.pool).await.unwrap();
   octacity_server_store_postgres::migrate(&database.pool).await.unwrap();
   octacity_server_store_postgres::migrate(&database.pool).await.unwrap();
@@ -2128,7 +2125,7 @@ async fn source_migration_preserves_existing_manual_admission_and_its_replay() {
     .admit_factory_work(management_mutation_with_request(admission, "post-source-replay"))
     .await
     .unwrap();
-  assert_eq!(replay.admission, original.admission);
+  assert_eq!(replay.admission, original);
   assert_eq!(replay.disposition, octacity_server_store::MutationDisposition::Replayed);
   database.cleanup().await;
 }

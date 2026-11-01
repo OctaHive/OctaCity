@@ -22,7 +22,8 @@ use crate::{
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
 #[serde(tag = "kind", content = "source", rename_all = "snake_case", deny_unknown_fields)]
 pub enum InternalTriggerSourceStrategy {
-  /// Reuse the exact immutable revision built by the upstream Build.
+  /// Reuse the upstream Build's frozen source, including explicit source absence.
+  /// The released `inherit_revision` spelling remains compatible.
   InheritRevision,
   /// Resolve source independently using the downstream Repository policy.
   ResolveTarget(ManualSourceSelection),

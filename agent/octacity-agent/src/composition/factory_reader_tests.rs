@@ -1,5 +1,31 @@
 #[cfg(all(unix, any(target_os = "macos", target_os = "linux")))]
 #[tokio::test]
+#[ignore = "requires the checksum-qualified guest supplied through MSB_AGENTD_PATH"]
+async fn qualified_guest_enables_selected_source_in_production_registration() {
+  let _guard = component_graph_guard().await;
+  assert!(std::env::var_os("MSB_AGENTD_PATH").is_some());
+  let fixture = installed_agent_fixture("https://coordinator.example");
+  let canonical: serde_json::Value = serde_json::from_str(include_str!(
+    "../../../../shared/protocol-fixtures/job-spec/job-spec-v3.json"
+  ))
+  .unwrap();
+  let mut document: toml::Value = toml::from_str(&fs::read_to_string(&fixture.config).unwrap()).unwrap();
+  document.as_table_mut().unwrap().insert(
+    "factory_permissions".to_owned(),
+    toml::Value::try_from(&canonical["permissions"]).unwrap(),
+  );
+  fs::write(&fixture.config, toml::to_string(&document).unwrap()).unwrap();
+  let components = Components::load(&fixture.config).await.unwrap();
+  assert_eq!(components.inventory.execution_contract.max, 4);
+  assert!(components.inventory.factory_executions.iter().any(|execution| {
+    execution
+      .enforcement
+      .contains(&FactoryEnforcementCapabilityV3::SourceVisibilityV1)
+  }));
+}
+
+#[cfg(all(unix, any(target_os = "macos", target_os = "linux")))]
+#[tokio::test]
 async fn controlled_reader_components_pin_both_binaries_before_registration() {
   use std::os::unix::fs::PermissionsExt as _;
   let _guard = component_graph_guard().await;
@@ -36,6 +62,16 @@ async fn controlled_reader_components_pin_both_binaries_before_registration() {
   let components = Components::load(&fixture.config).await.unwrap();
   assert!(components.factory_tools.is_some());
   assert_eq!(components.inventory.factory_executions.len(), 1);
+  assert_eq!(
+    components.inventory.execution_contract.max, 4,
+    "qualified production registration must admit ordinary source-free Jobs"
+  );
+  assert!(
+    !components.inventory.factory_executions[0]
+      .enforcement
+      .contains(&FactoryEnforcementCapabilityV3::SourceVisibilityV1),
+    "an unqualified guest must not advertise selected-source visibility"
+  );
   assert_eq!(
     components.inventory.factory_executions[0].controlled_tools,
     components.runner.capabilities.platform == "linux-aarch64",

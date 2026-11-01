@@ -17,12 +17,12 @@
 ## 3. Repository-free subjects and exact per-step resources
 
 - [x] 3.1 Through Work admission and replay Red/Green tests, add an explicit versioned repository-free Project/input subject without synthetic Repository/revision values. Verify no VCS access, legacy subject bytes/replay compatibility and rejection of changed content under an existing admission key.
-- [ ] 3.2 Through configuration/admission Red/Green tests, declare available pipeline sources using authorized Project repositories, revision-selection rules and access/scope ceilings, then attach no code or one declared primary source/candidate per step. Verify unused sources grant no access, undeclared/dangling/overbroad attachments fail validation, two different repositories work, revisions freeze before dependent I/O, retries retain pins and Build/Profile/Project policy remains enforced. Reuse versioned Flow/Configuration storage without a new source owner.
-- [ ] 3.3 Through Context, evidence and handoff Red/Green tests, retain both Work correlation and exact node resource provenance; replace unconditional Work-repository equality with exact declared binding validation. Verify cross-repository candidate/evidence substitution fails and a shared Work subject grants no mount, credential or code visibility.
-- [ ] 3.4 Through ordinary Build application/API Red/Green tests, add explicit source-free configuration/input support with versioned intent while preserving repository-backed defaults and historical canonical bytes. Verify creation, retry, cancellation, source absence and unchanged ordinary CI/CD behavior without Factory causality.
-- [ ] 3.5 Through signed JobSpec and placement contract Red/Green tests, carry source mode and exact per-step resources through ordinary execution intent and capability negotiation. Verify tampering and incompatible Agent/protocol/backend support block before lease/spawn; preserve existing protocol compatibility fixtures.
+- [x] 3.2 Through configuration/admission Red/Green tests, declare available pipeline sources using authorized Project repositories, revision-selection rules and access/scope ceilings, then attach no code or one declared primary source/candidate per step. Verify unused sources grant no access, undeclared/dangling/overbroad attachments fail validation, two different repositories work, revisions freeze before dependent I/O, retries retain pins and Build/Profile/Project policy remains enforced. Reuse versioned Flow/Configuration storage without a new source owner.
+- [x] 3.3 Through Context, evidence and handoff Red/Green tests, retain both Work correlation and exact node resource provenance; replace unconditional Work-repository equality with exact declared binding validation. Verify cross-repository candidate/evidence substitution fails and a shared Work subject grants no mount, credential or code visibility.
+- [x] 3.4 Through ordinary Build application/API Red/Green tests, add explicit source-free configuration/input support with versioned intent while preserving repository-backed defaults and historical canonical bytes. Verify creation, retry, cancellation, source absence and unchanged ordinary CI/CD behavior without Factory causality.
+- [x] 3.5 Through signed JobSpec and placement contract Red/Green tests, carry source mode and exact per-step resources through ordinary execution intent and capability negotiation. Verify tampering and incompatible Agent/protocol/backend support block before lease/spawn; preserve existing protocol compatibility fixtures.
 - [x] 3.6 Through qualified Agent/backend execution Red/Green tests, materialize a source-free ordinary Job with its private workspace and selected inputs but no VCS lookup, checkout, inherited code mount or hidden bootstrap repository. Verify normal result/output, cancellation and retry behavior through the existing executor.
-- [ ] 3.7 Through real persistence/restart Red/Green tests, retain new subjects, step resources and source-free intent with additive reentrant storage changes where required. Verify mixed legacy/new history, accepted-input identity after restart and safe rejection by incompatible consumers; do not reset or rewrite retained history.
+- [x] 3.7 Through real persistence/restart Red/Green tests, retain new subjects, step resources and source-free intent with additive reentrant storage changes where required. Verify mixed legacy/new history, accepted-input identity after restart and safe rejection by incompatible consumers; do not reset or rewrite retained history.
 
 ## 4. Common empty pipeline constructor
 
@@ -282,3 +282,100 @@ Each behavioral correction observed Red before its implementation, then Green th
 Final regression: `pnpm exec vitest run` passes 995 tests in 120 files; `pnpm exec playwright test tests/browser/factory*.spec.ts` passes all 33 cases. TypeScript, changed-file ESLint/Prettier, frontend architecture and all 8 authoring-schema export tests pass. These corrections add no API, persistence owner or dependency. No commits or task-completion changes; approximately 13 GiB remains free.
 
 Additional production verification: `pnpm build` compiles successfully but its bundle-budget gate fails. An isolated temporary source copy with only these three production fixes reversed reproduces the existing failure: CSS 93,038 / 91,136 bytes, JavaScript 1,553,088 / 1,436,160 bytes, and total static output 1,646,748 / 1,527,808 bytes. With the fixes, JavaScript/static output grow by 316 bytes and CSS is unchanged. The temporary copy was removed; no budget threshold was raised. This existing section 4 bundle-size failure remains separate from the three corrected behavioral defects. Strict OpenSpec validation and `git diff --check` pass.
+
+### Resumed section 3: access and preflight corrections
+
+Five application-boundary slices observed behavioral Red before implementation and Green afterwards (`CARGO_PROFILE_DEV_DEBUG=0 CARGO_BUILD_JOBS=2 cargo test --locked -p octacity-server-application --lib --all-features <filter>`):
+
+- `readonly_step_code_rejects_a_writable_source_mount_before_publication`: rejected writable source mounts, including parent and child paths, while retaining read-only source and unrelated writable scratch paths.
+- `explicit_no_code_step_rejects_source_mount_authority`: rejected both read-only and writable source mounts for explicit code absence.
+- The temporary whole-source-mount guard was superseded by qualified signed source visibility below; `selected_code_paths_retain_narrowed_visibility_under_readonly_mount_ceiling` observed Red under that guard and Green with the actual selected projection.
+- `selected_repository_mismatch_is_rejected_before_publishing_private_command_inputs`: rejected a Build/repository mismatch before private command publication.
+- `selected_repository_is_checked_before_reading_a_private_role_package`: rejected the same mismatch before reading reusable private Role instructions.
+
+Regression passed: 11 code-authoring cases, 25 code-admission cases, 39 resource cases, four command materializer cases, 70 Role materializer cases, 332 Factory core cases and application/core library Clippy with `-D warnings`. Source identity and existing Build/Project policy checks share one pure preflight used before protected operations and again by final materialization. No task is marked complete on metadata coverage alone; qualified selected-source execution and remaining section 3 persistence/compatibility cases remain open. No commits were created.
+
+
+### Resumed section 3: signed scopes, ordinary lifecycle and durable compatibility
+
+Observed Red/Green at public contracts:
+- `cargo test -p octacity-protocol --lib signed_selected_source_requires_qualified_visibility_enforcement` rejected the missing wire support, then accepted only the explicit ordered `source_visibility_v1` extension. `signed_source_write_overlays_cannot_escape_selected_visibility` first allowed a parent overlay, then rejected parent/neighbor widening. Historical v1–v3 canonical fixtures remain unchanged.
+- `cargo test -p octacity-server-application --lib --all-features selected_code_scope_is_frozen_in_ordinary_signed_job_intent` first omitted the scope, then retained exact paths, line ranges and resource identity in ordinary execution intent. Atomic acceptance separately observed Red/Green for a compiler stripping/widening/substituting that scope.
+- `cargo test -p octacity-job --lib selected_source_paths_and_lines_reach_only_the_scoped_backend_view` first exposed the whole checkout, then passed exact selected paths/lines while retaining the private trusted checkout. The writable-directory case observed its own Red/Green. Overlapping selections and separate line ranges were characterized before replacing the whole-tree filename collection with a streaming traversal and in-place line projection.
+- `cargo test -p octacity-lifecycle --lib selected_source_controlled_reader` first blocked a valid selected-source invocation before the physical backend boundary, then passed with the selected view transferred only to the confined reader and no source view exposed to the main harness. This is composition-boundary evidence, not a claim of real model execution.
+- `cargo test -p octacity-job --lib selected_directory_cannot_traverse_a_symlink_in_an_ancestor` first started the workload for a selected empty directory reached through a linked ancestor, then rejected it before directory enumeration/spawn. The frozen private checkout is checked for canonical ancestors; file contents additionally use retained no-follow handles. All 62 Job library cases pass after this correction and the bounded traversal refactor; all 49 lifecycle library cases pass.
+- On the disposable PostgreSQL service, `cargo test -p octacity-server-store-postgres --test store_contract source_free_cancellation_can_be_delivered -- --ignored` first returned `Unavailable` when the terminal outbox decoded a NULL revision, then delivered/completed the ordinary event with explicit source absence. The existing source-selection sum type replaces the in-process repository-only claim field; no sentinel revision or persisted definition rewrite is introduced.
+
+Real Microsandbox qualification passed normal execution, retry, cancellation and cleanup for ordinary source-free Jobs, selected read-only paths/lines and selected writable directories (`source_free_ordinary_job_runs_retries_and_cancels_on_microsandbox`, `selected_source_job_hides_unselected_paths_and_lines_on_microsandbox`, `selected_writable_source_hides_neighbors_and_retains_only_authorized_writes`). The installed Agent registration now advertises negotiated contract v4 and selected visibility only on the qualified Unix Microsandbox route; unqualified routes remain ineligible. REST documents the added enforcement value. Containerd/Windows qualification is not inferred from these results.
+
+Real PostgreSQL qualification now covers independent pool restart after source-free failure/retry/cancellation, mixed legacy/source-free Build history across additive reentrant migrations, exact per-step source pins, and selected-resource node input/accepted result identity after restart. The full Factory discovery suite passes 46 cases; the ordinary store suite passes 22 and existing internal-trigger delivery passes two. Historical migration fixtures use frozen pre-0109 SQL row shapes instead of calling a current writer on an obsolete schema; no production fallback, migration reordering, history reset or weakened constraint is added. Tasks 3.3, 3.4 and 3.7 are complete on this evidence; section 5 end-to-end qualification remains separate.
+
+Initial qualification blocker (resolved below): `selected_writable_file_does_not_grant_its_parent_directory` was Red on installed Microsandbox 0.7.6. Its guest `agentd` opened an existing bind target with write access inside the read-only parent and failed with EROFS before the workload started. Writable directories and read-only files/ranges passed. The user subsequently approved repairing the common runtime while preserving individual-file support; no parent-directory grant or supported-mode reduction was substituted.
+
+Final related checks: `cargo test -p octacity-job --lib` passes 62 cases; `cargo test -p octacity-lifecycle --lib` passes 49; `cargo test -p octacity-server-scheduler --lib` passes six. PostgreSQL `store_contract`, `factory_discovery` and `internal_triggers` pass 22, 46 and two cases respectively with `--ignored` on an explicitly disposable service. After the source-view refactor and ancestor correction, both selected read-only path/line and writable-directory real-VM contracts were rerun and pass. Protocol/core/store and execution adapter regressions had passed 77/332/112 and 18/14 cases; the full application all-feature run passed 959 cases before the terminal-claim correction, whose five related internal-trigger cases pass afterwards. REST 250 and ordinary manual-trigger 39 cases passed. All affected packages, including lifecycle, pass `cargo clippy --locked --all-targets --all-features -- -D warnings`; strict OpenSpec validation and `git diff --check` pass. Test-only fixture repairs and behavior-preserving traversal refactoring used existing passing behavioral baselines; they are not reported as new feature Red cycles.
+
+The initial disposable PostgreSQL container and Microsandbox workspace/state were removed after qualification. The user's stand, credentials and caches were not removed. Approximately 18 GiB remained free at that point. No commits were created. Subsequent runtime qualification and section 3 completion are recorded below.
+
+### Approved common runtime repair and section 3 completion
+
+The original real-VM writable-file Red now passes with the common guest repair:
+`CARGO_PROFILE_DEV_DEBUG=0 CARGO_BUILD_JOBS=2 cargo test --locked -p octacity-job --test backend_contract selected_ -- --ignored --test-threads=1` passes all three selected-source contracts. They cover hidden paths/lines, read-only access, writable directories and individual files, authorized write retention, retry, cancellation and cleanup. The source-free real-VM lifecycle contract also passes again. These use a disposable Apple Silicon Microsandbox VM and local retained guest image, not a model response or a mocked mount operation.
+
+The guest repair is limited to existing-file bind-target preparation in the pinned upstream 0.7.6 `agentd`. It leaves mount flags/order and parent permissions unchanged. `config/runtime/microsandbox-agentd-v1` records the reviewed patch, bounded checksummed source archive, upstream-compatible guest-only lockfile, per-platform pinned musl builders and output SHA-256 identities. The public source-builder command successfully rebuilt the ARM64 payload twice with identical output; the x86-64 cross build also passed. Local x86-64 VM execution is not claimed. Docker builds run as the caller and remove their temporary source/build tree.
+
+Observed staging/installation/registration Red/Green cycles:
+- `python3 -m unittest tools.tests.test_stage_microsandbox_agentd`: cache reuse, pinned source build and explicit `--repaired` CLI selection first failed, then retained only checksum-qualified output. The composite-action shell forwards the selected mode. Caller-owned builder output has its own observed Red/Green assertion.
+- `python3 -m unittest tools.tests.test_stage_local_stand_native tools.tests.test_configure_local_stand_agent tools.tests.test_start_local_stand_agent tools.tests.test_local_stand_launcher`: retained guest bytes/digest, a separate immutable native installation, hash-partitioned environment identity and explicit preflight/Agent runtime selection first failed, then passed. Changed installed guest bytes fail before publishing configuration. The common local-stand launcher consumes the returned exact installation path; no Factory-only bootstrap or new state owner is added.
+- `cargo test --locked -p octacity-agent --bin octacity-agent controlled_reader_components_pin_both_binaries_before_registration` first advertised selected visibility for an unqualified guest, then withheld it. `qualified_guest_enables_selected_source_in_production_registration -- --ignored` passes with the actual repaired payload. The adapter hashes the SDK-selected guest again before selected-source VM creation; version labels and ambient flags confer no qualification.
+- `python3 -m unittest tools.tests.test_backend_matrix tools.tests.test_verify_local_stand_context`: both Microsandbox CI jobs first lacked the mandatory repair/source contracts, then selected the qualified guest and propagated a failing contract command. The filtered container context first omitted the compile-time checksum registry, then included only that registry, excluding builder source/lock/patch inputs. The full context fixture was updated for the already-existing gate schema; that fixture correction is not reported as a production behavior Red.
+- CLI failure tests first leaked build/checksum exceptions, then returned a nonzero exit with a concise diagnostic instead of a traceback.
+
+Final verification after the runtime repair: the eight related Python modules pass 147 tests; Agent ordinary tests pass 19 (one explicit physical-qualification test ignored in the ordinary run and separately passed). Protocol/execution/Microsandbox/Job/lifecycle/scheduler libraries pass 77/18/14/62/49/6 cases. Affected Agent/runtime/Job/lifecycle all-target/all-feature Clippy passes with `-D warnings`. Strict OpenSpec validation and `git diff --check` pass. The existing JobSpec signing-policy owner pins Source/Octa, independently of the runtime environment identity; no duplicate signing policy was introduced.
+
+Tasks 3.2 and 3.5 are complete with the physical writable-file blocker resolved. All seven section 3 tasks are now checked. Section 5 clean-state end-to-end qualification and section 6 cutover remain separate unfinished work. Implementation stops after section 3 as requested, without commits. Runtime pins, build/qualification commands and rollback boundaries are documented in the runtime README and signed JobSpec reference. Only owned disposable VM/source-build data is removed during cleanup; the user's stand, credentials and shared caches are retained.
+
+Cleanup completed: approximately 0.9 GiB of owned source-build/VM data removed,
+small checksum-qualified guest binaries retained under ignored `target/`.
+Final free disk space is approximately 16 GiB. Overall change progress is
+27/36 tasks; the nine section 5–6 tasks remain unchecked.
+
+### Section 3 review corrections: executable files and empty directories
+
+Both corrections used the public Job executor contract, one observed Red/Green
+cycle at a time:
+
+- `CARGO_PROFILE_DEV_DEBUG=0 CARGO_BUILD_JOBS=2 cargo test --quiet --locked -p octacity-job --lib selected_source_paths_and_lines_reach_only_the_scoped_backend_view`
+  first failed with `PermissionDenied` when executing a selected repository
+  script, then passed after retaining its owner executable bit in the private
+  copy. The test separately verifies script output, removal of setuid/setgid
+  bits and absence of executable permission on ordinary data files.
+- The same command then failed because a selected empty nested directory was
+  absent. It passed after selected directories and their ancestors were created
+  explicitly, including empty directories, while an unselected empty directory
+  remained absent. One private directory helper is shared by directory and
+  file projection; no extra source or execution owner was introduced.
+
+`cargo test --quiet --locked -p octacity-job --test backend_contract selected_ -- --ignored --test-threads=1`
+passes four real Microsandbox contracts in an isolated Apple Silicon workspace.
+The read-only guest executes the selected script and observes selected empty
+directories. The added `selected_new_writable_directory_keeps_its_parent_readonly`
+case initializes a previously absent directory, retains its authorized output
+and rejects parent/neighbor writes. Existing writable-directory/file cases,
+retry, cancellation and cleanup remain covered. These backend cases qualify the
+executor fixes after their public-contract Red/Green cycles; they are not
+reported as independent production Red cycles.
+
+The signed JobSpec reference now states the executable-bit, private-permission
+and empty-directory semantics. No commits, runtime pin changes, dependency
+changes or work beyond the section 3 corrections are included.
+
+Final correction verification uses `CARGO_PROFILE_DEV_DEBUG=0 CARGO_BUILD_JOBS=2`:
+`cargo test --quiet --locked -p octacity-job --lib` passes 62 cases;
+`cargo test --quiet --locked -p octacity-execution -p octacity-execution-microsandbox -p octacity-lifecycle --lib`
+passes 18/14/49 cases. All four selected-source real-VM contracts pass again
+after deduplicating their scope setup with the physical baseline passing.
+`cargo clippy --quiet --locked -p octacity-job --all-targets --all-features -- -D warnings`,
+changed-file `rustfmt --check`, strict OpenSpec validation and `git diff --check`
+pass. The disposable VM workspace and test-only environment files were removed;
+the user's stand and credentials were not changed. Approximately 16 GiB remains
+free. No commits were created.

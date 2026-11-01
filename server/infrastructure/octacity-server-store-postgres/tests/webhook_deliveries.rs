@@ -1,5 +1,4 @@
-#[path = "support/authoritative_fixture.rs"]
-mod authoritative_fixture;
+use support::authoritative_fixture;
 mod support;
 
 use std::collections::{BTreeMap, BTreeSet};
@@ -51,7 +50,11 @@ async fn normalized_identity_and_retry_state_survive_store_replacement() {
         adapter_sha256: "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef".to_owned(),
         verification_material_handle: "secret:webhook".to_owned(),
         verification_headers: BTreeSet::from(["x-signature".to_owned()]),
-        repository_id: fixture.request.build.repository_id,
+        repository_id: fixture
+          .request
+          .build
+          .repository_id
+          .expect("repository-backed webhook fixture"),
         event_kind: TriggerEventKind::new("push").unwrap(),
         parameters: BTreeMap::new(),
         priority: 0,
@@ -93,7 +96,11 @@ async fn normalized_identity_and_retry_state_survive_store_replacement() {
     integration_id,
     provider_delivery_id: TriggerIdentity::new("provider-delivery-1").unwrap(),
     event_kind: TriggerEventKind::new("push").unwrap(),
-    repository_id: fixture.request.build.repository_id,
+    repository_id: fixture
+      .request
+      .build
+      .repository_id
+      .expect("repository-backed webhook fixture"),
     reference: None,
     revision: None,
     provider_time: Some(time(15)),
@@ -261,7 +268,11 @@ async fn managed_registration_retry_survives_store_replacement() {
           adapter_sha256: "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef".to_owned(),
           verification_material_handle: "secret:webhook".to_owned(),
           verification_headers: BTreeSet::from(["x-signature".to_owned()]),
-          repository_id: fixture.request.build.repository_id,
+          repository_id: fixture
+            .request
+            .build
+            .repository_id
+            .expect("repository-backed webhook fixture"),
           event_kind: TriggerEventKind::new("push").unwrap(),
           parameters: BTreeMap::new(),
           priority: 0,

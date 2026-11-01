@@ -1,6 +1,6 @@
 use octacity_server_domain::{
-  BuildConfigurationId, BuildConfigurationVersion, BuildId, EntityKind, ImmutableRevision, Timestamp, TriggerId,
-  TriggerIdentity, TriggerOccurrenceId, TriggerVersion,
+  BuildConfigurationId, BuildConfigurationVersion, BuildId, BuildSourceSelection, EntityKind, ImmutableRevision,
+  RepositorySourceSelection, Timestamp, TriggerId, TriggerIdentity, TriggerOccurrenceId, TriggerVersion,
 };
 use octacity_server_store::{
   ClaimInternalTriggerEvents, CompleteInternalTriggerEvent, InternalTriggerEventClaim, InternalTriggerMatch,
@@ -49,13 +49,14 @@ struct SourceBuildRow {
   id: Uuid,
   build_configuration_id: Uuid,
   build_configuration_version: i64,
-  immutable_revision: String,
+  immutable_revision: Option<String>,
+  input_snapshot: Json<serde_json::Value>,
 }
 
 struct SourceBuild {
   id: BuildId,
   target: TriggerTarget,
-  revision: ImmutableRevision,
+  source: BuildSourceSelection,
 }
 
 pub(crate) async fn claim(
@@ -132,7 +133,7 @@ async fn load_claim(
   Ok(InternalTriggerEventClaim {
     event_identity: TriggerIdentity::new(event.id.to_string()).map_err(|_| StoreError::Unavailable)?,
     source_build_id: build.id,
-    source_revision: build.revision,
+    source: build.source,
     source_target: build.target,
     source_origin,
     trigger_ancestry,
@@ -147,7 +148,7 @@ async fn load_claim(
 async fn source_build(pool: &PgPool, event: &ClaimedEventRow) -> Result<SourceBuild, StoreError> {
   let row: Option<SourceBuildRow> = match event.topic.as_str() {
     "job.completed" => sqlx::query_as(
-      "SELECT build.id, build.build_configuration_id, build.build_configuration_version, build.immutable_revision \
+      "SELECT build.id, build.build_configuration_id, build.build_configuration_version, build.immutable_revision, build.input_snapshot \
        FROM jobs AS job JOIN attempts AS attempt ON attempt.id = job.attempt_id \
        JOIN builds AS build ON build.id = attempt.build_id WHERE job.id::text = $1",
     )
@@ -156,7 +157,7 @@ async fn source_build(pool: &PgPool, event: &ClaimedEventRow) -> Result<SourceBu
     .await
     .map_err(unavailable)?,
     "build.cancellation-requested" => sqlx::query_as(
-      "SELECT id, build_configuration_id, build_configuration_version, immutable_revision \
+      "SELECT id, build_configuration_id, build_configuration_version, immutable_revision, input_snapshot \
        FROM builds WHERE id::text = $1",
     )
     .bind(&event.aggregate_identity)
@@ -168,6 +169,21 @@ async fn source_build(pool: &PgPool, event: &ClaimedEventRow) -> Result<SourceBu
   let row = row.ok_or(StoreError::NotFound {
     entity: EntityKind::Build,
   })?;
+  let selection = row
+    .input_snapshot
+    .0
+    .get("source")
+    .map(|value| serde_json::from_value::<BuildSourceSelection>(value.clone()))
+    .transpose()
+    .map_err(|_| StoreError::Unavailable)?;
+  let source = match (row.immutable_revision, selection) {
+    (Some(revision), None | Some(BuildSourceSelection::Repository(_))) => {
+      RepositorySourceSelection::ExactRevision(ImmutableRevision::new(revision).map_err(|_| StoreError::Unavailable)?)
+        .into()
+    }
+    (None, Some(BuildSourceSelection::SourceFree(mode))) => mode.into(),
+    _ => return Err(StoreError::Unavailable),
+  };
   Ok(SourceBuild {
     id: BuildId::from_uuid(row.id).map_err(|_| StoreError::Unavailable)?,
     target: TriggerTarget {
@@ -175,7 +191,7 @@ async fn source_build(pool: &PgPool, event: &ClaimedEventRow) -> Result<SourceBu
         .map_err(|_| StoreError::Unavailable)?,
       configuration_version: positive_configuration_version(row.build_configuration_version)?,
     },
-    revision: ImmutableRevision::new(row.immutable_revision).map_err(|_| StoreError::Unavailable)?,
+    source,
   })
 }
 

@@ -1,6 +1,11 @@
 name: Set up Microsandbox agentd
 description: Download, verify, and expose the pinned guest agent used by Microsandbox builds
 
+inputs:
+  repaired:
+    description: Build the checksum-qualified read-only-parent file-mount repair
+    default: 'false'
+
 outputs:
   path:
     description: Absolute path exported as MSB_AGENTD_PATH
@@ -12,6 +17,8 @@ runs:
     - id: stage
       name: Stage verified guest agent
       shell: bash
+      env:
+        OCTACITY_REPAIRED_AGENTD: ${{ inputs.repaired }}
       run: |
         set -euo pipefail
         case "${RUNNER_ARCH}" in
@@ -20,8 +27,10 @@ runs:
           *) echo "unsupported GitHub runner architecture: ${RUNNER_ARCH}" >&2; exit 1 ;;
         esac
 
-        path=$(python3 "${GITHUB_ACTION_PATH}/../../../tools/stage_microsandbox_agentd.py" \
-          --architecture "${architecture}" \
-          --output "${RUNNER_TEMP}/octacity-microsandbox/agentd-${architecture}")
+        arguments=(--architecture "${architecture}" --output "${RUNNER_TEMP}/octacity-microsandbox/agentd-${architecture}")
+        if [[ "${OCTACITY_REPAIRED_AGENTD}" == "true" ]]; then
+          arguments+=(--repaired)
+        fi
+        path=$(python3 "${GITHUB_ACTION_PATH}/../../../tools/stage_microsandbox_agentd.py" "${arguments[@]}")
         printf 'MSB_AGENTD_PATH=%s\n' "${path}" >> "${GITHUB_ENV}"
         printf 'path=%s\n' "${path}" >> "${GITHUB_OUTPUT}"

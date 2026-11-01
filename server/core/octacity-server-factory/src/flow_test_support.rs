@@ -388,6 +388,28 @@ pub(crate) fn execution_fixture_with_step_task(
   )
 }
 
+#[allow(dead_code)] // Application signing contracts exercise exact selected source visibility.
+pub(crate) fn execution_fixture_with_code_scope(
+  kind: FlowNodeKind,
+  work: WorkEnvelope,
+  selection: FlowBuildBinding,
+  permissions: FactoryPermissionSet,
+  scope: FlowCodeScope,
+) -> (WorkEnvelope, AdmittedFlow, FlowDataSchema, FlowNodeInput, NodeAttempt) {
+  execution_fixture_with_authority(
+    kind,
+    work,
+    selection,
+    None,
+    None,
+    ExecutionFixtureOptions {
+      code_scope: Some(scope),
+      ..Default::default()
+    },
+    permissions,
+  )
+}
+
 #[allow(dead_code)] // Source-free application contracts reuse the same ordinary Flow owner.
 pub(crate) fn execution_fixture_without_code(
   kind: FlowNodeKind,
@@ -437,6 +459,7 @@ struct ExecutionFixtureOptions {
   public_result: bool,
   step_task: Option<String>,
   source_free: bool,
+  code_scope: Option<FlowCodeScope>,
 }
 
 fn execution_fixture_with_authority(
@@ -505,6 +528,20 @@ fn execution_fixture_with_authority(
     wire["code"] = serde_json::json!({"kind": "none"});
     node = serde_json::from_value(wire).unwrap();
   }
+  if let Some(scope) = &options.code_scope {
+    let subject = work.subject().repository().unwrap();
+    let mut wire = serde_json::to_value(&node).unwrap();
+    wire["code"] = serde_json::to_value(FlowCodeBinding::Source {
+      source: key("primary"),
+      access: MountMode::ReadOnly,
+      scope: scope.clone(),
+      revision: FlowCodeRevision::ExactRevision {
+        revision: subject.base_revision().clone(),
+      },
+    })
+    .unwrap();
+    node = serde_json::from_value(wire).unwrap();
+  }
   let definition = FlowDefinition::new(FlowDefinitionInput {
     id: FlowDefinitionId::generate(),
     version: FlowDefinitionVersion::INITIAL,
@@ -527,6 +564,27 @@ fn execution_fixture_with_authority(
   .unwrap();
   let definition = if options.source_free {
     definition.with_code_sources(std::collections::BTreeMap::new()).unwrap()
+  } else {
+    definition
+  };
+  let definition = if options.code_scope.is_some() {
+    let subject = work.subject().repository().unwrap();
+    definition
+      .with_code_sources(std::collections::BTreeMap::from([(
+        key("primary"),
+        FlowCodeSource {
+          repository: FactoryRepositoryRef {
+            project_id: subject.project_id(),
+            id: subject.repository_id(),
+            version: octacity_server_domain::RepositoryVersion::INITIAL,
+            definition_digest: FactoryDigest::from_bytes([33; 32]),
+          },
+          selection: octacity_server_domain::RepositorySourceSelection::ExactRevision(subject.base_revision().clone()),
+          access: MountMode::ReadOnly,
+          scope: FlowCodeScope::Repository,
+        },
+      )]))
+      .unwrap()
   } else {
     definition
   };
@@ -585,7 +643,8 @@ fn execution_fixture_with_authority(
   )
   .unwrap();
   let at = octacity_server_domain::Timestamp::from_unix_millis(10).unwrap();
-  let deadline = octacity_server_domain::Timestamp::from_unix_millis(100).unwrap();
+  let deadline =
+    octacity_server_domain::Timestamp::from_unix_millis(if options.code_scope.is_some() { 1010 } else { 100 }).unwrap();
   let attempt = NodeAttempt::new(
     admitted.root_run(),
     admitted.initial_cycle(),

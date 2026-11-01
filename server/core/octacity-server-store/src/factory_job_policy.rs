@@ -82,3 +82,51 @@ fn wire_reference(reference: &ImmutableReference) -> FactoryImmutableReferenceV3
     sha256: reference.digest().to_string(),
   }
 }
+
+/// Projects the frozen node's selected visibility into signing and atomic admission.
+/// Work correlation, unused sources and absent source mounts confer no visibility.
+pub fn factory_job_source_scope(
+  input: &octacity_server_factory::FlowNodeInput,
+  permissions: &FactoryPermissionSet,
+) -> Result<Option<octacity_protocol::FactorySourceScopeV1>, StoreInputError> {
+  use octacity_protocol::{FactorySourceLinesV1, FactorySourceScopeV1, FactorySourceSelectionV1};
+  use octacity_server_factory::{FactoryDigest, FlowCodeScope, FlowCodeSelection, FlowNodeCode};
+  if !permissions
+    .mounts()
+    .any(|mount| mount.root().as_str() == octacity_protocol::FACTORY_SOURCE_ROOT)
+  {
+    return Ok(None);
+  }
+  let Some(FlowNodeCode::Source {
+    scope: FlowCodeScope::Selected { entries },
+    subject,
+    ..
+  }) = input.code()
+  else {
+    return Ok(None);
+  };
+  let mut selections: Vec<_> = entries
+    .iter()
+    .map(|entry| match entry {
+      FlowCodeSelection::Path { path } => FactorySourceSelectionV1 {
+        path: path.as_str().to_owned(),
+        lines: None,
+      },
+      FlowCodeSelection::Range { path, lines } => FactorySourceSelectionV1 {
+        path: path.as_str().to_owned(),
+        lines: Some(FactorySourceLinesV1 {
+          first: lines.first_line(),
+          last: lines.last_line(),
+        }),
+      },
+    })
+    .collect();
+  selections.sort();
+  Ok(Some(FactorySourceScopeV1 {
+    resource_digest: FactoryDigest::content_sha256(
+      &serde_json::to_vec(subject).map_err(|_| StoreInputError::InvalidFactoryBuild)?,
+    )
+    .to_string(),
+    selections,
+  }))
+}

@@ -93,6 +93,11 @@ shared/protocol-fixtures/coordinator/*
 # Canonical Factory inputs compiled into the server; operator catalogs stay out.
 !config/
 config/*
+!config/runtime/
+config/runtime/*
+!config/runtime/microsandbox-agentd-v1/
+config/runtime/microsandbox-agentd-v1/*
+!config/runtime/microsandbox-agentd-v1/SHA256SUMS
 !config/factory/
 config/factory/*
 !config/factory/presets/

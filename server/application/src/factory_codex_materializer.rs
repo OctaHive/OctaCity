@@ -500,6 +500,16 @@ impl<
     if at >= intent.node().deadline() || intent.node().verify_observer(&ownership, at).is_err() {
       return Err(Invalid);
     }
+    let context = self
+      .contexts
+      .load(
+        intent.input().subject().project_id(),
+        intent.profile().build_configuration.id(),
+        intent.profile().build_configuration.version(),
+      )
+      .await
+      .map_err(|_| Unavailable)?;
+    crate::factory_build_materialization::validate_factory_build_context(&context, intent)?;
     let (profile, role) = if intent.selected_profile().is_none()
       && let Some(profile) = self.profiles.iter().find(|profile| profile.matches_intent(intent))
     {
@@ -554,15 +564,6 @@ impl<
     if &effective != intent.permissions() {
       return Err(Invalid);
     }
-    let context = self
-      .contexts
-      .load(
-        intent.input().subject().project_id(),
-        intent.profile().build_configuration.id(),
-        intent.profile().build_configuration.version(),
-      )
-      .await
-      .map_err(|_| Unavailable)?;
     if !profile
       .pipeline_contract()
       .matches_nodes(context.pipeline.dag.nodes().iter().map(|node| node.id()))

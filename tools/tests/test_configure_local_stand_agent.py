@@ -224,6 +224,40 @@ class LocalStandAgentConfigurationTests(unittest.TestCase):
             host_machine="arm64",
         )
 
+    def test_qualified_guest_digest_partitions_the_generated_environment(self):
+        import stage_microsandbox_agentd as guest_runtime
+        guest = self.installation / "microsandbox/lib/agentd"
+        guest.write_bytes(b"qualified guest fixture"); guest.chmod(0o755)
+        digest = hashlib.sha256(guest.read_bytes()).hexdigest()
+        self._write_manifest()
+        manifest_path = self.installation / "installation-manifest.json"
+        manifest = json.loads(manifest_path.read_text()); manifest["microsandbox_agentd_sha256"] = digest
+        manifest_path.write_text(json.dumps(manifest))
+        policy = self.root / "guest-policy"; policy.mkdir()
+        (policy / "SHA256SUMS").write_text(f"{digest}  agentd-aarch64\n")
+        with mock.patch.object(guest_runtime,"REPAIR_ROOT",policy):
+            receipt = self.generate()
+            document = tomllib.loads(Path(receipt["config"]).read_text())
+            self.assertEqual(document["virtualization_providers"][0]["environment_identity"],
+                "microsandbox-0.7.6-linux-arm64-v1-agentd-"+digest)
+            self.assertEqual(CONFIGURATOR.validated_launch_plan(self.root.resolve(),self.installation.resolve(),receipt).guest_agent,guest.resolve())
+
+    def test_changed_guest_is_rejected_before_publishing_agent_configuration(self):
+        import stage_microsandbox_agentd as guest_runtime
+        guest = self.installation / "microsandbox/lib/agentd"
+        guest.write_bytes(b"changed guest"); guest.chmod(0o755)
+        self._write_manifest()
+        claimed = hashlib.sha256(b"qualified guest fixture").hexdigest()
+        path = self.installation / "installation-manifest.json"
+        manifest = json.loads(path.read_text()); manifest["microsandbox_agentd_sha256"] = claimed
+        path.write_text(json.dumps(manifest))
+        policy = self.root / "guest-policy"; policy.mkdir()
+        (policy / "SHA256SUMS").write_text(f"{claimed}  agentd-aarch64\n")
+        with mock.patch.object(guest_runtime,"REPAIR_ROOT",policy):
+            with self.assertRaisesRegex(CONFIGURATOR.AgentConfigurationError,"guest agent"):
+                self.generate()
+        self.assertFalse((self.root / "config/agent.toml").exists())
+
     def test_generates_only_microsandbox_with_private_distinct_bounded_state(self):
         receipt = self.generate()
         expected_keys = {

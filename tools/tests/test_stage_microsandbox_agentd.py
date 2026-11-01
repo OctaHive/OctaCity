@@ -3,17 +3,25 @@
 from __future__ import annotations
 
 import hashlib
+from contextlib import redirect_stderr
 import importlib.util
 import io
+import json
+import os
 import sys
 import tempfile
+import tarfile
+import subprocess
+import textwrap
 import tomllib
 import unittest
+from unittest import mock
 from pathlib import Path
 from urllib.error import URLError
 
 
 REPOSITORY = Path(__file__).resolve().parents[2]
+sys.path.insert(0, str(REPOSITORY / "tools"))
 SPEC = importlib.util.spec_from_file_location(
     "stage_microsandbox_agentd", REPOSITORY / "tools/stage_microsandbox_agentd.py"
 )
@@ -24,6 +32,98 @@ SPEC.loader.exec_module(STAGER)
 
 
 class MicrosandboxAgentdStagingTests(unittest.TestCase):
+    def test_cli_reports_a_failed_runtime_build_without_a_traceback(self):
+        error = subprocess.CalledProcessError(1, ["docker", "run"])
+        diagnostic = io.StringIO()
+        with (
+            mock.patch.object(sys, "argv", [
+                "stage-agentd", "--architecture", "aarch64",
+                "--output", "/unused/agentd", "--repaired",
+            ]),
+            mock.patch.object(STAGER, "stage_repaired_agentd", side_effect=error),
+            redirect_stderr(diagnostic),
+        ):
+            self.assertEqual(STAGER.main(), 1)
+        self.assertIn("docker", diagnostic.getvalue())
+        self.assertNotIn("Traceback", diagnostic.getvalue())
+
+    @unittest.skipUnless(os.name == "posix","requires the composite action shell")
+    def test_action_forwards_qualified_mode_and_exports_the_staged_path(self):
+        action = REPOSITORY / ".github/actions/setup-microsandbox-agentd/action.yml"
+        script = textwrap.dedent(action.read_text().split("      run: |\n",1)[1])
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary); commands = root / "bin"; commands.mkdir()
+            fake = commands / "python3"
+            fake.write_text('#!/bin/sh\nprintf "%s\\n" "$@" > "$ARG_LOG"\nprintf "%s\\n" "$STAGED_GUEST"\n')
+            fake.chmod(0o755)
+            arguments = root / "arguments"
+            environment = dict(os.environ,PATH=str(commands)+os.pathsep+os.environ.get("PATH",""),
+                RUNNER_ARCH="ARM64",RUNNER_TEMP=str(root),GITHUB_ACTION_PATH=str(action.parent),
+                GITHUB_ENV=str(root/"environment"),GITHUB_OUTPUT=str(root/"outputs"),
+                ARG_LOG=str(arguments),STAGED_GUEST=str(root/"qualified-agentd"),OCTACITY_REPAIRED_AGENTD="true")
+            subprocess.run(["/bin/bash","-c",script],env=environment,check=True,capture_output=True,text=True)
+            self.assertIn("--repaired",arguments.read_text().splitlines())
+            self.assertIn("MSB_AGENTD_PATH="+str(root/"qualified-agentd"),(root/"environment").read_text())
+    def test_cli_explicitly_selects_the_qualified_repair(self):
+        with mock.patch.object(sys,"argv",["stage-agentd","--architecture","aarch64","--output","/tmp/agentd","--repaired"]):
+            self.assertTrue(STAGER.parse_args().repaired)
+    def test_repaired_guest_reuses_exact_qualified_bytes_without_a_build(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            output = root / "agentd"
+            output.write_bytes(self.payload)
+            pins = root / "SHA256SUMS"
+            pins.write_text(f"{hashlib.sha256(self.payload).hexdigest()}  agentd-x86_64\n")
+            self.assertEqual(
+                STAGER.stage_repaired_agentd(
+                    self.architecture, output, policy_root=root,
+                    execute=lambda *_args, **_kwargs: self.fail("a qualified cached guest was rebuilt"),
+                ),
+                output.resolve(),
+            )
+
+    @unittest.skipUnless(os.name == "posix","repaired guest builds require Linux or macOS")
+    def test_repaired_guest_builds_pinned_source_and_publishes_only_qualified_bytes(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            pins = root / "SHA256SUMS"
+            pins.write_text(f"{hashlib.sha256(self.payload).hexdigest()}  agentd-x86_64\n")
+            archive = root / "source.tar.gz"
+            source_files = {"upstream/Cargo.toml": b'[workspace]\nmembers = ["guest"]\n', "upstream/guest.txt": b'old\n'}
+            with tarfile.open(archive, "w:gz") as bundle:
+                for name, contents in source_files.items():
+                    info = tarfile.TarInfo(name); info.size = len(contents)
+                    bundle.addfile(info, io.BytesIO(contents))
+            (root / "readonly-file-mount.patch").write_text("--- a/guest.txt\n+++ b/guest.txt\n@@ -1 +1 @@\n-old\n+repaired\n")
+            (root / "Cargo.lock").write_text("# pinned guest dependencies\n")
+            (root / "inputs.json").write_text(json.dumps({
+                "source": {"archive_url": archive.as_uri(), "sha256": hashlib.sha256(archive.read_bytes()).hexdigest(),
+                    "tag":"v0.7.6", "archive_max_bytes":1048576, "expanded_max_bytes":1048576,
+                    "file_max_bytes":65536,"member_max_count":16},
+                "builders": {"x86_64":{"image":"registry.test/rust@sha256:"+"a"*64,
+                    "platform":"linux/amd64","target":"x86_64-unknown-linux-musl"}},
+            }))
+            built = []
+            def execute(command, **kwargs):
+                if command[0] != "docker":
+                    return subprocess.run(command, **kwargs)
+                mount = command[command.index("--mount") + 1]
+                source = Path(mount.split("src=",1)[1].split(",dst=",1)[0])
+                self.assertEqual((source / "guest.txt").read_text(), "repaired\n")
+                self.assertEqual((source / "Cargo.lock").read_text(), "# pinned guest dependencies\n")
+                self.assertIn("--locked",command)
+                self.assertIn("linux/amd64",command)
+                self.assertEqual(command[command.index("--user")+1],f"{os.getuid()}:{os.getgid()}")
+                target = source / "target-musl-x86_64/x86_64-unknown-linux-musl/release/agentd"
+                target.parent.mkdir(parents=True)
+                target.write_bytes(self.payload)
+                built.append(command)
+                return subprocess.CompletedProcess(command, 0)
+            output = root / "installed/agentd"
+            result = STAGER.stage_repaired_agentd(self.architecture, output, policy_root=root, execute=execute)
+            self.assertEqual(result,output.resolve())
+            self.assertEqual(output.read_bytes(),self.payload)
+            self.assertEqual(len(built),1)
     def setUp(self):
         self.architecture = "x86_64"
         self.payload = b"verified agentd fixture"

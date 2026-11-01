@@ -1,17 +1,24 @@
 #!/usr/bin/env python3
-"""Download and verify the pinned Microsandbox guest agent for Cargo builds."""
+"""Stage a pinned released or source-built Microsandbox guest agent."""
 
 from __future__ import annotations
 
 import argparse
 import hashlib
+import json
 import os
+import re
+import shutil
+import subprocess
 import sys
+import tempfile
 import time
 from pathlib import Path
 from typing import Callable, NamedTuple
 from urllib.error import URLError
 from urllib.request import Request, urlopen
+
+from pinned_source_archive import SourceArchiveError, download, extract_source
 
 
 VERSION = "0.7.6"
@@ -20,6 +27,90 @@ RELEASE_URL = (
     f"v{VERSION}"
 )
 ASSET_API_URL = "https://api.github.com/repos/superradcompany/microsandbox/releases/assets"
+REPAIR_ROOT = Path(__file__).resolve().parents[1] / "config/runtime/microsandbox-agentd-v1"
+
+
+def qualified_digest(architecture: str, checksums: Path = REPAIR_ROOT / "SHA256SUMS") -> str:
+    """Resolve the exact qualified guest bytes, shared with backend registration."""
+    for line in checksums.read_text().splitlines():
+        fields = line.split()
+        if len(fields) == 2 and fields[1] == f"agentd-{architecture}":
+            digest = fields[0]
+            if len(digest) == 64 and all(c in "0123456789abcdef" for c in digest):
+                return digest
+    raise StageError(f"no qualified Microsandbox guest for {architecture}")
+
+
+def stage_repaired_agentd(
+    architecture: str,
+    output: Path,
+    *,
+    policy_root: Path = REPAIR_ROOT,
+    execute: Callable[..., object] = subprocess.run,
+) -> Path:
+    """Stage the qualified file-overlay repair without changing upstream downloads."""
+    expected = qualified_digest(architecture, policy_root / "SHA256SUMS")
+    if output.is_symlink():
+        raise StageError("repaired Microsandbox guest path must not be a symlink")
+    if output.is_file() and file_sha256(output) == expected:
+        return output.resolve()
+    if os.name != "posix":
+        raise StageError("building the qualified guest requires a Linux or macOS build host")
+    policy = json.loads((policy_root / "inputs.json").read_text())
+    builder = policy["builders"][architecture]
+    output = output.absolute()
+    output.parent.mkdir(parents=True, exist_ok=True)
+    with tempfile.TemporaryDirectory(prefix=".agentd-build-", dir=output.parent) as value:
+        staging = Path(value)
+        archive = staging / "source.tar.gz"
+        download(policy["source"], archive)
+        source = staging / "source"
+        extract_source(archive, source, policy["source"])
+        manifest = source / "Cargo.toml"
+        text = manifest.read_text()
+        members = json.dumps([
+            "crates/agentd", "crates/protocol",
+            "packages/microsandbox-types/macros", "packages/microsandbox-types/rust",
+        ])
+        text, count = re.subn(
+            r"members = \[.*?\]", "members = " + members, text, count=1, flags=re.S
+        )
+        if count != 1:
+            raise StageError("pinned Microsandbox workspace has no members")
+        manifest.write_text(text)
+        shutil.copyfile(policy_root / "Cargo.lock", source / "Cargo.lock")
+        patch = str((policy_root / "readonly-file-mount.patch").resolve())
+        execute(
+            ["git", "apply", "--check", patch],
+            cwd=source, check=True, capture_output=True, text=True,
+        )
+        execute(
+            ["git", "apply", patch],
+            cwd=source, check=True, capture_output=True, text=True,
+        )
+        execute([
+            "docker", "run", "--rm", "--platform", builder["platform"],
+            "--user", f"{os.getuid()}:{os.getgid()}",
+            "--mount", f"type=bind,src={source.resolve()},dst=/build",
+            "--workdir", "/build",
+            "--env", "CARGO_HOME=/build/.cargo-cache",
+            "--env", f"CARGO_TARGET_DIR=/build/target-musl-{architecture}",
+            "--env", f"CARGO_BUILD_JOBS={os.environ.get('CARGO_BUILD_JOBS', '2')}",
+            "--env", "CARGO_PROFILE_RELEASE_DEBUG=0",
+            "--env", "RUSTFLAGS=-C strip=symbols -C link-arg=-Wl,--build-id=none",
+            builder["image"], "cargo", "build", "--locked", "--release",
+            "--target", builder["target"],
+            "-p", "microsandbox-agentd", "--bin", "agentd",
+        ], check=True)
+        binary = source / f"target-musl-{architecture}" / builder["target"] / "release/agentd"
+        actual = file_sha256(binary)
+        if binary.is_symlink() or actual != expected:
+            raise StageError(
+                f"repaired guest checksum mismatch: expected {expected}, received {actual}"
+            )
+        binary.chmod(0o500)
+        os.replace(binary, output)
+    return output.resolve()
 
 
 class Asset(NamedTuple):
@@ -133,6 +224,10 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--architecture", required=True, choices=sorted(ASSETS))
     parser.add_argument("--output", required=True, type=Path)
     parser.add_argument("--attempts", type=int, default=5)
+    parser.add_argument(
+        "--repaired", action="store_true",
+        help="build or reuse the qualified read-only-parent file-mount repair",
+    )
     return parser.parse_args()
 
 
@@ -140,12 +235,13 @@ def main() -> int:
     """Stage agentd and print its absolute path for CI environment wiring."""
     arguments = parse_args()
     try:
-        path = stage_agentd(
-            arguments.architecture,
-            arguments.output,
-            attempts=arguments.attempts,
-        )
-    except (StageError, ValueError) as error:
+        if arguments.repaired:
+            path = stage_repaired_agentd(arguments.architecture, arguments.output)
+        else:
+            path = stage_agentd(
+                arguments.architecture, arguments.output, attempts=arguments.attempts
+            )
+    except (StageError, SourceArchiveError, subprocess.CalledProcessError, OSError, ValueError) as error:
         print(error, file=sys.stderr)
         return 1
     print(path)

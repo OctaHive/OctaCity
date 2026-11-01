@@ -1,6 +1,6 @@
 use std::num::NonZeroU16;
 
-use octacity_server_domain::{BuildId, ImmutableRevision, Timestamp, TriggerId, TriggerIdentity, TriggerVersion};
+use octacity_server_domain::{BuildId, BuildSourceSelection, Timestamp, TriggerId, TriggerIdentity, TriggerVersion};
 
 use crate::{
   CreateTriggerDefinition, IdempotencyKey, NormalizedTriggerOccurrence, StoreError, StoreInputError, StoreOperation,
@@ -194,8 +194,8 @@ pub struct InternalTriggerEventClaim {
   pub event_identity: TriggerIdentity,
   /// Build whose terminal transition produced the event.
   pub source_build_id: BuildId,
-  /// Exact immutable revision built by the upstream Build.
-  pub source_revision: ImmutableRevision,
+  /// Frozen upstream source: an exact revision or explicit versioned source absence.
+  pub source: BuildSourceSelection,
   /// Exact upstream Build Configuration version used for definition matching.
   pub source_target: TriggerTarget,
   /// Actual persisted origin that created the source Build.

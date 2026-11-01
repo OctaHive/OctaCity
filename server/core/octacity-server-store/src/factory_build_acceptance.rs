@@ -60,6 +60,7 @@ impl AcceptFactoryBuild {
     crate::model::validate_materialized_jobs(StoreOperation::AcceptFactoryBuild, self.build.id, &self.jobs)?;
     let permissions = crate::factory_job_permissions(self.intent.permissions()).map_err(|_| invalid())?;
     let digest = input.digest().map_err(|_| invalid())?.to_string();
+    let source_scope = crate::factory_job_source_scope(input, self.intent.permissions()).map_err(|_| invalid())?;
     // Signed output ceilings reserve the complete DAG's worst-case output,
     // including Jobs that are initially blocked by dependencies.
     let output_bytes = self.jobs.iter().try_fold(0_u64, |total, job| {
@@ -89,6 +90,7 @@ impl AcceptFactoryBuild {
           || factory.node_attempt_id != self.intent.node().id().to_string()
           || factory.input_digest != digest
           || factory.subject_digest != input.subject().digest().to_string()
+          || factory.source_scope != source_scope
           || self.intent.profile().capture_write_paths.as_ref().is_some_and(|paths| {
             let matches = |wire: &[String]| {
               paths

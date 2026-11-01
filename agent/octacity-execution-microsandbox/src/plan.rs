@@ -227,7 +227,7 @@ impl SandboxPlan {
       .as_ref()
       .filter(|factory| factory.source_visible && factory.source_read_only)
       .map(|factory| SandboxReadOnlyMount {
-        host: factory.source.clone(),
+        host: factory.projected_source().to_owned(),
         guest: FACTORY_SOURCE_ROOT.to_owned(),
       })
       .into_iter()

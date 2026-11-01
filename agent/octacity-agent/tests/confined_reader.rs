@@ -252,6 +252,7 @@ fn reader_fixture(wrap: impl FnOnce(Arc<dyn ExecutionBackend>) -> Arc<dyn Execut
       disk_accounting: ExecutionDiskAccounting::WholeJob,
       protected_inputs: protected,
       source: source.clone(),
+      source_view: None,
       source_visible: false,
       source_read_only: true,
       source_writable_paths: vec![],

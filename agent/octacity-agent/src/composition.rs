@@ -33,7 +33,7 @@ use octacity_job::{
 };
 use octacity_output::{OutputPublisher, PresignedOutputPublisher, PresignedOutputPublisherConfig};
 use octacity_protocol::{
-  AgentInventory, BackendHealth, BackendHealthStatus, EXECUTION_CONTRACT_V3, ExecutionCapabilityV2,
+  AgentInventory, BackendHealth, BackendHealthStatus, EXECUTION_CONTRACT_V4, ExecutionCapabilityV2,
   ExecutionEnvironmentId, ExecutionMode, ExecutionProviderId, FactoryEnforcementCapabilityV3,
   FactoryExecutionCapabilityV3, FactoryImmutableReferenceV3, PlatformArchitecture, PlatformOs, RuntimeCapability,
   RuntimeMode, guarantees_for,
@@ -153,7 +153,7 @@ impl Components {
     if validated.config.factory_permissions.is_some() {
       inventory.factory_executions = factory_executions;
       if !inventory.factory_executions.is_empty() {
-        inventory.execution_contract.max = EXECUTION_CONTRACT_V3;
+        inventory.execution_contract.max = EXECUTION_CONTRACT_V4;
       }
     }
     inventory.validate()?;
@@ -238,7 +238,7 @@ impl BackendAssembly {
     capability: ExecutionCapabilityV2,
     environment_identity: ExecutionEnvironmentId,
     backend: Arc<dyn ExecutionBackend>,
-    factory_enforcement: Option<&'static [FactoryEnforcementCapabilityV3]>,
+    factory_enforcement: Option<&[FactoryEnforcementCapabilityV3]>,
     workspace_anchor: bool,
     controlled_tools: bool,
   ) -> Result<(), octacity_job::JobError> {
@@ -444,12 +444,19 @@ impl BackendAssembly {
       )?;
       let workspace_anchor = engine.supports_factory_workspace_anchor();
       let controlled_tools = controlled_tools_installed && qualified_factory_tool_projection(engine.as_ref()).is_some();
+      let selected_source = engine.supports_selected_source_visibility();
       let backend: Arc<dyn ExecutionBackend> = Arc::new(OciBackend::new(vec![engine])?);
+      // Source-view reads use the qualified no-follow Unix filesystem boundary.
+      // Windows retains the historical capabilities until that path is qualified.
+      let enforcement = FactoryEnforcementCapabilityV3::ALL
+        .into_iter()
+        .chain(selected_source.then_some(FactoryEnforcementCapabilityV3::SourceVisibilityV1))
+        .collect::<Vec<_>>();
       self.add_execution(
         capability,
         environment_identity.clone(),
         backend,
-        Some(&FactoryEnforcementCapabilityV3::ALL),
+        Some(&enforcement),
         workspace_anchor,
         controlled_tools,
       )?;

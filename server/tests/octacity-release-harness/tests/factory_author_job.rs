@@ -349,6 +349,7 @@ async fn signed_compiled_author_job_captures_only_its_declared_change() {
       node_attempt_id: intent.node().id().to_string(),
       input_digest: intent.input().digest().unwrap().to_string(),
       subject_digest: intent.input().subject().digest().to_string(),
+      source_scope: None,
       source_write_paths: Some(capture.policy.allowed_path_prefixes.clone()),
       change_set_capture: Some(capture.clone()),
       change_set_materialization: None,

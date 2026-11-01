@@ -7,7 +7,27 @@ async fn legacy_backfill_preserves_original_work_and_converges_after_restart() {
   let database = TestDatabase::before_issue_backfill().await;
   let fixture = octacity_server_store::testing::factory_node_journal_contract_fixture();
   let admission = &fixture.admission;
-  seed_projection_admission(&database, admission).await;
+  let (_, repository) = seed_projection_configuration(&database, admission).await;
+  support::legacy_factory_admission::seed(
+    &database.pool,
+    AdmitFactoryWork {
+      probe: FactoryAdmissionProbe {
+        source_scope: FactoryWorkSourceScope {
+          source: key("manual"),
+          security_scope: ManagementSecurityScope::trusted_network(),
+        },
+        external_identity: admission.work.external_identity().clone(),
+        intent_digest: digest(1),
+        idempotency_key: idempotency("legacy-backfill-admit"),
+      },
+      repository_version: Some(repository.version),
+      work: admission.work.clone(),
+      run: admission.run.clone(),
+      flow: admission.flow.clone(),
+      admitted_at: time(1),
+    },
+  )
+  .await;
   let pool = sqlx::postgres::PgPoolOptions::new()
     .max_connections(1)
     .acquire_timeout(std::time::Duration::from_millis(200))

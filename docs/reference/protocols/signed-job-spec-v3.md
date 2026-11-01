@@ -31,6 +31,61 @@ validly signed newer payload in an older registration. Such a payload is
 rejected before workspace creation, source materialization, secret delivery,
 or process spawn.
 
+### Qualified selected-source visibility extension
+
+`factory.source_scope` is optional and omitted for historical Jobs. Its presence
+requires `source_visibility_v1` after the unchanged twenty v3 enforcement entries.
+Placement must require that semantic capability, not just protocol v3 support;
+older strict decoders reject the added field and capability. No released fixture
+bytes or unscoped Job meaning change.
+
+The scope contains `resource_digest` (SHA-256 of the canonical frozen
+`FactoryTaskSubject` JSON, including candidate identity when selected) and a
+strictly ordered, bounded, nonempty `selections` array. Each selection has a
+canonical repository-relative `path` and optional inclusive one-based
+`lines: { first, last }`. A path exposes that file/subtree; a line view exposes
+only the selected lines, with blank preceding lines to preserve original line
+numbers and no content after the last selected line. Root, traversal, duplicate,
+and malformed range selections are rejected. Line views are read-only. Explicit
+writable overlays cannot cover a parent or neighbor outside selected visibility.
+The independent `subject_digest` retains Work correlation and confers no code
+access.
+
+The Agent prepares a private filtered source view before execution; the complete
+exact checkout is retained for trusted reconstruction/capture and is never the
+selected guest mount. The view is a distinct canonical sibling under that Job,
+not a link or writable scratch/protected-input alias. Copying is bounded by the
+signed resources and observes cancellation/deadline. A selected file that cannot
+be read safely or a scope unsupported by the selected backend fails before
+spawn. Source absence never selects this extension or resolves VCS.
+
+The Microsandbox path/line projection has a real VM qualification covering
+unselected path and line canaries, read-only enforcement, retry, cancellation and
+cleanup (`selected_source_job_hides_unselected_paths_and_lines_on_microsandbox`).
+The portable Agent case additionally verifies that the trusted checkout remains
+intact. This is separate from containerd or Windows qualification; capability
+advertisement must follow each supported route's evidence.
+
+The selected view preserves empty directories and the owner executable bit of
+regular repository files. Files remain private to the Job; special permission
+bits and access for other host users are not copied. Unselected directories and
+files remain absent. A newly selected writable directory can be initialized
+without granting write access to its read-only parent.
+
+Controlled-reader composition transfers the same selected view to the confined
+reader; its main harness receives neither that view nor the trusted checkout.
+Selected writable directories also pass real Microsandbox retry/cancellation
+qualification. Individual writable files pass the same real-VM lifecycle checks
+with the [pinned guest file-mount repair](../../../config/runtime/microsandbox-agentd-v1/README.md).
+This common runtime repair avoids opening an existing bind target for writing
+inside its read-only parent; the parent receives no additional authority.
+The Agent advertises selected visibility only for the actual SDK-selected
+guest bytes matching the architecture-specific qualified SHA-256, and rechecks
+them before selected-source VM creation. Unchanged upstream 0.7.6 and unknown
+guest payloads remain ineligible for this extension. Local-stand installation
+retains the payload digest and includes it in execution environment identity;
+the host runtime version and historical unscoped Jobs are unchanged.
+
 ## Strict v3 shape
 
 `JobSpecV3` retains the common Job and toolchain identity fields and uses these

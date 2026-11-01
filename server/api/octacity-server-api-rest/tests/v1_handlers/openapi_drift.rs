@@ -2,6 +2,16 @@ use super::*;
 use octacity_server_application::{ManagementAuthorizationMapping, ManagementResourceKind};
 
 #[test]
+fn agent_inventory_contract_documents_qualified_selected_source_visibility() {
+  let document = openapi_document();
+  assert_json_matches_component(
+    &document,
+    "FactoryEnforcementCapability",
+    &serde_json::json!("source_visibility_v1"),
+  );
+}
+
+#[test]
 fn ordinary_manual_http_contract_accepts_source_free_intent_without_relaxing_repository_selectors() {
   let document = openapi_document();
   let mut request: serde_json::Value =

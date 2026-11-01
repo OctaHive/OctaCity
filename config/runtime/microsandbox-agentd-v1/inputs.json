@@ -1,0 +1,25 @@
+{
+  "source": {
+    "repository": "https://github.com/superradcompany/microsandbox",
+    "tag": "v0.7.6",
+    "source_revision": "09df3d4b9d832adaede1fb9a198cfc660bfab8cd",
+    "archive_url": "https://codeload.github.com/superradcompany/microsandbox/tar.gz/09df3d4b9d832adaede1fb9a198cfc660bfab8cd",
+    "sha256": "3d076d83211e9755b17c0a1b93fadb3f201fcc4073e311ca139636ebebf827bb",
+    "archive_max_bytes": 67108864,
+    "expanded_max_bytes": 134217728,
+    "file_max_bytes": 16777216,
+    "member_max_count": 8192
+  },
+  "builders": {
+    "aarch64": {
+      "platform": "linux/arm64",
+      "target": "aarch64-unknown-linux-musl",
+      "image": "docker.io/library/rust:1.99.0-alpine3.24@sha256:484dce463db97ee3b9c3dbeb82ac48408091573ec2da1ce9ccd84c823642779a"
+    },
+    "x86_64": {
+      "platform": "linux/amd64",
+      "target": "x86_64-unknown-linux-musl",
+      "image": "docker.io/library/rust:1.99.0-alpine3.24@sha256:ddcfc394ea1f26b4363936ff59ee69c8eedb7b72146477c844d73b85031880ea"
+    }
+  }
+}
