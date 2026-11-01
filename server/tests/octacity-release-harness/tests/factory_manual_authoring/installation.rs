@@ -194,7 +194,7 @@ pub(super) fn catalog(
   directory: &Path,
   resources: &Resources,
   profile: &FactoryCodexBuildProfile,
-  code: Option<&FactoryCodexBuildProfile>,
+  codes: &[&FactoryCodexBuildProfile],
 ) -> PathBuf {
   let reference = |name: &str| {
     ImmutableReference::new(
@@ -222,21 +222,31 @@ pub(super) fn catalog(
       .map(|reference| json!({"kind":"node_capability","alias":reference.identity(),"reference":reference})),
   );
   let mut body = json!({"version":1,"projects":[{"project_id":resources.project,"references":references,"build_configurations":[{"alias":"isolated-worker","reference":resources.configuration}],"role_profiles":{"manual-runtime":{"ceiling":definition(profile),"parameters":FlowDataSchema::new("parameters".parse().unwrap(),"v1".parse().unwrap(),FlowValueSchema::Object{fields:BTreeMap::new()}).unwrap(),"public_environment":{},"enforcement":PermissionCategory::ALL}}}],"codex":[{"toolchain":profile.toolchain,"build_configuration":profile.build_configuration,"instructions":profile.instructions,"credentials":profile.credentials,"credential_purpose":"evaluator","usage_policy":profile.usage_policy,"pipeline_node":profile.pipeline_node,"parameters":{},"mcp_configurations":[],"project_permissions":profile.project_permissions,"local_permissions":{"grants":profile.local_permissions.grants(),"enforceable":PermissionCategory::ALL}}]});
-  if let Some(code) = code {
+  for (index, code) in codes.iter().enumerate() {
+    let capability_alias = if index == 0 {
+      "manual-code-runtime".to_owned()
+    } else {
+      format!("manual-code-runtime-{index}")
+    };
+    let build_alias = if index == 0 {
+      "code-worker".to_owned()
+    } else {
+      format!("code-worker-{index}")
+    };
     let project = &mut body["projects"][0];
     project["references"][1]["metadata"]["permission_declarations"] =
       serde_json::to_value(&code.project_permissions).unwrap();
     project["references"]
       .as_array_mut()
       .unwrap()
-      .push(json!({"kind":"node_capability","alias":"manual-code-runtime","reference":code.toolchain.executable}));
+      .push(json!({"kind":"node_capability","alias":capability_alias,"reference":code.toolchain.executable}));
     project["build_configurations"]
       .as_array_mut()
       .unwrap()
-      .push(json!({"alias":"code-worker","reference":code.build_configuration}));
+      .push(json!({"alias":build_alias,"reference":code.build_configuration}));
     let mut capability = project["role_profiles"]["manual-runtime"].clone();
     capability["ceiling"] = definition(code);
-    project["role_profiles"]["manual-code-runtime"] = capability;
+    project["role_profiles"][&capability_alias] = capability;
     let mut compiler = body["codex"][0].clone();
     compiler["build_configuration"] = serde_json::to_value(&code.build_configuration).unwrap();
     compiler["project_permissions"] = serde_json::to_value(&code.project_permissions).unwrap();

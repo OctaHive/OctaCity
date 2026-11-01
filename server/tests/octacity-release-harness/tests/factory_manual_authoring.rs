@@ -38,6 +38,8 @@ mod console;
 mod environment;
 #[path = "factory_manual_authoring/installation.rs"]
 mod installation;
+#[path = "factory_manual_authoring/isolation.rs"]
+mod isolation;
 #[path = "factory_pilot/source.rs"]
 mod local_mirror;
 #[allow(dead_code)]
@@ -64,7 +66,7 @@ const RELEASE_READINESS_TIMEOUT_MILLISECONDS: u64 = 15_000;
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
 #[ignore = "requires current server/Agent, pinned Octa, disposable PostgreSQL/S3 and qualified Microsandbox"]
 async fn clean_project_authors_and_executes_two_isolated_agents_without_a_business_preset() {
-  journey(None).await;
+  journey(Scenario::Headless).await;
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
@@ -73,15 +75,39 @@ async fn packaged_console_authors_and_executes_two_isolated_agents_from_empty_pr
   let requested = env::var("OCTACITY_RELEASE_AUTHORING_LOCALE").ok();
   if let Some(locale) = requested.as_deref() {
     assert!(["en", "ru"].contains(&locale), "unsupported qualification locale");
-    journey(Some(locale)).await;
+    journey(Scenario::Console(locale)).await;
   } else {
     for locale in ["en", "ru"] {
-      journey(Some(locale)).await;
+      journey(Scenario::Console(locale)).await;
     }
   }
 }
 
-async fn journey(locale: Option<&str>) {
+#[derive(Clone, Copy)]
+enum Scenario<'a> {
+  Headless,
+  Console(&'a str),
+  RepositoryFree,
+  Repositories,
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+#[ignore = "requires current Server/Agent, disposable services and qualified Microsandbox"]
+async fn unrelated_three_step_repository_free_workflow_retains_only_selected_inputs() {
+  journey(Scenario::RepositoryFree).await;
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+#[ignore = "requires current Server/Agent, disposable services and qualified Microsandbox"]
+async fn unrelated_three_step_workflow_isolates_repositories_a_b_and_no_code() {
+  journey(Scenario::Repositories).await;
+}
+
+async fn journey(scenario: Scenario<'_>) {
+  let locale = match scenario {
+    Scenario::Console(locale) => Some(locale),
+    _ => None,
+  };
   let backend = ReleaseBackend::from_environment();
   let runtime = octacity_release_harness::validate_installed_agent_runtime(
     &octacity_release_harness::AgentRuntimeBundles {
@@ -151,7 +177,8 @@ async fn journey(locale: Option<&str>) {
   wait_for_server_ready(&client, &origin, &mut server, &log).await;
   let resources = installation::create(&client, &origin, &backend).await;
   let profile = installation::profile(&directory, &resources, &backend, &runtime.octa_root);
-  let code = if locale.is_some() {
+  let observed_plugins = code::observe_git(&directory, &runtime.source_plugins);
+  let code = if locale.is_some() || matches!(scenario, Scenario::Repositories) {
     Some(
       code::install(
         &client,
@@ -160,7 +187,26 @@ async fn journey(locale: Option<&str>) {
         &resources,
         &profile,
         &backend,
-        &runtime.source_plugins,
+        &observed_plugins,
+      )
+      .await,
+    )
+  } else {
+    None
+  };
+  let second_code = if matches!(scenario, Scenario::Repositories) {
+    Some(
+      code::install_named(
+        &client,
+        &origin,
+        &directory,
+        &resources,
+        &profile,
+        &backend,
+        &code.as_ref().unwrap().source_plugins,
+        "bulletin-b",
+        "repository-b-canary: approved translation rules\n",
+        &[code.as_ref().unwrap()],
       )
       .await,
     )
@@ -168,12 +214,12 @@ async fn journey(locale: Option<&str>) {
     None
   };
   shutdown_server(&mut server, &log).await;
-  let profiles = installation::catalog(
-    &directory,
-    &resources,
-    &profile,
-    code.as_ref().map(|code| &code.profile),
-  );
+  let codes: Vec<_> = code
+    .iter()
+    .chain(second_code.iter())
+    .map(|code| &code.profile)
+    .collect();
+  let profiles = installation::catalog(&directory, &resources, &profile, &codes);
   let connectors = private_file(&directory, "connectors.json", r#"{"version":1,"connectors":[]}"#);
   let config = write_factory_server_config(
     &directory,
@@ -221,6 +267,7 @@ async fn journey(locale: Option<&str>) {
       .unwrap()
       .contains(&json!("none"))
   );
+  let mut isolated = None;
   let run = if let Some(locale) = locale {
     console::author(
       &client,
@@ -251,7 +298,22 @@ async fn journey(locale: Option<&str>) {
       "first source-free step must resolve from installation alone: {resolved}"
     );
     assert!(resolved["build"].is_object());
-    workflow::run(&client, &origin, &resources, &profile, &published).await
+    if matches!(scenario, Scenario::RepositoryFree | Scenario::Repositories) {
+      let authored = isolation::run(
+        &client,
+        &origin,
+        &resources,
+        &profile,
+        &published,
+        code.as_ref().zip(second_code.as_ref()),
+      )
+      .await;
+      let run = authored.run.clone();
+      isolated = Some(authored);
+      run
+    } else {
+      workflow::run(&client, &origin, &resources, &profile, &published).await
+    }
   };
   let enrollment=post_management(&client,&origin,"/api/v1/agent-enrollments","manual-enrollment",json!({"pool_id":resources.pool,"pool_version":1,"expected_platform":{"operating_system":backend.agent_platform().0,"architecture":backend.agent_platform().1}})).await;
   let agent_directory = directory.join("agent");
@@ -301,9 +363,10 @@ async fn journey(locale: Option<&str>) {
     &string(&enrollment, "credential"),
     agent::AgentReleasePaths {
       octa_root: &runtime.octa_root,
-      source_plugins: code
+      source_plugins: second_code
         .as_ref()
-        .map_or(&runtime.source_plugins, |code| &code.source_plugins),
+        .or(code.as_ref())
+        .map_or(&observed_plugins, |code| &code.source_plugins),
     },
     &backend,
     &overrides,
@@ -314,7 +377,7 @@ async fn journey(locale: Option<&str>) {
     &agent_directory.join("stdout.log"),
     &agent_directory.join("stderr.log"),
   );
-  let state = timeout(Duration::from_secs(180), async {
+  let state = timeout(Duration::from_secs(240), async {
     loop {
       let state = get_json(&client, format!("{origin}/api/v1/factory-runs/{run}")).await;
       if ["completed", "failed", "cancelled"].contains(&state["state"].as_str().unwrap_or("")) {
@@ -347,24 +410,66 @@ async fn journey(locale: Option<&str>) {
     "{state}; private evidence: {}",
     directory.display()
   );
-  let retained = verification::completed(&client, &origin, &run, locale.is_none(), code.as_ref()).await;
+  let retained = if let Some(authored) = &isolated {
+    isolation::completed(&client, &origin, authored).await
+  } else {
+    verification::completed(&client, &origin, &run, locale.is_none(), code.as_ref()).await
+  };
+  match scenario {
+    Scenario::RepositoryFree => assert!(
+      !directory.join("git-invocations").exists(),
+      "repository-free execution must not invoke Git"
+    ),
+    Scenario::Repositories => {
+      let log = fs::read_to_string(directory.join("git-invocations")).unwrap();
+      let directories: std::collections::BTreeSet<_> =
+        log.lines().map(|line| line.split_once('|').unwrap().0).collect();
+      let fetches: BTreeMap<_, _> = log
+        .lines()
+        .filter(|line| line.contains(" fetch "))
+        .map(|line| (line.split_once('|').unwrap().0, line.split_whitespace().last().unwrap()))
+        .collect();
+      assert_eq!(
+        directories,
+        fetches.keys().copied().collect(),
+        "Git may run only for the two selected source Jobs"
+      );
+      assert_eq!(fetches.len(), 2, "the no-code step must not materialize a checkout");
+      assert_eq!(
+        fetches.values().copied().collect::<std::collections::BTreeSet<_>>(),
+        [
+          code.as_ref().unwrap().revision.as_str(),
+          second_code.as_ref().unwrap().revision.as_str()
+        ]
+        .into_iter()
+        .collect()
+      );
+    }
+    _ => (),
+  }
   worker.kill().await.unwrap();
   worker.wait().await.unwrap();
   shutdown_server(&mut server, &log).await;
   server = spawn_server(&binary, &config, &log, &directory.join("server.err"));
   wait_for_server_ready(&client, &origin, &mut server, &log).await;
   assert_eq!(
-    verification::completed(&client, &origin, &run, locale.is_none(), code.as_ref()).await,
+    if let Some(authored) = &isolated {
+      isolation::completed(&client, &origin, authored).await
+    } else {
+      verification::completed(&client, &origin, &run, locale.is_none(), code.as_ref()).await
+    },
     retained
   );
   shutdown_server(&mut server, &log).await;
   if env::var_os("OCTACITY_RELEASE_EVIDENCE_DIR").is_some() {
     let agent_binary = required_path("OCTACITY_MANUAL_AGENT_BINARY", true);
     fs::write(
-      evidence_root.join(locale.map_or_else(
-        || "manual-authoring.json".to_owned(),
-        |locale| format!("manual-console-{locale}.json"),
-      )),
+      evidence_root.join(match scenario {
+        Scenario::Headless => "manual-authoring.json".to_owned(),
+        Scenario::Console(locale) => format!("manual-console-{locale}.json"),
+        Scenario::RepositoryFree => "manual-isolation-no-code.json".to_owned(),
+        Scenario::Repositories => "manual-isolation-a-b.json".to_owned(),
+      }),
       serde_json::to_vec_pretty(&json!({
         "locale":locale,
         "backend":required_string("OCTACITY_RELEASE_BACKEND"),

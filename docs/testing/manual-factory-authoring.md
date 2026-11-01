@@ -1,6 +1,6 @@
 # Clean-state manual Factory authoring
 
-`factory_manual_authoring` qualifies tasks 5.1 and 5.2 of
+`factory_manual_authoring` qualifies tasks 5.1–5.3 of
 `enable-manual-factory-pipeline-authoring`. It starts the actual Server and Agent
 executables against PostgreSQL and S3 and executes two ordinary Jobs in separate
 Microsandbox VMs. Only the model CLI is a finite protocol peer; it does not own
@@ -107,7 +107,7 @@ private test evidence. The caller owns cleanup of disposable services and failed
 databases/directories. Do not reuse or delete a personal stand as cleanup.
 
 The first case qualifies headless authoring and isolated execution. The packaged
-Console case is described below. Full lifecycle/negative cases and other backends
+Console case is described below. Additional recovery/compatibility matrices
 retain their separate tasks. A finite peer does not qualify real-model quality,
 provider delivery or production credentials.
 
@@ -187,3 +187,61 @@ with the private MSB home configured for this test environment:
 msb image load --input /absolute/qualified-guest.tar \
   --tag "$OCTACITY_CONTRACT_MICROSANDBOX_IMAGE"
 ```
+
+## Three-step isolation and resources
+
+Two additional headless journeys author an unrelated bulletin workflow:
+**compose → translate → audit**. They reuse the same ordinary HTTP, PostgreSQL,
+Artifact, Server, Agent and Microsandbox owners:
+
+```sh
+CARGO_PROFILE_DEV_DEBUG=0 CARGO_PROFILE_TEST_DEBUG=0 CARGO_INCREMENTAL=0 \
+  CARGO_BUILD_JOBS=2 cargo test --locked -p octacity-release-harness \
+  --test factory_manual_authoring unrelated_three_step \
+  -- --ignored --nocapture --test-threads=1
+```
+
+`unrelated_three_step_repository_free_workflow_retains_only_selected_inputs`
+creates no Repository. All three steps use the same Role/Profile and model,
+but separate ordinary Builds, Jobs, input identities and Context manifests.
+Each step explicitly selects the admitted task, completion criteria and just
+its own Project document. The next step receives only the selected scalar
+caption or translation. Private result fields, investigation messages and
+an unselected Project document have distinct canaries which must be absent.
+
+`unrelated_three_step_workflow_isolates_repositories_a_b_and_no_code` declares
+repositories A/B with different exact revisions. Compose has no code;
+translate receives only read-only `README.md` from A; audit receives only
+read-only `README.md` from B. Both repositories also contain an unselected
+file. The finite guest checks the actual mounted content, its read-only mode,
+and absence of every other source entry, including Git metadata. Work remains
+a repository-free Project/input subject throughout.
+
+The verified SourceGit executable is copied unchanged with a private transport
+observer. The repository-free journey must record no Git invocation. The A/B
+journey uses the real SourceGit process and test-owned local transport rewrites;
+it qualifies isolation and exact materialization, not remote Git connectivity.
+
+The finite guest also puts copies of its actual protected execution package
+and node envelope into its ordinary private trace Artifact. Through authorized
+Artifact download, the test validates the package, compares its Context identity
+and digest to the retained call, and checks exact document IDs/digests/sizes,
+selected payload, original Work task and predecessor result references against
+the public journal. These are test probes, not model evidence or a new input
+owner. They grant no verified fact or delivery authority. Existing diagnostics
+do not expose protected execution documents.
+
+Before valid publication, both validate and publish routes must reject an
+unsupported network grant and a result source naming a foreign Run. The A/B
+case additionally rejects an undeclared source, broader read scope, write
+access and an accepted-candidate reference from A used for B. Rejected drafts
+must create no Flow, Run or Build. Completed reasoning results must create no
+candidate, verification evidence or delivery record implicitly.
+
+The exact retained records and input probes are compared after Server restart.
+With `OCTACITY_RELEASE_EVIDENCE_DIR`, these cases write distinct
+`manual-isolation-no-code.json` and `manual-isolation-a-b.json` reports alongside
+the existing headless and Console reports. Keep these artifacts private. Both
+Microsandbox release jobs run the headless baseline and both isolation cases;
+failure of any selected case fails the gate. Other recovery and compatibility
+matrices remain separate qualification tasks.

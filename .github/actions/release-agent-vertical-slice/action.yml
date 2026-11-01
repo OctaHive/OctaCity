@@ -140,9 +140,13 @@ runs:
             export OCTACITY_MINIO_ACCESS_KEY=octacity OCTACITY_MINIO_SECRET_KEY=octacity-secret
             export OCTACITY_MANUAL_SERVER_BINARY="${OCTACITY_RELEASE_SERVER_ROOT}/bin/octacity-server"
             export OCTACITY_MANUAL_AGENT_BINARY="${OCTACITY_RELEASE_AGENT_ROOT}/bin/octacity-agent"
-            cargo test --locked -p octacity-release-harness --test factory_manual_authoring \
+            for authoring_case in \
               clean_project_authors_and_executes_two_isolated_agents_without_a_business_preset \
-              -- --ignored --exact --nocapture
+              unrelated_three_step_repository_free_workflow_retains_only_selected_inputs \
+              unrelated_three_step_workflow_isolates_repositories_a_b_and_no_code; do
+              cargo test --locked -p octacity-release-harness --test factory_manual_authoring \
+                "${authoring_case}" -- --ignored --exact --nocapture
+            done
             ;;
         esac
 

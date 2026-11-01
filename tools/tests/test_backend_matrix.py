@@ -22,23 +22,28 @@ class BackendMatrixTests(unittest.TestCase):
         action = (REPOSITORY / ".github/actions/release-agent-vertical-slice/action.yml").read_text()
         step = action.split("    - id: test\n", 1)[1].split("    - name:", 1)[0]
         script = textwrap.dedent(step.split("      run: |\n", 1)[1])
-        for backend in ("microsandbox", "linux-microsandbox"):
-            with self.subTest(backend=backend):
+        for backend, failing in ((backend, case) for backend in ("microsandbox", "linux-microsandbox") for case in (
+            "clean_project_authors_and_executes_two_isolated_agents_without_a_business_preset",
+            "unrelated_three_step_repository_free_workflow_retains_only_selected_inputs",
+            "unrelated_three_step_workflow_isolates_repositories_a_b_and_no_code",
+        )):
+            with self.subTest(backend=backend, failing=failing):
                 with tempfile.TemporaryDirectory() as temporary:
                     root = Path(temporary)
                     receipt = root / "installation.json"
                     receipt.write_text("{}")
                     log = root / "commands"
-                    command = 'cargo() { printf "%s\\n" "$*" >> "$COMMAND_LOG"; case "$*" in *factory_manual_authoring*) : "${OCTACITY_MINIO_ACCESS_KEY:?}" "${OCTACITY_MINIO_SECRET_KEY:?}"; return 9;; *) return 0;; esac; };\n' + script
+                    command = 'cargo() { printf "%s\\n" "$*" >> "$COMMAND_LOG"; case "$*" in *"$FAILING_CASE"*) : "${OCTACITY_MINIO_ACCESS_KEY:?}" "${OCTACITY_MINIO_SECRET_KEY:?}"; return 9;; *) return 0;; esac; };\n' + script
                     result = subprocess.run(["/bin/bash", "-c", command], env={
                         **os.environ, "RUNNER_TEMP":str(root), "GITHUB_OUTPUT":str(root/"output"),
                         "OCTACITY_RELEASE_BACKEND":backend, "OCTACITY_RELEASE_EXECUTION_WRAPPER":"",
                         "OCTACITY_RELEASE_INSTALLATION_RECEIPT":str(receipt),
                         "OCTACITY_RELEASE_SERVER_ROOT":str(root/"server"), "OCTACITY_RELEASE_AGENT_ROOT":str(root/"agent"),
-                        "COMMAND_LOG":str(log),
+                        "COMMAND_LOG":str(log), "FAILING_CASE":failing,
                     }, capture_output=True, text=True)
                     self.assertEqual(result.returncode, 9, result.stderr)
                     self.assertIn("--test factory_manual_authoring", log.read_text())
+                    self.assertIn(failing, log.read_text())
 
     @unittest.skipUnless(os.name == "posix","requires the real CI shell")
     def test_microsandbox_source_contracts_run_on_both_jobs_and_fail_the_gate(self):

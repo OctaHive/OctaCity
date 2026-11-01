@@ -5,7 +5,7 @@ use octacity_server_application::FactoryCodexBuildProfile;
 const ASSESS: &str = "Assess Project fit. Retain duplicate uncertainty without inventing search evidence.";
 const CLASSIFY: &str = "Classify only the accepted eligible ticket using the selected component and priority guidance.";
 
-async fn document(client: &Client, origin: &str, project: &str, name: &str, content: &str) -> Value {
+pub(super) async fn document(client: &Client, origin: &str, project: &str, name: &str, content: &str) -> Value {
   let published = post_management(
     client,
     origin,
@@ -25,7 +25,7 @@ async fn document(client: &Client, origin: &str, project: &str, name: &str, cont
   assert_eq!(read["content"], content);
   published["artifact"].clone()
 }
-async fn schema(client: &Client, origin: &str, project: &str, name: &str, shape: FlowValueSchema) -> Value {
+pub(super) async fn schema(client: &Client, origin: &str, project: &str, name: &str, shape: FlowValueSchema) -> Value {
   post_management(
     client,
     origin,
@@ -35,7 +35,7 @@ async fn schema(client: &Client, origin: &str, project: &str, name: &str, shape:
   )
   .await
 }
-fn object(fields: &[(&str, FlowValueSchema)]) -> FlowValueSchema {
+pub(super) fn object(fields: &[(&str, FlowValueSchema)]) -> FlowValueSchema {
   FlowValueSchema::Object {
     fields: fields
       .iter()
@@ -43,28 +43,28 @@ fn object(fields: &[(&str, FlowValueSchema)]) -> FlowValueSchema {
       .collect(),
   }
 }
-fn text() -> FlowValueSchema {
+pub(super) fn text() -> FlowValueSchema {
   FlowValueSchema::String {
     min_bytes: 1,
     max_bytes: 256,
   }
 }
-fn constant(value: Value) -> Value {
+pub(super) fn constant(value: Value) -> Value {
   json!({"value":{"mapping":"constant","value":value}})
 }
-fn record(node: &str, outcome: &str, path: &str) -> Value {
+pub(super) fn record(node: &str, outcome: &str, path: &str) -> Value {
   json!({"sources":{"selected":{"source":"record","node":node,"outcome":outcome,"view":"payload","path":path}},"mapping":{"value":{"mapping":"pointer","path":"/selected"}}})
 }
-fn context(entries: &[(&str, &str, &Value)]) -> Value {
+pub(super) fn context(entries: &[(&str, &str, &Value)]) -> Value {
   json!({"entries":entries.iter().map(|(alias,kind,artifact)|(alias.to_string(),json!({"source_kind":kind,"source":constant(json!({"kind":"artifact","value":artifact}))}))).collect::<BTreeMap<_,_>>()})
 }
-fn node(name: &str, kind: &str, input: &Value, outcomes: &[(&str, &Value)], permissions: &Value) -> Value {
+pub(super) fn node(name: &str, kind: &str, input: &Value, outcomes: &[(&str, &Value)], permissions: &Value) -> Value {
   json!({"key":name,"kind":kind,"input_schema":input["reference"],"outcomes":outcomes.iter().map(|(key,schema)|json!({"key":key,"kind":"success","schema":schema["reference"],"public_result":true})).collect::<Vec<_>>(),"budget":BudgetLimit::new(1,120000,1000,1000,16*1024*1024).unwrap(),"permissions":permissions,"required":true,"subflow":null,"code":{"kind":"none"}})
 }
-fn edge(from: &str, outcome: &str, kind: &str, to: &str) -> Value {
+pub(super) fn edge(from: &str, outcome: &str, kind: &str, to: &str) -> Value {
   json!({"predecessor":from,"outcome":outcome,"target":{"kind":kind,"key":to},"max_repeats":0,"exhausted_terminal":null,"starts_cycle":false})
 }
-fn select(node: &mut Value, publication: &Value, build: Value) {
+pub(super) fn select(node: &mut Value, publication: &Value, build: Value) {
   node["profile_selection"] = json!({"role":publication["role"]["reference"],"candidates":{"chosen":{"profile":publication["profiles"][0],"build":build}},"policy":{"mode":"manual","candidate":"chosen"},"failure":{"kind":"manual_selection"},"selection_budget":BudgetUsage::default()});
 }
 async fn resolve(client: &Client, origin: &str, project: &str, role: &Value, outcome: &str) -> Value {

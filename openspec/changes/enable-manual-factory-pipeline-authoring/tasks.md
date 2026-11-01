@@ -41,7 +41,7 @@
 
 - [x] 5.1 Add a failing headless clean-state journey through real management routes, persistence and qualified isolated execution, then make it pass: manually author the two-agent assessment/classification workflow, documents, criteria, gates, handoff and manual input. Enumerate technical prerequisites and verify no preinstalled business definitions, demo Builds/Runs, handler substitutions or hidden triage resolver.
 - [x] 5.2 Add failing packaged Console acceptance journeys in English and Russian, then make them pass using keyboard and narrow layouts. Create Project documents and the visual Flow from empty state, select/preview/remove multiple documents with instruction/reference roles independently per step, connect conditional routes, inspect/edit pipeline goals/criteria, declare pipeline sources and attach exact step inputs, then execute through real APIs; verify review and retained server state rather than only a rendered graph. Include the approved explicit Work-task Context input, frozen selected-task provenance, legacy-byte compatibility and pre-publication rejection of missing mandatory Task Context.
-- [ ] 5.3 Add failing end-to-end isolation/resource cases, then make them pass for an unrelated three-step workflow, a fully repository-free workflow and steps using repositories A/B. Verify exact retained inputs, no VCS activity for no-code steps, no undeclared context, and rejection of foreign evidence and unsupported authority.
+- [x] 5.3 Add failing end-to-end isolation/resource cases, then make them pass for an unrelated three-step workflow, a fully repository-free workflow and steps using repositories A/B. Verify exact retained inputs, no VCS activity for no-code steps, no undeclared context, and rejection of foreign evidence and unsupported authority.
 - [ ] 5.4 Add failing recovery cases, then make them pass for restart after an accepted predecessor result, later Project document edits, revoked scope, lost publication/delivery replies and pending/failed provider receipts. Verify pinned original inputs, bounded recovery, no duplicate logical successor/effect and truthful delivery state.
 - [ ] 5.5 Run the compatibility matrix across legacy saved definitions, repository-backed Work/Builds, source preparation, replay, Context provenance, protocol fixtures and ordinary CI/CD; verify old Runs remain inspectable/recoverable and no migrated digest or replay identity changes.
 
@@ -499,3 +499,66 @@ waits for the completed Run-route navigation rather than racing the admission
 response. See `docs/testing/manual-factory-authoring.md` for reproducible setup
 and commands. Broader workflow/resource, recovery and compatibility matrices
 remain tasks 5.3–5.5; they are not marked complete by this journey.
+
+
+### Task 5.3 qualification evidence
+
+The existing physical `factory_manual_authoring` harness now authors an unrelated
+three-reasoning-step bulletin Flow solely through management HTTP. It executes
+compose → translate → audit in separate qualified Microsandbox VMs, once without
+any Repository and once with no code → exact A/README.md → exact B/README.md.
+Work retains its Project/input subject in both cases. The repository-free case
+uses the same Role/Profile and model for all three steps, with distinct ordinary
+Builds, Jobs, inputs and Context identities.
+
+Observed Red/Green cycles:
+
+- `python3 -m unittest discover -s tools/tests -p test_manual_factory_model.py`:
+  the finite peer rejected the new bulletin assignments (exit 64), then accepted
+  all three independently specified results and rejected missing or foreign
+  guidance. A leaked unselected Project document initially passed, then failed
+  closed. Assignments requesting A/B initially succeeded without mounted code;
+  they now require the exact read-only guest file and reject every extra entry.
+- `cargo test --locked -p octacity-release-harness --test factory_manual_authoring
+  unrelated_three_step_repository_free_workflow_retains_only_selected_inputs
+  -- --ignored --exact --nocapture`: the old scenario retained only two calls,
+  rather than the required three; the separately authored bulletin Flow now
+  executes three. Requiring the actual protected execution package in its private
+  trace initially failed; the finite guest probe now retains that package and
+  the node envelope through the ordinary Artifact owner.
+- `cargo test --locked -p octacity-release-harness --test factory_manual_authoring
+  unrelated_three_step -- --ignored --nocapture --test-threads=1`: both physical
+  isolation/resource cases pass. Each validates exact selected document
+  IDs/digests/sizes, original Work task, scalar input, predecessor attempt/result
+  references, Context identity/digest, per-step subject and ordinary Build/Job
+  linkage against the retained journal. Both are verified again after Server
+  restart. The fully repository-free case records zero Git calls; the A/B case
+  records Git only in the two selected Job source directories at their distinct
+  exact revisions. Unselected files, Git metadata and private investigation or
+  result fields never reach another step.
+- `python3 -m unittest discover -s tools/tests -p test_backend_matrix.py`: failures
+  in either new case initially did not fail either Microsandbox release gate
+  because the cases were not selected. Both gates now run all three headless
+  authoring cases and propagate a failure at any position.
+
+Before valid publication, both normalized review and publication reject an
+unsupported network grant and a result source naming a foreign Run. The A/B
+case additionally rejects A's accepted-candidate producer as authority for B,
+an undeclared source, wider read scope and unsupported writes. Rejected drafts
+create no Flow, Run or Build; successful model results create no candidate,
+verified evidence or delivery facts implicitly. No new runtime, parser, input
+owner or business alias was needed. The only finite replacement is the model
+CLI, not the Server, Agent, SourceGit, Artifact, persistence or execution owners.
+
+Qualification used actual PostgreSQL/S3, current Server/Agent binaries, pinned
+Octa and qualified Microsandbox on macOS ARM64 with Linux ARM64 guests. The
+packaged Console EN/RU regression also passes. This does not claim a physical
+Linux host run, remote Git connectivity or real-model judgment quality; the
+Linux Microsandbox release gate selects the same cases and its shell failure
+propagation is tested. The shared headless baseline, affected tool tests,
+release-harness Clippy, formatting, architecture and strict OpenSpec checks
+complete the regression gate. Test-environment image-cache/socket-path failures
+were not counted as TDD Red. During qualification free disk remained about
+9.7–10 GiB. Distinct retained reports and reproducible commands are documented
+in `docs/testing/manual-factory-authoring.md`. Recovery/compatibility work in
+5.4–5.5 remains pending.

@@ -110,38 +110,9 @@ pub(super) async fn completed(
       } else {
         json!({"component":"console","priority":"normal"})
       };
-      let outputs = get_json(
-        client,
-        format!(
-          "{origin}/api/v1/builds/{}/artifacts?limit=100",
-          string(link, "build_id")
-        ),
-      )
-      .await;
-      let result = outputs["items"]
-        .as_array()
-        .unwrap()
-        .iter()
-        .find(|output| output["name"] == "codex-run-result")
-        .expect("retained ordinary result report");
-      let download: Value = client
-        .post(format!("{origin}/api/v1/artifacts/{}/download", string(result, "id")))
-        .send()
-        .await
-        .unwrap()
-        .json()
-        .await
-        .unwrap();
-      let response = client
-        .get(string(&download, "get_url"))
-        .send()
-        .await
-        .unwrap_or_else(|_| panic!("private result transfer failed"));
-      assert!(response.status().is_success(), "private result transfer rejected");
-      let result: Value = response
-        .json()
-        .await
-        .unwrap_or_else(|_| panic!("private result document is invalid"));
+      let result: Value =
+        serde_json::from_slice(&output_bytes(client, origin, &string(link, "build_id"), "codex-run-result").await)
+          .unwrap();
       assert_eq!(result["structured_result"], expected);
     }
     let jobs = link["jobs"].as_array().unwrap();
@@ -155,4 +126,29 @@ pub(super) async fn completed(
   assert_eq!(subject.as_object().unwrap().len(), 3);
   assert_eq!(subject["input_digest"].as_str().unwrap().len(), 64);
   Value::Object(retained)
+}
+
+/// Uses the ordinary authorized Artifact download boundary, including private worker reports.
+pub(super) async fn output_bytes(client: &Client, origin: &str, build: &str, name: &str) -> Vec<u8> {
+  let outputs = get_json(client, format!("{origin}/api/v1/builds/{build}/artifacts?limit=100")).await;
+  let output = outputs["items"]
+    .as_array()
+    .unwrap()
+    .iter()
+    .find(|output| output["name"] == name)
+    .expect("retained worker output");
+  let response = client
+    .post(format!("{origin}/api/v1/artifacts/{}/download", string(output, "id")))
+    .send()
+    .await
+    .unwrap();
+  assert!(response.status().is_success());
+  let download: Value = response.json().await.unwrap();
+  let response = client
+    .get(string(&download, "get_url"))
+    .send()
+    .await
+    .unwrap_or_else(|_| panic!("private output transfer failed"));
+  assert!(response.status().is_success(), "private output transfer rejected");
+  response.bytes().await.unwrap().to_vec()
 }
