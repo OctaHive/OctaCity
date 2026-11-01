@@ -407,11 +407,21 @@ fn count_report(_: &FlowBuildIntent, _: &FactoryCommandBuildProfile) -> Option<s
 }
 
 async fn prepared_with_report(
+  profile: FactoryCommandBuildProfile,
+  media_type: &str,
+  output_schema: Option<FlowDataSchema>,
+  primary: PrimaryReport,
+  configure: impl FnOnce(&mut FactoryCommandBuildProfile),
+) -> Fixture {
+  prepared_scoped_report(profile, media_type, output_schema, primary, configure, None).await
+}
+async fn prepared_scoped_report(
   mut profile: FactoryCommandBuildProfile,
   media_type: &str,
   output_schema: Option<FlowDataSchema>,
   primary: PrimaryReport,
   configure: impl FnOnce(&mut FactoryCommandBuildProfile),
+  code_scope: Option<FlowCodeScope>,
 ) -> Fixture {
   let work = fixtures::work();
   configure_profile(&mut profile, &work);
@@ -424,13 +434,24 @@ async fn prepared_with_report(
   binding.task_digest = profile.task_digest();
   binding.result_output = profile.outputs[0].kind().clone();
   binding.evidence = profile.outputs[1..].to_vec();
-  let (_, admitted, schema, input, _) = fixtures::execution_fixture_with_permissions(
-    FlowNodeKind::BuildCommand,
-    work.clone(),
-    binding,
-    output_schema,
-    profile.project_permissions.clone(),
-  );
+  let (_, admitted, schema, input, _) = if let Some(scope) = code_scope {
+    assert!(output_schema.is_none());
+    fixtures::execution_fixture_with_code_scope(
+      FlowNodeKind::BuildCommand,
+      work.clone(),
+      binding,
+      profile.project_permissions.clone(),
+      scope,
+    )
+  } else {
+    fixtures::execution_fixture_with_permissions(
+      FlowNodeKind::BuildCommand,
+      work.clone(),
+      binding,
+      output_schema,
+      profile.project_permissions.clone(),
+    )
+  };
   assert_eq!(schema.reference(), profile.outputs[0].schema());
   let runs = Arc::new(InMemoryFactoryConfigurationStore::new());
   let run = FactoryRun::admitted(input.factory_run_id(), &work);
@@ -612,7 +633,16 @@ async fn finish_prepared_with_primary(
     pipeline_node_id: profile.pipeline_node.clone(),
     execution: program.execution,
     protected_inputs: program.protected_inputs,
-    required_enforcement: program.required_enforcement,
+    required_enforcement: {
+      let mut required = program.required_enforcement;
+      if factory_job_source_scope(intent.input(), intent.permissions())
+        .unwrap()
+        .is_some()
+      {
+        required.push(octacity_protocol::FactoryEnforcementCapabilityV3::SourceVisibilityV1);
+      }
+      required
+    },
     causality: FactoryCausalityV3 {
       factory_run_id: intent.input().factory_run_id().to_string(),
       factory_configuration_id: intent.input().configuration().id().to_string(),
@@ -622,7 +652,7 @@ async fn finish_prepared_with_primary(
       node_attempt_id: intent.node().id().to_string(),
       input_digest: intent.input().digest().unwrap().to_string(),
       subject_digest: intent.input().subject().digest().to_string(),
-      source_scope: None,
+      source_scope: factory_job_source_scope(intent.input(), intent.permissions()).unwrap(),
       source_write_paths: None,
       change_set_capture: None,
       change_set_materialization: match &source {
@@ -2030,6 +2060,63 @@ fn retained_deployment_reconstructs_the_qualified_target_and_plan_at_both_verifi
         .await
         .is_err(),
       "an ordinary promotion observer cannot attribute a network/credential command"
+    );
+  });
+}
+
+#[test]
+fn scoped_command_results_settle_with_the_executed_source_visibility_guarantee() {
+  crate::factory_admission_tests::run_ready(async {
+    let (_, _, profile) = crate::factory_command_tests::command_fixture();
+    let fixture = prepared_scoped_report(
+      profile,
+      "application/json",
+      None,
+      count_report,
+      |_| {},
+      Some(
+        serde_json::from_value(serde_json::json!({"kind":"selected","entries":[{"kind":"path","path":"README.md"}]}))
+          .unwrap(),
+      ),
+    )
+    .await;
+    let observed = fixture
+      .source(fixture.query.clone())
+      .published_outputs(fixture.query.build.build.id, fixture.query.attempt.id, 10000)
+      .await;
+    assert!(
+      matches!(observed, Ok(FactoryNodeBuildOutputObservation::Verified(_))),
+      "a correctly scoped ordinary command result remains verifiable"
+    );
+  });
+}
+
+#[test]
+fn scoped_command_observation_rejects_a_different_retained_source_scope() {
+  crate::factory_admission_tests::run_ready(async {
+    let (_, _, profile) = crate::factory_command_tests::command_fixture();
+    let mut fixture = prepared_scoped_report(
+      profile,
+      "application/json",
+      None,
+      count_report,
+      |_| {},
+      Some(
+        serde_json::from_value(serde_json::json!({"kind":"selected","entries":[{"kind":"path","path":"README.md"}]}))
+          .unwrap(),
+      ),
+    )
+    .await;
+    let mut template = serde_json::to_value(&fixture.query.attempt.jobs[0].job.job_spec_template).unwrap();
+    template["execution"]["factory"]["source_scope"]["selections"][0]["path"] = serde_json::json!("private.txt");
+    fixture.query.attempt.jobs[0].job.job_spec_template = serde_json::from_value(template).unwrap();
+    let observed = fixture
+      .source(fixture.query.clone())
+      .published_outputs(fixture.query.build.build.id, fixture.query.attempt.id, 10000)
+      .await;
+    assert!(
+      matches!(observed, Err(OrdinaryBuildApplicationError::Invalid)),
+      "a command result cannot authorize a different code scope"
     );
   });
 }

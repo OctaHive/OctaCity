@@ -76,7 +76,9 @@ export function removeDocument(node: Node, key: string): Node {
   const empty =
     !Object.keys(entries).length &&
     !Object.keys(binding?.artifact_collections ?? {}).length &&
-    !binding?.candidate_revision;
+    !binding?.candidate_revision &&
+    !binding?.candidate_when_present &&
+    !binding?.work_task;
   return { ...node, context_binding: empty ? null : { ...binding, entries } };
 }
 

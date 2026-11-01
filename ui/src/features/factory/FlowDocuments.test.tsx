@@ -262,3 +262,26 @@ it('shows a denied preview as a read-only preview failure without offering docum
   expect(failure.getByText('Preview document')).toBeTruthy();
   expect(screen.queryByRole('textbox', { name: 'Document text' })).toBeNull();
 });
+
+it('removes the last Project document without disconnecting the explicit Work task', async () => {
+  const { draft } = fixture((value) => {
+    value.root.nodes[0]!.context_binding = { entries: {}, work_task: 'task' };
+  });
+  const docs = within(await screen.findByRole('group', { name: 'Documents' }));
+  await userEvent.click(await docs.findByRole('checkbox', { name: 'Goals' }));
+  await userEvent.click(docs.getByRole('button', { name: 'Remove document Goals' }));
+  expect(draft().root.nodes[0]!.context_binding).toEqual({ entries: {}, work_task: 'task' });
+});
+
+it('recognizes an explicitly connected Work task as the selected profile input', async () => {
+  const binding =
+    factoryProfileConfigurationFixture().configuration.flow.closure.definitions[0]!.nodes[0]!
+      .profile_selection!;
+  binding.candidates.default!.profile.definition.context_requirements = ['task'];
+  fixture((value) => {
+    value.root.nodes[0]!.profile_selection = binding;
+    value.root.nodes[0]!.context_binding = { entries: {}, work_task: 'task' };
+  });
+  const docs = within(await screen.findByRole('group', { name: 'Documents' }));
+  expect(docs.queryByRole('alert')).toBeNull();
+});

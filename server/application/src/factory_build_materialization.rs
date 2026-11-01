@@ -28,6 +28,19 @@ pub struct FactoryManagedJobProgram {
   /// Qualified enforcement required by this installed capability.
   pub required_enforcement: Vec<FactoryEnforcementCapabilityV3>,
 }
+/// Reconstructs the signed guarantees shared by materialization and retained observation.
+/// A scoped source adds visibility enforcement without dropping native compiler guarantees.
+pub(crate) fn managed_factory_enforcement(
+  native: &[FactoryEnforcementCapabilityV3],
+  source_scope: Option<&octacity_protocol::FactorySourceScopeV1>,
+) -> Vec<FactoryEnforcementCapabilityV3> {
+  let mut required = native.to_vec();
+  if source_scope.is_some() && !required.contains(&FactoryEnforcementCapabilityV3::SourceVisibilityV1) {
+    required.push(FactoryEnforcementCapabilityV3::SourceVisibilityV1);
+  }
+  required
+}
+
 /// Frozen inputs to the common ordinary Build materialization boundary.
 #[derive(Clone)]
 pub struct FactoryManagedBuildInput {
@@ -347,12 +360,8 @@ pub fn materialize_factory_managed_build_with_source(
         .inputs
         .sort_by(|left, right| left.artifact_id.cmp(&right.artifact_id));
       protected_inputs.validate().map_err(|_| Invalid)?;
-      let mut required_enforcement = program.required_enforcement.clone();
-      if causality.source_scope.is_some()
-        && !required_enforcement.contains(&FactoryEnforcementCapabilityV3::SourceVisibilityV1)
-      {
-        required_enforcement.push(FactoryEnforcementCapabilityV3::SourceVisibilityV1);
-      }
+      let required_enforcement =
+        managed_factory_enforcement(&program.required_enforcement, causality.source_scope.as_ref());
       let template = derive_factory_managed_job_spec_template(FactoryManagedJobSpecInput {
         build: build_snapshot.clone(),
         pipeline_node_id: node.id().clone(),

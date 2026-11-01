@@ -356,6 +356,67 @@ it('admits manual Project input from exact Project documents without existing Bu
   expect(sources.listBuildArtifacts).not.toHaveBeenCalledWith('project-task', expect.anything());
 });
 
+it.each([
+  ['different content', 'c'.repeat(64), 'Process criteria'],
+  ['identical content', 'b'.repeat(64), 'newer-criteria'],
+  ['matching digest prefix', 'b'.repeat(8) + 'c'.repeat(56), 'newer-criteria'],
+])(
+  'distinguishes same-name Project publications and previews the exact selected input before admission (%s)',
+  async (_scenario, contentDigest, visiblePrefix) => {
+    const { admitWork, configuration } = renderWork();
+    const doc = (id: string, name: string, digest: string) => ({
+      project_id: configuration.project_id,
+      name,
+      artifact: { artifact_id: id, content_digest: digest.repeat(64), encoded_size: 30 },
+      published_at: 1700000000000,
+      expires_at: Date.now() + 60000,
+    });
+    const task = doc('project-task', 'Requested work', 'a');
+    const older = doc('older-criteria', 'Process criteria', 'b');
+    const newer = doc('newer-criteria', 'Process criteria', 'c');
+    newer.artifact.content_digest = contentDigest;
+    vi.spyOn(projectDocumentsApi, 'list').mockResolvedValue({
+      items: [task, older, newer],
+      next_cursor: null,
+    });
+    const read = vi
+      .spyOn(projectDocumentsApi, 'read')
+      .mockResolvedValue({ ...newer, content: 'Explicit revised process criteria' });
+    await userEvent.type(
+      await screen.findByRole('textbox', { name: 'Work label' }),
+      'review exact inputs',
+    );
+    await userEvent.click(screen.getByRole('combobox', { name: 'Work subject' }));
+    await userEvent.click(screen.getByRole('option', { name: 'Project input — no repository' }));
+    await userEvent.click(screen.getByRole('combobox', { name: 'Input origin' }));
+    await userEvent.click(screen.getByRole('option', { name: 'Project documents' }));
+    const inputs = within(await screen.findByRole('group', { name: 'Manual input documents' }));
+    await userEvent.click(
+      await inputs.findByRole('combobox', { name: 'Completion criteria document' }),
+    );
+    const publications = await screen.findAllByRole('option', { name: /Process criteria/ });
+    expect(new Set(publications.map((option) => option.textContent)).size).toBe(2);
+    // A distinguishing publication identity must survive the menu's tail truncation.
+    expect(publications[1]!.textContent?.startsWith(visiblePrefix)).toBe(true);
+    await userEvent.click(publications[1]!);
+    expect(read).not.toHaveBeenCalled();
+    await userEvent.click(inputs.getByRole('button', { name: 'Preview document' }));
+    expect(await inputs.findByText('Explicit revised process criteria')).toBeTruthy();
+    expect(read.mock.calls[0]?.[1]).toBe('newer-criteria');
+    expect(admitWork).not.toHaveBeenCalled();
+    await userEvent.click(inputs.getByRole('combobox', { name: 'Task document' }));
+    await userEvent.click(screen.getByRole('option', { name: 'Requested work' }));
+    await userEvent.click(screen.getByRole('button', { name: 'Review Work admission' }));
+    await userEvent.click(
+      within(await screen.findByRole('dialog')).getByRole('button', {
+        name: 'Confirm Work admission',
+      }),
+    );
+    expect(await screen.findByText('Admitted Run')).toBeTruthy();
+    expect(admitWork.mock.calls[0]![1].artifacts.acceptance).toEqual(newer.artifact);
+  },
+);
+
 it('requires explicit re-selection when the chosen Configuration version advances before manual input review', async () => {
   const { queryClient, configuration, admitWork } = renderWork();
   await userEvent.type(

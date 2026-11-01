@@ -60,6 +60,7 @@ pub fn installed_role_execution_choices(
       compilation: Some(FactoryBuildCompilationContract {
         task_digest: FactoryDigest::from_bytes([73; 32]),
         role_profiles: true,
+        requires_task_context: false,
         result_output: FactoryKey::new("result").unwrap(),
         result_output_kind: EvidenceOutputKind::Report,
         mcp_result_tool: None,
@@ -612,6 +613,7 @@ async fn qualify_pipeline_fixture(
   let compilation = include_compilation.then(|| FactoryBuildCompilationContract {
     task_digest: binding.task_digest,
     role_profiles: true,
+    requires_task_context: false,
     result_output: binding.result_output.clone(),
     result_output_kind: binding.result_output_kind,
     mcp_result_tool: None,

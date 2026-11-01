@@ -122,8 +122,8 @@ async fn empty_project_discovers_builtin_gate_contracts_without_saved_nodes() {
       .any(|r| r["disposition"] == "resume" && r["shape"]["fields"]["reason"]["required"] == true)
   );
   assert!(!responses.iter().any(|r| r["disposition"] == "confirm"));
-  assert_eq!(body["build_resource_modes"], serde_json::json!(["repository"]));
-  assert_eq!(body["source_free_incompatibility"], "executor_support_required");
+  assert_eq!(body["build_resource_modes"], serde_json::json!(["none", "repository"]));
+  assert!(body["source_free_incompatibility"].is_null());
   assert!(!body.to_string().contains("MODEL_AUTH"));
 }
 

@@ -124,7 +124,10 @@ pub(super) fn insert(schemas: &mut Map<String, Value>) {
             3,
           ),
         ),
-        ("build_resource_modes", bounded_array(json!({"enum":["repository"]}), 1)),
+        (
+          "build_resource_modes",
+          bounded_array(json!({"enum":["none","repository"]}), 2),
+        ),
         (
           "source_free_incompatibility",
           nullable(json!({"const":"executor_support_required"})),

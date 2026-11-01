@@ -38,6 +38,8 @@ pub struct FactoryBuildCompilationContract {
   pub task_digest: crate::FactoryDigest,
   /// Whether the native compiler binds this task to an exact Role/Profile reference.
   pub role_profiles: bool,
+  /// Whether compilation requires an explicit, unconditional Task Context input.
+  pub requires_task_context: bool,
   /// Primary output accepted by the installed native compiler.
   pub result_output: crate::FactoryKey,
   /// Existing publication category of the primary output.

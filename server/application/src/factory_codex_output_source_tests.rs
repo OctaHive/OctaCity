@@ -481,6 +481,7 @@ async fn prepared_role_source_with_mcp_evidence(
 #[derive(Default)]
 struct PreparedRoleOptions {
   source_free: bool,
+  code_scope: Option<FlowCodeScope>,
   capture: Option<FactoryCodexCapturePolicy>,
   capture_paths: Vec<octacity_protocol::CapturedChangeSetPathV1>,
   observation_override: Option<serde_json::Value>,
@@ -496,6 +497,7 @@ struct PreparedRoleOptions {
 async fn prepared_role_options(options: PreparedRoleOptions) -> SourceFixture {
   let PreparedRoleOptions {
     source_free,
+    code_scope,
     capture,
     capture_paths,
     observation_override,
@@ -659,6 +661,8 @@ async fn prepared_role_options(options: PreparedRoleOptions) -> SourceFixture {
   binding.task_digest = profile.task_digest();
   let (_, admitted, schema, input, _) = if source_free {
     fixtures::execution_fixture_without_code(FlowNodeKind::Reasoning, work.clone(), binding, grants.clone())
+  } else if let Some(scope) = code_scope {
+    fixtures::execution_fixture_with_code_scope(FlowNodeKind::Reasoning, work.clone(), binding, grants.clone(), scope)
   } else {
     fixtures::execution_fixture_with_permissions(FlowNodeKind::Reasoning, work.clone(), binding, None, grants.clone())
   };
@@ -1114,7 +1118,16 @@ async fn finish_prepared_source(input: PreparedSourceInput) -> SourceFixture {
     pipeline_node_id: job.pipeline_node_id.clone(),
     execution: program.execution,
     protected_inputs: program.protected_inputs,
-    required_enforcement: program.required_enforcement,
+    required_enforcement: {
+      let mut required = program.required_enforcement;
+      if factory_job_source_scope(intent.input(), intent.permissions())
+        .unwrap()
+        .is_some()
+      {
+        required.push(octacity_protocol::FactoryEnforcementCapabilityV3::SourceVisibilityV1);
+      }
+      required
+    },
     causality: octacity_protocol::FactoryCausalityV3 {
       factory_run_id: intent.input().factory_run_id().to_string(),
       factory_configuration_id: intent.input().configuration().id().to_string(),
@@ -1124,7 +1137,7 @@ async fn finish_prepared_source(input: PreparedSourceInput) -> SourceFixture {
       node_attempt_id: intent.node().id().to_string(),
       input_digest: intent.input().digest().unwrap().to_string(),
       subject_digest: intent.input().subject().digest().to_string(),
-      source_scope: None,
+      source_scope: factory_job_source_scope(intent.input(), intent.permissions()).unwrap(),
       source_write_paths: crate::factory_build_materialization::factory_capture_source_paths(
         &intent,
         profile.capture.as_ref().map(FactoryCodexCapturePolicy::instruction),
@@ -2340,6 +2353,58 @@ fn configured_mcp_outputs_verify_original_transport_after_settings_replacement()
     assert_eq!(
       outputs.documents[0].data.as_ref().unwrap().payload().value(),
       &serde_json::json!({"count":9})
+    );
+  });
+}
+
+#[test]
+fn scoped_code_codex_results_settle_with_the_executed_source_visibility_guarantee() {
+  crate::factory_admission_tests::run_ready(async {
+    let fixture = prepared_role_options(PreparedRoleOptions {
+      code_scope: Some(
+        serde_json::from_value(serde_json::json!({"kind":"selected","entries":[{"kind":"path","path":"README.md"}]}))
+          .unwrap(),
+      ),
+      ..Default::default()
+    })
+    .await;
+    let observed = fixture
+      .source(fixture.query.clone())
+      .published_outputs(fixture.query.build.build.id, fixture.query.attempt.id, 10000)
+      .await;
+    let observed = observed.expect("signed source visibility does not invalidate a correctly isolated result");
+    let FactoryNodeBuildOutputObservation::Verified(observed) = observed else {
+      panic!("retained successful scoped result")
+    };
+    assert_eq!(
+      observed.documents[0].data.as_ref().unwrap().payload().value(),
+      &serde_json::json!({"count":9})
+    );
+  });
+}
+
+#[test]
+fn scoped_codex_observation_rejects_a_different_retained_source_scope() {
+  crate::factory_admission_tests::run_ready(async {
+    let fixture = prepared_role_options(PreparedRoleOptions {
+      code_scope: Some(
+        serde_json::from_value(serde_json::json!({"kind":"selected","entries":[{"kind":"path","path":"README.md"}]}))
+          .unwrap(),
+      ),
+      ..Default::default()
+    })
+    .await;
+    let mut query = (*fixture.query).clone();
+    let mut template = serde_json::to_value(&query.attempt.jobs[0].job.job_spec_template).unwrap();
+    template["execution"]["factory"]["source_scope"]["selections"][0]["path"] = serde_json::json!("private.txt");
+    query.attempt.jobs[0].job.job_spec_template = serde_json::from_value(template).unwrap();
+    let observed = fixture
+      .source(Arc::new(query))
+      .published_outputs(fixture.query.build.build.id, fixture.query.attempt.id, 10000)
+      .await;
+    assert!(
+      matches!(observed, Err(OrdinaryBuildApplicationError::Invalid)),
+      "a valid report cannot authorize a different executed code scope"
     );
   });
 }

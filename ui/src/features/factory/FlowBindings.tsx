@@ -1,3 +1,4 @@
+import { FlowWorkTask } from './FlowWorkTask';
 import { useDraftRowKeys } from '../../shared/useDraftRowKeys';
 import type { components } from '../../../.generated/api/schema';
 import type { MessageKey } from '../../app/presentation/messages';
@@ -79,6 +80,7 @@ export function FlowBindings({
   ) => onChange({ ...node, context_binding: { ...node.context_binding, entries } });
   return (
     <section>
+      <FlowWorkTask key={node.key} node={node} onChange={onChange} />
       {issueStatus && node.action?.action === 'transition_issue' ? (
         <FlowIssueStatus
           key={`issue:${node.key}`}

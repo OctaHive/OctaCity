@@ -1961,6 +1961,13 @@ export const ruMessages = {
   'factory.terminalName': 'Имя завершения',
   'factory.terminalSchema': 'Схема завершения',
 
+  'factory.workTaskDetails': 'Подробности',
+  'factory.workTaskName': 'Имя входа задачи Work',
+  'factory.workTaskOccupied':
+    'Это имя входа уже занято. Выберите другое имя в разделе «Подробности».',
+  'factory.workTask': 'Задача из принятого Work',
+  'factory.workTaskHelp':
+    'Подключает исходную задачу к этому шагу. Остальные документы и результаты Work подключаются отдельно.',
   'factory.inputSchema': 'Входная схема',
   'factory.inputSources': 'Источники входных данных',
   'factory.addInputSource': 'Добавить источник',

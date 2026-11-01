@@ -86,12 +86,24 @@ impl FlowDataMapping {
   pub fn project_value(&self, input: &Value, schema: &FlowDataSchema) -> Result<FlowPayload, FactoryError> {
     FlowPayload::new(schema, self.project_raw(input)?)
   }
+  /// Whether this mapping can be checked without observing an admitted input.
+  pub(crate) fn is_input_independent(&self) -> bool {
+    self.value.is_input_independent()
+  }
   pub(crate) fn project_raw(&self, input: &Value) -> Result<Value, FactoryError> {
     let mut remaining = MAX_FLOW_DATA_BYTES;
     self.value.project(input, &mut remaining)
   }
 }
 impl FlowValueMapping {
+  fn is_input_independent(&self) -> bool {
+    match self {
+      Self::Constant { .. } => true,
+      Self::Object { fields } => fields.values().all(Self::is_input_independent),
+      Self::Array { items } => items.iter().all(Self::is_input_independent),
+      Self::Pointer { .. } | Self::IfPresent { .. } => false,
+    }
+  }
   fn validate(&self, depth: usize, count: &mut usize) -> Result<(), FactoryError> {
     *count += 1;
     if depth > MAX_FLOW_SCHEMA_DEPTH || *count > MAX_MAPPING_NODES {

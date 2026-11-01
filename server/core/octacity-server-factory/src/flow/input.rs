@@ -91,6 +91,8 @@ pub struct FlowNodeInput {
   subject: crate::WorkSubject,
   #[serde(skip_serializing_if = "Option::is_none")]
   code: Option<Box<FlowNodeCode>>,
+  #[serde(skip_serializing_if = "Option::is_none")]
+  work_task: Option<crate::FactoryArtifactReference>,
   configuration: FactoryConfigurationRef,
   root_definition: FlowDefinitionRef,
   admission_limits: FlowAdmissionLimits,
@@ -395,6 +397,10 @@ impl FlowNodeInput {
       work_digest: work_digest(work)?,
       subject: work.subject().clone(),
       code: code.map(Box::new),
+      work_task: declared
+        .context_binding()
+        .and_then(|binding| binding.work_task())
+        .map(|_| work.artifacts().task().clone()),
       configuration: work.configuration().clone(),
       root_definition: admitted.closure().root(),
       admission_limits: admitted.limits().clone(),
@@ -482,6 +488,10 @@ impl FlowNodeInput {
   #[must_use]
   pub const fn context(&self) -> Option<&ContextManifest> {
     self.context.as_ref()
+  }
+  /// Exact admitted task selected by this node; other Work Artifacts are not inherited.
+  pub fn work_task(&self) -> Option<&crate::FactoryArtifactReference> {
+    self.work_task.as_ref()
   }
   fn with_sources(mut self, mut sources: Vec<FlowRecordReference>) -> Result<Self, FactoryError> {
     if let Some(FlowNodeCode::Source {
@@ -577,6 +587,10 @@ impl FlowNodeInput {
       || self.work_digest != work_digest(work)?
       || &self.subject != work.subject()
       || &self.configuration != work.configuration()
+      || self
+        .work_task
+        .as_ref()
+        .is_some_and(|task| task != work.artifacts().task())
       || self
         .profile_override
         .as_ref()

@@ -645,3 +645,146 @@ fn decision_profile_answers_are_checked_before_flow_publication() {
     );
   });
 }
+
+#[test]
+fn native_compiler_rejects_missing_task_context_before_publication_and_accepts_explicit_work_task() {
+  run_ready(async {
+    let project = ProjectId::generate();
+    let fixture = selected_fixture(project);
+    let mut choices = fixture.choices;
+    let mut draft = fixture.draft;
+    let flow = draft.flow.as_ref().unwrap();
+    let root = flow.closure.definition(flow.closure.root()).unwrap();
+    let node = root
+      .nodes()
+      .iter()
+      .find(|node| node.profile_selection().is_some())
+      .unwrap();
+    for binding in node.build_bindings() {
+      choices = choices
+        .with_build_pipeline_contract(FactoryBuildPipelineContract {
+          build_configuration: binding.build_configuration.clone(),
+          tool: binding.tool.clone(),
+          plugin: binding.plugin.clone(),
+          model_or_tool: binding.model_or_tool.clone(),
+          pipeline_node: octacity_server_domain::PipelineNodeId::new("native").unwrap(),
+          compilation: Some(FactoryBuildCompilationContract {
+            task_digest: binding.task_digest,
+            role_profiles: true,
+            requires_task_context: true,
+            result_output: binding.result_output.clone(),
+            result_output_kind: binding.result_output_kind,
+            mcp_result_tool: None,
+          }),
+        })
+        .unwrap();
+    }
+    let store = Arc::new(InMemoryFactoryConfigurationStore::new());
+    store.seed_project(project).unwrap();
+    store.enable_project(project, choices).unwrap();
+    let handlers = FactoryConfigurationHandlers::new(store);
+    let request = ValidateFactoryConfigurationQuery {
+      id: FactoryConfigurationId::generate(),
+      project_id: project,
+      definition_digest: digest(20),
+      draft: draft.clone(),
+    };
+    assert!(
+      query(&handlers, request.clone()).await.is_err(),
+      "a native step without Task Context cannot be published"
+    );
+    let artifact =
+      FactoryArtifactReference::new(octacity_server_domain::ArtifactId::generate(), digest(31), 42).unwrap();
+    for (binding, accepted) in [
+      (
+        serde_json::json!({"entries":{"request":{"source_kind":"task","source":{"value":{"mapping":"constant","value":true}}}},"work_task":"task"}),
+        false,
+      ),
+      (
+        serde_json::json!({"entries":{"request":{"source_kind":"task","source":{"value":{"mapping":"constant","value":true}}}}}),
+        false,
+      ),
+      (
+        serde_json::json!({"entries":{"request":{"source_kind":"task","source":{"value":{"mapping":"constant","value":{"kind":"artifact","value":{"artifact_id":artifact.artifact_id(),"content_digest":artifact.content_digest(),"encoded_size":0}}}}}}}),
+        false,
+      ),
+      (
+        serde_json::json!({"entries":{"request":{"source_kind":"task","source":{"value":{"mapping":"object","fields":{"invalid":{"mapping":"constant","value":true}}}}}}}),
+        false,
+      ),
+      (
+        serde_json::json!({"entries":{"request":{"source_kind":"task","source":{"value":{"mapping":"constant","value":{"kind":"artifact","value":artifact}}}}}}),
+        true,
+      ),
+      (
+        serde_json::json!({"entries":{"request":{"source_kind":"task","source":{"value":{"mapping":"pointer","path":"/incoming_task"}}}}}),
+        true,
+      ),
+      (
+        serde_json::json!({"entries":{"request":{"source_kind":"task","source":{"value":{"mapping":"object","fields":{"kind":{"mapping":"constant","value":"artifact"},"value":{"mapping":"constant","value":artifact}}}}}}}),
+        true,
+      ),
+      (
+        serde_json::json!({"entries":{"request":{"source_kind":"task","source":{"value":{"mapping":"if_present","path":"/incoming_task","then":{"mapping":"pointer","path":"/incoming_task"},"otherwise":{"mapping":"constant","value":null}}}}}}),
+        true,
+      ),
+      (serde_json::json!({"entries":{},"work_task":"task"}), true),
+    ] {
+      // Rebuild the immutable definition and its closure through their public constructors.
+      let flow = draft.flow.as_ref().unwrap();
+      let root = flow.closure.definition(flow.closure.root()).unwrap();
+      let mut nodes = root.nodes().to_vec();
+      let at = nodes
+        .iter()
+        .position(|node| node.profile_selection().is_some())
+        .unwrap();
+      let node = nodes[at].key().clone();
+      nodes[at] = nodes[at]
+        .clone()
+        .with_context_binding(serde_json::from_value(binding.clone()).unwrap())
+        .unwrap();
+      let definition = FlowDefinition::new(FlowDefinitionInput {
+        id: root.reference().id(),
+        version: root.reference().version(),
+        input_schema: root.input_schema().cloned(),
+        entry: root.entry().clone(),
+        nodes,
+        transitions: root.transitions().to_vec(),
+        terminals: root.terminals().to_vec(),
+        context_projections: root.context_projections().to_vec(),
+        data_projections: root.data_projections().to_vec(),
+        execution: root.execution().clone(),
+      })
+      .unwrap();
+      let reference = definition.reference();
+      draft.flow.as_mut().unwrap().closure = PinnedFlowDefinitionClosure::new(reference, vec![definition]).unwrap();
+      let result = query(
+        &handlers,
+        ValidateFactoryConfigurationQuery {
+          draft: draft.clone(),
+          ..request.clone()
+        },
+      )
+      .await;
+      if accepted {
+        assert!(
+          result.is_ok(),
+          "explicit Work task, valid literal and dynamic Task bindings remain supported: {binding:?}: {result:?}"
+        );
+      } else {
+        let Err(crate::ApplicationError::FactoryValidation(report)) = result else {
+          panic!("invalid literal Task must block publication: {binding:?}");
+        };
+        assert!(
+          report
+            .errors
+            .iter()
+            .any(|issue| issue.field == "/context_binding/work_task"
+              && issue.node.as_ref() == Some(&node)
+              && issue.definition == Some(reference)),
+          "Task diagnostics must identify the affected node and field: {report:?}"
+        );
+      }
+    }
+  });
+}

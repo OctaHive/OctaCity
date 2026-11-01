@@ -117,9 +117,11 @@ pub struct FactoryAuthoringCapabilities {
   pub deterministic_gate: FactoryDeterministicGateContract,
   /// Common durable human responses, requiring no external executor.
   pub human_gates: Vec<FactoryHumanGateContract>,
-  /// Source modes currently supported by the ordinary Build/Job contract.
+  /// Source modes supported by the ordinary Build/Job contract, independently
+  /// of a selected compiler's configuration or current Agent readiness.
   pub build_resource_modes: Vec<&'static str>,
-  /// Explicit missing prerequisite rather than advertising unqualified source-free execution.
+  /// Unsupported protocol prerequisite, if any. Selected Build and Agent support
+  /// are still checked independently during validation and placement.
   pub source_free_incompatibility: Option<&'static str>,
 }
 #[async_trait::async_trait]
@@ -199,8 +201,8 @@ impl<S: FactoryConfigurationStore> ManagementQueryUseCase<GetFactoryAuthoringCap
         resource_modes: vec!["none"],
       },
       human_gates,
-      build_resource_modes: vec!["repository"],
-      source_free_incompatibility: Some("executor_support_required"),
+      build_resource_modes: vec!["none", "repository"],
+      source_free_incompatibility: None,
     })
   }
 }

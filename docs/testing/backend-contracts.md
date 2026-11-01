@@ -9,6 +9,10 @@ scheduled or explicitly selected suite. Skipped self-hosted jobs establish no
 platform qualification, and provider-wire fixtures establish no real-model
 calibration or bounded-control approval.
 
+The [manual Factory authoring journey](manual-factory-authoring.md) exercises a
+clean Project through management HTTP, PostgreSQL and two source-free
+Microsandbox Jobs, separately from preset-based pilots.
+
 The portable workspace suite tests orchestration with an in-memory backend.
 The retained backend contract suite additionally runs a real signed job, real
 `octa-runner`, and the same Octafile through direct Host execution, legacy

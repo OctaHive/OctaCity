@@ -181,6 +181,7 @@ impl FactoryCodexBuildProfile {
       compilation: Some(octacity_server_factory::FactoryBuildCompilationContract {
         task_digest: self.task_digest(),
         role_profiles: true,
+        requires_task_context: true,
         result_output: crate::factory_codex_contract::CODEX_RUN_RESULT
           .parse()
           .expect("native output key"),

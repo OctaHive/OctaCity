@@ -1407,3 +1407,148 @@ fn metadata_context_keeps_literal_and_collection_dependencies_with_the_same_alia
       .any(|(name, fact)| name == &key("docs") && !fact.required && fact.source.is_none())
   );
 }
+
+#[test]
+fn explicit_work_task_context_does_not_require_a_model_payload_field_or_implicit_artifact() {
+  let binding = serde_json::from_value::<FlowContextBinding>(serde_json::json!({
+    "entries":{}, "work_task":"original_request"
+  }));
+  assert!(
+    binding.is_ok(),
+    "explicit Work task Context must be authorable without payload metadata"
+  );
+  let binding = binding.unwrap();
+  let schema = FlowDataSchema::new(key("task-free-payload"), key("v1"), FlowValueSchema::Boolean).unwrap();
+  let payload = FlowPayload::new(&schema, serde_json::json!(true)).unwrap();
+  assert!(
+    binding.selected_sources(&payload).is_err(),
+    "an unqualified caller cannot invent the admitted task"
+  );
+  assert_eq!(serde_json::to_value(binding).unwrap()["work_task"], "original_request");
+}
+
+#[test]
+fn selected_work_task_is_frozen_without_other_work_artifacts_and_rejects_substitution_on_restore() {
+  let (work, original, schema, _, _) = execution_fixture(FlowNodeKind::Reasoning);
+  let old = &original.closure().definitions()[0];
+  let selected = old.nodes()[0]
+    .clone()
+    .with_context_binding(
+      serde_json::from_value(serde_json::json!({"entries":{},"work_task":"original_request"})).unwrap(),
+    )
+    .unwrap();
+  let definition = FlowDefinition::new(FlowDefinitionInput {
+    id: old.reference().id(),
+    version: old.reference().version(),
+    input_schema: old.input_schema().cloned(),
+    entry: old.entry().clone(),
+    nodes: vec![selected],
+    transitions: old.transitions().to_vec(),
+    terminals: old.terminals().to_vec(),
+    context_projections: old.context_projections().to_vec(),
+    data_projections: old.data_projections().to_vec(),
+    execution: old.execution().clone(),
+  })
+  .unwrap();
+  let run = FactoryRun::admitted(original.root_run().factory_run_id(), &work);
+  let flow = FlowRun::root(&run, definition.reference()).unwrap();
+  let cycle = WorkflowCycle::initial(&flow).unwrap();
+  let admitted = AdmittedFlow::new(
+    PinnedFlowDefinitionClosure::new(definition.reference(), vec![definition]).unwrap(),
+    original.limits().clone(),
+    flow,
+    cycle,
+    FactoryWipLimits::new(8, 16).unwrap(),
+  )
+  .unwrap()
+  .with_data_schemas(vec![schema.clone()])
+  .unwrap();
+  let input = FlowNodeInput::new(
+    &work,
+    &admitted,
+    admitted.root_run(),
+    admitted.initial_cycle(),
+    key("accessibility_audit"),
+    FlowPayload::new(&schema, serde_json::json!({"count":3})).unwrap(),
+  )
+  .unwrap();
+  let subject = input.task_subject().unwrap();
+  let artifact = work.artifacts().task().clone();
+  let entry = ContextManifestEntry::new(
+    ContextSourceKind::Task,
+    key("original_request"),
+    subject.clone(),
+    FactoryContextReference::Artifact(artifact.clone()),
+    artifact.content_digest(),
+    artifact.encoded_size(),
+    FactorySafeText::new("Explicit admitted task").unwrap(),
+    FactoryDigest::from_bytes([91; 32]),
+  )
+  .unwrap();
+  let input = input
+    .with_context(
+      ContextManifest::new(
+        ContextManifestId::generate(),
+        subject,
+        FactoryDigest::from_bytes([92; 32]),
+        vec![entry],
+      )
+      .unwrap(),
+      vec![],
+    )
+    .unwrap();
+  let wire = serde_json::to_value(&input).unwrap();
+  assert_eq!(
+    wire["work_task"],
+    serde_json::to_value(work.artifacts().task()).unwrap()
+  );
+  assert_eq!(wire["payload"]["value"], serde_json::json!({"count":3}));
+  assert!(
+    !wire
+      .to_string()
+      .contains(&work.artifacts().acceptance().artifact_id().to_string())
+  );
+  let bytes = serde_json::to_vec(&input).unwrap();
+  let restored = FlowNodeInput::restore(
+    &bytes,
+    &work,
+    &admitted,
+    admitted.root_run(),
+    admitted.initial_cycle(),
+    &schema,
+    input.digest().unwrap(),
+  )
+  .unwrap();
+  assert_eq!(restored, input);
+  let mut forged = wire;
+  forged["work_task"] = serde_json::to_value(work.artifacts().acceptance()).unwrap();
+  let bytes = serde_json::to_vec(&forged).unwrap();
+  let digest = FactoryDigest::sha256("octacity.factory.flow-node-input.v1", &[&bytes]);
+  assert!(
+    FlowNodeInput::restore(
+      &bytes,
+      &work,
+      &admitted,
+      admitted.root_run(),
+      admitted.initial_cycle(),
+      &schema,
+      digest
+    )
+    .is_err()
+  );
+}
+
+#[test]
+fn unselected_work_task_preserves_the_legacy_context_bytes_and_input_wire_version() {
+  let original =
+    br#"{"candidate_revision":null,"entries":{"task":{"source_kind":"task","source":{"value":{"mapping":"pointer","path":"/task"}}}}}"#;
+  let binding: FlowContextBinding = serde_json::from_slice(original).unwrap();
+  assert_eq!(serde_json::to_vec(&binding).unwrap(), original);
+  let (_, _, _, input, _) = execution_fixture(FlowNodeKind::Reasoning);
+  let wire = serde_json::to_value(input).unwrap();
+  assert_eq!(wire["schema_version"], 1);
+  assert!(
+    wire.get("work_task").is_none(),
+    "legacy inputs never acquire an implicit task attachment"
+  );
+}

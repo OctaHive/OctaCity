@@ -141,6 +141,11 @@ impl<
     }
     let task = tasks.first().cloned().ok_or_else(invalid)?;
     specifications.extend(tasks.into_iter().skip(1));
+    // Context retains every explicit alias; the native task inventory contains each
+    // immutable document once and never lists the primary task as its own specification.
+    specifications.retain(|reference| reference != &task);
+    specifications.sort();
+    specifications.dedup();
     let prompt = crate::factory_codex::render_role_prompt(
       intent,
       &installed.instructions,

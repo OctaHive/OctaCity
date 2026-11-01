@@ -516,3 +516,35 @@ fn editing_process_publications_changes_only_the_new_flow_and_rejects_unknown_re
 
 #[path = "factory_code_authoring_tests.rs"]
 mod code_authoring;
+
+#[test]
+fn publication_rejects_a_declarative_gate_without_explicit_result_data() {
+  run_ready(async {
+    let mut draft = layout_draft();
+    let original = draft.root.nodes[0].clone();
+    let incomplete = FlowGateProgram::new(vec![], key("measured")).unwrap();
+    draft.root.nodes[0] = original.with_gate(incomplete.binding().unwrap()).unwrap();
+    let input = crate::ValidateFactoryFlowDefinitionQuery {
+      id: FlowDefinitionId::generate(),
+      project_id: ProjectId::generate(),
+      draft,
+    };
+    let result = authoring_queries().handle_query(&context(), input.clone()).await;
+    assert!(
+      result.is_err(),
+      "a predicate without result data cannot create an executable gate"
+    );
+    let mut complete = input;
+    complete.draft.root.nodes[0] = complete.draft.root.nodes[0]
+      .clone()
+      .with_gate(
+        incomplete
+          .with_default_output_mapping(FlowDataMapping::new(FlowValueMapping::Pointer { path: String::new() }).unwrap())
+          .unwrap()
+          .binding()
+          .unwrap(),
+      )
+      .unwrap();
+    assert!(authoring_queries().handle_query(&context(), complete).await.is_ok());
+  });
+}

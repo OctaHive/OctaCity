@@ -39,8 +39,8 @@
 
 ## 5. Clean-state execution and compatibility qualification
 
-- [ ] 5.1 Add a failing headless clean-state journey through real management routes, persistence and qualified isolated execution, then make it pass: manually author the two-agent assessment/classification workflow, documents, criteria, gates, handoff and manual input. Enumerate technical prerequisites and verify no preinstalled business definitions, demo Builds/Runs, handler substitutions or hidden triage resolver.
-- [ ] 5.2 Add failing packaged Console acceptance journeys in English and Russian, then make them pass using keyboard and narrow layouts. Create Project documents and the visual Flow from empty state, select/preview/remove multiple documents with instruction/reference roles independently per step, connect conditional routes, inspect/edit pipeline goals/criteria, declare pipeline sources and attach exact step inputs, then execute through real APIs; verify review and retained server state rather than only a rendered graph.
+- [x] 5.1 Add a failing headless clean-state journey through real management routes, persistence and qualified isolated execution, then make it pass: manually author the two-agent assessment/classification workflow, documents, criteria, gates, handoff and manual input. Enumerate technical prerequisites and verify no preinstalled business definitions, demo Builds/Runs, handler substitutions or hidden triage resolver.
+- [x] 5.2 Add failing packaged Console acceptance journeys in English and Russian, then make them pass using keyboard and narrow layouts. Create Project documents and the visual Flow from empty state, select/preview/remove multiple documents with instruction/reference roles independently per step, connect conditional routes, inspect/edit pipeline goals/criteria, declare pipeline sources and attach exact step inputs, then execute through real APIs; verify review and retained server state rather than only a rendered graph. Include the approved explicit Work-task Context input, frozen selected-task provenance, legacy-byte compatibility and pre-publication rejection of missing mandatory Task Context.
 - [ ] 5.3 Add failing end-to-end isolation/resource cases, then make them pass for an unrelated three-step workflow, a fully repository-free workflow and steps using repositories A/B. Verify exact retained inputs, no VCS activity for no-code steps, no undeclared context, and rejection of foreign evidence and unsupported authority.
 - [ ] 5.4 Add failing recovery cases, then make them pass for restart after an accepted predecessor result, later Project document edits, revoked scope, lost publication/delivery replies and pending/failed provider receipts. Verify pinned original inputs, bounded recovery, no duplicate logical successor/effect and truthful delivery state.
 - [ ] 5.5 Run the compatibility matrix across legacy saved definitions, repository-backed Work/Builds, source preparation, replay, Context provenance, protocol fixtures and ordinary CI/CD; verify old Runs remain inspectable/recoverable and no migrated digest or replay identity changes.
@@ -379,3 +379,123 @@ changed-file `rustfmt --check`, strict OpenSpec validation and `git diff --check
 pass. The disposable VM workspace and test-only environment files were removed;
 the user's stand and credentials were not changed. Approximately 16 GiB remains
 free. No commits were created.
+
+
+### Clean-state headless authoring qualification (5.1)
+
+The new `factory_manual_authoring` journey uses normal Server/Agent processes,
+management HTTP, fresh PostgreSQL and S3, and two actual isolated ordinary Jobs.
+Technical prerequisites, invocation, evidence retention and explicit limits are
+listed in [the qualification guide](../../../docs/testing/manual-factory-authoring.md).
+There is no saved business Flow/Configuration, bootstrap Build/Run, Repository,
+handler replacement or hidden stage resolver. Project documents, two generic
+Roles/Profiles, step-owned assignments, finite schemas, two declarative gates,
+accepted-summary handoff, criteria recipients and manual Project/input Work are
+published through management routes.
+
+Observed production Red/Green:
+
+- With `CARGO_PROFILE_DEV_DEBUG=0 CARGO_BUILD_JOBS=2`,
+  `cargo test --quiet --locked -p octacity-release-harness --test factory_manual_authoring -- --ignored --nocapture`
+  first failed because authoring discovery still advertised only `repository`
+  and unconditionally declared source-free execution unsupported, despite the
+  ordinary Build/Job support completed in section 3.
+- `cargo test --quiet --locked -p octacity-server-api-rest --test v1_handlers empty_project_discovers_builtin_gate_contracts_without_saved_nodes`
+  independently failed on that public response before Green. The response now
+  includes `none` and `repository`; the OpenAPI array bound/enum agrees. This
+  describes protocol support, not selected compiler or Agent readiness. Existing
+  exact-binding, policy and placement checks retain their own authority.
+- The full physical journey subsequently passed. Fixture invocation/schema
+  mistakes and missing prerequisites were corrected as test setup and were not
+  counted as production Red evidence. The model process is a finite protocol
+  peer with explicit empty MCP and disabled networking, not real-model quality
+  or provider qualification.
+
+The peer verifies exact selected document canaries inside the VM. Classification
+receives only the accepted summary, its own guidance, the original task and
+process criteria; it rejects predecessor-private investigation and unselected
+fields. Public diagnostics verify four exact results, separate Build/Job,
+input/task/Context identities, source-free Build metadata and repository-free
+Work. Restarting the production Server preserves those exact records. The
+assessment explicitly retains duplicate search as `not_requested`, never as
+independently verified evidence.
+
+Regression commands and outcomes:
+
+- `cargo test --quiet --locked -p octacity-server-api-rest --test v1_handlers`:
+  250 passed.
+- `python3 -m unittest tools.tests.test_manual_factory_model tools.tests.test_backend_matrix`:
+  22 passed. The release-action guard observed an absent qualification command
+  before Green and now checks failure propagation for both Microsandbox jobs.
+- `cargo clippy --quiet --locked -p octacity-release-harness --test factory_manual_authoring -p octacity-server-application -p octacity-server-api-rest --lib -- -D warnings`:
+  passed. Rust commands use the debug0/jobs2 environment above.
+- `pnpm api:generate`, `pnpm typecheck`, and
+  `node --test scripts/factory-authoring-schemas.test.mjs`: passed (8 schema cases).
+- `cargo fmt --all -- --check`, `python3 tools/check_architecture.py`,
+  `openspec validate enable-manual-factory-pipeline-authoring --strict` and
+  `git diff --check`: passed. Documentation-only edits have no executable TDD
+  boundary; links, formatting and OpenSpec validation cover them.
+
+Local physical qualification uses macOS arm64, current debug0 Server/Agent,
+pinned Octa 0.8.0 and qualified Microsandbox 0.7.6 with the repaired guest agent.
+Release CI reuses its checked candidate installations and disposable services.
+Linux physical execution, packaged Console journeys and the remaining section
+5/6 tasks are not inferred from this local run. No commits or personal-stand
+changes are included.
+
+The final exact-name physical invocation passed in 92.29 seconds, including the
+Server restart and evidence write. Its public report with binary hashes is
+retained under ignored `target/manual-authoring-evidence.json`. Owned disposable
+containers, failed-scenario databases/directories and private environment files
+were removed afterwards. Task 5.1 is complete (28/36 overall); work stops before
+5.2. The pre-existing incomplete JS bundle optimization is outside this task.
+Final free disk space after cleanup is approximately 5.1 GiB.
+
+### Task 5.2 qualification evidence
+
+The packaged Console journey uses a fresh database/Project for each of English
+and Russian, a 390 × 844 viewport and keyboard controls, without HTTP
+interception or seeded business definitions. It creates documents and reusable
+agents/profiles, authors four graph nodes and six conditional routes, previews and
+removes step-specific documents, edits/inspects goals and criteria, declares an
+exact Repository source and connects only `README.md` to classification. The
+assessment Build is source-free; Work keeps its Project/input correlation.
+
+TDD cycles observed through public boundaries:
+
+- `cargo test -p octacity-server-factory --lib explicit_work_task_context_does_not_require`: unknown Context selection → accepted explicit `work_task`, without model payload metadata.
+- `cargo test -p octacity-server-factory --lib selected_work_task_is_frozen`: missing task reference → exact admitted-task pin, qualified Context and restore; substituting acceptance data is rejected.
+- `cargo test -p octacity-server-application --lib native_compiler_rejects_missing_task_context`: invalid native step was publishable → rejection before publication; explicit Work input succeeds. The requirement comes from exact installed compiler metadata.
+- `cargo test -p octacity-server-api-rest --test v1_contract flow_context_contract_exposes`: missing public schema property → bounded optional logical-key contract.
+- `pnpm --dir ui exec vitest run src/features/factory/FlowBindings.test.tsx src/features/factory/FlowDocuments.test.tsx`: missing Work input control, occupied Context names, lost Work connection on document removal and retained empty bindings → explicit selection, collision protection and independent removal. UI publication tests also observed missing Task/condition field labels before the fixes.
+- `pnpm --dir ui exec vitest run src/features/factory/FactoryWorkForm.test.tsx`: indistinguishable same-name criteria publications → distinct labels and exact, explicitly requested previews before admission.
+- `cargo test -p octacity-server-application --lib the_same_selected_task_document`: duplicate Task/specification blocked native packaging → every Context alias retained, unique native inventory without the primary task becoming its own specification.
+- `cargo test -p octacity-server-application --lib scoped_`: valid scoped Codex/command results were rejected; after accepting their signed visibility guarantee, scope-substitution tests exposed acceptance of a different path. Green now requires the complete native guarantees plus source visibility and equality with the frozen source scope, using the shared materialization contract.
+- `cargo test -p octacity-server-application --lib publication_rejects_a_declarative_gate`: a predicate without result mappings was publishable but could not settle → rejected new publication, accepted explicit result mapping. Historical predicate parsing/selection and wire identities are unchanged.
+- `python3 -m unittest tools.tests.test_manual_factory_model`: the finite process silently ignored an assigned code guide → rejects missing code; the real guest additionally verifies the selected file and its read-only visibility.
+
+The packaged EN/RU test passed with real PostgreSQL, S3, nginx, production Server
+and Agent, the pinned Octa runner/plugins and qualified Microsandbox on macOS
+ARM64 / Linux ARM64 guests. Both locales retain four completions, two distinct
+ordinary Build/Job identities, independent task/input/Context/profile identities
+and exact structured outputs; REST state is checked again after Server restart.
+The finite model qualifies wiring/isolation and protocol execution, not real-model
+judgment quality or remote Git connectivity. Locale-specific evidence is written
+as `manual-console-en.json` and `manual-console-ru.json`.
+
+Regression checks passed: 335 Factory core tests, the full 960-test application
+baseline followed by the affected authoring/materialization/output suites,
+369 Factory UI tests, 29 REST contract and 250 handler tests, 48 tool tests and
+8 generated-schema checks. TypeScript, affected Clippy/ESLint/Prettier, Rust
+formatting, package verification, shared release-browser compilation,
+architecture and strict OpenSpec validation passed. The pre-existing UI bundle
+budget failure remains explicit: TypeScript/Vite build succeeds, but JavaScript
+and total output exceed the unchanged repository limits. No budget was raised.
+
+Infrastructure/setup failures were not counted as Red: the disposable image
+cache initially lacked the full digest reference, and the technical Repository
+policy needed its existing version precondition. The narrow-layout assertion now
+waits for the completed Run-route navigation rather than racing the admission
+response. See `docs/testing/manual-factory-authoring.md` for reproducible setup
+and commands. Broader workflow/resource, recovery and compatibility matrices
+remain tasks 5.3–5.5; they are not marked complete by this journey.

@@ -6,7 +6,7 @@ import { usePresentation } from '../../app/presentation/PresentationProvider';
 import { queryKeys } from '../../app/query';
 import { PagedExplorerBranch, useCursorPage } from '../../shared/PagedExplorerBranch';
 import { SelectMenu } from '../../shared/SelectMenu';
-import { ProjectDocumentRead } from '../../shared/ProjectDocumentReader';
+import { ProjectDocumentPreview } from '../../shared/ProjectDocumentPreview';
 import { ProjectDocumentPublisher } from '../../shared/ProjectDocumentPublisher';
 import { catalogLabels } from './catalogLabels';
 import {
@@ -57,11 +57,14 @@ export function FlowDocuments({
     ),
   ];
   const missing = requirements.filter(
-    (name) => !entries[name] || entries[name].when_present != null,
+    (name) =>
+      node.context_binding?.work_task !== name &&
+      (!entries[name] || entries[name].when_present != null),
   );
   const count =
     Object.keys(node.context_binding?.entries ?? {}).length +
-    Object.keys(node.context_binding?.artifact_collections ?? {}).length;
+    Object.keys(node.context_binding?.artifact_collections ?? {}).length +
+    Number(!!node.context_binding?.work_task);
   const maximum =
     FACTORY_AUTHORING_SCHEMAS.FactoryFlowContextBinding.properties.entries.maxProperties;
   if (managing)
@@ -141,7 +144,14 @@ export function FlowDocuments({
               <button type="button" onClick={() => onChange(removeDocument(node, entry.key))}>
                 {t('factory.removeDocument', { name })}
               </button>
-              <DocumentPreview document={document} artifact={entry.artifact} services={services} />
+              <ProjectDocumentPreview
+                api={services.api}
+                projectId={services.projectId}
+                document={
+                  document ?? { artifact: entry.artifact, name: t('factory.selectedDocument') }
+                }
+                label={t('factory.previewDocument')}
+              />
               {requirements.length ? (
                 <details>
                   <summary>{t('factory.documentInputDetails')}</summary>
@@ -151,12 +161,21 @@ export function FlowDocuments({
                     options={[
                       { value: '', label: t('factory.additionalDocument') },
                       ...requirements
-                        .filter((key) => key === entry.key || !entries[key])
+                        .filter(
+                          (key) =>
+                            key === entry.key ||
+                            (!entries[key] && node.context_binding?.work_task !== key),
+                        )
                         .map((key) => ({ value: key, label: key })),
                     ]}
                     onValueChange={(input) => {
                       const key = input || `project-document.${entry.artifact.artifact_id}`;
-                      if (key === entry.key || entries[key]) return;
+                      if (
+                        key === entry.key ||
+                        entries[key] ||
+                        node.context_binding?.work_task === key
+                      )
+                        return;
                       const renamed = { ...entries };
                       delete renamed[entry.key];
                       renamed[key] = entry.selection;
@@ -173,33 +192,5 @@ export function FlowDocuments({
         })}
       </ul>
     </fieldset>
-  );
-}
-
-function DocumentPreview({
-  document,
-  artifact,
-  services,
-}: {
-  document: components['schemas']['ProjectDocumentResource'] | undefined;
-  artifact: components['schemas']['FactoryArtifactReference'];
-  services: FlowDocumentServices;
-}) {
-  const { t } = usePresentation();
-  const [preview, setPreview] = useState('');
-  const [reading, setReading] = useState(false);
-  return (
-    <>
-      <ProjectDocumentRead
-        api={services.api}
-        projectId={services.projectId}
-        document={document ?? { artifact, name: t('factory.selectedDocument') }}
-        label={t('factory.previewDocument')}
-        disabled={reading}
-        onLoad={(value) => setPreview(value.content)}
-        onLoading={setReading}
-      />
-      {preview ? <pre>{preview}</pre> : null}
-    </>
   );
 }

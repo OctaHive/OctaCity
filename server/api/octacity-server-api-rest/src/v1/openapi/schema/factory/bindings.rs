@@ -11,6 +11,7 @@ pub(super) fn insert(schemas: &mut Map<String, Value>) {
     "FactoryFlowContextBinding".to_owned(),
     object(
       [
+        ("work_task", key()),
         ("candidate_revision", nullable(schema_ref("FactoryFlowDataMapping"))),
         ("candidate_when_present", nullable(json!({"type":"string"}))),
         (

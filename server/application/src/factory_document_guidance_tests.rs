@@ -178,3 +178,43 @@ fn document_guided_invocations_keep_vocabulary_in_selected_context_not_agent_set
     );
   });
 }
+
+#[test]
+fn the_same_selected_task_document_keeps_both_context_aliases_without_becoming_its_own_specification() {
+  crate::factory_admission_tests::run_ready(async {
+    let (intent, _, installed, expected, bytes) = fixture_for_work_mode_with_context(
+      fixtures::work(),
+      |_| {},
+      Default::default(),
+      factory_role_task_digest,
+      true,
+      RoleFixtureOptions {
+        repeat_task_reference: true,
+        ..Default::default()
+      },
+    );
+    let source = FactoryStoredCodexRoleInvocationSource::new(
+      publish_package_roles(&expected).await,
+      Arc::new(crate::factory_skill_import_tests::Bytes::default()),
+      Arc::new(ContextBytes(bytes)),
+      vec![installed],
+    );
+    let invocation = source
+      .invocation(
+        &intent,
+        Timestamp::from_unix_millis(41).unwrap(),
+        intent.node().deadline(),
+      )
+      .await;
+    assert!(
+      invocation.is_ok(),
+      "an explicitly selected reference to the original task must not block compilation"
+    );
+    let invocation = invocation.unwrap().unwrap();
+    assert!(invocation.package().inputs().task.specifications().is_empty());
+    assert_eq!(
+      invocation.package().inputs().context,
+      *intent.input().context().unwrap()
+    );
+  });
+}

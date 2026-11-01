@@ -50,3 +50,107 @@ it('declares a bounded summary and Work input source through typed controls with
   expect(observed.input_binding?.sources.task).toEqual({ source: 'work', path: '' });
   expect(screen.queryByRole('textbox', { name: 'Transcript' })).toBeNull();
 });
+
+it('connects the admitted Work task explicitly without changing payload mappings or other Context entries', async () => {
+  const flow = configurationFixture().configuration.flow;
+  const root = flow.closure.definitions[0]!;
+  const node = structuredClone(root.nodes[0]!);
+  node.context_binding = {
+    entries: {
+      guidance: {
+        source_kind: 'policy',
+        source: { value: { mapping: 'pointer', path: '/guidance' } },
+      },
+    },
+  };
+  const originalInput = structuredClone(node.input_binding);
+  let observed = node;
+  function Harness() {
+    const [value, setValue] = useState(node);
+    return (
+      <FlowBindings
+        node={value}
+        root={root}
+        schemas={flow.data_schemas}
+        onChange={(next) => {
+          observed = next;
+          setValue(next);
+        }}
+      />
+    );
+  }
+  render(<Harness />);
+  const task = screen.getByRole('checkbox', { name: 'Task from admitted Work' });
+  expect(task).toHaveProperty('checked', false);
+  await userEvent.click(task);
+  expect(observed.context_binding).toMatchObject({
+    work_task: 'task',
+    entries: node.context_binding.entries,
+  });
+  expect(observed.input_binding).toEqual(originalInput);
+  await userEvent.click(task);
+  expect(observed.context_binding?.work_task).toBeUndefined();
+  expect(observed.context_binding?.entries).toEqual(node.context_binding.entries);
+});
+
+it('keeps an occupied Context key and lets the operator choose another key for the Work task', async () => {
+  const flow = configurationFixture().configuration.flow;
+  const root = flow.closure.definitions[0]!;
+  const node = structuredClone(root.nodes[0]!);
+  node.context_binding = {
+    entries: {
+      task: {
+        source_kind: 'specification',
+        source: { value: { mapping: 'pointer', path: '/existing' } },
+      },
+    },
+  };
+  let observed = node;
+  function Harness() {
+    const [value, setValue] = useState(node);
+    return (
+      <FlowBindings
+        node={value}
+        root={root}
+        schemas={flow.data_schemas}
+        onChange={(next) => {
+          observed = next;
+          setValue(next);
+        }}
+      />
+    );
+  }
+  render(<Harness />);
+  const task = screen.getByRole('checkbox', { name: 'Task from admitted Work' });
+  expect(task).toHaveProperty('disabled', true);
+  expect(
+    screen.getByText('This Context name is already in use. Choose another name under Details.'),
+  ).toBeTruthy();
+  const name = screen.getByRole('textbox', { name: 'Work task Context name', hidden: true });
+  await userEvent.click(name.closest('details')!.querySelector('summary')!);
+  await userEvent.clear(name);
+  await userEvent.type(name, 'original_request');
+  await userEvent.click(task);
+  expect(observed.context_binding?.work_task).toBe('original_request');
+  expect(observed.context_binding?.entries).toEqual(node.context_binding.entries);
+});
+
+it('disconnects the sole Work task without retaining an invalid empty Context binding', async () => {
+  const flow = configurationFixture().configuration.flow;
+  const root = flow.closure.definitions[0]!;
+  const node = structuredClone(root.nodes[0]!);
+  node.context_binding = { entries: {}, work_task: 'task' };
+  let observed = node;
+  render(
+    <FlowBindings
+      node={node}
+      root={root}
+      schemas={flow.data_schemas}
+      onChange={(next) => {
+        observed = next;
+      }}
+    />,
+  );
+  await userEvent.click(screen.getByRole('checkbox', { name: 'Task from admitted Work' }));
+  expect(observed.context_binding).toBeNull();
+});

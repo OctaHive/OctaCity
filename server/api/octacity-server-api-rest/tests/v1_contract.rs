@@ -705,3 +705,20 @@ fn profile_selector_choices_expose_bounded_installation_facts_without_private_pl
   assert!(metadata["properties"].get("questions").is_none());
   assert!(metadata["properties"].get("credentials").is_none());
 }
+
+#[test]
+fn flow_context_contract_exposes_an_optional_explicit_work_task_without_payload_metadata() {
+  let document = octacity_server_api_rest::v1::openapi_document();
+  let binding = &document["components"]["schemas"]["FactoryFlowContextBinding"];
+  assert_eq!(
+    binding["properties"]["work_task"]["type"], "string",
+    "Work task uses a bounded logical key"
+  );
+  assert_eq!(binding["properties"]["work_task"]["pattern"], "^[a-z0-9][a-z0-9._-]*$");
+  assert!(
+    !binding["required"]
+      .as_array()
+      .unwrap()
+      .contains(&serde_json::json!("work_task"))
+  );
+}

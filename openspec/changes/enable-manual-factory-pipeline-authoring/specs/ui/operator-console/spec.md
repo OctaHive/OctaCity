@@ -148,3 +148,11 @@ The common editor SHALL provide a visual graph for adding, selecting, configurin
 #### Scenario: Operator builds and revises the graph
 - **WHEN** an operator adds reasoning and gate nodes, connects accepted/review routes, edits a condition and removes a referenced node using keyboard or pointer controls
 - **THEN** the graph and inspectors reflect the same draft, invalid dangling routes block publication, and explicit correction publishes the reviewed ordinary Flow without inferred context transfer
+
+
+### Requirement: Step inputs explicitly connect the admitted Work task
+The step inspector SHALL offer **Task from admitted Work** as an explicit Context input, separately from Step task instructions, result schemas and Project document instruction/reference roles. Selection SHALL not copy task identity fields into a model data schema or require an opaque Artifact id. Existing Task bindings SHALL remain inspectable. Enabling/removing this input SHALL preserve independent documents and handoffs; an occupied logical key SHALL require explicit reconciliation without silently overwriting another binding. Missing mandatory native task input SHALL be an actionable authoring blocker rather than a Run that waits without creating a Build.
+
+#### Scenario: Operator connects the original ticket to both agents
+- **WHEN** the operator explicitly selects the Work task for each agent and connects only the accepted predecessor summary to the analyst
+- **THEN** both invocations receive their exact original task and independent selected Context, with no automatic inheritance from Work correlation or a document's role

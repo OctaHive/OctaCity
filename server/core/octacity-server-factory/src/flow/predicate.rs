@@ -227,6 +227,17 @@ impl FlowGateProgram {
     self.validate_bytes()?;
     Ok(self)
   }
+  /// Reports whether every reachable outcome explicitly selects its result data.
+  /// Predicate-only programs remain valid for selection; execution needs a record mapping.
+  pub fn has_complete_output_mapping(&self) -> bool {
+    self.default_output.is_some()
+      || self
+        .rules
+        .iter()
+        .map(|rule| &rule.outcome)
+        .chain(std::iter::once(&self.fallback))
+        .all(|outcome| self.outputs.contains_key(outcome))
+  }
   /// Executes the exact declared program and mapping into a common immutable record.
   ///
   /// The caller commits the returned record with its ordinary fenced completion;

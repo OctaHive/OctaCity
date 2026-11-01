@@ -34,6 +34,8 @@ pub struct FlowContextSourceObservation {
 #[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
 #[serde(try_from = "BindingWire")]
 pub struct FlowContextBinding {
+  #[serde(skip_serializing_if = "Option::is_none")]
+  work_task: Option<FactoryKey>,
   candidate_revision: Option<FlowDataMapping>,
   #[serde(default, skip_serializing_if = "Option::is_none")]
   candidate_when_present: Option<String>,
@@ -44,6 +46,8 @@ pub struct FlowContextBinding {
 #[derive(Deserialize)]
 #[serde(deny_unknown_fields)]
 struct BindingWire {
+  #[serde(default)]
+  work_task: Option<FactoryKey>,
   #[serde(default)]
   candidate_revision: Option<FlowDataMapping>,
   #[serde(default)]
@@ -56,6 +60,7 @@ impl TryFrom<BindingWire> for FlowContextBinding {
   type Error = FactoryError;
   fn try_from(wire: BindingWire) -> Result<Self, Self::Error> {
     let binding = Self {
+      work_task: wire.work_task,
       candidate_revision: wire.candidate_revision,
       candidate_when_present: wire.candidate_when_present,
       entries: wire.entries,
@@ -72,6 +77,7 @@ impl FlowContextBinding {
     entries: BTreeMap<FactoryKey, FlowContextSelection>,
   ) -> Result<Option<Self>, FactoryError> {
     let mut binding = original.cloned().unwrap_or(Self {
+      work_task: None,
       candidate_revision: None,
       candidate_when_present: None,
       entries: BTreeMap::new(),
@@ -83,6 +89,7 @@ impl FlowContextBinding {
       && binding.artifact_collections.is_empty()
       && binding.candidate_revision.is_none()
       && binding.candidate_when_present.is_none()
+      && binding.work_task.is_none()
     {
       return Ok(None);
     }
@@ -96,6 +103,7 @@ impl FlowContextBinding {
     entries: BTreeMap<FactoryKey, FlowContextSelection>,
   ) -> Result<Self, FactoryError> {
     let binding = Self {
+      work_task: None,
       candidate_revision,
       candidate_when_present: None,
       entries,
@@ -104,13 +112,25 @@ impl FlowContextBinding {
     binding.validate()?;
     Ok(binding)
   }
+  /// Explicit logical key for the authoritative admitted task, never an implicit attachment.
+  pub fn work_task(&self) -> Option<&FactoryKey> {
+    self.work_task.as_ref()
+  }
   pub(super) fn guarantees(&self, name: &FactoryKey) -> bool {
-    self
-      .entries
-      .get(name)
-      .is_some_and(|selection| selection.when_present.is_none())
+    self.work_task.as_ref() == Some(name)
+      || self
+        .entries
+        .get(name)
+        .is_some_and(|selection| selection.when_present.is_none())
   }
   fn validate(&self) -> Result<(), FactoryError> {
+    if self
+      .work_task
+      .as_ref()
+      .is_some_and(|key| self.entries.contains_key(key) || self.artifact_collections.contains_key(key))
+    {
+      return Err(invalid());
+    }
     if self.candidate_when_present.is_some() && self.candidate_revision.is_none() {
       return Err(invalid());
     }
@@ -123,13 +143,37 @@ impl FlowContextBinding {
     ) {
       super::predicate::validate_pointer(path).map_err(|_| invalid())?;
     }
-    if (self.entries.is_empty() && self.artifact_collections.is_empty())
-      || self.entries.len() + self.artifact_collections.len() > MAX_CONTEXT_MANIFEST_ENTRIES
+    if (self.entries.is_empty() && self.artifact_collections.is_empty() && self.work_task.is_none())
+      || self.entries.len() + self.artifact_collections.len() + usize::from(self.work_task.is_some())
+        > MAX_CONTEXT_MANIFEST_ENTRIES
       || serde_json::to_vec(self).map_err(|_| invalid())?.len() > MAX_FLOW_INPUT_BINDING_BYTES
     {
       return Err(invalid());
     }
     Ok(())
+  }
+  /// A native compiler requires an unconditional Task without assuming its alias.
+  /// All static Task sources must be Artifact references; dynamic mappings remain input-validated.
+  pub fn guarantees_task(&self) -> bool {
+    let mut required = self.work_task.is_some();
+    for entry in self
+      .entries
+      .values()
+      .filter(|entry| entry.source_kind == ContextSourceKind::Task)
+    {
+      if entry.source.is_input_independent()
+        && !entry
+          .source
+          .project_raw(&serde_json::Value::Null)
+          .ok()
+          .and_then(|value| serde_json::from_value::<FactoryContextReference>(value).ok())
+          .is_some_and(|source| matches!(source, FactoryContextReference::Artifact(_)))
+      {
+        return false;
+      }
+      required |= entry.when_present.as_ref().is_none_or(String::is_empty);
+    }
+    required
   }
   /// Observes declarations without reading Context bytes or inventing input.
   /// Required dynamic and collection sources remain required but unobserved.
@@ -157,6 +201,15 @@ impl FlowContextBinding {
         };
         (name.clone(), FlowContextSourceObservation { required, source })
       })
+      .chain(self.work_task.iter().map(|key| {
+        (
+          key.clone(),
+          FlowContextSourceObservation {
+            required: true,
+            source: None,
+          },
+        )
+      }))
       .collect()
   }
   /// Resolves only the declared immutable sources for a trusted context collector.
@@ -166,6 +219,17 @@ impl FlowContextBinding {
     &self,
     input: &FlowPayload,
   ) -> Result<BTreeMap<FactoryKey, (ContextSourceKind, FactoryContextReference)>, FactoryError> {
+    self.selected_sources_with_work_task(input, None)
+  }
+  /// Resolves the declared Work task using its owner-frozen reference, independently of payload.
+  pub fn selected_sources_with_work_task(
+    &self,
+    input: &FlowPayload,
+    task: Option<&crate::FactoryArtifactReference>,
+  ) -> Result<BTreeMap<FactoryKey, (ContextSourceKind, FactoryContextReference)>, FactoryError> {
+    if self.work_task.is_some() != task.is_some() {
+      return Err(invalid());
+    }
     let mut selected = self
       .entries
       .iter()
@@ -175,6 +239,12 @@ impl FlowContextBinding {
         Ok((name.clone(), (selection.source_kind, source)))
       })
       .collect::<Result<BTreeMap<_, _>, FactoryError>>()?;
+    if let (Some(key), Some(task)) = (&self.work_task, task) {
+      selected.insert(
+        key.clone(),
+        (ContextSourceKind::Task, FactoryContextReference::Artifact(task.clone())),
+      );
+    }
     for (prefix, collection) in &self.artifact_collections {
       if !applies(collection.when_present.as_deref(), input) {
         continue;
@@ -236,7 +306,7 @@ impl FlowContextBinding {
     if !matches {
       return Err(invalid());
     }
-    let selected = self.selected_sources(input.payload())?;
+    let selected = self.selected_sources_with_work_task(input.payload(), input.work_task())?;
     if context.entries().len() != selected.len() {
       return Err(invalid());
     }

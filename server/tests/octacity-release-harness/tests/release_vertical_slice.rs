@@ -36,6 +36,8 @@ mod backend;
 mod backend_config_tests;
 #[path = "release_vertical_slice/browser.rs"]
 mod browser;
+#[path = "release_vertical_slice/browser_proxy.rs"]
+mod browser_proxy;
 #[path = "release_vertical_slice/issue_source_status.rs"]
 mod issue_source_status;
 #[path = "release_vertical_slice/linux_native.rs"]

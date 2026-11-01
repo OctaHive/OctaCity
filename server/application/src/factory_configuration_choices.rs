@@ -539,6 +539,15 @@ pub(super) fn validate_flow_choices(
           "/gate/policy",
         ));
       }
+      if octacity_server_factory::FlowGateProgram::from_node(node)
+        .is_ok_and(|program| !program.has_complete_output_mapping())
+      {
+        return Err(crate::FactoryValidationDiagnostics::invalid_binding(
+          definition.reference(),
+          node.key(),
+          "/gate/parameters",
+        ));
+      }
       if node
         .profile_selection()
         .is_some_and(|selection| selection.validate_capabilities(choices).is_err())
@@ -547,6 +556,19 @@ pub(super) fn validate_flow_choices(
           definition.reference(),
           Some(node.key()),
           "/profile_selection",
+        ));
+      }
+      if node.build_bindings().any(|build| {
+        choices
+          .build_pipeline_contract(build)
+          .and_then(|contract| contract.compilation.as_ref())
+          .is_some_and(|compiler| compiler.requires_task_context)
+      }) && !node.context_binding().is_some_and(|binding| binding.guarantees_task())
+      {
+        return Err(crate::FactoryValidationDiagnostics::invalid_binding(
+          definition.reference(),
+          node.key(),
+          "/context_binding/work_task",
         ));
       }
       if node

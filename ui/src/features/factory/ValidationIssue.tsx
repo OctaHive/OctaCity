@@ -7,6 +7,7 @@ const fields: Record<string, MessageKey> = {
   key: 'factory.nodeName',
   input_schema: 'factory.inputSchema',
   build: 'factory.executor',
+  gate: 'factory.conditionCheck',
   profile_selection: 'factory.executor',
   task: 'factory.stepTask',
   budget: 'factory.executionLimits',
@@ -26,6 +27,12 @@ export function validationFieldLabel(field: string, t: ReturnType<typeof usePres
   const node = /^\/root\/nodes\/(\d+)(?:\/|$)/u.exec(field);
   const parts = field.split('/').filter(Boolean);
   const key = (node ? parts.slice(3) : parts).find((key) => Object.hasOwn(fields, key));
+  if (parts.includes('work_task')) {
+    const label = t('factory.workTask');
+    return node
+      ? t('factory.stepFieldLabel', { number: Number(node[1]) + 1, field: label })
+      : label;
+  }
   const label = t(key ? fields[key]! : 'factory.flowSettings');
   return node ? t('factory.stepFieldLabel', { number: Number(node[1]) + 1, field: label }) : label;
 }

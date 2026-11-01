@@ -16,6 +16,7 @@ fn key(value: &str) -> FactoryKey {
 struct RoleFixtureOptions<'a> {
   exact_agent: Option<(&'a FactoryRole, &'a FactoryRoleProfile)>,
   step_task: Option<&'a str>,
+  repeat_task_reference: bool,
   extra_context: &'a [(ContextSourceKind, FactoryKey, Vec<u8>)],
   role_name: &'a str,
   additional_credentials: &'a [&'a str],
@@ -28,6 +29,7 @@ impl Default for RoleFixtureOptions<'_> {
     Self {
       exact_agent: None,
       step_task: None,
+      repeat_task_reference: false,
       extra_context: &[],
       role_name: "Custom reviewer",
       additional_credentials: &[],
@@ -90,6 +92,7 @@ fn fixture_for_work_mode_with_context(
   let RoleFixtureOptions {
     exact_agent,
     step_task,
+    repeat_task_reference,
     extra_context,
     role_name,
     additional_credentials,
@@ -275,6 +278,21 @@ fn fixture_for_work_mode_with_context(
       .unwrap(),
     );
     extra_inputs.insert(artifact.artifact_id(), bytes.clone());
+  }
+  if repeat_task_reference {
+    entries.push(
+      ContextManifestEntry::new(
+        ContextSourceKind::Specification,
+        key("task-reference"),
+        old_context.subject().clone(),
+        FactoryContextReference::Artifact(task.clone()),
+        task.content_digest(),
+        task.encoded_size(),
+        FactorySafeText::new("Explicit task reference").unwrap(),
+        FactoryDigest::from_bytes([7; 32]),
+      )
+      .unwrap(),
+    );
   }
   let context = ContextManifest::new(
     old_context.id(),

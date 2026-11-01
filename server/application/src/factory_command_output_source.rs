@@ -646,8 +646,14 @@ fn verify_compiled_command_job(
   // Candidate/private retained inputs still require their separate opaque proof.
   let program = compiled.attribution_program(managed.protected_inputs())?;
   compiled.command_proof(&program)?;
-  if managed.execution() != &program.execution
-    || template.required_factory_enforcement() != Some(program.required_enforcement.as_slice())
+  let source_scope = factory_job_source_scope(intent.input(), &permissions).map_err(|_| Invalid)?;
+  let required = crate::factory_build_materialization::managed_factory_enforcement(
+    &program.required_enforcement,
+    source_scope.as_ref(),
+  );
+  if causality.source_scope != source_scope
+    || managed.execution() != &program.execution
+    || template.required_factory_enforcement() != Some(required.as_slice())
   {
     return Err(Invalid);
   }

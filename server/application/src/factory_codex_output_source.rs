@@ -255,6 +255,7 @@ impl<R: FactoryRunStore, Q: BuildQueryStore, A: ArtifactRecordStore, B: Artifact
     {
       return Err(Invalid);
     }
+    let source_scope = factory_job_source_scope(intent.input(), &permissions).map_err(|_| Invalid)?;
     let job = &attempt.jobs[0];
     let template = &job.job.job_spec_template;
     let managed = template.managed_intent().ok_or(Invalid)?;
@@ -279,6 +280,7 @@ impl<R: FactoryRunStore, Q: BuildQueryStore, A: ArtifactRecordStore, B: Artifact
       || causality.factory_configuration_version != intent.input().configuration().version().get()
       || causality.flow_run_id != intent.input().flow_run_id().to_string()
       || causality.workflow_cycle_id != intent.input().cycle_id().to_string()
+      || causality.source_scope != source_scope
       || causality.source_write_paths != write_paths
       || causality.change_set_capture.as_ref() != capture.map(FactoryCodexCapturePolicy::instruction)
       || causality.change_set_materialization.is_some() != has_candidate
@@ -389,8 +391,11 @@ impl<R: FactoryRunStore, Q: BuildQueryStore, A: ArtifactRecordStore, B: Artifact
       compiler_inputs.inputs.retain(|input| !is_source(input));
     }
     let program = compiled.managed_program(compiler_inputs).map_err(|_| Invalid)?;
-    if managed.execution() != &program.execution
-      || template.required_factory_enforcement() != Some(program.required_enforcement.as_slice())
+    let required = crate::factory_build_materialization::managed_factory_enforcement(
+      &program.required_enforcement,
+      source_scope.as_ref(),
+    );
+    if managed.execution() != &program.execution || template.required_factory_enforcement() != Some(required.as_slice())
     {
       return Err(Invalid);
     }

@@ -141,41 +141,49 @@ it('requires fresh authoritative validation and replays one frozen publication w
   expect(replaceFlow.mock.calls[0]?.[2]['If-Match']).toBe('"1"');
   expect(await within(dialog).findByText('Immutable version published.')).toBeTruthy();
 });
-it('associates authoritative field errors with the draft and retains unrelated edits without allowing publication', async () => {
-  const { request } = setup();
-  request.definition.root.nodes[0]!.budget.max_tokens = 321;
-  const api = {
-    ...factoryApi,
-    validateFlow: vi.fn(async () => {
-      throw new ManagementApiError({
-        code: 'invalid_request',
-        message: 'Invalid contract',
-        requestId: null,
-        retryAfterMilliseconds: null,
-        status: 400,
-        validationIssues: [{ field: '/root/input_schema', code: 'unavailable_reference' }],
-      });
-    }),
-  };
-  const router = createMemoryRouter([
-    {
-      path: '*',
-      element: <FactoryPublication api={api} subject={{ kind: 'flow', request }} version={1} />,
-    },
-  ]);
-  render(
-    <QueryClientProvider client={createConsoleQueryClient()}>
-      <RouterProvider router={router} />
-    </QueryClientProvider>,
-  );
-  await userEvent.click(screen.getByRole('button', { name: 'Validate draft' }));
-  expect(await screen.findByText('/root/input_schema')).toBeTruthy();
-  expect(screen.getByRole('button', { name: 'Review publication' })).toHaveProperty(
-    'disabled',
-    true,
-  );
-  expect(request.definition.root.nodes[0]?.budget.max_tokens).toBe(321);
-});
+it.each([
+  ['/root/input_schema', 'Input schema'],
+  ['/context_binding/work_task', 'Task from admitted Work'],
+  ['/gate/parameters', 'Condition check'],
+])(
+  'associates authoritative field %s with the draft and retains unrelated edits without allowing publication',
+  async (field, label) => {
+    const { request } = setup();
+    request.definition.root.nodes[0]!.budget.max_tokens = 321;
+    const api = {
+      ...factoryApi,
+      validateFlow: vi.fn(async () => {
+        throw new ManagementApiError({
+          code: 'invalid_request',
+          message: 'Invalid contract',
+          requestId: null,
+          retryAfterMilliseconds: null,
+          status: 400,
+          validationIssues: [{ field, code: 'unavailable_reference' }],
+        });
+      }),
+    };
+    const router = createMemoryRouter([
+      {
+        path: '*',
+        element: <FactoryPublication api={api} subject={{ kind: 'flow', request }} version={1} />,
+      },
+    ]);
+    render(
+      <QueryClientProvider client={createConsoleQueryClient()}>
+        <RouterProvider router={router} />
+      </QueryClientProvider>,
+    );
+    await userEvent.click(screen.getByRole('button', { name: 'Validate draft' }));
+    expect(await screen.findByText(field)).toBeTruthy();
+    expect(screen.getByRole('button', { name: label })).toBeTruthy();
+    expect(screen.getByRole('button', { name: 'Review publication' })).toHaveProperty(
+      'disabled',
+      true,
+    );
+    expect(request.definition.root.nodes[0]?.budget.max_tokens).toBe(321);
+  },
+);
 
 it('creates a first immutable Flow after confirmation and abandons a reviewed intent without sending it', async () => {
   const { config, request } = setup();

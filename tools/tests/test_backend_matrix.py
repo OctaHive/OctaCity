@@ -17,6 +17,29 @@ SPEC.loader.exec_module(BACKEND_MATRIX)
 
 
 class BackendMatrixTests(unittest.TestCase):
+    @unittest.skipUnless(os.name == "posix", "requires the composite action shell")
+    def test_microsandbox_release_gate_runs_manual_authoring_and_propagates_failure(self):
+        action = (REPOSITORY / ".github/actions/release-agent-vertical-slice/action.yml").read_text()
+        step = action.split("    - id: test\n", 1)[1].split("    - name:", 1)[0]
+        script = textwrap.dedent(step.split("      run: |\n", 1)[1])
+        for backend in ("microsandbox", "linux-microsandbox"):
+            with self.subTest(backend=backend):
+                with tempfile.TemporaryDirectory() as temporary:
+                    root = Path(temporary)
+                    receipt = root / "installation.json"
+                    receipt.write_text("{}")
+                    log = root / "commands"
+                    command = 'cargo() { printf "%s\\n" "$*" >> "$COMMAND_LOG"; case "$*" in *factory_manual_authoring*) : "${OCTACITY_MINIO_ACCESS_KEY:?}" "${OCTACITY_MINIO_SECRET_KEY:?}"; return 9;; *) return 0;; esac; };\n' + script
+                    result = subprocess.run(["/bin/bash", "-c", command], env={
+                        **os.environ, "RUNNER_TEMP":str(root), "GITHUB_OUTPUT":str(root/"output"),
+                        "OCTACITY_RELEASE_BACKEND":backend, "OCTACITY_RELEASE_EXECUTION_WRAPPER":"",
+                        "OCTACITY_RELEASE_INSTALLATION_RECEIPT":str(receipt),
+                        "OCTACITY_RELEASE_SERVER_ROOT":str(root/"server"), "OCTACITY_RELEASE_AGENT_ROOT":str(root/"agent"),
+                        "COMMAND_LOG":str(log),
+                    }, capture_output=True, text=True)
+                    self.assertEqual(result.returncode, 9, result.stderr)
+                    self.assertIn("--test factory_manual_authoring", log.read_text())
+
     @unittest.skipUnless(os.name == "posix","requires the real CI shell")
     def test_microsandbox_source_contracts_run_on_both_jobs_and_fail_the_gate(self):
         workflow = (REPOSITORY / ".github/workflows/backend-contracts.yml").read_text()

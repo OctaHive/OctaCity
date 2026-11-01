@@ -1947,6 +1947,13 @@ export const enMessages = {
   'factory.terminalName': 'Terminal name',
   'factory.terminalSchema': 'Terminal schema',
 
+  'factory.workTaskDetails': 'Details',
+  'factory.workTaskName': 'Work task Context name',
+  'factory.workTaskOccupied':
+    'This Context name is already in use. Choose another name under Details.',
+  'factory.workTask': 'Task from admitted Work',
+  'factory.workTaskHelp':
+    'Connects the original task to this step. Other Work documents and results are connected separately.',
   'factory.inputSchema': 'Input schema',
   'factory.inputSources': 'Input sources',
   'factory.addInputSource': 'Add input source',

@@ -7,6 +7,8 @@ import { usePresentation } from '../../app/presentation/PresentationProvider';
 import { SelectMenu } from '../../shared/SelectMenu';
 import { PagedExplorerBranch, useCursorPage } from '../../shared/PagedExplorerBranch';
 import { ProjectDocumentPublisher } from '../../shared/ProjectDocumentPublisher';
+import { formatTimestamp } from '../../shared/display';
+import { ProjectDocumentPreview } from '../../shared/ProjectDocumentPreview';
 import { useDeadline } from '../../shared/useDeadline';
 import { catalogLabels } from './catalogLabels';
 type Document = components['schemas']['ProjectDocumentResource'];
@@ -27,7 +29,7 @@ export function WorkProjectInputs({
   onChange: (value: WorkProjectSelection) => void;
   onValidityChange: (ready: boolean) => void;
 }) {
-  const { t } = usePresentation();
+  const { t, locale } = usePresentation();
   const [managing, setManaging] = useState(false);
   const catalog = useCursorPage(
     queryKeys.projectInputDocuments(projectId),
@@ -43,6 +45,19 @@ export function WorkProjectInputs({
     catalog.data?.pages
       .flatMap((page) => page.items)
       .filter((item) => item.project_id === projectId) ?? [];
+  const publicationLabel = (item: Document) =>
+    `${item.name} · ${formatTimestamp(item.published_at, locale).display} · ${item.artifact.content_digest.slice(0, 8)}`;
+  const documentLabel = (item: Document) => {
+    const others = items.filter(
+      (other) => other.name === item.name && other.id !== item.artifact.artifact_id,
+    );
+    if (!others.length) return item.name;
+    const label = publicationLabel(item);
+    // Put distinct publication identities first so tail truncation cannot hide them.
+    return others.some((other) => publicationLabel(other) === label)
+      ? `${item.artifact.artifact_id} · ${label}`
+      : label;
+  };
   const selected = [value.task, value.acceptance, ...value.specifications].filter(
     (item): item is Document => !!item,
   );
@@ -104,30 +119,46 @@ export function WorkProjectInputs({
         {() => (
           <>
             {(['task', 'acceptance'] as const).map((kind) => (
-              <SelectMenu
-                key={kind}
-                ariaLabel={t(kind === 'task' ? 'factory.taskDocument' : 'factory.criteriaDocument')}
-                value={value[kind]?.artifact.artifact_id ?? ''}
-                options={[
-                  { value: '', label: t('projectDocument.choose') },
-                  ...items.map((item) => ({ value: item.id, label: item.name })),
-                  ...(value[kind] && !current(value[kind])
-                    ? [
-                        {
-                          value: value[kind].artifact.artifact_id,
-                          label: t('factory.inputDocumentUnavailable'),
-                        },
-                      ]
-                    : []),
-                ]}
-                onValueChange={(id) =>
-                  onChange({
-                    ...value,
-                    [kind]:
-                      items.find((item) => item.id === id && item.expires_at > Date.now()) ?? null,
-                  })
-                }
-              />
+              <fieldset key={kind}>
+                <legend>
+                  {t(kind === 'task' ? 'factory.taskDocument' : 'factory.criteriaDocument')}
+                </legend>
+                <SelectMenu
+                  ariaLabel={t(
+                    kind === 'task' ? 'factory.taskDocument' : 'factory.criteriaDocument',
+                  )}
+                  value={value[kind]?.artifact.artifact_id ?? ''}
+                  options={[
+                    { value: '', label: t('projectDocument.choose') },
+                    ...items.map((item) => ({ value: item.id, label: documentLabel(item) })),
+                    ...(value[kind] && !current(value[kind])
+                      ? [
+                          {
+                            value: value[kind].artifact.artifact_id,
+                            label: t('factory.inputDocumentUnavailable'),
+                          },
+                        ]
+                      : []),
+                  ]}
+                  onValueChange={(id) =>
+                    onChange({
+                      ...value,
+                      [kind]:
+                        items.find((item) => item.id === id && item.expires_at > Date.now()) ??
+                        null,
+                    })
+                  }
+                />
+                {value[kind] ? (
+                  <ProjectDocumentPreview
+                    key={value[kind].artifact.artifact_id}
+                    api={projectDocumentsApi}
+                    projectId={projectId}
+                    document={value[kind]}
+                    label={t('factory.previewDocument')}
+                  />
+                ) : null}
+              </fieldset>
             ))}
             <fieldset>
               <legend>{t('factory.specificationArtifacts')}</legend>
@@ -148,7 +179,7 @@ export function WorkProjectInputs({
                         : removeSpecification(item.id)
                     }
                   />
-                  {item.name}
+                  {documentLabel(item)}
                 </label>
               ))}
             </fieldset>

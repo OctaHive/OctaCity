@@ -469,6 +469,18 @@ impl FactoryValidationDiagnostics {
       ..Self::default()
     }))
   }
+  pub(crate) fn invalid_binding(
+    definition: octacity_server_factory::FlowDefinitionRef,
+    node: &octacity_server_factory::FactoryKey,
+    field: &str,
+  ) -> ApplicationError {
+    let ApplicationError::FactoryValidation(mut report) = Self::invalid(field) else {
+      unreachable!()
+    };
+    report.errors[0].definition = Some(definition);
+    report.errors[0].node = Some(node.clone());
+    ApplicationError::FactoryValidation(report)
+  }
   pub(crate) fn unavailable_binding(
     definition: octacity_server_factory::FlowDefinitionRef,
     node: Option<&octacity_server_factory::FactoryKey>,

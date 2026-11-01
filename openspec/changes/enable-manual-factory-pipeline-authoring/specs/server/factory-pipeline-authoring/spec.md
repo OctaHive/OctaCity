@@ -79,3 +79,15 @@ The supported manual journey SHALL be demonstrated from a Project with no Factor
 #### Scenario: Complete manual journey survives restart
 - **WHEN** the operator authors and executes the pipeline, the server restarts after the first accepted result and a Project document is subsequently edited
 - **THEN** recovery retains the original Work/Run and frozen inputs, resumes only the declared successor and exposes neither the predecessor's private context nor a second logical execution or reporting effect
+
+
+### Requirement: Explicit Work task Context is pinned independently of result data
+The ordinary Context binding SHALL support an explicit `work_task` logical input selection. It SHALL resolve only the task Artifact of the authoritative admitted Work, freeze that exact reference in the existing Node Input/Context owners, and verify it against the original Work on restore and execution. It SHALL NOT require task metadata in a step's result/input schema, infer a task from a document name or instruction/reference role, or expose unselected Work Artifacts. Existing literal/projected Task bindings SHALL remain supported. Bindings and inputs without this selection SHALL preserve historical canonical bytes and replay identity. Common normalized validation SHALL reject native task-backed execution without its required Task Context before protected reads or dispatch.
+
+#### Scenario: Operator explicitly connects the admitted task
+- **WHEN** a step selects the Work task as Context alongside a bounded predecessor summary and independent Project documents
+- **THEN** its invocation contains that original exact task and only the other declared inputs without widening its schema or inheriting other Work content
+
+#### Scenario: Task Context is omitted or substituted
+- **WHEN** a native task-backed step omits required Task Context, or restored input substitutes another task under the same Work
+- **THEN** authoring rejects the omission before execution and recovery rejects substitution without changing the retained Work or starting a Job
