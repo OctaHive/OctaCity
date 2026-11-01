@@ -149,35 +149,40 @@ fn restart_issues_a_fresh_epoch_and_fences_every_old_operation() {
 }
 
 #[test]
-fn registration_negotiates_the_v3_execution_contract() {
-  run_ready(async {
-    let store = Arc::new(InMemoryStore::new());
-    let pool_id = id::<PoolId>(11);
-    store.seed_agent_pool(pool_id, PoolVersion::INITIAL).unwrap();
-    let enrollment_id = id::<EnrollmentCredentialId>(12);
-    issue_enrollment(&store, enrollment_id, [0x11; 32], pool_id, 100).await;
-    let service = AgentRegistrationService::new(store, Duration::from_secs(60)).unwrap();
+fn registration_negotiates_the_latest_common_execution_contract() {
+  use octacity_protocol::{EXECUTION_CONTRACT_V1, EXECUTION_CONTRACT_V3, EXECUTION_CONTRACT_V4};
 
-    let mut request = registration_request();
-    request.request_id = "register-current-execution".to_owned();
-    request.inventory.execution_contract = octacity_protocol::ExecutionContractRange {
-      min: octacity_protocol::EXECUTION_CONTRACT_V1,
-      max: octacity_protocol::EXECUTION_CONTRACT_V3,
-    };
-    let outcome = service
-      .register(AgentRegistrationInput {
-        request,
-        credential: enrollment_credential(enrollment_id),
-        observed_at_unix_ms: 200,
-      })
-      .await
-      .unwrap();
+  for (minimum, maximum, expected) in [
+    (EXECUTION_CONTRACT_V1, EXECUTION_CONTRACT_V3, EXECUTION_CONTRACT_V3),
+    (EXECUTION_CONTRACT_V1, EXECUTION_CONTRACT_V4, EXECUTION_CONTRACT_V4),
+    (EXECUTION_CONTRACT_V4, EXECUTION_CONTRACT_V4, EXECUTION_CONTRACT_V4),
+  ] {
+    run_ready(async {
+      let store = Arc::new(InMemoryStore::new());
+      let pool_id = id::<PoolId>(11);
+      store.seed_agent_pool(pool_id, PoolVersion::INITIAL).unwrap();
+      let enrollment_id = id::<EnrollmentCredentialId>(12);
+      issue_enrollment(&store, enrollment_id, [0x11; 32], pool_id, 100).await;
+      let service = AgentRegistrationService::new(store, Duration::from_secs(60)).unwrap();
 
-    assert_eq!(
-      outcome.execution_contract_version,
-      octacity_protocol::EXECUTION_CONTRACT_V3
-    );
-  });
+      let mut request = registration_request();
+      request.request_id = "register-current-execution".to_owned();
+      request.inventory.execution_contract = octacity_protocol::ExecutionContractRange {
+        min: minimum,
+        max: maximum,
+      };
+      let outcome = service
+        .register(AgentRegistrationInput {
+          request,
+          credential: enrollment_credential(enrollment_id),
+          observed_at_unix_ms: 200,
+        })
+        .await
+        .unwrap();
+
+      assert_eq!(outcome.execution_contract_version, expected);
+    });
+  }
 }
 
 #[test]
@@ -224,9 +229,10 @@ fn registration_rejects_an_execution_contract_without_a_common_revision() {
 
     let mut request = registration_request();
     request.request_id = "register-unsupported-execution".to_owned();
+    let unsupported = octacity_protocol::SUPPORTED_EXECUTION_CONTRACTS.max + 1;
     request.inventory.execution_contract = octacity_protocol::ExecutionContractRange {
-      min: octacity_protocol::EXECUTION_CONTRACT_V3 + 1,
-      max: octacity_protocol::EXECUTION_CONTRACT_V3 + 1,
+      min: unsupported,
+      max: unsupported,
     };
     let error = service
       .register(AgentRegistrationInput {
