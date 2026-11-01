@@ -91,6 +91,7 @@ function setup(
     roleVersion?: number;
     multipleOutcomes?: boolean;
     mcp?: boolean;
+    competingRuntimes?: boolean;
     unavailable?: boolean;
     profileResponse?: Promise<components['schemas']['FactoryRoleProfile']>;
     capabilityResponse?: Promise<components['schemas']['FactoryRoleProfileCapabilityDetails']>;
@@ -100,6 +101,7 @@ function setup(
   if (options.mcp) {
     const reference = { identity: 'issues-reader', version: 'v1', digest: '8'.repeat(64) };
     profile.definition.execution!.mcp_servers = { issues: { configuration: reference } };
+    choice.mcp_servers = profile.definition.execution!.mcp_servers;
     capability.mcp_configurations = {
       issues: {
         reference,
@@ -118,6 +120,25 @@ function setup(
       },
     };
   }
+  const choices = options.competingRuntimes
+    ? [
+        {
+          ...choice,
+          alias: 'other-worker',
+          build_configuration: { ...choice.build_configuration, version: 2 },
+        },
+        {
+          ...choice,
+          alias: 'other-mcp',
+          mcp_servers: {
+            issues: {
+              configuration: { identity: 'another-reader', version: 'v1', digest: '4'.repeat(64) },
+            },
+          },
+        },
+        choice,
+      ]
+    : [choice];
   role.definition.name = 'Project';
   const schema = {
     reference: { identity: 'assessment', version: 'v1', digest: 'a'.repeat(64) },
@@ -161,9 +182,17 @@ function setup(
       total: 1,
       next_cursor: null,
     })),
-    listCapabilities: vi.fn(async () => ({ items: [choice], total: 1, next_cursor: null })),
+    listCapabilities: vi.fn(async () => ({
+      items: choices,
+      total: choices.length,
+      next_cursor: null,
+    })),
     getRole: vi.fn(async () => role),
-    getCapability: vi.fn(async () => options.capabilityResponse ?? capability),
+    getCapability: vi.fn(async (_project: string, alias: string) =>
+      options.competingRuntimes && alias !== choice.alias
+        ? { ...capability, mcp_configurations: {} }
+        : (options.capabilityResponse ?? capability),
+    ),
     getProfile: vi.fn(async () => {
       if (options.unavailable) throw new Error('private provider details');
       return options.profileResponse ?? profile;
@@ -424,6 +453,25 @@ it('shows MCP read scope separately and keeps logical credentials inside Details
     screen.getByRole('group', { name: 'Executor' }).contains(tools.getByText('MCP · issues')),
   ).toBe(false);
   expect(api.getCapability).toHaveBeenCalledWith(
+    profile.reference.project_id,
+    'installed-runtime',
+    expect.any(AbortSignal),
+  );
+  expect(api.resolveExecutionBinding).not.toHaveBeenCalled();
+  expect(draft()).toEqual(before);
+});
+
+it('shows the selected profiles exact MCP runtime when toolchains match other workers or MCP bindings', async () => {
+  const { api, profile, draft } = setup({ selected: true, mcp: true, competingRuntimes: true });
+  const before = structuredClone(draft());
+  const tools = within(await screen.findByRole('group', { name: 'Tools and access' }));
+  expect(await tools.findByText('MCP tools: search, get')).toBeTruthy();
+  expect(
+    tools.queryByText(
+      'The exact MCP configuration is unavailable. Review the runtime and Project access before starting.',
+    ),
+  ).toBeNull();
+  expect(api.getCapability).toHaveBeenCalledExactlyOnceWith(
     profile.reference.project_id,
     'installed-runtime',
     expect.any(AbortSignal),

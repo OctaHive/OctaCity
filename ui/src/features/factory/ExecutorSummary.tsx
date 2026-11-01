@@ -152,10 +152,21 @@ function ProfileTools({
   );
   const choice = choices.data?.pages
     .flatMap((page) => page.items)
-    .find(
-      (item) =>
-        profile.exact && sameExecutorToolchain(item.toolchain, profile.exact.definition.toolchain),
-    );
+    .find((item) => {
+      const definition = profile.exact?.definition;
+      return (
+        definition &&
+        sameExecutorToolchain(item.toolchain, definition.toolchain) &&
+        (['project_id', 'id', 'version', 'definition_digest'] as const).every(
+          (key) => item.build_configuration[key] === definition.build_configuration[key],
+        ) &&
+        Object.entries(definition.execution?.mcp_servers ?? {}).every(([alias, binding]) =>
+          (['identity', 'version', 'digest'] as const).every(
+            (key) => item.mcp_servers[alias]?.configuration[key] === binding.configuration[key],
+          ),
+        )
+      );
+    });
   const capability = useQuery({
     queryKey: queryKeys.factoryRoleCatalog(reference.project_id, 'capability', choice?.alias ?? ''),
     enabled: !!choice && !!profile.exact,
