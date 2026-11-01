@@ -1,8 +1,10 @@
 import react from '@vitejs/plugin-react';
 import { defineConfig } from 'vitest/config';
 
-export default defineConfig({
+export default defineConfig(({ command }) => ({
   plugins: [react()],
+  // Compact production selectors without changing local class names or development diagnostics.
+  css: command === 'build' ? { modules: { generateScopedName: 'c[hash:base64:8]' } } : {},
   build: {
     rolldownOptions: {
       output: {
@@ -31,4 +33,4 @@ export default defineConfig({
     setupFiles: ['./tests/setup.ts'],
     testTimeout: 15_000,
   },
-});
+}));

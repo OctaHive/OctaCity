@@ -1,8 +1,11 @@
-import { URL } from 'node:url';
+import { URL, fileURLToPath } from 'node:url';
+import { execFile } from 'node:child_process';
+import { promisify } from 'node:util';
 import assert from 'node:assert/strict';
 import { mkdtemp, mkdir, rm, writeFile, readFile } from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
+import process from 'node:process';
 import test from 'node:test';
 
 import { verifyArchitecture } from './verify-architecture.mjs';
@@ -25,6 +28,26 @@ const POLICY = {
     assetCount: 8,
   },
 };
+
+test('keeps the current production console within the checked-in bundle budgets', async (context) => {
+  const root = fileURLToPath(new URL('../', import.meta.url));
+  const output = await mkdtemp(path.join(os.tmpdir(), 'octacity-production-budget-'));
+  context.after(() => rm(output, { recursive: true, force: true }));
+  await promisify(execFile)(
+    process.execPath,
+    [
+      path.join(root, 'node_modules/vite/bin/vite.js'),
+      'build',
+      '--outDir',
+      output,
+      '--emptyOutDir',
+      '--logLevel',
+      'error',
+    ],
+    { cwd: root, timeout: 30_000 },
+  );
+  assert.deepEqual(await verifyArchitecture(root, { distDirectory: output }), []);
+});
 
 test('accepts the declared source and bundle boundaries', async (context) => {
   const root = await fixture(context);
