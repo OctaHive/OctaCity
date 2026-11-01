@@ -202,6 +202,33 @@ class LocalStandContextTests(unittest.TestCase):
             with self.assertRaisesRegex(VERIFY.ContextError, "register-request-v1.json"):
                 VERIFY.validate_repository(root)
 
+    def test_openapi_job_spec_fixture_is_available_in_the_filtered_build_context(self):
+        rules = VERIFY.validate_dockerignore(REPOSITORY / ".dockerignore")
+        self.assertTrue(VERIFY.docker_path_included(
+            "shared/protocol-fixtures/job-spec/job-spec-v3.json", rules,
+        ))
+        for excluded in (
+            "shared/protocol-fixtures/job-spec/private-job.json",
+            "shared/protocol-fixtures/job-spec/job-spec-v4.json",
+            "shared/protocol-fixtures/other/job-spec-v3.json",
+        ):
+            with self.subTest(path=excluded):
+                self.assertFalse(VERIFY.docker_path_included(excluded, rules))
+
+    def test_context_preflight_rejects_a_missing_openapi_job_spec_fixture(self):
+        fixture = "shared/protocol-fixtures/job-spec/job-spec-v3.json"
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            shutil.copyfile(REPOSITORY / ".dockerignore", root / ".dockerignore")
+            for relative in VERIFY.REQUIRED_CONTEXT_PATHS:
+                if relative == fixture:
+                    continue
+                destination = root / relative
+                destination.parent.mkdir(parents=True, exist_ok=True)
+                shutil.copyfile(REPOSITORY / relative, destination)
+            with self.assertRaisesRegex(VERIFY.ContextError, "job-spec-v3.json"):
+                VERIFY.validate_repository(root)
+
     def test_repository_verification_rejects_a_missing_generator_dependency(self):
         for dependency in ("factory-authoring-schemas.mjs", "issue-workflow-constraints.mjs", "issue-constraints.mjs"):
             with self.subTest(dependency=dependency), tempfile.TemporaryDirectory() as temporary:

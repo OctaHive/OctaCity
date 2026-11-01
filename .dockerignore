@@ -89,6 +89,9 @@ shared/*/*
 !shared/protocol-fixtures/coordinator/
 shared/protocol-fixtures/coordinator/*
 !shared/protocol-fixtures/coordinator/register-request-v1.json
+!shared/protocol-fixtures/job-spec/
+shared/protocol-fixtures/job-spec/*
+!shared/protocol-fixtures/job-spec/job-spec-v3.json
 
 # Canonical Factory inputs compiled into the server; operator catalogs stay out.
 !config/
