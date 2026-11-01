@@ -46,6 +46,87 @@ fn digest(bytes: &[u8]) -> String {
   hex::encode(Sha256::digest(bytes))
 }
 
+#[test]
+fn author_fixture_compiles_the_original_repository_subject_without_guest_execution() {
+  // Metadata-only inputs exercise the same compiler fixture; installation and
+  // executable qualification remain the explicit signed-Job contract below.
+  let root = PathBuf::from("/compile-only-fixture");
+  let runner = RunnerInstallation {
+    root: root.clone(),
+    executable: root.join("octa-runner"),
+    plugins_dir: root.join("plugins"),
+    default_plugin_lock: root.join("Octa.lock"),
+    sha256: digest(b"compiler fixture runner"),
+    capabilities: octacity_runner::RunnerCapabilities {
+      octa_version: "0.8.0".into(),
+      runner_protocols: vec![1],
+      event_schemas: vec![1],
+      plugin_protocols: vec![1],
+      octafile_versions: vec![1],
+      platform: "linux-aarch64".into(),
+      features: vec![],
+      build_commit: None,
+    },
+    plugins: BTreeMap::from([(
+      "codex".into(),
+      octacity_runner::RunnerPlugin {
+        version: "0.8.0".into(),
+        protocol: 1,
+        platforms: vec!["linux-aarch64".into()],
+        executable: root.join("plugins/codex"),
+        sha256: digest(b"compiler fixture plugin"),
+        capabilities: vec![],
+      },
+    )]),
+  };
+  let cli = octacity_runner::VerifiedExternalExecutable {
+    guest_filename: None,
+    product: "codex-cli".into(),
+    version: "0.161.0".into(),
+    platform: "linux-aarch64".into(),
+    executable: root.join("codex-cli"),
+    sha256: digest(b"compiler fixture CLI"),
+    selection_environment: "OCTA_CODEX_EXECUTABLE".into(),
+  };
+  let git = GitCaptureTool {
+    executable: root.join("git"),
+    identity: FactoryImmutableReferenceV3 {
+      identity: "git".into(),
+      version: "2.50.0".into(),
+      sha256: digest(b"compiler fixture Git"),
+    },
+  };
+  let capture = ChangeSetCaptureV3 {
+    author_name: "Fixture author".into(),
+    author_email: "fixture@example.test".into(),
+    committed_at: 1,
+    patch_max_bytes: None,
+    policy: ChangeSetCapturePolicyV3 {
+      allowed_path_prefixes: vec!["public/approved".into()],
+      forbidden_control_paths: vec![".github/workflows".into()],
+      max_changed_paths: 2,
+      max_file_bytes: 128,
+      max_total_bytes: 256,
+      allow_empty: false,
+      binary_policy: ChangeSetBinaryPolicyV3::Reject,
+      forbidden_secret_patterns: ChangeSetSecretPatternV3::ALL.to_vec(),
+    },
+    observation: None,
+  };
+  let base = "0123456789012345678901234567890123456789";
+  let (intent, compiled, _) = compile_author(&runner, &cli, base, &git, &capture);
+  let document = compiled
+    .documents()
+    .iter()
+    .find(|document| document.kind() == FactoryProtectedDocumentKind::TaskEnvelope)
+    .unwrap();
+  let envelope: serde_json::Value = serde_json::from_slice(document.bytes()).unwrap();
+  let subject: FactoryTaskSubject = serde_json::from_value(envelope["input"]["context"]["subject"].clone()).unwrap();
+  assert!(matches!(subject, FactoryTaskSubject::Exact(_)));
+  assert_eq!(subject.execution_revision().unwrap().as_str(), base);
+  assert_eq!(&subject, intent.input().context().unwrap().subject());
+}
+
 const SOURCE2_CANARY: &[u8] = b"signed-author-private-source2-canary";
 
 // Keep the real installed Source protocol. Only test-owned, host-only sibling
@@ -820,7 +901,13 @@ fn compile_author(
   .unwrap()
   .with_data_schemas(vec![schema.clone()])
   .unwrap();
-  let subject = FactoryTaskSubject::Exact(work.subject().clone());
+  let subject = FactoryTaskSubject::Exact(
+    work
+      .subject()
+      .repository()
+      .expect("author fixture requires repository-backed Work")
+      .clone(),
+  );
   let input = FlowNodeInput::new(
     &work,
     &admitted,
