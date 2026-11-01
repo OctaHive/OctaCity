@@ -23,7 +23,8 @@ pub(super) async fn install(execution: &mut ExecutionEnvironment, defect: bool, 
   install_reviewed(execution, defect, connection, false).await
 }
 
-/// Console publishes its own Flow/Configuration; installation supplies only prerequisites.
+/// Upgrade coverage starts from an already published legacy triage definition.
+/// Blank construction has its own manual-authoring qualification.
 pub(super) async fn install_for_console(execution: &mut ExecutionEnvironment, connection: &str) -> Value {
   install_reviewed(execution, false, connection, true).await
 }
@@ -328,11 +329,7 @@ async fn install_reviewed(
   } else {
     None
   };
-  let target = if console {
-    Value::Null
-  } else {
-    publish_preset(execution, &permissions, &profiles, command.as_ref(), reporting.as_ref()).await
-  };
+  let target = publish_preset(execution, &permissions, &profiles, command.as_ref(), reporting.as_ref()).await;
   let setup = Path::new(input["setup_file"].as_str().unwrap());
   fs::write(
     setup,

@@ -28,22 +28,6 @@ export interface FactoryApi extends FactoryNodeControlApi {
     request: components['schemas']['ValidateFactoryGateProgramRequest'],
     signal?: AbortSignal,
   ): Promise<components['schemas']['FactoryFlowGate']>;
-  readiness(
-    id: string,
-    version: number,
-    selection: components['schemas']['FactoryReadinessSelection'],
-    signal?: AbortSignal,
-  ): Promise<components['schemas']['FactoryReadinessReport']>;
-  listPresets(
-    projectId: string,
-    cursor: string | null,
-    signal?: AbortSignal,
-  ): Promise<components['schemas']['FactoryPresetPage']>;
-  resolvePreset(
-    projectId: string,
-    request: components['schemas']['FactoryPresetResolutionRequest'],
-    signal?: AbortSignal,
-  ): Promise<components['schemas']['FactoryPresetResolution']>;
   selectProfile(
     runId: string,
     inputDigest: string,
@@ -148,38 +132,6 @@ export const factoryApi: FactoryApi = {
   async normalizeGateProgram(projectId, body, signal) {
     const { data } = await managementApi.POST(
       '/api/v1/projects/{project_id}/factory-gate-programs/validate',
-      {
-        params: { path: { project_id: projectId } },
-        body,
-        signal: signal ?? null,
-      },
-    );
-    return requireManagementResponse(data);
-  },
-  async readiness(id, version, body, signal) {
-    const { data } = await managementApi.POST(
-      '/api/v1/factory-configurations/{factory_configuration_id}/versions/{version}/readiness',
-      {
-        params: { path: { factory_configuration_id: id, version } },
-        body,
-        signal: signal ?? null,
-      },
-    );
-    return requireManagementResponse(data);
-  },
-  async listPresets(projectId, cursor, signal) {
-    const { data } = await managementApi.GET('/api/v1/projects/{project_id}/factory-presets', {
-      params: {
-        path: { project_id: projectId },
-        query: { limit: 25, ...(cursor === null ? {} : { after: cursor }) },
-      },
-      signal: signal ?? null,
-    });
-    return requireManagementResponse(data);
-  },
-  async resolvePreset(projectId, body, signal) {
-    const { data } = await managementApi.POST(
-      '/api/v1/projects/{project_id}/factory-presets/resolve',
       {
         params: { path: { project_id: projectId } },
         body,

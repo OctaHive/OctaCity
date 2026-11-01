@@ -1004,6 +1004,47 @@ fn agent_route_qualification_flags_are_documented_as_optional_booleans() {
 }
 
 #[test]
+fn legacy_preset_queries_are_deprecated_without_reinterpreting_their_contracts() {
+  let document = openapi_document();
+  for (method, path, id) in [
+    (
+      "get",
+      "/api/v1/projects/{project_id}/factory-presets",
+      "listFactoryPresets",
+    ),
+    (
+      "post",
+      "/api/v1/projects/{project_id}/factory-presets/resolve",
+      "resolveFactoryPreset",
+    ),
+  ] {
+    let operation = &document["paths"][path][method];
+    assert_eq!(operation["deprecated"], true, "{id}");
+    assert!(
+      operation["description"]
+        .as_str()
+        .unwrap()
+        .contains("/api/v1/flow-definitions/validate")
+    );
+    assert_eq!(
+      operation["responses"]["200"]["headers"]["Cache-Control"]["schema"]["const"],
+      "no-store"
+    );
+  }
+  assert_eq!(
+    document["paths"]["/api/v1/projects/{project_id}/factory-presets/resolve"]["post"]["requestBody"]["content"]["application/json"]
+      ["schema"]["$ref"],
+    "#/components/schemas/FactoryPresetResolutionRequest"
+  );
+  for path in [
+    "/api/v1/flow-definitions/validate",
+    "/api/v1/factory-configurations/validate",
+  ] {
+    assert_ne!(document["paths"][path]["post"]["deprecated"], true);
+  }
+}
+
+#[test]
 fn factory_setup_inventory_keeps_read_authority_and_shared_contract_bounds() {
   let document = openapi_document();
   let registered = management_authorization_operations();

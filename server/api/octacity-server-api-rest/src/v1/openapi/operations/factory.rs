@@ -10,6 +10,8 @@ use octacity_server_application::{
 
 use super::{ManagementOperation, ParameterProfile};
 
+const LEGACY_PRESET_MIGRATION: &str = "Legacy preset queries retain their original request/response semantics for existing clients. New authoring uses installed factory-authoring-capabilities and factory-configuration-choices, then /api/v1/flow-definitions/validate and ordinary immutable Flow/Configuration publication. See docs/reference/factory-pipeline-authoring-migration.md.";
+
 pub(super) const OPERATIONS: &[ManagementOperation] = &[
   operation!(
     octacity_server_application::GetFactoryReadinessQuery,
@@ -38,6 +40,7 @@ pub(super) const OPERATIONS: &[ManagementOperation] = &[
     false,
     false
   )
+  .with_deprecation(LEGACY_PRESET_MIGRATION)
   .with_no_store_response(),
   operation!(
     octacity_server_application::ListFactoryPresetsQuery,
@@ -54,6 +57,7 @@ pub(super) const OPERATIONS: &[ManagementOperation] = &[
   )
   .with_visibility::<octacity_server_application::ListFactoryPresetsQuery>()
   .with_parameters(ParameterProfile::CurrentDefinitionList)
+  .with_deprecation(LEGACY_PRESET_MIGRATION)
   .with_no_store_response(),
   operation!(
     octacity_server_application::GetFactoryRuntimeSettingsQuery,

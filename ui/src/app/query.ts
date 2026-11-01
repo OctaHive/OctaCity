@@ -183,7 +183,6 @@ export const queryKeys = {
   factoryCurrent: (kind: string, id: string) => ['factory', 'current', kind, id] as const,
   factoryFlowVersions: (id: string) => ['factory', 'flow', id] as const,
   factoryConfigurationVersions: (id: string) => ['factory', 'configuration', id] as const,
-  factoryPresets: (projectId: string) => ['factory', 'presets', projectId] as const,
   factoryChoices: (projectId: string) => ['factory', 'choices', projectId] as const,
   factoryConfigurations: (projectId: string) => ['factory', 'configurations', projectId] as const,
   factoryFlows: (projectId: string) => ['factory', 'flows', projectId] as const,

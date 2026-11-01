@@ -20,6 +20,8 @@ pub struct ManagementOperation {
   pub tag: &'static str,
   /// Short operator-facing operation summary.
   pub summary: &'static str,
+  /// Migration guidance for a retained deprecated operation, when present.
+  pub deprecation: Option<&'static str>,
   /// Request component schema, when the operation accepts JSON.
   pub request_schema: Option<&'static str>,
   /// Successful response component schema.
@@ -125,6 +127,10 @@ pub(crate) enum ParameterProfile {
 }
 
 impl ManagementOperation {
+  const fn with_deprecation(mut self, migration: &'static str) -> Self {
+    self.deprecation = Some(migration);
+    self
+  }
   const fn with_pending_response(mut self) -> Self {
     self.pending_response = true;
     self
@@ -197,6 +203,7 @@ macro_rules! operation {
       operation_id: $id,
       tag: $tag,
       summary: $summary,
+      deprecation: None,
       request_schema: $request,
       response_schema: $response,
       success_status: $status,
@@ -260,6 +267,7 @@ const EMPTY_OPERATION: ManagementOperation = ManagementOperation {
   operation_id: "",
   tag: "",
   summary: "",
+  deprecation: None,
   request_schema: None,
   response_schema: "",
   success_status: "",

@@ -115,6 +115,10 @@ fn operation_document(operation: &ManagementOperation) -> Value {
     ),
     ("responses".to_owned(), responses(operation)),
   ]);
+  if let Some(migration) = operation.deprecation {
+    document.insert("deprecated".to_owned(), json!(true));
+    document.insert("description".to_owned(), json!(migration));
+  }
   let parameters = parameters(operation);
   if !parameters.is_empty() {
     document.insert("parameters".to_owned(), Value::Array(parameters));

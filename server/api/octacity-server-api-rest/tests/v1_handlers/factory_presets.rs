@@ -546,6 +546,121 @@ async fn preset_resolution_rechecks_project_visibility_after_metadata_reads() {
   );
 }
 
+/// A saved triage Configuration needs no preset adapter to read, validate or replace it.
+#[tokio::test]
+async fn saved_triage_configurations_republish_without_the_legacy_authoring_adapter() {
+  let (legacy, project, store) = preset_router();
+  let parameters = selected_parameters(&legacy, project, &store).await;
+  let response = legacy
+    .oneshot(json_request(
+      "POST",
+      &format!("/api/v1/projects/{project}/factory-presets/resolve"),
+      "old-client",
+      None,
+      &parameters.to_string(),
+    ))
+    .await
+    .unwrap();
+  assert_eq!(response.status(), StatusCode::OK);
+  let resolved = json(response).await;
+  assert_eq!(resolved["diagnostics"], serde_json::json!([]));
+
+  let policy = Arc::new(TrustedNetworkManagementPolicy);
+  let peer = Arc::new(RecordingApplication::default());
+  let configs = Arc::new(FactoryConfigurationHandlers::with_policy(store.clone(), policy.clone()));
+  let commands = Arc::new(AuthorizedCommandHandler::new(policy.clone(), peer.clone()));
+  let queries = Arc::new(AuthorizedQueryHandler::new(policy.clone(), peer.clone()));
+  let factory = octacity_server_api_rest::v1::FactoryManagementApplication::new(
+    Arc::new(AuthorizedCommandHandler::new(policy.clone(), configs.clone())),
+    Arc::new(AuthorizedQueryHandler::new(policy, configs)),
+    commands.clone(),
+    queries.clone(),
+    commands.clone(),
+    queries,
+    commands,
+  );
+  let router = management_router_with_application(
+    || true,
+    support::recording_management_application_with_factory(peer, factory),
+  );
+  let id = parameters["configuration_id"].as_str().unwrap();
+  let body = serde_json::json!({"id":id,"project_id":project,"definition":resolved["configuration"]}).to_string();
+  let published = router
+    .clone()
+    .oneshot(json_request(
+      "POST",
+      "/api/v1/factory-configurations",
+      "legacy-config",
+      None,
+      &body,
+    ))
+    .await
+    .unwrap();
+  assert_eq!(published.status(), StatusCode::CREATED);
+  let original = json(published).await["resource"].clone();
+  let exact_path = format!("/api/v1/factory-configurations/{id}/versions/1");
+  let read = router
+    .clone()
+    .oneshot(empty_request("GET", &exact_path, None))
+    .await
+    .unwrap();
+  assert_eq!(read.status(), StatusCode::OK);
+  assert_eq!(json(read).await, original);
+  let validated = router
+    .clone()
+    .oneshot(json_request(
+      "POST",
+      "/api/v1/factory-configurations/validate",
+      "read",
+      None,
+      &body,
+    ))
+    .await
+    .unwrap();
+  assert_eq!(validated.status(), StatusCode::OK, "{}", json(validated).await);
+  let replacement = serde_json::json!({"definition":resolved["configuration"]}).to_string();
+  let published = router
+    .clone()
+    .oneshot(json_request(
+      "POST",
+      &format!("/api/v1/factory-configurations/{id}/versions"),
+      "common-edit",
+      Some("\"1\""),
+      &replacement,
+    ))
+    .await
+    .unwrap();
+  assert_eq!(published.status(), StatusCode::CREATED);
+  let updated = json(published).await;
+  assert_eq!(updated["resource"]["configuration"]["reference"]["version"], 2);
+  assert_eq!(
+    updated["resource"]["configuration"]["flow"],
+    original["configuration"]["flow"]
+  );
+  let read = router
+    .clone()
+    .oneshot(empty_request("GET", &exact_path, None))
+    .await
+    .unwrap();
+  assert_eq!(
+    json(read).await,
+    original,
+    "editing must retain the original exact graph and settings"
+  );
+  // Old bodies are not silently treated as new common drafts.
+  let invalid = router
+    .oneshot(json_request(
+      "POST",
+      "/api/v1/factory-configurations/validate",
+      "invalid",
+      None,
+      &parameters.to_string(),
+    ))
+    .await
+    .unwrap();
+  assert_eq!(invalid.status(), StatusCode::BAD_REQUEST);
+}
+
 /// Qualification of the existing publication owners: resolution creates no alternate mutation path.
 #[tokio::test]
 async fn resolved_preset_uses_ordinary_confirmed_versioned_publication_and_current_dependencies() {
