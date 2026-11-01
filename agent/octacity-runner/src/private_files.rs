@@ -18,9 +18,11 @@ mod persistence;
 /// The caller must bind its logical profile to the signed credential selection.
 pub struct RunnerPrivateJsonFile {
   source: PathBuf,
+  #[cfg(unix)]
   destination: PathBuf,
   bytes: Zeroizing<Vec<u8>>,
   redactions: Vec<Zeroizing<Vec<u8>>>,
+  #[cfg(unix)]
   fields: Option<Vec<String>>,
 }
 impl RunnerPrivateJsonFile {
@@ -85,9 +87,11 @@ impl RunnerPrivateJsonFile {
       }
       Ok(Self {
         source: source.to_owned(),
+        #[cfg(unix)]
         destination: destination.to_owned(),
         bytes,
         redactions,
+        #[cfg(unix)]
         fields: fields.map(<[String]>::to_vec),
       })
     };
