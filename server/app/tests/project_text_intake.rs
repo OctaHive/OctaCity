@@ -5,6 +5,7 @@ use octacity_server_factory::*;
 use octacity_server_store::{ManagementSecurityScope, MutationDisposition};
 use octacity_server_store::{testing::management_mutation, *};
 use octacity_server_store_postgres::{PostgresAuthoritativeStore, PostgresStore};
+use postgres::authoritative_fixture;
 #[allow(dead_code)]
 #[path = "support/protected_input_transfer.rs"]
 mod protected_input_transfer;
@@ -834,9 +835,6 @@ impl octacity_artifact_store::ArtifactStore for Bytes {
     }
   }
 }
-#[allow(dead_code)]
-#[path = "../../infrastructure/octacity-server-store-postgres/tests/support/authoritative_fixture.rs"]
-mod authoritative_fixture;
 #[tokio::test]
 #[ignore = "requires an explicitly configured disposable PostgreSQL service"]
 async fn shared_input_retention_cleans_abandoned_bytes_honors_build_holds_and_prevents_resurrection() {
