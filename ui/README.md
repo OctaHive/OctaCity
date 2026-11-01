@@ -52,21 +52,14 @@ external fonts, icon fonts, analytics integrations, and copied template assets. 
 `architecture-policy.json` is the single source of truth for the raw-byte and asset-count limits;
 the build reports any measured value that exceeds them. Task Source ownership authoring reuses
 shared Source references, row identities and Reporter effects, adding no runtime dependencies.
-The measured console with Project-scoped AI settings and workflow canvas authoring
-is 1,299,504 bytes of JavaScript and 1,391,069 bytes of total static output. The
-aggregate ceilings are 1,270 KiB JavaScript and 1,359 KiB static output. The typed
-Runtime setup surface and both translations use a reviewed 32 KiB increase in
-aggregate budgets, with no new dependency.
-The Issue workflow canvas and properties inspector add 3.5 KiB to the CSS
-allowance (89 KiB total) for selectable status cards, initial/terminal markers,
-directed transitions and properties. Workflow selection, inspection, status
-authoring, connections, node dragging and viewport controls add 11 KiB to the
-JavaScript allowance and 14 KiB to the static-output allowance. Entry (450 KiB) and asset-count (57)
-limits stay in force.
-Role/Profile controls reuse existing forms, the confirmed command, closed value
-schemas and server validation. The architecture contract admits the measured
-footprint and rejects another unplanned 16 KiB of JavaScript. Networking and
-persistence boundaries stay enforced.
+The current Console, including manual Factory authoring and both translations,
+measures 1,551,704 JavaScript bytes and 1,634,879 total static bytes. Its reviewed
+aggregate ceilings are **1,536 KiB JavaScript** and **1,632 KiB static output**.
+The entry ceiling (450 KiB), CSS ceiling (89 KiB) and asset count (57) are unchanged;
+no runtime or development dependency was added for this budget revision.
+The production-build test checks the actual bundle against this policy. Synthetic
+near-ceiling cases verify that another KiB is rejected, independently of the
+measured build's remaining headroom. Networking and persistence boundaries stay enforced.
 
 Release packaging consumes this exact `dist/` directory without rebuilding the application:
 

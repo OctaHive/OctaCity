@@ -309,7 +309,7 @@ test('admits bounded Agent diagnostics and retains the CSS ceiling', async (cont
   );
 });
 
-test('admits measured triage result diagnostics and rejects another KiB near aggregate ceilings', async (context) => {
+test('admits measured manual authoring and rejects another KiB near aggregate ceilings', async (context) => {
   const policy = JSON.parse(
     await readFile(new URL('../architecture-policy.json', import.meta.url), 'utf8'),
   );
@@ -319,20 +319,26 @@ test('admits measured triage result diagnostics and rejects another KiB near agg
     'dist/index.html',
     '<script type="module" src="./assets/index.js"></script>'.padEnd(622, ' '),
   );
-  await write(root, 'dist/assets/index.js', 'x'.repeat(305_431));
-  await write(root, 'dist/assets/features.js', 'x'.repeat(1_111_192));
-  await write(root, 'dist/assets/styles.css', 'x'.repeat(90_943));
+  await write(root, 'dist/assets/index.js', 'x'.repeat(305_570));
+  await write(root, 'dist/assets/features.js', 'x'.repeat(1_246_134));
+  await write(root, 'dist/assets/styles.css', 'x'.repeat(82_553));
   assert.deepEqual(await verifyArchitecture(root, { distDirectory: 'dist' }), []);
   assert.deepEqual(policy.bundleBudgets, {
     entryJavaScriptBytes: 460_800,
-    totalJavaScriptBytes: 1_436_160,
+    totalJavaScriptBytes: 1_572_864,
     totalCssBytes: 91_136,
-    totalStaticBytes: 1_527_808,
+    totalStaticBytes: 1_671_168,
     assetCount: 57,
   });
-  // Exercise the ceiling independently of the measured bundle's remaining headroom:
-  // 1,435,648 JS bytes and 1,527,213 total bytes fit; one more KiB exceeds both.
-  await write(root, 'dist/assets/features.js', 'x'.repeat(1_130_217));
+  // Exercise both ceilings independently of the measured bundle's headroom:
+  // 1,572,352 JS bytes and 1,670,463 total bytes fit; one more KiB exceeds both.
+  await write(
+    root,
+    'dist/index.html',
+    '<script type="module" src="./assets/index.js"></script>'.padEnd(7_168, ' '),
+  );
+  await write(root, 'dist/assets/styles.css', 'x'.repeat(90_943));
+  await write(root, 'dist/assets/features.js', 'x'.repeat(1_266_782));
   assert.deepEqual(await verifyArchitecture(root, { distDirectory: 'dist' }), []);
   await write(root, 'dist/assets/unplanned.js', 'x'.repeat(1_024));
   const rejected = await verifyArchitecture(root, { distDirectory: 'dist' });
