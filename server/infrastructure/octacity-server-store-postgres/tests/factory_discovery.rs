@@ -1,5 +1,8 @@
 mod support;
 
+#[path = "factory_discovery/code_pins.rs"]
+mod code_pins;
+
 #[path = "factory_discovery/action_projection.rs"]
 mod action_projection;
 
