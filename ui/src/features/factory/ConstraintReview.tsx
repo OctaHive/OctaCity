@@ -5,6 +5,14 @@ import { usePresentation } from '../../app/presentation/PresentationProvider';
 import type { MessageKey } from '../../app/presentation/messages';
 import { BUDGET_LABELS } from './ResourceEditors';
 type S = components['schemas'];
+type NodePermissions = S['FactoryValidationDiagnostics']['effective_permissions'][number];
+const permissionResourceLabels = {
+  cpu_millis: 'factory.resourceCpu',
+  elapsed_millis: 'factory.maxElapsed',
+  memory_bytes: 'factory.resourceMemory',
+  disk_bytes: 'factory.resourceDisk',
+  process_count: 'factory.resourceProcesses',
+} satisfies Record<keyof S['FactoryResourceLimits'], MessageKey>;
 const scopes = {
   run_total: 'factory.scope.runTotal',
   flow_run_total: 'factory.scope.flowRunTotal',
@@ -23,6 +31,7 @@ export const constraintSourceLabels = {
   node: 'factory.limitSource.node',
   configuration: 'factory.limitSource.configuration',
   role_profile: 'factory.limitSource.profile',
+  profile_budget: 'factory.limitSource.profileBudget',
   configuration_wip: 'factory.limitSource.configurationWip',
   project_policy: 'factory.limitSource.project',
   installed_runtime_policy: 'factory.limitSource.runtime',
@@ -31,6 +40,7 @@ export const constraintSourceLabels = {
 } satisfies Record<
   | S['FactoryBudgetConstraintSource']['source']
   | S['FactoryConcurrencyConstraint']['source']
+  | NonNullable<NodePermissions['profiles']>[number]['sources'][number]
   | NonNullable<
       S['FactoryValidationDiagnostics']['effective_permissions'][number]['unresolved_sources']
     >[number],
@@ -121,17 +131,28 @@ export function ConstraintReview({
       {diagnostics.effective_permissions.map((item) => (
         <section key={`${item.definition.id}:${item.node}`}>
           <h5>{item.node}</h5>
-          <p>
-            {t('factory.permissionCounts', {
-              plugins: item.permissions.plugins.length,
-              tools: item.permissions.tools.length,
-              hosts: item.permissions.network_hosts.length,
-            })}
-          </p>
-          <p>
-            {t('factory.constraintOrigins')}:{' '}
-            {(item.sources ?? []).map((source) => t(constraintSourceLabels[source])).join(', ')}
-          </p>
+          <PermissionCeiling permissions={item.permissions} sources={item.sources ?? []} />
+          {item.profiles?.length ? <p>{t('factory.profileCeilingsHelp')}</p> : null}
+          {item.profiles?.map((candidate, index) => (
+            <fieldset key={JSON.stringify(candidate.profile)}>
+              <legend>
+                {t('factory.profileCandidateCeiling', {
+                  number: index + 1,
+                  version: candidate.profile.version,
+                })}
+              </legend>
+              <PermissionCeiling permissions={candidate.permissions} sources={candidate.sources} />
+              <details>
+                <summary>{t('factory.routeDetails')}</summary>
+                <dl>
+                  <dt>{t('factory.executorProfile')}</dt>
+                  <dd>{candidate.profile.id}</dd>
+                  <dt>{t('factory.digest')}</dt>
+                  <dd>{candidate.profile.digest}</dd>
+                </dl>
+              </details>
+            </fieldset>
+          ))}
           {item.unresolved_sources?.length ? (
             <p role="alert">
               {t('factory.unresolvedAccessOrigins', {
@@ -141,20 +162,45 @@ export function ConstraintReview({
               })}
             </p>
           ) : null}
-          <details>
-            <summary>{t('factory.routeDetails')}</summary>
-            <dl>
-              {Object.entries(item.permissions.resources).map(([key, value]) => (
-                <div key={key}>
-                  <dt>{key}</dt>
-                  <dd>{value}</dd>
-                </div>
-              ))}
-            </dl>
-          </details>
         </section>
       ))}
     </section>
+  );
+}
+
+/** Displays independent server-projected ceilings; candidate policy is not a dispatch grant. */
+function PermissionCeiling({
+  permissions,
+  sources,
+}: {
+  permissions: S['FactoryPermissions'];
+  sources: readonly (keyof typeof constraintSourceLabels)[];
+}) {
+  const { t, locale } = usePresentation();
+  return (
+    <>
+      <p>
+        {t('factory.permissionCounts', {
+          plugins: permissions.plugins.length,
+          tools: permissions.tools.length,
+          hosts: permissions.network_hosts.length,
+        })}
+      </p>
+      <p>
+        {t('factory.constraintOrigins')}:{' '}
+        {sources.map((source) => t(constraintSourceLabels[source])).join(', ')}
+      </p>
+      <dl>
+        {(Object.keys(permissionResourceLabels) as (keyof S['FactoryResourceLimits'])[]).map(
+          (key) => (
+            <div key={key}>
+              <dt>{t(permissionResourceLabels[key])}</dt>
+              <dd>{permissions.resources[key].toLocaleString(locale)}</dd>
+            </div>
+          ),
+        )}
+      </dl>
+    </>
   );
 }
 

@@ -350,6 +350,108 @@ it('reviews a disabled configuration with server-derived capability and permissi
   expect(replaceConfiguration.mock.calls[0]?.[2]['If-Match']).toBe('"1"');
 });
 
+it('reviews each exact candidate profile ceiling alongside step access and unresolved runtime limits', async () => {
+  const { config, request } = setup();
+  const permissions = {
+    ...config.flow.limits.permissions,
+    plugins: [],
+    tools: [],
+    network_hosts: ['api.allowed.example'],
+    resources: {
+      cpu_millis: 1000,
+      elapsed_millis: 10000,
+      memory_bytes: 4096,
+      disk_bytes: 8192,
+      process_count: 4,
+    },
+  };
+  const profile = {
+    project_id: request.project_id,
+    id: '77777777-7777-4777-8777-777777777777',
+    version: 2,
+    digest: '7'.repeat(64),
+  };
+  const api = {
+    ...factoryApi,
+    validateFlow: vi.fn<FactoryApi['validateFlow']>(async () => ({
+      ...config.flow,
+      diagnostics: {
+        errors: [],
+        unavailable_references: [],
+        required_node_capabilities: [],
+        required_agent_capabilities: [],
+        required_backend_capabilities: [],
+        warnings: [],
+        effective_permissions: [
+          {
+            definition: config.flow.closure.root,
+            node: 'operator_step',
+            permissions,
+            sources: ['flow_admission', 'flow_definition', 'node'],
+            profiles: [
+              {
+                profile,
+                permissions: {
+                  ...permissions,
+                  network_hosts: [],
+                  resources: { ...permissions.resources, elapsed_millis: 0 },
+                },
+                sources: ['role_profile', 'profile_budget'],
+              },
+              {
+                profile: { ...profile, version: 3, digest: '8'.repeat(64) },
+                permissions: {
+                  ...permissions,
+                  network_hosts: ['one.example', 'two.example'],
+                  resources: { ...permissions.resources, elapsed_millis: 2000 },
+                },
+                sources: ['role_profile', 'profile_budget'],
+              },
+            ],
+            unresolved_sources: ['agent_local', 'backend_placement'],
+          },
+        ],
+      },
+    })),
+  };
+  render(
+    <QueryClientProvider client={createConsoleQueryClient()}>
+      <RouterProvider
+        router={createMemoryRouter([
+          {
+            path: '*',
+            element: <FactoryPublication api={api} subject={{ kind: 'flow', request }} />,
+          },
+        ])}
+      />
+    </QueryClientProvider>,
+  );
+  await userEvent.click(screen.getByRole('button', { name: 'Validate draft' }));
+  const review = within(await screen.findByRole('region', { name: 'Effective constraints' }));
+  expect(review.getByText('Plugins: 0; tools: 0; network hosts: 1')).toBeTruthy();
+  const first = within(review.getByRole('group', { name: 'Profile candidate 1 · v2' }));
+  expect(first.getByText('Plugins: 0; tools: 0; network hosts: 0')).toBeTruthy();
+  expect(first.getByText('Elapsed time (ms)')).toBeTruthy();
+  expect(first.getByText('0', { selector: 'dd' })).toBeTruthy();
+  expect(first.getByText('Constraints from: Role profile, Profile budget')).toBeTruthy();
+  const second = within(review.getByRole('group', { name: 'Profile candidate 2 · v3' }));
+  expect(second.getByText('Plugins: 0; tools: 0; network hosts: 2')).toBeTruthy();
+  expect(second.getByText('2,000', { selector: 'dd' })).toBeTruthy();
+  expect(
+    review.getByText(
+      'Each candidate has its own ceiling. Flow and step limits also apply; the profile is selected at execution.',
+    ),
+  ).toBeTruthy();
+  expect(review.getByRole('alert').textContent).toBe(
+    'Access still requires enforcement by: Agent limits, Execution backend.',
+  );
+  await userEvent.click(first.getByText('Details', { selector: 'summary' }));
+  expect(first.getByText(profile.id)).toBeTruthy();
+  expect(first.getByText(profile.digest)).toBeTruthy();
+  await userEvent.click(second.getByText('Details', { selector: 'summary' }));
+  expect(second.getByText('8'.repeat(64))).toBeTruthy();
+});
+
 it('reviews exact immutable per-stage effects before publishing the validated Flow', async () => {
   const { config, request } = setup();
   const choice = (await import('../../../tests/fixtures/integrations')).integrationFixture(
