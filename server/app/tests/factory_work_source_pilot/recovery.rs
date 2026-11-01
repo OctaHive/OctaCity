@@ -77,25 +77,12 @@ async fn failed_or_revoked_delivery_stays_distinct_from_the_accepted_result_afte
     let fixture = &mut pilot.fixture;
     let directory = fixture.root.path().join("github");
     let accepted = fixture.store.factory_run_snapshot(run).await.unwrap();
-    if reason == "expired" {
-      fixture.clock.0.store(10000, Ordering::SeqCst);
-    } else if reason == "revoked" {
-      grant(
-        fixture,
-        pilot.connection.id,
-        Some(pilot.connection.access_version),
-        vec![IntegrationPurpose::TaskRead],
-        "revoke-before-delivery",
-      )
-      .await;
+    let mode = if reason == "permanent" {
+      serde_json::json!({"failure":{"class":"permanent","retry_after_millis":null}})
     } else {
-      let mode = if reason == "permanent" {
-        serde_json::json!({"failure":{"class":"permanent","retry_after_millis":null}})
-      } else {
-        serde_json::json!({"failure":{"class":"transient","retry_after_millis":null}})
-      };
-      std::fs::write(directory.join("reporter-mode.json"), serde_json::to_vec(&mode).unwrap()).unwrap();
-    }
+      serde_json::json!({"failure":{"class":"transient","retry_after_millis":null}})
+    };
+    std::fs::write(directory.join("reporter-mode.json"), serde_json::to_vec(&mode).unwrap()).unwrap();
     let first = reporting_worker(
       fixture,
       managed_projector(fixture, &pilot.profile),
@@ -105,30 +92,52 @@ async fn failed_or_revoked_delivery_stays_distinct_from_the_accepted_result_afte
     .run_once(time(120))
     .await
     .unwrap();
-    if reason == "exhausted" {
-      assert_eq!(first.retrying, 1, "{reason}: {first:?}");
-    } else {
+    if reason == "permanent" {
       assert_eq!(first.failed, 1, "{reason}: {first:?}");
+    } else {
+      assert_eq!(first.retrying, 1, "{reason}: {first:?}");
     }
     let interrupted = fixture.store.factory_run_snapshot(run).await.unwrap();
     assert_eq!(interrupted.flow, accepted.flow);
+    if ["revoked", "expired"].contains(&reason) {
+      assert_eq!(
+        status(&interrupted).state,
+        FactoryOutboxState::Pending,
+        "recovery must recheck authority and the deadline of a still-pending delivery"
+      );
+    }
     assert_ne!(status(&interrupted).state, FactoryOutboxState::Delivered);
+    let calls_before_recovery = captured_requests(&directory);
     fixture.store = Arc::new(PostgresStore::new(database.pool.clone()));
     assert_eq!(fixture.store.factory_run_snapshot(run).await.unwrap(), interrupted);
-    fixture.clock.0.store(220, Ordering::SeqCst);
+    let resumed_at = time(if reason == "expired" { 10000 } else { 220 });
+    fixture.clock.0.store(resumed_at.unix_millis(), Ordering::SeqCst);
+    if reason == "revoked" {
+      grant(
+        fixture,
+        pilot.connection.id,
+        Some(pilot.connection.access_version),
+        vec![IntegrationPurpose::TaskRead],
+        "revoke-pending-delivery",
+      )
+      .await;
+    }
+    if ["revoked", "expired"].contains(&reason) {
+      std::fs::write(directory.join("reporter-mode.json"), b"{}").unwrap();
+    }
     let retry = reporting_worker(
       fixture,
       managed_projector(fixture, &pilot.profile),
       "reopened-failure",
       10000,
     )
-    .run_once(time(220))
+    .run_once(resumed_at)
     .await
     .unwrap();
-    if reason == "exhausted" {
-      assert_eq!(retry.failed, 1);
-    } else {
+    if reason == "permanent" {
       assert_eq!(retry.claimed, 0);
+    } else {
+      assert_eq!(retry.failed, 1);
     }
     let failed = fixture.store.factory_run_snapshot(run).await.unwrap();
     assert_eq!(status(&failed).state, FactoryOutboxState::Failed);
@@ -141,14 +150,20 @@ async fn failed_or_revoked_delivery_stays_distinct_from_the_accepted_result_afte
       |line| serde_json::from_str::<serde_json::Value>(line).unwrap()["message"]["command"]["operation"] == "apply"
     ));
     if reason == "revoked" {
-      assert!(calls.is_empty(), "revocation is checked before invoking the provider");
+      assert_eq!(
+        calls, calls_before_recovery,
+        "recovery rechecks revoked authority before the provider"
+      );
       assert_eq!(status(&failed).failure, Some(FactoryOutboxFailure::Forbidden));
     }
     if ["exhausted", "expired"].contains(&reason) {
       assert_eq!(status(&failed).failure, Some(FactoryOutboxFailure::Exhausted));
     }
     if reason == "expired" {
-      assert!(calls.is_empty(), "restart cannot renew the original delivery deadline");
+      assert_eq!(
+        calls, calls_before_recovery,
+        "restart cannot renew the original delivery deadline"
+      );
     }
     fixture.clock.0.store(10000, Ordering::SeqCst);
     assert_eq!(

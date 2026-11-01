@@ -109,26 +109,8 @@ async fn imported_card_keeps_independent_work_across_reporter_restart_and_second
     .await
     .unwrap();
     let project = fixture.input.project_id();
-    tokio::time::timeout(TEST_WAIT, async {
-      loop {
-        let mut complete = true;
-        for run in &runs {
-          complete &= fixture
-            .store
-            .issue_work_association(project, run.work_id)
-            .await
-            .unwrap()
-            .is_some();
-        }
-        if complete {
-          break;
-        }
-        tokio::time::sleep(Duration::from_millis(20)).await;
-      }
-    })
-    .await
-    .unwrap();
-    server.shutdown().await.unwrap();
+    // Explicit native import queues these post-upgrade Work associations;
+    // the running Server owns their bounded reconciliation, not migration 0093.
     let issue = issues::card_on(
       &fixture,
       Arc::new(observation_reader(&fixture, &connection)),
@@ -137,6 +119,7 @@ async fn imported_card_keeps_independent_work_across_reporter_restart_and_second
       true,
     )
     .await;
+    server.shutdown().await.unwrap();
     controls::begin(fixture.store.clone(), downstream.id).await;
     controls::qualify(fixture.store.clone(), &fixture.profile.read.context, downstream.id).await;
     assert_eq!(

@@ -153,11 +153,16 @@ where
       imported = Some(link.issue_id);
     }
     if existing {
-      let link = store
-        .issue_work_association(project, run.work_id)
-        .await
-        .unwrap()
-        .expect("Source admission owns durable association");
+      let link = tokio::time::timeout(TEST_WAIT, async {
+        loop {
+          if let Some(link) = store.issue_work_association(project, run.work_id).await.unwrap() {
+            break link;
+          }
+          tokio::time::sleep(Duration::from_millis(20)).await;
+        }
+      })
+      .await
+      .expect("explicit Source import must reconcile the retained Work association");
       assert_eq!(link.issue_id, imported.unwrap());
       assert_eq!(link.run_id, run.id);
     } else {
@@ -177,7 +182,7 @@ where
         .unwrap();
       // This isolated Issue-consumer fixture supplies an accepted association.
       // Production admission/queue/restart linkage is qualified without this seed
-      // by new_source_admissions_recover_one_card_without_manual_association.
+      // by new_source_admissions_wait_for_import_then_recover_original_runs.
       store
         .associate_issue_work(management_mutation(AssociateIssueWork {
           project_id: project,
@@ -323,7 +328,8 @@ where
       .unwrap()
       .items
       .len(),
-    if existing { 4 } else { 3 }
+    3,
+    "explicit import uses the selected workflow; only the two reviewed transitions change status"
   );
   for run in runs {
     let association = store
