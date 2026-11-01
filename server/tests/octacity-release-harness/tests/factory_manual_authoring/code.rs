@@ -15,7 +15,7 @@ pub(super) async fn install(
   client: &Client,
   origin: &str,
   directory: &Path,
-  resources: &installation::Resources,
+  resources: &mut installation::Resources,
   base: &FactoryCodexBuildProfile,
   backend: &ReleaseBackend,
   released_plugins: &Path,
@@ -41,7 +41,7 @@ pub(super) async fn install_named(
   client: &Client,
   origin: &str,
   directory: &Path,
-  resources: &installation::Resources,
+  resources: &mut installation::Resources,
   base: &FactoryCodexBuildProfile,
   backend: &ReleaseBackend,
   released_plugins: &Path,
@@ -156,7 +156,7 @@ pub(super) async fn install_named(
       resources.project
     ))
     .header("idempotency-key", format!("{name}-policy"))
-    .header("if-match", format!("\"{}\"", previous.len() + 1))
+    .header("if-match", format!("\"{}\"", resources.policy_version))
     .json(&policy)
     .send()
     .await
@@ -166,6 +166,8 @@ pub(super) async fn install_named(
     "technical source policy: {}",
     response.status()
   );
+  let published: Value = response.json().await.unwrap();
+  resources.policy_version = published["resource"]["version"].as_u64().unwrap();
 
   CodeInstallation {
     profile,

@@ -184,7 +184,28 @@ async fn journey(scenario: Scenario<'_>) {
   let binary = required_path("OCTACITY_MANUAL_SERVER_BINARY", true);
   let mut server = spawn_server(&binary, &config, &log, &directory.join("server.err"));
   wait_for_server_ready(&client, &origin, &mut server, &log).await;
-  let resources = installation::create(&client, &origin, &backend).await;
+  let mut resources = installation::create(&client, &origin, &backend).await;
+  if matches!(scenario, Scenario::Repositories) {
+    // An independent policy edit must not make source installation infer
+    // the policy precondition from the number of repositories installed.
+    let mut policy =
+      support::project_policy_body(&resources.pool, "", backend.runtime_class(), backend.execution_target());
+    policy["policy"]["repositories"]["value"] = json!([]);
+    let response = client
+      .post(format!(
+        "{origin}/api/v1/projects/{}/policy-versions",
+        resources.project
+      ))
+      .header("idempotency-key", "independent-policy-edit")
+      .header("if-match", format!("\"{}\"", resources.policy_version))
+      .json(&policy)
+      .send()
+      .await
+      .unwrap();
+    assert!(response.status().is_success());
+    let published: Value = response.json().await.unwrap();
+    resources.policy_version = published["resource"]["version"].as_u64().unwrap();
+  }
   let profile = installation::profile(&directory, &resources, &backend, &runtime.octa_root);
   let observed_plugins = code::observe_git(&directory, &runtime.source_plugins);
   let code = if locale.is_some() || matches!(scenario, Scenario::Repositories) {
@@ -193,7 +214,7 @@ async fn journey(scenario: Scenario<'_>) {
         &client,
         &origin,
         &directory,
-        &resources,
+        &mut resources,
         &profile,
         &backend,
         &observed_plugins,
@@ -209,7 +230,7 @@ async fn journey(scenario: Scenario<'_>) {
         &client,
         &origin,
         &directory,
-        &resources,
+        &mut resources,
         &profile,
         &backend,
         &code.as_ref().unwrap().source_plugins,

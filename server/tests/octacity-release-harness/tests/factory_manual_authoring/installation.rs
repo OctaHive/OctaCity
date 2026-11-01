@@ -7,6 +7,8 @@ pub(super) struct Resources {
   pub project: String,
   pub pool: String,
   pub configuration: BuildConfigurationRef,
+  /// Exact latest policy publication observed by this HTTP fixture.
+  pub policy_version: u64,
 }
 pub(super) async fn create(client: &Client, origin: &str, backend: &ReleaseBackend) -> Resources {
   let pool = resource_id(&post_management(client,origin,"/api/v1/agent-pools","manual-pool",json!({
@@ -46,7 +48,7 @@ pub(super) async fn create(client: &Client, origin: &str, backend: &ReleaseBacke
   policy["policy"]["repositories"]["value"] = json!([]);
   policy["policy"]["artifacts"]["value"] = outputs;
   policy["policy"]["concurrency"]["value"] = json!({"active_builds":2,"active_jobs":2});
-  post_management(
+  let published_policy = post_management(
     client,
     origin,
     &format!("/api/v1/projects/{project}/policy-versions"),
@@ -58,6 +60,7 @@ pub(super) async fn create(client: &Client, origin: &str, backend: &ReleaseBacke
     project,
     pool,
     configuration,
+    policy_version: published_policy["resource"]["version"].as_u64().unwrap(),
   }
 }
 
