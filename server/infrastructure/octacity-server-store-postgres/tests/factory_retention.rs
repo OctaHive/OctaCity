@@ -385,7 +385,14 @@ async fn seed_factory_runs(pool: &sqlx::PgPool) {
     .bind(external_identity)
     .bind(format!("{ordinal:02x}"))
     .bind(format!("{:02x}", ordinal + 8))
-    .bind(Json(serde_json::json!({"fixture": ordinal})))
+    .bind(Json(serde_json::json!({
+      "fixture": ordinal,
+      "subject": {
+        "project_id": "00000000-0000-0000-0000-000000000101",
+        "repository_id": "00000000-0000-0000-0000-000000000102",
+        "base_revision": "revision"
+      }
+    })))
     .execute(&mut *transaction)
     .await
     .unwrap();
