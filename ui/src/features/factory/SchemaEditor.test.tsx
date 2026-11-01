@@ -1,10 +1,52 @@
 // @vitest-environment jsdom
-import { cleanup, render, screen } from '@testing-library/react';
+import { act, cleanup, render, screen } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { afterEach, it, expect, vi } from 'vitest';
 import { SchemaEditor } from './SchemaEditor';
 import { configurationFixture } from '../../../tests/fixtures/factory';
 afterEach(cleanup);
+it.each(['name and version', 'version', 'shape'] as const)(
+  'retains the next schema draft when %s changes before an earlier normalization completes',
+  async (edited) => {
+    const schema = {
+      reference: { identity: 'operator.first', version: 'v1', digest: '6'.repeat(64) },
+      shape: { type: 'boolean' as const },
+    };
+    let complete!: (value: typeof schema) => void;
+    const response = new Promise<typeof schema>((resolve) => {
+      complete = resolve;
+    });
+    const normalizeSchema = vi.fn(() => response);
+    const onAdd = vi.fn();
+    render(<SchemaEditor api={{ normalizeSchema }} projectId="visible-project" onAdd={onAdd} />);
+    const name = screen.getByRole('textbox', { name: 'Schema name' });
+    const version = screen.getByRole('textbox', { name: 'Schema version' });
+    await userEvent.type(name, 'operator.first');
+    await userEvent.type(version, 'v1');
+    await userEvent.click(screen.getByRole('button', { name: 'Add schema' }));
+    if (edited === 'name and version') {
+      await userEvent.clear(name);
+      await userEvent.type(name, 'operator.next');
+    }
+    if (edited !== 'shape') {
+      await userEvent.clear(version);
+      await userEvent.type(version, 'v2');
+    } else {
+      await userEvent.click(screen.getByRole('combobox', { name: 'Schema type' }));
+      await userEvent.click(screen.getByRole('option', { name: 'String' }));
+    }
+    await act(async () => complete(schema));
+    expect(onAdd).toHaveBeenCalledExactlyOnceWith(schema);
+    expect(name).toHaveProperty(
+      'value',
+      edited === 'name and version' ? 'operator.next' : 'operator.first',
+    );
+    expect(version).toHaveProperty('value', edited === 'shape' ? 'v1' : 'v2');
+    if (edited === 'shape')
+      expect(screen.getByRole('combobox', { name: 'Schema type' }).textContent).toContain('String');
+    expect(screen.getByRole('button', { name: 'Add schema' })).toHaveProperty('disabled', false);
+  },
+);
 it('authors bounded document-guided component and priority fields without a copied enum and explains structural validation', async () => {
   const normalizeSchema = vi.fn(
     async () => configurationFixture().configuration.flow.data_schemas[0]!,

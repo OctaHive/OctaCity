@@ -37,18 +37,23 @@ export function SchemaEditor({
   onAdd: (schema: components['schemas']['FactoryFlowDataSchema']) => void;
 }) {
   const { t } = usePresentation();
-  const [identity, setIdentity] = useState('');
-  const [version, setVersion] = useState('');
-  const [shape, setShape] = useState<Shape>({ type: 'boolean' });
+  const [draft, setDraft] = useState<{ identity: string; version: string; shape: Shape }>({
+    identity: '',
+    version: '',
+    shape: { type: 'boolean' },
+  });
+  const { identity, version, shape } = draft;
   const [pending, setPending] = useState(false);
   const [error, setError] = useState<Error | null>(null);
   const add = async () => {
     setPending(true);
     setError(null);
     try {
-      onAdd(await api.normalizeSchema({ project_id: projectId, identity, version, shape }));
-      setIdentity('');
-      setVersion('');
+      onAdd(await api.normalizeSchema({ project_id: projectId, ...draft }));
+      // Edits during normalization form a new draft, including unchanged companion fields.
+      setDraft((current) =>
+        current === draft ? { ...current, identity: '', version: '' } : current,
+      );
     } catch (failure) {
       setError(failure instanceof Error ? failure : new Error('Schema normalization failed'));
     } finally {
@@ -64,7 +69,10 @@ export function SchemaEditor({
         <input
           maxLength={128}
           value={identity}
-          onChange={(event) => setIdentity(event.target.value)}
+          onChange={(event) => {
+            const identity = event.target.value;
+            setDraft((current) => ({ ...current, identity }));
+          }}
         />
       </label>
       <label>
@@ -72,10 +80,16 @@ export function SchemaEditor({
         <input
           maxLength={128}
           value={version}
-          onChange={(event) => setVersion(event.target.value)}
+          onChange={(event) => {
+            const version = event.target.value;
+            setDraft((current) => ({ ...current, version }));
+          }}
         />
       </label>
-      <ShapeEditor value={shape} onChange={setShape} />
+      <ShapeEditor
+        value={shape}
+        onChange={(shape) => setDraft((current) => ({ ...current, shape }))}
+      />
       {error ? (
         <QueryFailureNotice title={t('factory.schemas')} error={error} onRetry={add} />
       ) : null}
