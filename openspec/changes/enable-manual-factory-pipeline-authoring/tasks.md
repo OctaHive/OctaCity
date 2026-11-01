@@ -42,7 +42,7 @@
 - [x] 5.1 Add a failing headless clean-state journey through real management routes, persistence and qualified isolated execution, then make it pass: manually author the two-agent assessment/classification workflow, documents, criteria, gates, handoff and manual input. Enumerate technical prerequisites and verify no preinstalled business definitions, demo Builds/Runs, handler substitutions or hidden triage resolver.
 - [x] 5.2 Add failing packaged Console acceptance journeys in English and Russian, then make them pass using keyboard and narrow layouts. Create Project documents and the visual Flow from empty state, select/preview/remove multiple documents with instruction/reference roles independently per step, connect conditional routes, inspect/edit pipeline goals/criteria, declare pipeline sources and attach exact step inputs, then execute through real APIs; verify review and retained server state rather than only a rendered graph. Include the approved explicit Work-task Context input, frozen selected-task provenance, legacy-byte compatibility and pre-publication rejection of missing mandatory Task Context.
 - [x] 5.3 Add failing end-to-end isolation/resource cases, then make them pass for an unrelated three-step workflow, a fully repository-free workflow and steps using repositories A/B. Verify exact retained inputs, no VCS activity for no-code steps, no undeclared context, and rejection of foreign evidence and unsupported authority.
-- [ ] 5.4 Add failing recovery cases, then make them pass for restart after an accepted predecessor result, later Project document edits, revoked scope, lost publication/delivery replies and pending/failed provider receipts. Verify pinned original inputs, bounded recovery, no duplicate logical successor/effect and truthful delivery state.
+- [x] 5.4 Add failing recovery cases, then make them pass for restart after an accepted predecessor result, later Project document edits, revoked scope, lost publication/delivery replies and pending/failed provider receipts. Verify pinned original inputs, bounded recovery, no duplicate logical successor/effect and truthful delivery state.
 - [ ] 5.5 Run the compatibility matrix across legacy saved definitions, repository-backed Work/Builds, source preparation, replay, Context provenance, protocol fixtures and ordinary CI/CD; verify old Runs remain inspectable/recoverable and no migrated digest or replay identity changes.
 
 ## 6. Authoring cutover, documentation and review
@@ -562,3 +562,73 @@ were not counted as TDD Red. During qualification free disk remained about
 9.7–10 GiB. Distinct retained reports and reproducible commands are documented
 in `docs/testing/manual-factory-authoring.md`. Recovery/compatibility work in
 5.4–5.5 remains pending.
+
+### Task 5.4 qualification evidence
+
+The ordinary three-step bulletin journey now has a separately selected recovery
+case. A configured HumanGate holds execution after compose's accepted result.
+Later same-name Project task, criteria and guidance publications retain separate
+immutable identities. Server and idle Agent restart with their original durable
+state before the operator resumes the gate. The three isolated ordinary Builds
+retain the admitted task/criteria/document references, projected scalar values,
+Context and predecessor provenance; later content and private canaries are
+rejected. No Git call is permitted. Exact terminal history is compared after a
+second Server restart.
+
+Observed Red/Green:
+
+- `python3 -m unittest discover -s tools/tests -p test_manual_factory_model.py`:
+  a later-document canary initially reached an accepted finite result (0 instead
+  of 64); the peer now rejects it. All seven protocol-peer cases pass.
+- `cargo test --locked -p octacity-release-harness --test
+  factory_manual_authoring
+  manual_workflow_recovers_after_accepted_result_with_original_documents_once
+  -- --ignored --exact --nocapture`: the unheld baseline initially created a
+  successor invocation before the required checkpoint. The explicit ordinary
+  gate now permits interruption after exactly one accepted predecessor. The
+  physical restart case passes with four node results and exactly three
+  reasoning Builds/Jobs. Environment provisioning failures were not TDD Red.
+- The same physical case passes with committed replies lost by a bounded
+  transparent TCP relay at Flow publication, Configuration publication and the
+  operator response. The client observes an actual transport failure before
+  replay with the original body/key/precondition. There is one Flow, one
+  Configuration and no duplicate logical successor or implicit reporting effect.
+- `python3 -m unittest discover -s tools/tests -p test_backend_matrix.py`:
+  the new physical case and durable Reporter group initially failed to fail both
+  Microsandbox release gates. Both groups are now selected and errors propagate;
+  all 19 matrix tests pass.
+
+`cargo test --locked -p octacity-server --test factory_work_source_pilot
+'postgres::recovery::' -- --ignored --nocapture --test-threads=1` passes both new
+tests, including pending delivery, an applied write with a lost reply, revoked
+Project writer scope, permanent provider rejection, transient retry exhaustion
+and original deadline expiry. They use PostgreSQL, the existing configured
+trusted-action/hosted Reporter/process adapter owners, and a finite protocol
+peer. Reconstructed store/workers and fresh normal Server HTTP instances retain
+one operation identity and expose pending/delivered/failed accurately. The lost
+reply causes exactly one provider apply; revoked/expired authority causes zero
+provider calls. Terminal delivery cannot restart or change accepted Work/Flow.
+Existing production owners already support these cases; no new runtime,
+credential, document or delivery state owner was introduced.
+
+Strict Clippy for both affected test targets with all features, formatting,
+architecture and strict OpenSpec validation pass. Full Reporter-module regression
+also exposed the pre-existing
+`postgres::imported_card_keeps_independent_work_across_reporter_restart_and_second_vocabulary`
+timeout waiting for Issue/Work association. It reproduces with that test file
+restored from HEAD, without the new recovery module. Its new Work is outside
+the one-time `issue_legacy_backfill` membership fixed by migration 0093; the
+current runtime must not widen that migration to attach arbitrary new Work.
+This baseline failure is recorded for compatibility qualification in 5.5, not
+hidden or reported as a passing full module.
+
+The physical cases run on macOS ARM64 with Linux ARM64 Microsandbox guests;
+Linux host qualification remains in the selected release gate. Provider tests
+qualify common protocol ownership, not live GitHub credentials or its native
+adapter. Reproducible prerequisites, recovery commands and private evidence
+(`manual-recovery.json`) are in `docs/testing/manual-factory-authoring.md`.
+The existing physical repository-free isolation case also passes unchanged
+(three reasoning steps, no recovery gate). Task 5.5 remains open.
+Only test-owned PostgreSQL/S3 containers, network and temporary runtime state
+were removed after qualification. A private ignored copy is retained at
+`target/manual-recovery-evidence.json`; final free disk is about 11 GiB.

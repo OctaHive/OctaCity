@@ -143,10 +143,13 @@ runs:
             for authoring_case in \
               clean_project_authors_and_executes_two_isolated_agents_without_a_business_preset \
               unrelated_three_step_repository_free_workflow_retains_only_selected_inputs \
-              unrelated_three_step_workflow_isolates_repositories_a_b_and_no_code; do
+              unrelated_three_step_workflow_isolates_repositories_a_b_and_no_code \
+              manual_workflow_recovers_after_accepted_result_with_original_documents_once; do
               cargo test --locked -p octacity-release-harness --test factory_manual_authoring \
                 "${authoring_case}" -- --ignored --exact --nocapture
             done
+            cargo test --locked -p octacity-server --test factory_work_source_pilot \
+              'postgres::recovery::' -- --ignored --nocapture --test-threads=1
             ;;
         esac
 

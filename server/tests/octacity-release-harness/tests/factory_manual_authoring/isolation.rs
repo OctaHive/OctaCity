@@ -9,6 +9,7 @@ pub(super) struct Authored {
   pub task: Value,
   pub criteria: Value,
   pub code: Vec<(String, String)>,
+  pub checkpoint: bool,
 }
 
 pub(super) async fn run(
@@ -18,6 +19,7 @@ pub(super) async fn run(
   profile: &FactoryCodexBuildProfile,
   role: &Value,
   code: Option<(&code::CodeInstallation, &code::CodeInstallation)>,
+  checkpoint: bool,
 ) -> Authored {
   let project = &resources.project;
   if let Some((a, b)) = code {
@@ -165,6 +167,22 @@ pub(super) async fn run(
       draft["root"]["code_sources"][key] = json!({"repository":{"project_id":project,"id":source.repository,"version":1,"definition_digest":repository["definition_digest"]},"selection":{"kind":"exact_revision","value":source.revision},"access":"read_only","scope":{"kind":"selected","entries":[{"kind":"path","path":"README.md"}]}});
     }
   }
+  if checkpoint {
+    let mut gate = node(
+      "resume",
+      "human_gate",
+      &boolean,
+      &[("continue", &boolean)],
+      &permissions,
+    );
+    gate["input_binding"] = json!({"sources":{},"mapping":constant(json!(true))});
+    draft["root"]["nodes"].as_array_mut().unwrap().push(gate);
+    draft["root"]["transitions"][0] = edge("compose", "done", "node", "resume");
+    draft["root"]["transitions"]
+      .as_array_mut()
+      .unwrap()
+      .push(edge("resume", "continue", "node", "translate"));
+  }
   reject_unselected_authority(client, origin, project, &draft, code.is_some()).await;
   let request = json!({"id":Uuid::new_v4(),"project_id":project,"definition":draft});
   post_management(
@@ -175,14 +193,61 @@ pub(super) async fn run(
     request.clone(),
   )
   .await;
-  let flow = post_management(client, origin, "/api/v1/flow-definitions", "publish-bulletin", request).await;
-  let configuration = post_management(client,origin,"/api/v1/factory-configurations","configure-bulletin",json!({"id":Uuid::new_v4(),"project_id":project,"definition":{"admission_policy":"manual-admission","permission_ceiling":"manual-ceiling","hard_budget":budget,"wip_limits":{"max_active_runs":1,"max_active_nodes":1},"enabled":true,"flow":flow["resource"]["flow"]}})).await;
+  let flow = if checkpoint {
+    recovery::replay_after_lost_reply(
+      client,
+      origin,
+      "/api/v1/flow-definitions",
+      "publish-bulletin",
+      None,
+      request,
+    )
+    .await
+  } else {
+    post_management(client, origin, "/api/v1/flow-definitions", "publish-bulletin", request).await
+  };
+  let request = json!({"id":Uuid::new_v4(),"project_id":project,"definition":{"admission_policy":"manual-admission","permission_ceiling":"manual-ceiling","hard_budget":budget,"wip_limits":{"max_active_runs":1,"max_active_nodes":1},"enabled":true,"flow":flow["resource"]["flow"]}});
+  let configuration = if checkpoint {
+    recovery::replay_after_lost_reply(
+      client,
+      origin,
+      "/api/v1/factory-configurations",
+      "configure-bulletin",
+      None,
+      request,
+    )
+    .await
+  } else {
+    post_management(
+      client,
+      origin,
+      "/api/v1/factory-configurations",
+      "configure-bulletin",
+      request,
+    )
+    .await
+  };
+  if checkpoint {
+    for collection in ["flow-definitions", "factory-configurations"] {
+      let page = get_json(
+        client,
+        format!("{origin}/api/v1/projects/{project}/{collection}?limit=100"),
+      )
+      .await;
+      assert_eq!(
+        page["items"].as_array().unwrap().len(),
+        1,
+        "lost publication replies must not duplicate definitions"
+      );
+    }
+  }
   let admitted = post_management(client,origin,&format!("/api/v1/projects/{project}/factory-work"),"admit-bulletin",json!({"configuration_id":configuration["resource"]["configuration"]["reference"]["id"],"configuration_version":1,"external_identity":"bulletin/1","source":{"kind":"project_input_v1"},"artifacts":{"task":task,"acceptance":criteria,"specifications":[]},"classification":{"priority":40,"risk":"low","metadata":{}}})).await;
   Authored {
     run: string(&admitted, "factory_run_id"),
     documents: documents.try_into().unwrap(),
     task,
     criteria,
+    checkpoint,
     code: code.map_or_else(Vec::new, |(a, b)| {
       vec![
         (a.repository.clone(), a.revision.clone()),
@@ -219,7 +284,7 @@ pub(super) async fn completed(client: &Client, origin: &str, authored: &Authored
     );
   }
   let completions = retained["node-completions"].as_array().unwrap();
-  assert_eq!(completions.len(), 3);
+  assert_eq!(completions.len(), 3 + usize::from(authored.checkpoint));
   for (key, expected) in [
     (
       "compose",

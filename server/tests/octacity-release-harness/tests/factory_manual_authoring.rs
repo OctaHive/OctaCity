@@ -42,6 +42,8 @@ mod installation;
 mod isolation;
 #[path = "factory_pilot/source.rs"]
 mod local_mirror;
+#[path = "factory_manual_authoring/recovery.rs"]
+mod recovery;
 #[allow(dead_code)]
 #[path = "release_vertical_slice/server.rs"]
 mod server;
@@ -89,6 +91,7 @@ enum Scenario<'a> {
   Console(&'a str),
   RepositoryFree,
   Repositories,
+  Recovery,
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
@@ -101,6 +104,12 @@ async fn unrelated_three_step_repository_free_workflow_retains_only_selected_inp
 #[ignore = "requires current Server/Agent, disposable services and qualified Microsandbox"]
 async fn unrelated_three_step_workflow_isolates_repositories_a_b_and_no_code() {
   journey(Scenario::Repositories).await;
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+#[ignore = "requires current Server/Agent, disposable services and qualified Microsandbox"]
+async fn manual_workflow_recovers_after_accepted_result_with_original_documents_once() {
+  journey(Scenario::Recovery).await;
 }
 
 async fn journey(scenario: Scenario<'_>) {
@@ -298,7 +307,10 @@ async fn journey(scenario: Scenario<'_>) {
       "first source-free step must resolve from installation alone: {resolved}"
     );
     assert!(resolved["build"].is_object());
-    if matches!(scenario, Scenario::RepositoryFree | Scenario::Repositories) {
+    if matches!(
+      scenario,
+      Scenario::RepositoryFree | Scenario::Repositories | Scenario::Recovery
+    ) {
       let authored = isolation::run(
         &client,
         &origin,
@@ -306,6 +318,7 @@ async fn journey(scenario: Scenario<'_>) {
         &profile,
         &published,
         code.as_ref().zip(second_code.as_ref()),
+        matches!(scenario, Scenario::Recovery),
       )
       .await;
       let run = authored.run.clone();
@@ -377,6 +390,24 @@ async fn journey(scenario: Scenario<'_>) {
     &agent_directory.join("stdout.log"),
     &agent_directory.join("stderr.log"),
   );
+  if matches!(scenario, Scenario::Recovery) {
+    let checkpoint = recovery::checkpoint(&client, &origin, &run).await;
+    recovery::edit_documents(&client, &origin, &resources.project, isolated.as_ref().unwrap()).await;
+    // The installed Agent has finite transport retries; restart its normal
+    // process with the same durable state after the Server is available again.
+    worker.kill().await.unwrap();
+    worker.wait().await.unwrap();
+    shutdown_server(&mut server, &log).await;
+    server = spawn_server(&binary, &config, &log, &directory.join("server.err"));
+    wait_for_server_ready(&client, &origin, &mut server, &log).await;
+    worker = agent::spawn_agent(
+      &required_path("OCTACITY_MANUAL_AGENT_BINARY", true),
+      &agent_config,
+      &agent_directory.join("restarted-stdout.log"),
+      &agent_directory.join("restarted-stderr.log"),
+    );
+    recovery::resume(&client, &origin, &run, &checkpoint).await;
+  }
   let state = timeout(Duration::from_secs(240), async {
     loop {
       let state = get_json(&client, format!("{origin}/api/v1/factory-runs/{run}")).await;
@@ -416,7 +447,7 @@ async fn journey(scenario: Scenario<'_>) {
     verification::completed(&client, &origin, &run, locale.is_none(), code.as_ref()).await
   };
   match scenario {
-    Scenario::RepositoryFree => assert!(
+    Scenario::RepositoryFree | Scenario::Recovery => assert!(
       !directory.join("git-invocations").exists(),
       "repository-free execution must not invoke Git"
     ),
@@ -469,6 +500,7 @@ async fn journey(scenario: Scenario<'_>) {
         Scenario::Console(locale) => format!("manual-console-{locale}.json"),
         Scenario::RepositoryFree => "manual-isolation-no-code.json".to_owned(),
         Scenario::Repositories => "manual-isolation-a-b.json".to_owned(),
+        Scenario::Recovery => "manual-recovery.json".to_owned(),
       }),
       serde_json::to_vec_pretty(&json!({
         "locale":locale,

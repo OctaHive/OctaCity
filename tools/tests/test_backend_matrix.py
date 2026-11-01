@@ -26,6 +26,8 @@ class BackendMatrixTests(unittest.TestCase):
             "clean_project_authors_and_executes_two_isolated_agents_without_a_business_preset",
             "unrelated_three_step_repository_free_workflow_retains_only_selected_inputs",
             "unrelated_three_step_workflow_isolates_repositories_a_b_and_no_code",
+            "manual_workflow_recovers_after_accepted_result_with_original_documents_once",
+            "postgres::recovery::",
         )):
             with self.subTest(backend=backend, failing=failing):
                 with tempfile.TemporaryDirectory() as temporary:

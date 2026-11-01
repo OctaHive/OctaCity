@@ -27,7 +27,7 @@ prompt=$(head -c 1048577)
 contains() { printf %s "$prompt" | grep -Fq -- "$1"; }
 if contains 'bulletin-request-canary'; then
   contains 'bulletin-criteria-canary' || fail
-  for forbidden in compose-unselected-canary translate-unselected-canary bulletin-private-investigation-canary bulletin-unselected-project-canary; do
+  for forbidden in compose-unselected-canary translate-unselected-canary bulletin-private-investigation-canary bulletin-unselected-project-canary later-document-canary; do
     ! contains "$forbidden" || fail
   done
   selected_file=

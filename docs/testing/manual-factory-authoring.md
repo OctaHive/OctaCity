@@ -1,8 +1,8 @@
 # Clean-state manual Factory authoring
 
-`factory_manual_authoring` qualifies tasks 5.1–5.3 of
+`factory_manual_authoring` qualifies tasks 5.1–5.4 of
 `enable-manual-factory-pipeline-authoring`. It starts the actual Server and Agent
-executables against PostgreSQL and S3 and executes two ordinary Jobs in separate
+executables against PostgreSQL and S3 and executes ordinary Jobs in separate
 Microsandbox VMs. Only the model CLI is a finite protocol peer; it does not own
 admission, routing, persistence, compilation or completion.
 
@@ -107,7 +107,7 @@ private test evidence. The caller owns cleanup of disposable services and failed
 databases/directories. Do not reuse or delete a personal stand as cleanup.
 
 The first case qualifies headless authoring and isolated execution. The packaged
-Console case is described below. Additional recovery/compatibility matrices
+Console and recovery cases are described below. Additional compatibility matrices
 retain their separate tasks. A finite peer does not qualify real-model quality,
 provider delivery or production credentials.
 
@@ -243,5 +243,62 @@ With `OCTACITY_RELEASE_EVIDENCE_DIR`, these cases write distinct
 `manual-isolation-no-code.json` and `manual-isolation-a-b.json` reports alongside
 the existing headless and Console reports. Keep these artifacts private. Both
 Microsandbox release jobs run the headless baseline and both isolation cases;
-failure of any selected case fails the gate. Other recovery and compatibility
-matrices remain separate qualification tasks.
+failure of any selected case fails the gate. Recovery is described below;
+compatibility matrices remain a separate qualification task.
+
+## Recovery and delivery truth
+
+The recovery journey authors the bulletin Flow with an ordinary HumanGate
+between compose and translate. It waits for compose's accepted result and the
+gate, verifies that only one invocation/Build exists, then publishes later
+same-name task, criteria, glossary and checklist documents. These are new
+immutable publications, not edits to the selected Artifacts or an inferred
+document version chain.
+
+The Server and idle Agent processes stop and restart with their existing durable
+state. The Agent's normal coordinator transport retries are finite; the fixture
+restarts its process after Server readiness, without changing that policy. Before
+resuming, the management API must return the exact accepted predecessor records.
+Only the explicitly declared successors run. Their private guest probes must
+retain the original task, criteria, selected documents, projected scalar inputs
+and provenance, reject later-document/private canaries, and create no Git calls.
+The completed history contains four node results including the gate and exactly
+three ordinary reasoning Builds/Jobs. It is checked again after another Server
+restart.
+
+For Flow/Configuration publication and the gate response, a bounded transparent
+TCP relay forwards the actual HTTP request to the normal Server, consumes its
+successful committed response, and closes without returning it to the client.
+The test requires a real client transport failure before replaying the original
+body, idempotency key and precondition. Publication retains one Flow and one
+Configuration, and response replay cannot create another logical successor.
+No handler, transaction, journal or workflow outcome is replaced by the relay.
+
+```sh
+cargo test --locked -p octacity-release-harness --test factory_manual_authoring \
+  manual_workflow_recovers_after_accepted_result_with_original_documents_once \
+  -- --ignored --exact --nocapture
+cargo test --locked -p octacity-server --test factory_work_source_pilot \
+  'postgres::recovery::' -- --ignored --nocapture --test-threads=1
+```
+
+The second command uses the existing configured trusted-action, Source,
+integration grant, hosted Reporter, PostgreSQL outbox and process-adapter owners.
+Only the provider protocol peer is finite. Its tests reconstruct the store and
+Reporter worker and read delivery diagnostics through fresh normal Server HTTP
+instances. Pending delivery, an applied write with a lost reply, a revoked Project
+write grant, permanent provider failure, retry exhaustion and original deadline
+expiry remain separate from the accepted action result. Recovery must preserve
+Work/Flow and operation identity, perform at most one native write after the lost
+reply, perform no provider call after revocation/deadline expiry, and never
+restart terminal delivery. The read-only API must expose pending, delivered and
+failed states truthfully as one logical effect.
+
+These provider tests qualify the common protocol/ownership boundary, not live
+GitHub authentication or the native GitHub adapter. The physical recovery case
+qualifies macOS ARM64 with Linux ARM64 Microsandbox guests; Linux host execution
+is selected by the corresponding release gate, not claimed by a local macOS run.
+Both Microsandbox release jobs select the physical recovery case and durable
+Reporter cases and propagate their failures. `OCTACITY_RELEASE_EVIDENCE_DIR`
+retains `manual-recovery.json` alongside the isolation reports. Compatibility
+qualification in task 5.5 remains separate.

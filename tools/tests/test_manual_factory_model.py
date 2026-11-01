@@ -33,6 +33,15 @@ class ManualFactoryModelTests(unittest.TestCase):
                     missing = subprocess.run(command,input=prompt.replace(document,""),text=True,capture_output=True,check=False)
                     self.assertEqual(missing.returncode,64)
 
+    def test_recovered_bulletin_rejects_later_project_document_content(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            schema = Path(temporary) / "schema.json"
+            schema.write_text(json.dumps({"type":"object","properties":{"translation":{}}}))
+            prompt = "bulletin-request-canary bulletin-criteria-canary Translate the accepted caption. glossary-canary selected-caption later-document-canary"
+            command = ["/bin/sh",str(MODEL),"--ask-for-approval=never","exec","--json","--sandbox=workspace-write","--model=finite-model",f"--output-schema={schema}","--ignore-user-config","--config=mcp_servers={}","-"]
+            result = subprocess.run(command,input=prompt,text=True,capture_output=True,check=False)
+            self.assertEqual(result.returncode,64,"recovery must retain only the admitted document content")
+
     def test_classifier_requires_its_guidance_and_rejects_predecessor_private_context(self):
         prompt = "Classify only the accepted eligible ticket ticket-request-canary process-criteria-canary eligible-public-summary component-guide-canary priority-guide-canary"
         with tempfile.TemporaryDirectory() as temporary:

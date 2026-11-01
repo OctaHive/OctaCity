@@ -9,6 +9,8 @@ mod runtime;
 #[allow(dead_code)]
 #[path = "../support/console_pilot.rs"]
 mod console_pilot;
+#[path = "recovery.rs"]
+mod recovery;
 
 #[tokio::test]
 #[ignore = "requires disposable PostgreSQL and MinIO"]
