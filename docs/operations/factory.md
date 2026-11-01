@@ -1272,3 +1272,13 @@ required native-client compatibility fixes and MCP capture. See the
 [native evidence qualification](../../openspec/changes/archive/2026-10-28-enable-local-stand-runtime-mcp/mcp-evidence-verification.md)
 for call/result provenance and cancellation coverage; full stand qualification
 remains task 3.1.
+
+## Common pipeline authoring
+
+Use **Add pipeline** to construct an empty Flow graph. Saved triage definitions
+use the same inspection/editing controls; the dedicated triage setup wizard is
+removed. Follow the [blank-construction procedure](factory-pipeline-authoring.md)
+for prerequisites, document/criteria ownership, step inputs and first admission.
+See [authoring migration](../reference/factory-pipeline-authoring-migration.md)
+for legacy client compatibility, exact-version preservation and the common API
+contracts. New authoring requires no triage preset or previous Flow.

@@ -435,8 +435,15 @@ source revision's release, real-backend and provider/model qualification gates.
 
 #### Default two-stage triage
 
-`tools/factory-stand` installs the reviewed triage pipeline: a Project analyst
-assesses eligibility and a separate systems analyst classifies eligible work.
+`tools/factory-stand` installs an explicit example using the ordinary Factory
+APIs: a Project agent assesses eligibility and a separate systems analyst
+classifies eligible work. Reusable agents come from
+`deployment/local-stand/factory-agents.json`; their step assignments and result
+examples come from `factory-triage-tasks.json`. They are not product templates or
+prerequisites for **Add pipeline**. The launcher normalizes the shared reviewed
+schema/gate fragments through the same public APIs as Console, resolves exact
+installed execution bindings, then publishes an ordinary Flow and Configuration.
+It never calls the legacy preset endpoints or borrows an existing Flow.
 Server retains their states, accepted results and exact selected Context.
 The launcher retains installation references only. Intake and Configuration
 start disabled; installation does not invoke a model or create a demonstration
@@ -487,7 +494,11 @@ HTTPS Git transport. The default stand installs its Repository integration
 automatically, so the reviewed default branch is resolved to an exact revision
 at Work admission; no manually copied commit SHA is required. This installation
 uses anonymous reads for the public code repository, independently of the GitHub
-Issue connection and model/MCP credentials.
+Issue connection and model/MCP credentials. This Repository is Work correlation
+for Source admission; the example's two reasoning steps explicitly select no
+code and use a source-free ordinary worker. Neither inherits a checkout from the
+Work subject. A later code-backed step needs its own compatible worker/profile
+and explicit source attachment through the ordinary editor.
 
 Resuming a pre-VCS stand through the same `tools/factory-stand` command upgrades
 only the recognized generated configuration through the ordinary atomic update.
@@ -525,26 +536,34 @@ receives the reviewed investigation connection. The analyst receives its
 explicit selected Context and accepted predecessor results through Server.
 
 Open the Console at `https://octacity.localhost:8443` after installing the
-public stand CA as described below. In the Project's Factory page, choose
-**Set up triage → Review triage prerequisites**. The completion section shows a
-short summary; **View completion criteria** opens the exact reviewed text.
-New selections use the concise `v2` document, while retained `v1` inputs preserve
-their original bytes. Under **Retained Project
-document**, select **OctaCity project goals**, then **Open document for viewing
-or editing**. Review an edit and confirm **Publish document**. This creates an
-immutable new revision; select it explicitly for each intended stage and
-publish a reviewed Configuration version. Existing accepted inputs continue
-to reference the original bytes. Project documents and the MCP token expire
-after 30 days: renew credentials through the existing private installation
-updater, publish fresh documents and review their selection before admitting
-new work. Startup does not silently renew or retarget accepted references.
+public stand CA as described below. In the Project's Factory page, use
+**Inspect Flow Definition → Edit Flow draft**. Each reasoning step separates
+**Executor**, **Step task**, **Documents** and **Tools and access**. Change the
+fit/duplicate or classification assignment in **Step task**, not in the reusable
+agent. Pipeline completion criteria use the common process editor and explicitly
+select both reasoning steps. Editing publishes a new immutable Flow version;
+select it explicitly in the reviewed Configuration.
 
-Project rules are optional. The default installation publishes only Project
-goals and creates no separate triage-rules document. Selecting rules explicitly
-keeps them as controlling policy with the normal Artifact checks. Existing
-installations keep their published documents, Profiles and Configuration pins;
-removing a previous rules requirement requires an explicitly reviewed Profile
-and Configuration publication, not a restart or deletion of retained data.
+Create, view and edit shared documents in **Project documents** in Project
+settings. The initial Project goals and process criteria are exact managed
+Artifact publications. Document edits create new identities; attach the intended
+version explicitly to each step. Existing accepted inputs and Runs retain their
+original bytes. The default creates no triage-rules document and requires no
+fixed rules slot. Independently selected controlling policy keeps its ordinary
+precedence and cannot grant permissions.
+
+Repeated startup resumes the retained installation. It neither reseeds published
+agents/definitions nor renews credentials or expired documents. New example
+publications use separate `manual-v1` identities and replay keys; historical
+specialized Role/Profile versions and saved triage remain unchanged. An existing
+stand with a completed receipt continues its original configuration; changing
+it uses explicit ordinary versioned editing, not a reset or an automatic rewrite.
+An incomplete installation with a repository-backed worker is rejected before
+publishing the new no-code Flow; use a separate empty stand root for the example
+or review a compatible worker/profile through the common management controls.
+Project documents and the MCP token expire after 30 days: renew credentials
+through the existing private installation updater, publish fresh documents and
+review their selection before admitting new work.
 
 Before enabling intake, inspect the exact Configuration readiness and preview
 in Console. Resolve every blocked/unknown dependency, confirm separate stage

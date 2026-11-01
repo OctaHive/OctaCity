@@ -21,6 +21,7 @@ Runbooks for deploying and maintaining released components:
 - [Operator console deployment](operations/operator-console.md)
 - [Server operations](operations/server.md)
 - [Optional Factory operations and qualification](operations/factory.md)
+- [Build a Factory pipeline from an empty Project](operations/factory-pipeline-authoring.md)
 - [OpenAI Decisions shadow preparation](operations/openai-decisions-shadow.md)
 - [Agent operations](operations/agent.md)
 - [Backup, restore, and reconciliation](operations/backup-restore.md)
@@ -31,6 +32,7 @@ Runbooks for deploying and maintaining released components:
 Stable interfaces and examples consumed by operators or implementations:
 
 - [Management REST v1 workflow](reference/management-rest-v1.md)
+- [Factory authoring migration and shared contracts](reference/factory-pipeline-authoring-migration.md)
 - [Directory artifact format v1](reference/directory-artifact-format-v1.md)
 - [Wire protocol catalogue](reference/protocols/README.md)
 - [Configuration and policy examples](reference/examples/)

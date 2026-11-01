@@ -43,14 +43,14 @@
 - [x] 5.2 Add failing packaged Console acceptance journeys in English and Russian, then make them pass using keyboard and narrow layouts. Create Project documents and the visual Flow from empty state, select/preview/remove multiple documents with instruction/reference roles independently per step, connect conditional routes, inspect/edit pipeline goals/criteria, declare pipeline sources and attach exact step inputs, then execute through real APIs; verify review and retained server state rather than only a rendered graph. Include the approved explicit Work-task Context input, frozen selected-task provenance, legacy-byte compatibility and pre-publication rejection of missing mandatory Task Context.
 - [x] 5.3 Add failing end-to-end isolation/resource cases, then make them pass for an unrelated three-step workflow, a fully repository-free workflow and steps using repositories A/B. Verify exact retained inputs, no VCS activity for no-code steps, no undeclared context, and rejection of foreign evidence and unsupported authority.
 - [x] 5.4 Add failing recovery cases, then make them pass for restart after an accepted predecessor result, later Project document edits, revoked scope, lost publication/delivery replies and pending/failed provider receipts. Verify pinned original inputs, bounded recovery, no duplicate logical successor/effect and truthful delivery state.
-- [ ] 5.5 Run the compatibility matrix across legacy saved definitions, repository-backed Work/Builds, source preparation, replay, Context provenance, protocol fixtures and ordinary CI/CD; verify old Runs remain inspectable/recoverable and no migrated digest or replay identity changes.
+- [x] 5.5 Run the compatibility matrix across legacy saved definitions, repository-backed Work/Builds, source preparation, replay, Context provenance, protocol fixtures and ordinary CI/CD; verify old Runs remain inspectable/recoverable and no migrated digest or replay identity changes.
 
 ## 6. Authoring cutover, documentation and review
 
-- [ ] 6.1 After clean-state execution coverage passes, use Red/Green UI/API migration tests to remove the dedicated triage setup entry and its required preset-shaped authoring path. Verify existing saved triage definitions open in common controls and continue execution; document any retired authoring operation/client migration without silently reinterpreting request bodies.
-- [ ] 6.2 Through launcher behavioral Red/Green tests, adapt the explicitly requested tools/factory-stand example to publish ordinary definitions through common APIs with reusable agents and step-owned fit/duplicate/classification assignments and result examples. Verify configurable credentials, exact shared contracts, repeatable setup and preservation of existing immutable Role/Profile versions; keep the example absent from clean-state acceptance prerequisites.
-- [ ] 6.3 Document blank construction, installed technical prerequisites, Project document/criteria ownership, explicit per-step resources/handoffs, source-free compatibility and safe upgrade/rollback. Record shared-contract coordination for sibling bugfix/delivery changes without implementing them; verify examples against public contracts and run documentation/OpenSpec checks.
-- [ ] 6.4 Review each completed group for unnecessary owners, coupled UI/business logic, duplicated binding/publication logic, hardcoded parameters and undocumented contracts. Resolve behavioral findings through their own Red/Green slices; finish required repository checks and strict change validation, recording test commands, observed Red/Green results, remaining limitations and final disk availability.
+- [x] 6.1 After clean-state execution coverage passes, use Red/Green UI/API migration tests to remove the dedicated triage setup entry and its required preset-shaped authoring path. Verify existing saved triage definitions open in common controls and continue execution; document any retired authoring operation/client migration without silently reinterpreting request bodies.
+- [x] 6.2 Through launcher behavioral Red/Green tests, adapt the explicitly requested tools/factory-stand example to publish ordinary definitions through common APIs with reusable agents and step-owned fit/duplicate/classification assignments and result examples. Verify configurable credentials, exact shared contracts, repeatable setup and preservation of existing immutable Role/Profile versions; keep the example absent from clean-state acceptance prerequisites.
+- [x] 6.3 Document blank construction, installed technical prerequisites, Project document/criteria ownership, explicit per-step resources/handoffs, source-free compatibility and safe upgrade/rollback. Record shared-contract coordination for sibling bugfix/delivery changes without implementing them; verify examples against public contracts and run documentation/OpenSpec checks.
+- [x] 6.4 Review each completed group for unnecessary owners, coupled UI/business logic, duplicated binding/publication logic, hardcoded parameters and undocumented contracts. Resolve behavioral findings through their own Red/Green slices; finish required repository checks and strict change validation, recording test commands, observed Red/Green results, remaining limitations and final disk availability.
 
 ## Implementation evidence
 
@@ -606,8 +606,9 @@ and original deadline expiry. They use PostgreSQL, the existing configured
 trusted-action/hosted Reporter/process adapter owners, and a finite protocol
 peer. Reconstructed store/workers and fresh normal Server HTTP instances retain
 one operation identity and expose pending/delivered/failed accurately. The lost
-reply causes exactly one provider apply; revoked/expired authority causes zero
-provider calls. Terminal delivery cannot restart or change accepted Work/Flow.
+reply causes exactly one provider apply; resumed pending delivery under
+revoked/expired authority causes zero additional provider calls. Terminal
+delivery cannot restart or change accepted Work/Flow.
 Existing production owners already support these cases; no new runtime,
 credential, document or delivery state owner was introduced.
 
@@ -632,3 +633,353 @@ The existing physical repository-free isolation case also passes unchanged
 Only test-owned PostgreSQL/S3 containers, network and temporary runtime state
 were removed after qualification. A private ignored copy is retained at
 `target/manual-recovery-evidence.json`; final free disk is about 11 GiB.
+
+### Task 5.5 compatibility qualification evidence
+
+The compatibility matrix and reproducible commands are documented in
+`docs/testing/manual-factory-authoring.md`. The existing immutable Flow,
+Configuration, Work, Run, Context, Build, Source, signing and Trigger owners
+are exercised without a stand reset or a new execution/publication owner.
+
+Two findings were resolved through observed Red/Green:
+
+- `cargo test --locked -p octacity-server --all-features --test
+  factory_work_source_pilot
+  postgres::imported_card_keeps_independent_work_across_reporter_restart_and_second_vocabulary
+  -- --ignored --exact --nocapture` reproduced the 5.4 baseline timeout. The
+  fixture waited for post-upgrade Work associations before explicitly importing
+  the native Issue. It now imports through the existing authorized handler while
+  a normal Server reconciles the queued associations with a bounded wait. Both
+  provider vocabularies pass, including real HTTP and Console reads after
+  restart. The expected status history contains creation and two reviewed
+  transitions, rather than an invented legacy-workflow adoption. No migration
+  membership, production association logic or Issue authority was broadened.
+- The PostgreSQL matrix exposed two migration-check failures because 0109 had
+  typed but unbounded `flow_code_pins`. The new public storage case
+  `code_pins::retained_code_pins_reject_oversized_metadata_without_changing_the_run`
+  first accepted an oversized array (`rows_affected: 1`), then rejected it with
+  SQLSTATE 23514 after additive migration 0112. It starts on schema 0111,
+  retains an original Run across upgrade/repeated migration and reconstructs
+  the same snapshot after rejected writes. Historical SQL NULL is preserved.
+  The 16 MiB ceiling accommodates the existing bounded source/reference grammar
+  and follows the existing Flow-publication storage limit; 0109 and all prior
+  migration checksums remain unchanged. No retained documents or digests are
+  rewritten, and non-array values remain rejected.
+
+Final matrix results, with debug information/incremental output disabled and
+two Cargo build jobs:
+
+| Command group | Result |
+| --- | --- |
+| PostgreSQL `configurations`, `factory_discovery`, `factory_flow_management`, `internal_triggers`, `migrations`, `store_contract`, all with `--ignored --test-threads=2` | 2 / 47 / 2 / 2 / 8 / 22 passed; all six targets completed. |
+| `octacity-protocol`, `octacity-server-factory`, `octacity-server-store` libraries | 77 / 335 / 112 passed, including legacy canonical bytes, exact Context/provenance and retained source input contracts. |
+| `octacity-server-job --test job_spec` | 11 passed, including stable v1-v3 signing/templates and explicit ordinary source-free v4 intent. |
+| Application `manual_trigger`, `agent_registration` | 39 / 5 passed, including ordinary manual/scheduled/webhook/internal execution, restart/retry and contract negotiation. |
+| Application `factory_admission_tests::`, `factory_configuration_cqrs_tests::` | 138 / 51 passed, including the fixed historical v1 admission fingerprint and independent Source preparation/replay. |
+| Server `factory_work_source_pilot -- --include-ignored --test-threads=1` | All 5 passed, including the previously failing imported-Work journey and both durable delivery recovery cases. |
+| Six saved-definition/input/publication Console component suites listed in the guide | 62 passed. |
+
+The PostgreSQL cases include pre-upgrade Work/Run recovery, immutable Flow
+replacement/replay, old Source intent replay, independent-pool resource pin and
+accepted-result restoration, and mixed repository-backed/source-free Build
+history across additive migrations with unchanged old Job template bytes.
+The ordinary CI/CD suite retains its original Trigger causality without
+synthetic Factory fields. New Work still cannot create an Issue through the
+legacy backfill path before explicit import.
+
+Affected-target Clippy with all features and `-D warnings`, Rust formatting,
+architecture (64 packages/263 edges), strict OpenSpec validation and diff checks
+pass. Documentation-only changes use these structural checks rather than a
+new executable Red cycle. Local services are actual disposable PostgreSQL/S3
+on macOS ARM64; finite provider peers do not qualify live credentials or another
+host/backend. Physical VM qualification remains the separate 5.1-5.4 evidence.
+No personal stand state or credentials were changed and no commits were made.
+Private ignored evidence is retained at `target/manual-compatibility-evidence.json`.
+Section 5 is complete (32/36 overall); section 6 remains unchecked.
+Owned disposable PostgreSQL/S3 containers and temporary environment files were
+removed after qualification. Final free disk is approximately 9 GiB.
+
+### Review corrections for tasks 5.3-5.5
+
+Both review findings were corrected through the existing public qualification
+boundaries, without changing production permission or execution semantics:
+
+- `cargo test --locked -p octacity-release-harness --test
+  factory_manual_authoring
+  unrelated_three_step_workflow_isolates_repositories_a_b_and_no_code
+  -- --ignored --exact --nocapture`: adding an independent Project policy edit
+  before installing either source first caused `409 Conflict`. Technical
+  installation now retains each policy version returned by the normal Server
+  and uses that exact observed version as its next precondition. Repository
+  count determines only the source whitelist, never a policy version. The full
+  A/B journey then passed in 122.71 seconds with three separate ordinary Jobs in
+  real Microsandbox VMs and the same retained input/result checks after Server
+  restart. A missing image in the disposable SDK cache was an environment
+  failure, not TDD Red; importing the existing local archive restored it.
+- `cargo test --locked -p octacity-server --all-features --test
+  factory_work_source_pilot
+  postgres::recovery::failed_or_revoked_delivery_stays_distinct_from_the_accepted_result_after_reopen
+  -- --ignored --exact --nocapture`: the new pending-state assertion first
+  observed `Failed` rather than `Pending`. The revoked/expired cases now retain
+  a retryable delivery before reconstructing the store/worker, then revoke the
+  writer or advance beyond the original deadline. A responsive provider peer
+  cannot receive an additional call. The original operation and Work/Flow stay
+  exact, failed receipts remain truthful and the clock never moves backwards.
+  Both `postgres::recovery::` tests pass, including lost-response recovery with
+  exactly one applied effect.
+
+Affected-target all-feature Clippy with `-D warnings`, Rust formatting,
+architecture, strict OpenSpec validation and diff checks pass. No new policy,
+delivery or execution owner was introduced. The qualification guide records
+the precise precondition and pending-recovery behavior. Only owned disposable
+services/cache/workspaces are removed; the installed runtime is read-only and
+personal stand state/credentials are unchanged. No commits were created.
+
+### Task 6.1 common-authoring migration evidence
+
+The dedicated Console triage entry, wizard, private wizard draft/publication
+assembly, preset query methods/cache key and unused translations are removed.
+Add pipeline opens the common empty graph. Saved definitions use the ordinary
+Flow/Configuration inspection and editing controls. Existing result diagnostics,
+immutable agent/profile instructions, Source preparation and execution owners are
+preserved. No historical content, digest, replay key or persisted state is rewritten.
+
+Observed Red/Green and regression commands:
+
+- `pnpm --dir ui exec vitest run src/features/factory/FactoryDefinitions.test.tsx
+  -t 'opens Add pipeline'`: the new absence assertion first found the old
+  Set up triage button; it passed after removal. All ten surviving workbench
+  tests pass, including saved-version editing and draft disposal.
+- `cargo test --locked -p octacity-server-api-rest --test v1_handlers
+  legacy_preset_queries_are_deprecated_without_reinterpreting_their_contracts`:
+  first failed with `deprecated: null`, then passed with explicit OpenAPI
+  deprecation and common-contract migration guidance. The legacy endpoints keep
+  their schemas, read authorization and no-store behavior. Their bodies are not
+  reinterpreted as common drafts. This compatibility window preserves existing
+  headless clients and the launcher pending its separate task 6.2 migration.
+- The added HTTP compatibility case publishes a legacy resolved Configuration
+  through common handlers without a preset adapter, reads and validates it,
+  publishes version 2, and verifies the original exact graph/version remains
+  unchanged. A preset body sent to common validation is rejected. The full
+  `octacity-server-api-rest --test v1_handlers` target passes (252 tests).
+- `pnpm --dir ui exec vitest run`: 117 files / 980 tests pass. Eight Factory
+  Playwright suites pass (33 cases), including EN/RU keyboard/390-pixel common
+  editing, zero preset calls, independent source/reporting controls and retained
+  triage result/receipt reads. Factory desktop visual references are reviewed
+  and refreshed on macOS and Linux Chromium; Linux comparison passes again.
+- `cargo test --locked -p octacity-server-application --all-features --lib
+  factory_flow`: 66 execution/control/reporting cases pass, including configured
+  intake/classification progression, exact accepted input retention and restart.
+  The real packaged triage scenario now starts with a saved legacy definition,
+  validates it through common graph controls, and retains its existing explicit
+  Source activation, execution and recovery assertions. This packaged VM case
+  is compiled/Clippy-checked here; its full native/provider run is not repeated
+  locally. Earlier clean-state physical execution evidence in section 5 remains
+  the prerequisite, not a newly claimed result of this authoring change.
+
+Migration and generated-client guidance is documented in
+`docs/reference/factory-pipeline-authoring-migration.md`. Production build and
+unchanged bundle budgets, generated API, UI lint/format, affected all-feature
+Clippy, Rust formatting, architecture and strict OpenSpec checks pass.
+No commits are created. Tasks 6.2–6.4 remain open (33/36 complete).
+Final free disk after task 6.1 checks and temporary browser cleanup: approximately 8.3 GiB.
+
+
+### Task 6.2 opt-in ordinary stand example
+
+The launcher now uses ordinary schema/gate validation, exact installed execution
+binding resolution and Flow/Configuration publication. It has no preset API or
+prior Flow dependency. Reusable agents are separate from explicit step tasks and
+result examples. Root-owned editable process criteria select both reasoning
+steps; their code selection is explicitly none and their worker is source-free.
+The existing credential installers, Runtime ceilings, private MCP separation and
+disabled Source/Configuration defaults are preserved. New manual-v1 identities
+and replay keys leave historical specialized Role/Profile versions untouched.
+A completed stand receipt still resumes its original definitions. No new state,
+execution or publication owner is introduced; the example remains optional.
+
+Observed Red/Green through the public HTTP launcher boundary:
+
+- `python3 -m unittest tools.tests.test_factory_stand_triage.FactoryStandTriageTests.test_publishes_two_separate_reviewed_roles_without_inheriting_investigation_credentials`
+  first found duplicate-assessment duties in reusable agent instructions, then
+  passed with generic agents and step-owned assignments.
+- `python3 -m unittest tools.tests.test_factory_stand_triage.FactoryStandTriageTests.test_triage_prerequisites_publish_an_ordinary_worker_without_starting_builds_or_demo_runs`
+  first found no explicit source-free worker selection, then passed.
+- `python3 -m unittest tools.tests.test_factory_stand_triage.FactoryStandTriageTests.test_publishes_the_resolved_two_stage_pipeline_without_starting_intake_or_work`
+  first reached an unavailable preset endpoint, then published through common
+  APIs with exact returned schema/gate/Build references, repeatable requests and
+  disabled intake. A further negative case first failed to reject an incompatible
+  repository-backed worker, then passed without publishing a second Flow.
+- `OCTACITY_TEST_TRIAGE_SERVER=... OCTACITY_TEST_TRIAGE_ENV=... OCTACITY_TEST_TRIAGE_POSTGRES=... python3 -m unittest tools.tests.test_factory_triage_setup_rest.FactoryTriageSetupRestTests`
+  runs the real current Server against disposable PostgreSQL/S3. Configuration
+  validation first rejected preview-only diagnostics embedded as retained Flow
+  data; the client now retains only the common definition fields. Explicit
+  no-code and process-criteria assertions also failed before their respective
+  additions. The final case passes: exact repeated publications, retained old
+  Role/Profile versions, independent document edits and restart, no Runs. This
+  checks real management/persistence contracts, not live inference or VM intake.
+
+Operational guidance documents the ordinary editing path, explicit resource
+selection and immutable-history behavior. Documentation-only edits need no TDD.
+
+Final checks: `python3 -m unittest discover -s tools/tests` passes 618 tests
+(36 environment-specific opt-ins skipped); the explicit real-Server case above
+passes separately. Focused launcher and recovery suites pass 12 and 6 tests.
+`python3 tools/check_architecture.py`,
+`python3 tools/verify_local_stand_context.py`, Python compilation, JSON parsing,
+`git diff --check` and
+`openspec validate enable-manual-factory-pipeline-authoring --strict` pass.
+Only task-owned disposable containers, volumes, network and temporary setup
+files were removed. Final free disk is approximately 7.7 GiB. No commits are
+created. Task 6.2 is complete; tasks 6.3–6.4 remain open (34/36 complete).
+
+### Task 6.3 operator documentation and shared-contract handoff
+
+`docs/operations/factory-pipeline-authoring.md` provides the blank Project journey:
+technical prerequisites, reusable executor versus step task, Project documents,
+explicit Work-task Context, accepted-only projections, no-code/A/B resources,
+process-input publication/recipients, effective limits and manual/optional Source
+admission. It records source-free execution-contract v4 support without implying
+a new backend qualification. The final 6.4 review corrects its writable-file
+guidance to match the qualified common guest repair from section 3.
+The documentation index, Factory operations and qualification guide link it.
+
+`docs/reference/factory-pipeline-authoring-migration.md` lists the ordinary HTTP
+contracts, exact binding/publication and recovery rules, compatible upgrade,
+definition rollback versus snapshot-based binary/schema rollback, and the shared
+boundaries for bugfix quickstart and ticket delivery. It preserves historical
+versions and explicitly separates implementation acceptance, isolated inputs and
+external effects. Sibling planning artifacts/tasks and executable code are not
+changed by this documentation task.
+
+Validation performed:
+
+- A documentation audit resolved 39 local links/anchors and checked 18 API paths,
+  13 explicit HTTP methods and selected wire fields against the generated public
+  contracts. It corrected readiness to read-only POST with an explicit input body.
+- `cargo test --locked -p octacity-server-api-rest --test v1_handlers openapi_drift::`:
+  13 tests pass, including live route/DTO/OpenAPI inventory, supported source forms
+  and legacy authoring deprecation. The same command with `project_documents::`
+  passes 2 exact-content/no-store and publication/metadata contracts.
+- `pnpm --dir ui exec vitest run src/features/factory/FlowProcess.test.tsx src/features/factory/FlowCodeResources.test.tsx src/features/factory/StepExecutor.test.tsx src/features/factory/FlowStepTask.test.tsx src/features/factory/FlowBindings.test.tsx src/features/factory/FactoryWorkForm.test.tsx`:
+  6 files / 50 tests pass for the documented common editor/input controls.
+- `python3 -m unittest tools.tests.test_local_stand_documentation`: 3 tests pass.
+  `git diff --check` and
+  `openspec validate enable-manual-factory-pipeline-authoring --strict` pass.
+
+Only prose/navigation/checklist edits are made for 6.3, so executable TDD does not
+apply; existing behavioral tests verify the referenced contracts. No new live
+model/provider or physical backend run is claimed. Free disk remains about
+7.5 GiB, no services/caches are created and no commits are made. Task 6.3 is
+complete (35/36); the final 6.4 code review and repository gates remain open.
+
+### Task 6.4 final review corrections
+
+Review scope is the implementation since proposal commit `4999c02a`, including
+the current uncommitted cutover, launcher and documentation changes. Independent
+standards and specification passes inspected the completed groups' shared owners:
+capability/binding validation, Project inputs/process recipients, Work/source and
+signed execution compatibility, visual authoring/publication, qualification and
+recovery, and optional stand migration. No second executor, binding/digest owner,
+input journal or hidden stage-name dispatcher was found. The fixed stand example
+composes reviewed data through ordinary APIs; its business content is not a
+prerequisite for the common editor. Existing legacy copies remain immutable.
+
+Two common-editor behavioral findings were corrected through separate TDD slices:
+
+- `pnpm --dir ui exec vitest run src/features/factory/SchemaEditor.test.tsx -t 'retains the next schema'`:
+  a delayed successful normalization cleared the newer name/version instead of
+  retaining `operator.next` / `v2` (Red). Additional version-only and shape-only
+  edits also reproduced loss of unchanged companion fields after a per-field
+  correction. One coherent local schema draft now clears identifiers only if
+  the complete submitted draft is still unchanged. The complete SchemaEditor
+  suite passes 11 cases. The parent already uses functional graph updates; no extra
+  callback journal, draft owner or speculative callback ref was added.
+- `pnpm --dir ui exec vitest run src/features/factory/StepExecutor.test.tsx -t 'toolchains match other'`:
+  three runtimes sharing a toolchain caused the exact selected MCP configuration
+  to appear unavailable (Red). Metadata lookup now compares the full Build
+  reference and each explicitly selected MCP configuration pin, rather than the
+  first toolchain match. The complete StepExecutor suite passes 16 cases, including
+  no resolver call or draft mutation from inspection. Extra installed MCP aliases
+  remain a ceiling, never implicit step attachments.
+
+The spec pass also corrected the operator guide's inaccurate directory-only
+writable-scope statement: qualified selected writable files are supported by the
+existing repaired guest, while parents/siblings remain read-only. This is a prose
+correction against already retained physical qualification, not a new runtime
+behavior or a new physical-test claim. Both code fixes received a second review.
+
+The final ordinary checks use `CARGO_PROFILE_DEV_DEBUG=0`,
+`CARGO_PROFILE_TEST_DEBUG=0`, `CARGO_INCREMENTAL=0`, `CARGO_BUILD_JOBS=2`:
+
+- Python tool discovery passes 618 tests (36 explicit environment opt-ins skipped).
+- Console typecheck, full ESLint/Prettier, production build and unchanged bundle
+  budgets pass. The script contracts pass 40 cases, Vitest passes 984 tests in
+  117 files, and the browser suite passes 174 cases (5 opt-ins skipped), including
+  the existing macOS visual references. No visual baseline was updated here.
+- `cargo clippy --locked --workspace --all-targets --all-features -- -D warnings`
+  passes. Rust formatting, architecture (64 packages / 263 edges), bounded stand
+  contexts, diff checks and the 40 linked-document paths/anchors also pass.
+
+The first unconstrained ordinary workspace test run had one unrelated transient:
+the unchanged local-management inactive-socket test could not establish a refused
+connection, so the runtime safely refused replacement. Its original connect
+errno/timeout was masked by the existing safe error; a root cause was not proven.
+The exact compiled test passed 80/80 isolated repetitions in four parallel
+processes. The full Server library then passed 226 tests (54 ignored) with
+`--test-threads=2`. No socket recovery code, timeout or safety assertion was
+changed. A two-thread workspace repeat was stopped during CPU-heavy application
+journeys rather than counted as complete. The final full workspace command uses
+four test threads, independently of the two compiler jobs. Ordinary success does
+not claim new physical/backend or live-provider coverage.
+
+Final completed gates:
+
+- `cargo test --locked --workspace --all-features -- --test-threads=4` passes
+  3235 tests, with 477 explicitly ignored service/backend/release opt-ins across
+  the ordinary and doc-test targets. The inactive-socket test passes in this
+  full run; the first unconstrained transient remains recorded above rather
+  than represented as a repaired production defect.
+- `RUSTDOCFLAGS='-D missing_docs' cargo doc --locked --workspace --all-features --no-deps`
+  passes. `pnpm --dir ui api:generate` passes; all five generated API artifacts
+  have exactly their pre-generation SHA-256 values, so no new client drift or
+  additional unchanged UI rerun is required.
+- The final SchemaEditor refinement was followed by the complete Console
+  typecheck/lint/format/build/unit/browser commands listed above: 984 Vitest and
+  174 browser cases pass. The 11 SchemaEditor and 16 StepExecutor cases also
+  pass together. Strict OpenSpec validation and final diff checks pass.
+
+Earlier explicit physical/persistence qualification in sections 3 and 5 and
+the real management/persistence launcher qualification in 6.2 retain their
+recorded scope. The final ordinary run does not turn its ignored cases into
+fresh qualification, attest another host/backend or attest live model/forge
+credentials. The review found no further confirmed issue in the inspected
+shared-owner boundaries. It is not a claim that arbitrary future workflows or
+all possible runtime failures are qualified.
+
+The unused 15 GiB Rust incremental cache was removed while all current compiler
+commands had incremental output disabled. Only this task's disposable diagnostic
+sample files were otherwise cleaned; user stand state, credentials and unrelated
+worktree edits were preserved. Final available disk is approximately 11 GiB.
+No commits, spec synchronization or archive were performed. Task 6.4 is complete;
+all 36 implementation tasks are checked.
+
+### Follow-up review: candidate Profile access ceilings
+
+From `ui`, `pnpm exec vitest run src/features/factory/FactoryPublication.test.tsx -t 'reviews each exact candidate profile ceiling'`
+first failed because validation displayed only Flow/step permissions and omitted
+the candidate Profile groups. It now passes for two exact versions with distinct
+network/resource ceilings, including denied network and zero elapsed time, their
+Profile/budget origins and retained unresolved Agent/backend enforcement. The
+display uses the server projections independently; it does not intersect policy
+in the browser or imply that a candidate was selected. Exact references remain
+under Details. Resource labels and origins have English/Russian presentation.
+
+The 49 affected publication/authoring/executor/resource tests and 10 existing
+Factory/canvas browser tests pass. Typecheck, ESLint, changed-file Prettier and
+the production build with unchanged bundle budgets pass. The operator guide
+describes the independent ceilings; this prose-only update needs no behavioral
+TDD. No API or runtime policy changed, and no commit was created.
+The complete `pnpm test:unit` run passes all 40 script contracts and 985 Vitest
+tests in 117 files. Strict OpenSpec validation and the final diff check pass.
+Available disk remains approximately 11 GiB.

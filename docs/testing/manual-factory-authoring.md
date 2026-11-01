@@ -1,5 +1,10 @@
 # Clean-state manual Factory authoring
 
+For the operator procedure, see
+[build a Factory pipeline from an empty Project](../operations/factory-pipeline-authoring.md).
+This guide describes qualification fixtures and their evidence, not required
+business definitions for a deployment.
+
 `factory_manual_authoring` qualifies tasks 5.1–5.4 of
 `enable-manual-factory-pipeline-authoring`. It starts the actual Server and Agent
 executables against PostgreSQL and S3 and executes ordinary Jobs in separate
@@ -217,6 +222,11 @@ file. The finite guest checks the actual mounted content, its read-only mode,
 and absence of every other source entry, including Git metadata. Work remains
 a repository-free Project/input subject throughout.
 
+The A/B source setup also publishes an independent Project policy edit before
+installing either repository. Technical installation retains the exact version
+returned by each policy publication for its next `If-Match`; repository counts
+are never used as policy versions.
+
 The verified SourceGit executable is copied unchanged with a private transport
 observer. The repository-free journey must record no Git invocation. The A/B
 journey uses the real SourceGit process and test-owned local transport rewrites;
@@ -294,6 +304,12 @@ reply, perform no provider call after revocation/deadline expiry, and never
 restart terminal delivery. The read-only API must expose pending, delivered and
 failed states truthfully as one logical effect.
 
+The revoked/expired cases first retain a retryable pending delivery. After
+reconstructing the store, they revoke writer access or advance beyond the
+original deadline, restore a responsive provider peer and resume with monotonic
+time. The provider request log must remain unchanged during that recovery,
+while the operation identity and accepted Work/Flow remain exact.
+
 These provider tests qualify the common protocol/ownership boundary, not live
 GitHub authentication or the native GitHub adapter. The physical recovery case
 qualifies macOS ARM64 with Linux ARM64 Microsandbox guests; Linux host execution
@@ -301,4 +317,71 @@ is selected by the corresponding release gate, not claimed by a local macOS run.
 Both Microsandbox release jobs select the physical recovery case and durable
 Reporter cases and propagate their failures. `OCTACITY_RELEASE_EVIDENCE_DIR`
 retains `manual-recovery.json` alongside the isolation reports. Compatibility
-qualification in task 5.5 remains separate.
+qualification is described below.
+
+## Compatibility matrix
+
+Task 5.5 uses the same disposable PostgreSQL/S3 prerequisites. It checks the
+existing public storage/application/protocol boundaries; it does not reset a
+stand, rewrite accepted definitions or require a real model/provider account.
+Run every command to completion: Cargo stops at the first failing test target,
+so an earlier partial run does not establish a passing matrix.
+
+```sh
+export CARGO_PROFILE_DEV_DEBUG=0 CARGO_PROFILE_TEST_DEBUG=0
+export CARGO_INCREMENTAL=0 CARGO_BUILD_JOBS=2
+cargo test --locked -p octacity-server-store-postgres --all-features \
+  --test factory_flow_management --test factory_discovery \
+  --test store_contract --test configurations --test internal_triggers \
+  --test migrations -- --ignored --test-threads=2
+cargo test --locked -p octacity-protocol -p octacity-server-factory \
+  -p octacity-server-store -p octacity-server-job --all-features --lib
+cargo test --locked -p octacity-server-job --all-features --test job_spec
+cargo test --locked -p octacity-server-application --all-features \
+  --test manual_trigger --test agent_registration
+cargo test --locked -p octacity-server-application --all-features --lib \
+  'factory_admission_tests::'
+cargo test --locked -p octacity-server-application --all-features --lib \
+  'factory_configuration_cqrs_tests::'
+cargo test --locked -p octacity-server --all-features \
+  --test factory_work_source_pilot -- --include-ignored --test-threads=1
+pnpm --dir ui exec vitest run \
+  src/features/factory/FactoryDefinitions.test.tsx \
+  src/features/factory/FactoryPublication.test.tsx \
+  src/features/factory/FactoryWorkForm.test.tsx \
+  src/features/factory/FlowBindings.test.tsx \
+  src/features/factory/FlowDocuments.test.tsx \
+  src/features/factory/FlowCodeResources.test.tsx
+```
+
+| Boundary | Compatibility evidence |
+| --- | --- |
+| Saved Flow/Configuration versions | Exact publication replay and replacement preserve old versions; historical definitions remain readable when current execution is disabled or choices change. |
+| Historical Work/Run upgrade | Frozen pre-backfill rows migrate without changing original Work, Run or current state. New Work cannot enter legacy backfill without explicit verified native import. |
+| Repository-backed and source-free Builds | Mixed history survives additive migrations, independent pools, retry and cancellation; old Job templates and Trigger replay identities remain exact. |
+| Source preparation | Managed input publication, retained preparation, provider-neutral selectors, revocation and lost acknowledgements preserve the admitted target and original Run. |
+| Context and step resources | Legacy Context bytes omit new optional fields; exact task, selected source pins and accepted result provenance survive restore without granting sibling access. |
+| Protocol/signing | Checked-in v1–v3 bytes and signatures remain stable; explicit v4 source-free intent negotiates separately, and incompatible revisions are rejected. |
+| Ordinary CI/CD | Manual, schedule, webhook and internal Trigger paths retain ordinary Build causality, retry, suppression and terminal-outbox semantics independently of Factory. |
+| Operator inspection | Component tests retain exact saved versions and inputs. The durable Source/Reporter pilot also checks real HTTP and Console inspection after Server restart with two provider vocabularies. |
+
+Migration 0112 adds a typed 16 MiB bound to retained `flow_code_pins`, using the
+existing Flow-publication storage ceiling. It preserves historical SQL NULL and
+all valid bounded exact references. The migration neither edits 0109/checksums
+nor rewrites Run documents, resource identities or replay digests. Its storage
+regression starts from schema 0111, retains an original Run across upgrade and
+repeated migration, rejects oversized/non-array updates and verifies the exact
+snapshot again through a reconstructed store.
+
+The durable pilot explicitly imports the native Issue before waiting for its
+queued Work associations. A running normal Server performs bounded recovery;
+test setup never seeds associations or broadens the one-time legacy migration.
+This ordering also means import uses the already selected Issue workflow: the
+only later business-status changes are the two explicitly reviewed transitions.
+
+Local qualification covers macOS ARM64 with actual disposable PostgreSQL/S3 and
+finite Source/Reporter peers. Physical isolated execution remains qualified by
+the separate 5.1–5.4 journeys above; this matrix does not imply another host or
+backend qualification or live-provider authentication. Common-authoring cutover,
+the optional stand example and retained-client compatibility are documented in
+[authoring migration](../reference/factory-pipeline-authoring-migration.md).
