@@ -28,6 +28,21 @@ jobs:
           revision=$(git rev-parse HEAD)
           state_root="${RUNNER_TEMP}/octacity-local-stand-portable"
           log="${RUNNER_TEMP}/octacity-local-stand-portable.log"
+          report_portable_failure() {
+            status=$?
+            trap - EXIT
+            if [[ "${status}" -eq 0 ]]; then
+              return
+            fi
+            if python3 tools/check_local_stand_logs.py \
+              --state-root "${state_root}" --log "${log}"; then
+              cat "${log}"
+            else
+              echo "portable contracts failed; refusing to emit an unsafe diagnostic log" >&2
+            fi
+            exit "${status}"
+          }
+          trap report_portable_failure EXIT
           python3 tools/verify_local_stand_inputs.py \
             deployment/local-stand/inputs.json \
             --agent-revision "${revision}"

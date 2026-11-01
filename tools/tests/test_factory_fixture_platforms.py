@@ -23,6 +23,8 @@ class FactoryFixturePlatformTests(unittest.TestCase):
             ("test_factory_stand_triage", "FactoryStandTriageTests.test_native_triage_installation_keeps_model_login_and_project_mcp_separate"),
             ("test_factory_stand_triage", "FactoryStandTriageTests.test_factory_overlay_publishes_only_a_loopback_mcp_listener_with_an_explicit_route"),
             ("test_stage_local_stand_native", "NativeStandStagingTests.test_public_install_cli_stages_a_separate_pinned_guest_reader"),
+            ("test_stage_local_stand_native", "NativeStandStagingTests.test_qualified_guest_is_installed_under_a_distinct_immutable_identity"),
+            ("test_stage_local_stand_native", "NativeStandStagingTests.test_qualified_guest_staging_is_independent_of_test_discovery_order"),
         ):
             with self.subTest(module=name, selected=selected):
                 spec = importlib.util.spec_from_file_location(name, Path(__file__).with_name(name + ".py"))

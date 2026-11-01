@@ -4,7 +4,6 @@ from __future__ import annotations
 
 import hashlib
 from contextlib import redirect_stderr
-import importlib.util
 import io
 import json
 import os
@@ -22,13 +21,8 @@ from urllib.error import URLError
 
 REPOSITORY = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(REPOSITORY / "tools"))
-SPEC = importlib.util.spec_from_file_location(
-    "stage_microsandbox_agentd", REPOSITORY / "tools/stage_microsandbox_agentd.py"
-)
-assert SPEC and SPEC.loader
-STAGER = importlib.util.module_from_spec(SPEC)
-sys.modules[SPEC.name] = STAGER
-SPEC.loader.exec_module(STAGER)
+# Share the producer module already held by staging and launcher consumers.
+import stage_microsandbox_agentd as STAGER  # noqa: E402
 
 
 class MicrosandboxAgentdStagingTests(unittest.TestCase):

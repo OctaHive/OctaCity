@@ -95,9 +95,10 @@ class LocalStandLauncherTests(unittest.TestCase):
         def install(*args, **kwargs):
             installed.append(kwargs)
             raise RuntimeError("stop at native installation boundary")
-        # Stop at external installation; launch orchestration, initialization
-        # and policy loading remain real and no shared services are touched.
+        # Model the supported native host and stop at external installation;
+        # orchestration, initialization and policy loading remain real.
         with (
+            mock.patch.object(launcher.native_stager,"require_native_host"),
             mock.patch.object(guest_runtime,"stage_repaired_agentd",side_effect=build_guest),
             mock.patch.object(launcher.native_stager,"prepare_inputs"),
             mock.patch.object(launcher.native_stager,"install_native_bundle",side_effect=install),

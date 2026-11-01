@@ -4,10 +4,12 @@ from __future__ import annotations
 
 from copy import deepcopy
 import hashlib
+from itertools import permutations
 import io
 import importlib.util
 import json
 import os
+import shutil
 from pathlib import Path
 import subprocess
 import sys
@@ -377,6 +379,7 @@ class NativeStandStagingTests(unittest.TestCase):
                     installed,
                 )
 
+    @unittest.skipUnless(os.name == "posix", "native staging requires POSIX ownership and executable modes")
     def test_qualified_guest_is_installed_under_a_distinct_immutable_identity(self):
         import stage_microsandbox_agentd as guest_runtime
         with tempfile.TemporaryDirectory() as temporary:
@@ -396,6 +399,33 @@ class NativeStandStagingTests(unittest.TestCase):
                 manifest = json.loads((installed / "installation-manifest.json").read_text())
                 self.assertEqual(manifest["microsandbox_agentd_sha256"],digest)
                 self.assertEqual(manifest["files"]["microsandbox/lib/agentd"],digest)
+
+    @unittest.skipUnless(os.name == "posix", "native staging fixtures require POSIX modes")
+    def test_qualified_guest_staging_is_independent_of_test_discovery_order(self):
+        cases = (
+            "test_local_stand_launcher.LocalStandLauncherTests.test_up_connects_the_qualified_guest_producer_to_native_installation",
+            "test_stage_local_stand_native.NativeStandStagingTests.test_qualified_guest_is_installed_under_a_distinct_immutable_identity",
+            "test_stage_microsandbox_agentd.MicrosandboxAgentdStagingTests.test_cli_reports_a_failed_runtime_build_without_a_traceback",
+        )
+        with tempfile.TemporaryDirectory() as directory:
+            commands = Path(directory)
+            for name in ("git", "openssl"):
+                executable = shutil.which(name)
+                if executable is None:
+                    self.skipTest(f"{name} is required by the real stand initializer")
+                (commands / name).symlink_to(executable)
+            # A hosted macOS runner has no Docker. Collection must not defeat
+            # the fixture adapters and invoke the real external guest producer.
+            for order in permutations(cases):
+                with self.subTest(order=order):
+                    result = subprocess.run(
+                        [sys.executable, "-m", "unittest", *order],
+                        cwd=REPOSITORY,
+                        env={**os.environ, "PATH": str(commands), "PYTHONPATH": os.pathsep.join(
+                            (str(REPOSITORY / "tools"), str(REPOSITORY / "tools/tests")))},
+                        capture_output=True, text=True, timeout=30, check=False,
+                    )
+                    self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
 
     def reader_cli_fixture(self, root: Path):
         cache = root / "cache"

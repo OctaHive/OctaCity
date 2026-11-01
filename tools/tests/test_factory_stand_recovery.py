@@ -108,7 +108,9 @@ class FactoryStandRecoveryTests(unittest.TestCase):
             return types.SimpleNamespace(state="registered", pid=42)
 
         output, errors = io.StringIO(), io.StringIO()
-        with mock.patch.object(stand.launcher, "_prepare_native_installation", return_value=stand.launcher.NativeInstallation(self.fixture.installation, {})), \
+        # Recovery uses a supported native host fixture, independently of the test runner.
+        with mock.patch.object(fixtures.CONFIGURATOR, "_require_apple_silicon"), \
+                mock.patch.object(stand.launcher, "_prepare_native_installation", return_value=stand.launcher.NativeInstallation(self.fixture.installation, {})), \
                 mock.patch.object(stand.launcher, "_build_images"), \
                 mock.patch.object(stand, "install_runtime_executable", return_value={}), \
                 mock.patch.object(stand.triage, "prepare_guest_image", return_value="registry.example/worker@sha256:" + "c" * 64), \

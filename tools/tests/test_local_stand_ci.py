@@ -97,6 +97,61 @@ class LocalStandCiContractTests(unittest.TestCase):
 
 
 @unittest.skipUnless(os.name == "posix" and shutil.which("bash"), "requires Bash")
+class LocalStandPortableDiagnosticsTests(unittest.TestCase):
+    def run_portable_step(self, failed_stage, output):
+        workflow = CI.read_text(encoding="utf-8")
+        step = workflow.split(
+            "      - name: Validate local-stand policies, Compose, and portable contracts\n", 1
+        )[1].split("      - name:", 1)[0]
+        script = textwrap.dedent(step.split("        run: |\n", 1)[1])
+        peers = r'''python3() {
+          case "$1" in
+            tools/init_local_stand.py) stage=init ;;
+            -m) stage=contracts ;;
+            tools/check_local_stand_logs.py) "$TEST_PYTHON" "$@"; return $? ;;
+            *) return 0 ;;
+          esac
+          if [[ "$stage" == "$FAILED_STAGE" ]]; then
+            printf '%s\n' "$STAGE_OUTPUT"
+            return 17
+          fi
+          printf '%s\n' "fixture $stage completed"
+        }
+        docker() { return 0; }
+        '''
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            secrets = root / "octacity-local-stand-portable" / "secrets"
+            secrets.mkdir(parents=True)
+            (secrets / "fixture-secret").write_text("synthetic-private-value")
+            return subprocess.run(
+                [shutil.which("bash"), "--noprofile", "--norc", "-c", peers + script],
+                cwd=REPOSITORY,
+                env={**os.environ, "RUNNER_TEMP": str(root), "TEST_PYTHON": sys.executable,
+                     "FAILED_STAGE": failed_stage, "STAGE_OUTPUT": output},
+                capture_output=True, text=True, check=False,
+            )
+
+    def test_failures_print_safe_diagnostics_and_keep_the_original_exit_status(self):
+        for stage in ("init", "contracts"):
+            with self.subTest(stage=stage):
+                result = self.run_portable_step(stage, "fixture portable contract failed")
+                self.assertEqual(result.returncode, 17, result.stderr)
+                self.assertIn("fixture portable contract failed", result.stdout)
+
+    def test_unsafe_failure_logs_are_withheld_without_replacing_the_original_status(self):
+        result = self.run_portable_step("contracts", "synthetic-private-value")
+        self.assertEqual(result.returncode, 17, result.stderr)
+        self.assertNotIn("synthetic-private-value", result.stdout + result.stderr)
+        self.assertIn("refusing to emit", result.stderr)
+
+    def test_success_retains_the_existing_checked_log_output(self):
+        result = self.run_portable_step("", "")
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertIn("fixture contracts completed", result.stdout)
+
+
+@unittest.skipUnless(os.name == "posix" and shutil.which("bash"), "requires Bash")
 class LocalStandImageDiagnosticsTests(unittest.TestCase):
     def run_image_step(self, build_status, build_output):
         workflow = CI.read_text(encoding="utf-8")
