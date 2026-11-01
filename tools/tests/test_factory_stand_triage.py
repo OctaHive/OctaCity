@@ -110,7 +110,7 @@ class FactoryStandTriageTests(unittest.TestCase):
             try:
                 profiles = {"eligibility": {"profile": "reviewed-project"}, "classification": {"profile": "reviewed-analyst"}}
                 context = {"project_id": project, "goals": "frozen-goals", "rules": "frozen-rules", "documents": {}}
-                selection = setup.preset_selection(client, {"project": project, "repository": repository},
+                selection = setup.pipeline_selection(client, {"project": project, "repository": repository},
                     profiles, context, {"id": connection, "version": 3}, namespace, {"network_hosts": []})
                 self.assertEqual(selection["profiles"], profiles)
                 self.assertEqual(selection["context"], {stage: context for stage in profiles})
@@ -126,7 +126,7 @@ class FactoryStandTriageTests(unittest.TestCase):
                 self.assertEqual(selection["repository"]["definition_digest"], "b" * 64)
                 source["predicate_label_presence"] = ["any"]
                 with self.assertRaisesRegex(ValueError, "unlabeled"):
-                    setup.preset_selection(client, {"project": project, "repository": repository}, profiles,
+                    setup.pipeline_selection(client, {"project": project, "repository": repository}, profiles,
                         context, {"id": connection, "version": 3}, namespace, {"network_hosts": []})
             finally:
                 server.shutdown()
@@ -295,6 +295,9 @@ class FactoryStandTriageTests(unittest.TestCase):
             "/api/v1/pipelines", "/api/v1/build-configurations", f"/api/v1/projects/{resources['project']}/policy-versions"])
         self.assertEqual(calls[0][1]["name"], "OctaCity")
         definition = calls[3][1]["definition"]
+        self.assertEqual(definition.get("source"), {"kind": "source_free_v1"})
+        self.assertIsNone(definition["repository_id"])
+        self.assertIsNone(definition["repository_version"])
         self.assertEqual(definition["allowed_pools"], [pool])
         self.assertEqual(definition["runtime"]["immutable_image"], image)
         self.assertEqual(definition["runtime"]["network"], {"mode": "restricted", "allowed_hosts":
@@ -360,10 +363,13 @@ class FactoryStandTriageTests(unittest.TestCase):
             finally:
                 server.shutdown()
                 thread.join(timeout=2)
+        reusable_text = json.dumps([body for _, _, body in first_calls]).lower()
+        for assignment in ("duplicate", "fit", "priority_assessment", "recommended_route", "example result"):
+            self.assertNotIn(assignment, reusable_text, "step duties and examples must not be embedded in reusable agents")
         profiles = [body["definition"] for path, _, body in first_calls if path.endswith("/validate")]
         self.assertEqual(len(profiles), 2)
         self.assertEqual([profile["context_requirements"] for profile in profiles],
-            [["task", "completion", "project-goals"], ["task", "completion", "project-goals"]])
+            [["task"], ["task"]])
         self.assertEqual(reads, [base + "/factory-profile-capabilities/reviewed-runtime"] * 2)
         self.assertEqual([profile["toolchain"]["model"] for profile in profiles], [selected, selected])
         self.assertEqual(profiles[0]["execution"], capability["definition"]["execution"])
@@ -552,104 +558,132 @@ class FactoryStandTriageTests(unittest.TestCase):
             self.assertFalse(root.exists())
 
     def test_publishes_the_resolved_two_stage_pipeline_without_starting_intake_or_work(self):
-        project = str(uuid.uuid4())
-        namespace = uuid.uuid4()
-        preset = {"identity": "triage", "version": "v1", "digest": "a" * 64}
-        selected = {"profiles": {"eligibility": {"role": "reviewed-project", "profile": "project-default"},
-                                 "classification": {"role": "reviewed-analyst", "profile": "analyst-default"}}}
-        child_id = str(uuid.uuid4())
+        """The example is a common HTTP client; a preset service is deliberately absent."""
+        project, namespace = str(uuid.uuid4()), uuid.uuid4()
+        base = f"/api/v1/projects/{project}"
+        reference = lambda identity: {"project_id": project, "id": identity, "version": 1, "digest": "a" * 64}
+        profiles = {stage: {"role": reference(str(uuid.uuid4())), "profile": reference(str(uuid.uuid4())),
+                           "capability": "reviewed-runtime"} for stage in ("eligibility", "classification")}
+        permissions = json.loads((stand.launcher.REPOSITORY / "config/factory/presets/triage/v1.json").read_text())["execution"]["permissions"]
+        budget = json.loads(stand.triage.POLICY.read_text())["flow_budget"]
         input_id = str(uuid.uuid4())
-        published = {"flows": {}, "configurations": {}, "runs": [], "documents": {}, "inputs": []}
-        root = {"closure": {"root": {"id": "published-root", "version": 1, "digest": "b" * 64}}}
+        selected = {"profiles": profiles, "context": {},
+            "execution": {"budget": budget, "permissions": permissions, "max_active_nodes": 1},
+            "configuration": {"admission_policy": "reviewed-admission", "permission_ceiling": "reviewed-ceiling",
+                "wip_limits": {"max_active_runs": 1, "max_active_nodes": 1}, "hard_budget": budget},
+            "input": {"id": input_id, "source": "reviewed-source", "reporter": None,
+                "predicate": {"state": "open", "label_presence": "none", "all_of": [], "any_of": [], "none_of": []}},
+            "repository": {"project_id": project, "id": str(uuid.uuid4()), "version": 1, "definition_digest": "c" * 64}}
+        worker_reference = {"id": str(uuid.uuid4()), "project_id": project, "version": 1, "definition_digest": "b" * 64}
+        worker_source = [{"kind": "source_free_v1"}]
+        published = {"flows": {}, "configurations": {}, "documents": {}, "inputs": {}}
+        calls, reads, replies = [], [], {}
+        normalized = {}
 
         class Management(BaseHTTPRequestHandler):
             def log_message(self, *_):
                 pass
-
             def reply(self, value, status=200):
                 data = json.dumps(value).encode()
                 self.send_response(status)
-                self.send_header("Content-Type", "application/json")
                 self.send_header("Content-Length", str(len(data)))
                 self.end_headers()
                 self.wfile.write(data)
-
             def do_GET(self):
-                if self.path == f"/api/v1/projects/{project}/factory-presets":
-                    self.reply({"items": [{"reference": preset}]})
-                else:
-                    self.reply({"error": "unexpected read"}, 404)
-
+                reads.append(self.path)
+                if self.path == f"/api/v1/build-configurations/{worker_reference['id']}/versions/1":
+                    return self.reply({"definition": {"source": worker_source[0]}})
+                for item in profiles.values():
+                    if self.path == f"{base}/factory-role-profiles/{item['profile']['id']}/versions/1":
+                        return self.reply({"reference": item["profile"], "role": item["role"],
+                            "definition": {"budget": budget, "permissions": permissions, "build_configuration": worker_reference}})
+                self.reply({"error": "no preset service or other implicit dependency"}, 404)
             def do_POST(self):
                 body = json.loads(self.rfile.read(int(self.headers["Content-Length"])))
-                if self.path == f"/api/v1/projects/{project}/input-documents":
-                    required = {"OctaCity project goals": "Retain step states and results internally."}
-                    if body["name"] not in required or required[body["name"]] not in body["content"]:
-                        return self.reply({"error": "only initial Project goals should be published"}, 422)
+                key = self.headers.get("Idempotency-Key")
+                calls.append((self.path, key, body))
+                replay = replies.get((self.path, key))
+                if replay is not None:
+                    if replay[0] != body:
+                        return self.reply({"error": "changed replay"}, 409)
+                    return self.reply(replay[1])
+                if self.path == base + "/input-documents":
                     artifact = {"artifact_id": str(uuid.uuid4()), "content_digest": "d" * 64,
                                 "encoded_size": len(body["content"].encode())}
                     published["documents"][body["name"]] = artifact
-                    self.reply({"project_id": project, "artifact": artifact}, 201)
-                elif self.path == f"/api/v1/projects/{project}/factory-presets/resolve":
-                    if body["preset"] != preset or body["profiles"] != selected["profiles"]:
-                        return self.reply({"error": "unreviewed selection"}, 422)
-                    self.reply({"diagnostics": [], "flow": {"root": {"nodes": [
-                        {"key": "eligibility", "kind": "reasoning"},
-                        {"key": "classification", "kind": "reasoning"}]}},
-                        "configuration": {"enabled": False, "flow": {"unpublished": True}},
-                        "dependencies": [{"id": child_id, "definition": {"root": {"nodes": []}}}],
-                        "input": {"id": input_id, "expected_version": None,
-                            "definition": {"target": {"unpublished": True}, "enabled": False, "source": "reviewed-source"}}})
+                    result = {"project_id": project, "artifact": artifact}
+                elif self.path == "/api/v1/flow-data-schemas/validate":
+                    result = {"reference": {"identity": body["identity"], "version": body["version"], "digest": "e" * 64},
+                              "shape": body["shape"]}
+                elif self.path == base + "/factory-execution-bindings/resolve":
+                    result = {"build": {"result_outcome": body["result_outcome"], "server_binding": "exact-installed-compilation"},
+                              "incompatibility": None}
+                elif self.path == base + "/factory-gate-programs/validate":
+                    result = {"policy": {"identity": "server-normalized-gate", "version": "v1", "digest": "f" * 64},
+                              "parameters": body["program"]}
+                elif self.path == "/api/v1/flow-definitions/validate":
+                    definition = body["definition"]
+                    normalized[body["id"]] = {"closure": {"root": {"id": body["id"], "version": 1, "digest": "b" * 64}},
+                        "limits": definition["limits"], "data_schemas": definition["data_schemas"]}
+                    result = normalized[body["id"]]
                 elif self.path == "/api/v1/flow-definitions":
-                    if body["definition"]["root"]["nodes"] and child_id not in published["flows"]:
-                        return self.reply({"error": "publish the required reporting dependency first"}, 422)
-                    published["flows"][body["id"]] = body
-                    self.reply({"resource": {"flow": root}}, 201)
+                    published["flows"][body["id"]] = body["definition"]
+                    result = {"resource": {"flow": normalized[body["id"]]}}
+                elif self.path == "/api/v1/factory-configurations/validate":
+                    result = {"diagnostics": {"errors": []}}
                 elif self.path == "/api/v1/factory-configurations":
-                    if body["definition"]["flow"] != root or body["definition"]["enabled"]:
-                        return self.reply({"error": "configuration must pin the published flow and remain disabled"}, 422)
-                    published["configurations"][body["id"]] = body
-                    self.reply({"resource": {"configuration": {"reference": {"id": body["id"], "version": 1}}}}, 201)
-                elif self.path == f"/api/v1/projects/{project}/factory-source-inputs/{input_id}/versions":
+                    if body["definition"]["enabled"] or body["definition"]["flow"]["closure"]["root"]["id"] not in published["flows"]:
+                        return self.reply({"error": "publish the reviewed disabled definition"}, 422)
+                    published["configurations"][body["id"]] = body["definition"]
+                    result = {"resource": {"configuration": {"reference": reference(body["id"])}}}
+                elif self.path == f"{base}/factory-source-inputs/{input_id}/versions":
                     entry, = body["intent"]["inputs"]
-                    target = entry["definition"]["target"]
-                    if target["id"] not in published["configurations"] or entry["definition"]["enabled"]:
-                        return self.reply({"error": "input must pin the published Configuration and stay disabled"}, 422)
-                    if self.headers.get("If-None-Match") != "*":
-                        return self.reply({"error": "creation precondition is required"}, 412)
-                    retained = {"id": input_id, "version": 1, "project_id": project, "definition": entry["definition"]}
-                    published["inputs"].append(retained)
-                    self.reply({"publication": {"inputs": [{"input": retained}]}}, 201)
+                    if self.headers.get("If-None-Match") != "*" or entry["definition"]["enabled"]:
+                        return self.reply({"error": "input must remain disabled and use a creation precondition"}, 422)
+                    retained = {"id": input_id, "project_id": project, "version": 1, "definition": entry["definition"]}
+                    published["inputs"][input_id] = retained
+                    result = {"publication": {"inputs": [{"input": retained}]}}
                 else:
-                    self.reply({"error": "no execution or intake mutation was authorized"}, 403)
+                    return self.reply({"error": "no legacy authoring, intake, inference or provider effect is authorized"}, 403)
+                replies[(self.path, key)] = (body, result)
+                self.reply(result)
 
-        server = ThreadingHTTPServer(("127.0.0.1", 0), Management)
-        worker = threading.Thread(target=server.serve_forever, daemon=True)
-        worker.start()
-        try:
+        with ThreadingHTTPServer(("127.0.0.1", 0), Management) as server:
+            worker = threading.Thread(target=server.serve_forever, daemon=True)
+            worker.start()
             client = bootstrap.BootstrapClient(stand.BootstrapTransport(server.server_port),
                 bootstrap.RetryPolicy(attempts=1, timeout_seconds=2, initial_delay_seconds=0))
-            original = copy.deepcopy(selected)
-            context = stand.publish_triage_context(client, project, namespace)
-            self.assertEqual(context, {"project_id": project,
-                "goals": published["documents"]["OctaCity project goals"],
-                "documents": {}})
-            receipt = stand.publish_triage(client, project, selected, namespace)
-            self.assertEqual(selected, original)
-            self.assertEqual(len(published["flows"]), 2)
-            self.assertEqual(len(published["configurations"]), 1)
-            flow = next(value for value in published["flows"].values() if value["id"] != child_id)
-            self.assertEqual([node["key"] for node in flow["definition"]["root"]["nodes"]],
-                             ["eligibility", "classification"])
-            self.assertEqual(receipt["configuration"]["id"], next(iter(published["configurations"])))
-            self.assertEqual(receipt["flow"], root["closure"]["root"], "local receipts retain exact references, not another graph store")
-            self.assertEqual(published["runs"], [])
-            self.assertEqual(len(published["inputs"]), 1)
-            self.assertEqual(receipt["input"], {"project_id": project, "id": input_id, "version": 1})
-        finally:
-            server.shutdown()
-            server.server_close()
-            worker.join(timeout=3)
+            try:
+                context = stand.publish_triage_context(client, project, namespace)
+                selected["context"] = {stage: context for stage in profiles}
+                original = copy.deepcopy(selected)
+                receipt = stand.publish_triage(client, project, selected, namespace)
+                first = copy.deepcopy(calls)
+                self.assertEqual(stand.publish_triage(client, project, selected, namespace), receipt)
+                self.assertEqual(calls[len(first):], first[1:], "repeat setup retains exact publication bodies and keys")
+                worker_source[0] = {"kind": "repository"}
+                with self.assertRaisesRegex(ValueError, "source-free"):
+                    stand.publish_triage(client, project, selected, uuid.uuid4())
+            finally:
+                server.shutdown()
+                worker.join(timeout=3)
+        self.assertEqual(selected, original)
+        self.assertFalse(any("factory-presets" in path for path in reads))
+        self.assertEqual(len(published["flows"]), 1)
+        self.assertEqual(len(published["configurations"]), 1)
+        flow = next(iter(published["flows"].values()))
+        nodes = {node["key"]: node for node in flow["root"]["nodes"]}
+        self.assertEqual(set(nodes), {"eligibility", "eligibility_gate", "classification", "classification_gate"})
+        for stage in profiles:
+            assignment = "\n".join(nodes[stage]["task"])
+            self.assertIn("Example result:", assignment)
+            self.assertEqual(nodes[stage]["profile_selection"]["candidates"]["selected"]["build"]["server_binding"], "exact-installed-compilation")
+            self.assertEqual(nodes[stage]["profile_selection"]["role"], profiles[stage]["role"])
+        self.assertIn("duplicate", "\n".join(nodes["eligibility"]["task"]))
+        self.assertIn("priority_assessment", "\n".join(nodes["classification"]["task"]))
+        self.assertEqual(receipt["configuration"]["id"], next(iter(published["configurations"])))
+        self.assertEqual(receipt["input"], {"project_id": project, "id": input_id, "version": 1})
+        self.assertFalse(published["inputs"][input_id]["definition"]["enabled"])
 
 
 if __name__ == "__main__":

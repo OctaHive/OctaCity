@@ -156,7 +156,7 @@ class FactoryStandRecoveryTests(unittest.TestCase):
                 mock.patch.object(stand, "ensure_github_connection", return_value={}), \
                 mock.patch.object(stand, "publish_triage_roles", return_value={}), \
                 mock.patch.object(stand, "publish_triage_context", return_value={}), \
-                mock.patch.object(stand.triage, "preset_selection", return_value={}), \
+                mock.patch.object(stand.triage, "pipeline_selection", return_value={}), \
                 mock.patch.object(stand, "publish_triage", return_value=published):
             self._resume("--github-repository", "Example/Tickets")
         configured = tomllib.loads((self.root / "config/server/server.toml").read_text())

@@ -5,6 +5,7 @@ No Agent, inference, Source activation or provider mutation is dispatched here.
 """
 from contextlib import contextmanager
 import hashlib
+import copy
 import json
 import os
 from pathlib import Path
@@ -132,8 +133,27 @@ class FactoryTriageSetupRestTests(unittest.TestCase):
                     settings = stand._read_json(Path(assets["runtime_settings"]))
                     client.post(f"/api/v1/projects/{project}/factory-runtimes/triage-runtime", str(namespace) + "-runtime",
                         {"expected_version": None, "definition": settings})
+                    # Retain an older specialized Role/Profile under the historical IDs.
+                    seed = json.loads((stand.launcher.REPOSITORY / "config/factory/presets/triage/project-role-v1.json").read_text())
+                    old_role = client.post(f"/api/v1/projects/{project}/factory-role-publications", f"{namespace}-old-role",
+                        {"role": {"id": str(uuid.uuid5(namespace, "role/triage/eligibility")),
+                            "expected_current_version": None, "definition": seed["role"]}, "profiles": []})["role"]
+                    old_id = str(uuid.uuid5(namespace, "profile/triage/eligibility"))
+                    old_definition = copy.deepcopy(client.get(f"/api/v1/projects/{project}/factory-profile-capabilities/triage-runtime")["definition"])
+                    old_definition.update(seed["profiles"]["default"])
+                    checked = client.post(f"/api/v1/projects/{project}/factory-role-profiles/validate", f"{namespace}-old-review",
+                        {"id": old_id, "role": old_role["reference"], "capability": "triage-runtime", "definition": old_definition})
+                    self.assertIsNone(checked["incompatibility"])
+                    old_profile = client.post(f"/api/v1/projects/{project}/factory-role-publications", f"{namespace}-old-profile",
+                        {"profiles": [{"id": old_id, "role": old_role["reference"], "expected_current_version": None,
+                            "definition": checked["profile"]["definition"]}]})["profiles"][0]
                     profiles = stand.publish_triage_roles(client, project, namespace,
                         runtime="triage-runtime", model_credential_profile="triage-model")
+                    self.assertNotEqual(profiles["eligibility"]["profile"]["id"], old_id)
+                    self.assertEqual(stand.publish_triage_roles(client, project, namespace,
+                        runtime="triage-runtime", model_credential_profile="triage-model"), profiles)
+                    self.assertEqual(client.get(f"/api/v1/projects/{project}/factory-role-profiles/{old_id}/versions/1"), old_profile)
+                    self.assertEqual(client.get(f"/api/v1/projects/{project}/factory-roles/{old_role['reference']['id']}/versions/1"), old_role)
                     context = stand.publish_triage_context(client, project, namespace)
                     repository = client.get(f"/api/v1/repositories/{resources['repository']}/versions/1")
                     budget = json.loads(triage.POLICY.read_text())["flow_budget"]
@@ -143,15 +163,18 @@ class FactoryTriageSetupRestTests(unittest.TestCase):
                         "execution": {"budget": budget, "permissions": settings["permissions"], "max_active_nodes": 1},
                         "configuration": {"admission_policy": "triage-admission", "permission_ceiling": "triage-ceiling",
                             "wip_limits": {"max_active_runs": 1, "max_active_nodes": 1}, "hard_budget": budget}, "effects": {}}
-                    preset = client.get(f"/api/v1/projects/{project}/factory-presets")["items"][0]["reference"]
-                    reviewed = client.post(f"/api/v1/projects/{project}/factory-presets/resolve", str(namespace) + "-review",
-                        {**selected, "preset": preset, "flow_id": str(uuid.uuid4()), "configuration_id": str(uuid.uuid4())})
-                    self.assertEqual(reviewed["diagnostics"], [], "the installed two-stage defaults must resolve through the ordinary owner")
                     published = stand.publish_triage(client, project, selected, namespace)
+                    self.assertEqual(stand.publish_triage(client, project, selected, namespace), published)
                     self.assertEqual(published["configuration"]["version"], 1)
                     self.assertIsNone(published["input"])
                     self.assertEqual(client.get(f"/api/v1/projects/{project}/factory-runs?limit=10")["items"], [])
+                    flow = client.get(f"/api/v1/flow-definitions/{published['flow']['id']}/versions/1")
+                    nodes = {node["key"]: node for node in flow["flow"]["closure"]["definitions"][0]["nodes"]}
+                    process = flow["flow"]["closure"]["definitions"][0].get("process") or {}
+                    self.assertEqual(set(process.get("criteria", {}).get("recipients", [])), {"eligibility", "classification"})
                     for stage in profiles:
+                        self.assertIn("Example result:", "\n".join(nodes[stage]["task"]))
+                        self.assertEqual(nodes[stage]["code"], {"kind": "none"})
                         retained = client.get(f"/api/v1/projects/{project}/factory-role-profiles/{profiles[stage]['profile']['id']}")
                         self.assertEqual(retained["definition"]["toolchain"]["model"]["identity"], "gpt-6.1-sol")
                     analyst = client.get(f"/api/v1/projects/{project}/factory-role-profiles/{profiles['classification']['profile']['id']}")
@@ -167,6 +190,7 @@ class FactoryTriageSetupRestTests(unittest.TestCase):
                     self.assertEqual(retained["content"], original["content"])
                     changed = client.get(f"/api/v1/projects/{project}/input-documents/{edited['artifact']['artifact_id']}")
                     self.assertIn("An independently published operator revision", changed["content"])
+                    self.assertEqual(client.get(f"/api/v1/projects/{project}/factory-role-profiles/{old_id}/versions/1"), old_profile)
                     configuration = client.get(f"/api/v1/factory-configurations/{published['configuration']['id']}/versions/1")
                     self.assertFalse(configuration["configuration"]["enabled"])
                     self.assertEqual(client.get(f"/api/v1/projects/{project}/factory-runs?limit=10")["items"], [])

@@ -45,5 +45,12 @@
     "log_seconds": 86400,
     "artifact_seconds": 86400,
     "cache_seconds": 86400
+  },
+  "flow_limits": {
+    "max_depth": 1,
+    "max_expanded_nodes": 4,
+    "max_repeat_count": 1,
+    "max_fan_out": 1,
+    "max_wip": 1
   }
 }

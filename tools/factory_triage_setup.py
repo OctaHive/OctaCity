@@ -105,7 +105,7 @@ def preparation_mapping(project: str) -> dict:
     return mapping
 
 
-def preset_selection(client, resources: dict, profiles: dict, context: dict,
+def pipeline_selection(client, resources: dict, profiles: dict, context: dict,
                      connection: dict, namespace: uuid.UUID, permissions: dict) -> dict:
     """Pin current public Source choices; unsupported narrowing cannot fall back."""
     project = resources["project"]

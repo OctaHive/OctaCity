@@ -24,6 +24,7 @@ import verify_local_stand_integration as integration
 from factory_integrations import install_repository, read_github_token, ensure_github_connection, installed_github_resource
 from factory_local_runtime import install_runtime_executable
 import factory_triage_setup as triage
+import factory_stand_flow
 
 
 def _private_json(path: Path, value: dict) -> None:
@@ -186,7 +187,7 @@ def run_triage_stand(root: Path, source: str | None, revision: str | None, *,
     profiles = publish_triage_roles(client, resources["project"], namespace,
         runtime="triage-runtime", model_credential_profile="triage-model")
     context = publish_triage_context(client, resources["project"], namespace)
-    selection = triage.preset_selection(client, resources, profiles, context, connection, namespace, settings["permissions"])
+    selection = triage.pipeline_selection(client, resources, profiles, context, connection, namespace, settings["permissions"])
     published = publish_triage(client, resources["project"], selection, namespace)
     receipt = {"schema_version": 1, "origin": bootstrap.DEFAULT_ORIGIN, "project": resources["project"],
         "profiles": profiles, "context": context, **published}
@@ -214,6 +215,7 @@ def prepare_triage_resources(client, pool: str, source: str, image: str, namespa
     request = integration._configuration_request(project_id=project, repository_id=repository,
         pipeline_id=pipeline, pool_id=pool, guest_image=image, name="Factory triage worker", publishes_outputs=True)
     definition = request["definition"]
+    definition.update(source={"kind": "source_free_v1"}, repository_id=None, repository_version=None)
     definition["cache"] = {"namespace": None, "read": False, "write": False}
     definition["artifacts"] = policy["outputs"]
     definition["agent_requirements"].update(minimum_cpu_millis=limits["cpu_millis"],
@@ -334,7 +336,7 @@ def publish_triage_context(client, project: str, namespace: uuid.UUID) -> dict:
 
 def publish_triage_roles(client, project: str, namespace: uuid.UUID, *,
                          runtime: str, model_credential_profile: str) -> dict:
-    """Copy reviewed role content and qualify separate profiles with existing owners.
+    """Publish reusable agents; step assignments belong to the ordinary Flow.
 
     Installed Runtime settings supply exact MCP pins. Publication and validation
     retain server-derived role/profile digests; the launcher does not hash them.
@@ -343,19 +345,17 @@ def publish_triage_roles(client, project: str, namespace: uuid.UUID, *,
     ceiling = client.get(f"{base}/factory-profile-capabilities/{runtime}")["definition"]
     if model_credential_profile not in ceiling["permissions"]["secret_profiles"]:
         raise ValueError("triage Runtime lacks the selected model credential profile")
-    templates = launcher.REPOSITORY / "config/factory/presets/triage"
+    agents = json.loads((launcher.REPOSITORY / "deployment/local-stand/factory-agents.json").read_text())
     selections = {}
-    for stage, filename in (("eligibility", "project-role-v1.json"),
-                             ("classification", "analyst-role-v1.json")):
-        seed = json.loads((templates / filename).read_text())
-        role_id = str(uuid.uuid5(namespace, f"role/triage/{stage}"))
-        profile_id = str(uuid.uuid5(namespace, f"profile/triage/{stage}"))
-        role = client.post(f"{base}/factory-role-publications", f"{namespace}-triage-{stage}-role",
+    for stage, seed in agents.items():
+        role_id = str(uuid.uuid5(namespace, f"role/triage/manual-v1/{stage}"))
+        profile_id = str(uuid.uuid5(namespace, f"profile/triage/manual-v1/{stage}"))
+        role = client.post(f"{base}/factory-role-publications", f"{namespace}-manual-v1-{stage}-role",
             {"role": {"id": role_id, "expected_current_version": None, "definition": seed["role"]},
              "profiles": []})["role"]["reference"]
         definition = copy.deepcopy(ceiling)
-        definition.update(seed["profiles"]["default"])
-        definition["context_requirements"] = ["task", "completion", "project-goals"]
+        definition.update(seed["profile"])
+        definition["context_requirements"] = ["task"]
         if stage == "classification":
             execution = definition["execution"]
             execution["mcp_servers"] = {}
@@ -364,42 +364,47 @@ def publish_triage_roles(client, project: str, namespace: uuid.UUID, *,
                                         if value["kind"] == "public"}
             definition["permissions"]["secret_profiles"] = [model_credential_profile]
         validated = client.post(f"{base}/factory-role-profiles/validate",
-            f"{namespace}-triage-{stage}-review", {"id": profile_id, "role": role,
+            f"{namespace}-manual-v1-{stage}-review", {"id": profile_id, "role": role,
                 "capability": runtime, "definition": definition})
         if validated["incompatibility"] is not None:
             raise ValueError("triage profile requires review against its installed Runtime")
         published = client.post(f"{base}/factory-role-publications",
-            f"{namespace}-triage-{stage}-profile", {"profiles": [{"id": profile_id, "role": role,
+            f"{namespace}-manual-v1-{stage}-profile", {"profiles": [{"id": profile_id, "role": role,
                 "expected_current_version": None, "definition": validated["profile"]["definition"]}]})
-        selections[stage] = {"role": role, "profile": published["profiles"][0]["reference"]}
+        selections[stage] = {"role": role, "profile": published["profiles"][0]["reference"], "capability": runtime}
     return selections
 
 
 def publish_triage(client, project: str, selection: dict, namespace: uuid.UUID) -> dict:
-    """Publish reviewed preset drafts through ordinary management; do not start intake."""
-    presets = client.get(f"/api/v1/projects/{project}/factory-presets")["items"]
-    preset = next(item["reference"] for item in presets if item["reference"]["identity"] == "triage")
-    flow_id = str(uuid.uuid5(namespace, "flow/triage"))
-    configuration_id = str(uuid.uuid5(namespace, "configuration/triage"))
-    resolved = client.post(f"/api/v1/projects/{project}/factory-presets/resolve",
-        f"{namespace}-triage-review", {**copy.deepcopy(selection), "preset": preset,
-        "flow_id": flow_id, "configuration_id": configuration_id})
-    if resolved["diagnostics"] or resolved["flow"] is None or resolved["configuration"] is None:
-        raise ValueError("triage prerequisites require explicit review before publication")
-    for child in resolved["dependencies"]:
-        client.post("/api/v1/flow-definitions", f"{namespace}-triage-child-{child['id']}",
-            {"id": child["id"], "project_id": project, "definition": child["definition"]})
-    flow = client.post("/api/v1/flow-definitions", f"{namespace}-triage-flow",
-        {"id": flow_id, "project_id": project, "definition": resolved["flow"]})["resource"]["flow"]
-    definition = {**resolved["configuration"], "flow": flow, "enabled": False}
-    configuration = client.post("/api/v1/factory-configurations", f"{namespace}-triage-configuration",
+    """Publish the ordinary example, retaining exact server references and disabled intake."""
+    flow_id = str(uuid.uuid5(namespace, "flow/triage/manual-v1"))
+    configuration_id = str(uuid.uuid5(namespace, "configuration/triage/manual-v1"))
+    criteria = client.post(f"/api/v1/projects/{project}/input-documents", f"{namespace}-manual-v1-criteria",
+        {"name": "Triage completion criteria", "content": json.loads((launcher.REPOSITORY /
+            "config/factory/presets/triage/completion-v2.json").read_text())["content"]})["artifact"]
+    draft = factory_stand_flow.flow_draft(client, project, selection, namespace, criteria)
+    body = {"id": flow_id, "project_id": project, "definition": draft}
+    preview = client.post("/api/v1/flow-definitions/validate", f"{namespace}-manual-v1-flow-review", body)
+    if preview.get("diagnostics", {}).get("errors"):
+        raise ValueError("stand Flow requires explicit review before publication")
+    reviewed = {key: preview[key] for key in ("closure", "limits", "data_schemas", "pools") if key in preview}
+    definition = {**copy.deepcopy(selection["configuration"]), "flow": reviewed, "enabled": False}
+    validation = client.post("/api/v1/factory-configurations/validate", f"{namespace}-manual-v1-configuration-review",
+        {"id": configuration_id, "project_id": project, "definition": definition})
+    if validation.get("diagnostics", {}).get("errors"):
+        raise ValueError("stand Configuration requires explicit review before publication")
+    flow = client.post("/api/v1/flow-definitions", f"{namespace}-manual-v1-flow", body)["resource"]["flow"]
+    definition["flow"] = flow
+    configuration = client.post("/api/v1/factory-configurations", f"{namespace}-manual-v1-configuration",
         {"id": configuration_id, "project_id": project, "definition": definition})["resource"]["configuration"]
     installed_input = None
-    if resolved["input"] is not None:
-        source = copy.deepcopy(resolved["input"])
+    if selection.get("input") is not None:
+        chosen = copy.deepcopy(selection["input"])
+        source = {"id": chosen.pop("id"), "expected_version": None,
+            "definition": {**chosen, "repository": copy.deepcopy(selection["repository"])}}
         source["definition"].update(target=configuration["reference"], enabled=False)
         published = client.post(f"/api/v1/projects/{project}/factory-source-inputs/{source['id']}/versions",
-            f"{namespace}-triage-input", {"intent": {"project_id": project, "group": None, "inputs": [source]}},
+            f"{namespace}-manual-v1-input", {"intent": {"project_id": project, "group": None, "inputs": [source]}},
             expected_version=0)
         retained = published["publication"]["inputs"][0]["input"]
         installed_input = {key: retained[key] for key in ("project_id", "id", "version")}
