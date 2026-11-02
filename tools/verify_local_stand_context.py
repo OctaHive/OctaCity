@@ -70,6 +70,8 @@ REQUIRED_CONTEXT_PATHS = (
     "ui/scripts/issue-workflow-constraints.mjs",
     "ui/scripts/issue-constraints.mjs",
     "ui/scripts/verify-architecture.mjs",
+    "ui/scripts/compact-message-catalogs.mjs",
+    "ui/scripts/compact-message-catalogs.d.mts",
     "ui/src/main.tsx",
     "deployment/console/nginx/cache-map.conf",
     "deployment/console/nginx/routes.conf",

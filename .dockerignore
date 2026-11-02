@@ -149,6 +149,8 @@ ui/scripts/*
 !ui/scripts/issue-workflow-constraints.mjs
 !ui/scripts/issue-constraints.mjs
 !ui/scripts/verify-architecture.mjs
+!ui/scripts/compact-message-catalogs.mjs
+!ui/scripts/compact-message-catalogs.d.mts
 !ui/tsconfig.json
 !ui/vite.config.ts
 !ui/public/

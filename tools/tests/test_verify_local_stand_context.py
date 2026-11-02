@@ -229,8 +229,11 @@ class LocalStandContextTests(unittest.TestCase):
             with self.assertRaisesRegex(VERIFY.ContextError, "job-spec-v3.json"):
                 VERIFY.validate_repository(root)
 
-    def test_repository_verification_rejects_a_missing_generator_dependency(self):
-        for dependency in ("factory-authoring-schemas.mjs", "issue-workflow-constraints.mjs", "issue-constraints.mjs"):
+    def test_repository_verification_rejects_a_missing_ui_build_dependency(self):
+        for dependency in (
+            "factory-authoring-schemas.mjs", "issue-workflow-constraints.mjs", "issue-constraints.mjs",
+            "compact-message-catalogs.mjs", "compact-message-catalogs.d.mts",
+        ):
             with self.subTest(dependency=dependency), tempfile.TemporaryDirectory() as temporary:
                 root = Path(temporary)
                 shutil.copyfile(REPOSITORY / ".dockerignore", root / ".dockerignore")
@@ -258,6 +261,44 @@ class LocalStandContextTests(unittest.TestCase):
         self.assertFalse(
             VERIFY.docker_path_included("ui/.generated/api/constraints.ts", rules)
         )
+
+    def test_ui_build_configuration_loads_from_the_filtered_docker_context(self):
+        node = shutil.which("node")
+        compiler = REPOSITORY / "ui/node_modules/typescript/bin/tsc"
+        if node is None or not compiler.is_file():
+            self.skipTest("Installed Console dependencies are required for the build smoke test")
+        rules = VERIFY.validate_dockerignore(REPOSITORY / ".dockerignore")
+        # Resolve the installed dependencies from the parent ui directory without
+        # copying node_modules or requiring privileged directory symlinks.
+        with tempfile.TemporaryDirectory(dir=REPOSITORY / "ui") as temporary:
+            root = Path(temporary)
+            for source in (
+                REPOSITORY / "ui/package.json",
+                REPOSITORY / "ui/vite.config.ts",
+                *(REPOSITORY / "ui/scripts").iterdir(),
+            ):
+                relative = source.relative_to(REPOSITORY)
+                if source.is_file() and VERIFY.docker_path_included(relative.as_posix(), rules):
+                    destination = root / relative
+                    destination.parent.mkdir(parents=True, exist_ok=True)
+                    shutil.copyfile(source, destination)
+            for command in (
+                [node, str(compiler), "--noEmit", "--strict", "--skipLibCheck",
+                 "--moduleResolution", "bundler", "--module", "esnext",
+                 "--target", "es2022", "vite.config.ts"],
+                [node, "--input-type=module", "--eval", """
+import assert from 'node:assert/strict';
+import { loadConfigFromFile } from 'vite';
+const loaded = await loadConfigFromFile({command: 'build', mode: 'production'}, './vite.config.ts');
+assert(loaded?.config.plugins.flat().some(plugin => plugin?.name === 'compact-message-catalogs'));
+"""],
+            ):
+                result = subprocess.run(command, cwd=root / "ui", capture_output=True,
+                                        text=True, timeout=30)
+                self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        self.assertFalse(VERIFY.docker_path_included(
+            "ui/scripts/compact-message-catalogs.test.mjs", rules,
+        ))
 
     def test_ui_api_generators_load_from_the_filtered_docker_context(self):
         node = shutil.which("node")
