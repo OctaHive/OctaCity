@@ -42,6 +42,9 @@ pub fn factory_native_gate_policies(flow: &FactoryFlowConfiguration) -> Vec<Immu
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
 #[serde(deny_unknown_fields)]
 pub struct FactoryFlowRootDraft {
+  /// Optional display name, versioned with the graph and independent of logical step keys.
+  #[serde(default, skip_serializing_if = "Option::is_none")]
+  pub name: Option<octacity_server_factory::FactoryText>,
   /// Exact input contract for the entry.
   pub input_schema: Option<ImmutableReference>,
   /// Caller-selected entry node.
@@ -151,6 +154,7 @@ impl FactoryFlowDefinitionDraft {
       Some(process) => definition.with_process(process),
       None => Ok(definition),
     })
+    .and_then(|definition| definition.with_name(root.name.clone()))
     .map_err(|error| {
       crate::factory_code_sources::validation_error(&error)
         .or_else(|| crate::FactoryValidationDiagnostics::constraint_ceiling_error(&error))

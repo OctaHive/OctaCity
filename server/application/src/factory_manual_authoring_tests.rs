@@ -15,6 +15,44 @@ fn authoring_queries()
 }
 
 #[test]
+fn pipeline_names_round_trip_in_the_immutable_definition_without_changing_legacy_digests() {
+  run_ready(async {
+    let id = FlowDefinitionId::generate();
+    let project_id = ProjectId::generate();
+    let queries = authoring_queries();
+    let legacy = layout_draft();
+    let validate = |draft| crate::ValidateFactoryFlowDefinitionQuery { id, project_id, draft };
+    let original = queries
+      .handle_query(&context(), validate(legacy.clone()))
+      .await
+      .unwrap();
+    let mut wire = serde_json::to_value(&legacy).unwrap();
+    wire["root"]["name"] = serde_json::json!("Триаж входящих задач");
+    let named: crate::FactoryFlowDefinitionDraft = serde_json::from_value(wire).unwrap();
+    let published = queries.handle_query(&context(), validate(named)).await.unwrap();
+    let root = published.closure.definition(published.closure.root()).unwrap();
+    assert_eq!(serde_json::to_value(root).unwrap()["name"], "Триаж входящих задач");
+    assert_ne!(published.closure.root().digest(), original.closure.root().digest());
+    let retained = serde_json::to_value(&published).unwrap();
+    assert_eq!(
+      serde_json::from_value::<FactoryFlowConfiguration>(retained.clone()).unwrap(),
+      published
+    );
+    let mut tampered = retained;
+    tampered["closure"]["definitions"][0]["name"] = serde_json::json!("Подменённое имя");
+    let tampered: FactoryFlowConfiguration = serde_json::from_value(tampered).unwrap();
+    assert!(tampered.closure.validate(tampered.limits).is_err());
+    let unchanged = queries.handle_query(&context(), validate(legacy)).await.unwrap();
+    assert_eq!(unchanged, original);
+    assert!(
+      serde_json::to_value(original).unwrap()["closure"]["definitions"][0]
+        .get("name")
+        .is_none()
+    );
+  });
+}
+
+#[test]
 fn root_budget_above_admission_names_the_resource_request_and_applicable_maximum() {
   run_ready(async {
     let mut draft = layout_draft();
@@ -208,6 +246,7 @@ fn layout_draft() -> crate::FactoryFlowDefinitionDraft {
   }
   crate::FactoryFlowDefinitionDraft {
     root: crate::FactoryFlowRootDraft {
+      name: None,
       code_sources: None,
       process: None,
       input_schema: Some(document.reference().clone()),

@@ -515,6 +515,8 @@ struct FlowDefinitionContent<'a> {
   process: Option<&'a super::FlowProcessInputs>,
   #[serde(skip_serializing_if = "Option::is_none")]
   code_sources: Option<&'a super::FlowCodeSources>,
+  #[serde(skip_serializing_if = "Option::is_none")]
+  name: Option<&'a crate::FactoryText>,
 }
 
 /// Canonically ordered immutable semantics of one Factory Flow version.
@@ -534,6 +536,8 @@ pub struct FlowDefinition {
   process: Option<super::FlowProcessInputs>,
   #[serde(default, skip_serializing_if = "Option::is_none")]
   code_sources: Option<super::FlowCodeSources>,
+  #[serde(default, skip_serializing_if = "Option::is_none")]
+  name: Option<crate::FactoryText>,
 }
 
 impl FlowDefinition {
@@ -590,6 +594,7 @@ impl FlowDefinition {
       execution: &input.execution,
       process: None,
       code_sources: None,
+      name: None,
     };
     let digest = definition_digest(&content)?;
     let definition = Self {
@@ -604,11 +609,31 @@ impl FlowDefinition {
       execution: input.execution,
       process: None,
       code_sources: None,
+      name: None,
     };
     if let Some(policy) = definition.execution.verification() {
       policy.validate_definition(&definition)?;
     }
     Ok(definition)
+  }
+
+  /// Pins an optional display name to this version without changing logical node keys.
+  /// Omitting the name preserves the canonical identity of historical unnamed content.
+  pub fn with_name(mut self, name: Option<crate::FactoryText>) -> Result<Self, FactoryError> {
+    self.name = name;
+    self.reference = FlowDefinitionRef::new(
+      self.reference.id(),
+      self.reference.version(),
+      definition_digest(&self.content())?,
+    );
+    self.validate_canonical_form()?;
+    Ok(self)
+  }
+
+  /// Operator-owned display name; it grants no execution or routing authority.
+  #[must_use]
+  pub const fn name(&self) -> Option<&crate::FactoryText> {
+    self.name.as_ref()
   }
 
   /// Freezes explicit available sources; an empty inventory requires reviewed no-code steps.
@@ -742,6 +767,7 @@ impl FlowDefinition {
       execution: &self.execution,
       process: self.process.as_ref(),
       code_sources: self.code_sources.as_ref(),
+      name: self.name.as_ref(),
     }
   }
 

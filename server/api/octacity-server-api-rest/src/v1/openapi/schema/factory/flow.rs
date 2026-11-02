@@ -176,6 +176,12 @@ pub(super) fn insert(schemas: &mut Map<String, Value>) {
     "FactoryFlowDefinition".to_owned(),
     object(
       [
+        (
+          "name",
+          nullable(
+            json!({"type":"string","minLength":1,"maxLength":bounds.text_bytes,"x-max-utf8-bytes":bounds.text_bytes}),
+          ),
+        ),
         ("reference", schema_ref("FactoryFlowDefinitionReference")),
         (
           "input_schema",

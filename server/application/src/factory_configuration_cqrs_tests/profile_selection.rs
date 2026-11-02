@@ -289,6 +289,7 @@ fn standalone_flow_publication_uses_the_same_profile_compatibility_validation() 
     let root = flow.closure.definition(flow.closure.root()).unwrap();
     let draft = crate::FactoryFlowDefinitionDraft {
       root: crate::FactoryFlowRootDraft {
+        name: None,
         code_sources: None,
         process: root.process().cloned(),
         input_schema: root.input_schema().cloned(),
@@ -590,6 +591,7 @@ fn decision_profile_answers_are_checked_before_flow_publication() {
     );
     let draft = crate::FactoryFlowDefinitionDraft {
       root: crate::FactoryFlowRootDraft {
+        name: None,
         code_sources: None,
         process: root.process().cloned(),
         input_schema: root.input_schema().cloned(),
