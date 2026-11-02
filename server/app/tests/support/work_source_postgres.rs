@@ -29,16 +29,29 @@ impl Fixture {
       .unwrap();
     sqlx::query("INSERT INTO repository_versions (repository_id,version,vcs_integration_id,repository_locator,selection_policy,published_at) VALUES ($1,1,$2,$3,$4,to_timestamp(0))")
     .bind(repository.id.as_uuid()).bind(repository.definition.vcs_integration_id.as_uuid()).bind(repository.definition.repository_locator.as_str()).bind(Json(&repository.definition.selection)).execute(&pool).await.unwrap();
-    let configuration = context.configuration.configuration;
+    let policies = context.project_policies.unwrap();
+    let configuration = context
+      .configuration
+      .configuration
+      .with_project_policies(
+        policies.launch_policy.reference().clone(),
+        policies.access_profile.reference().clone(),
+      )
+      .unwrap();
     let draft = FactoryConfigurationDraft {
       flow: Some(configuration.flow().clone()),
-      admission_policy: key("admission").into(),
+      admission_policy: octacity_server_factory::FactoryPolicySelection::Project {
+        project_policy: policies.launch_policy.reference().clone(),
+      },
       wip_limits: configuration.wip_limits(),
       hard_budget: configuration.hard_budget(),
-      permission_ceiling: key("permissions").into(),
+      permission_ceiling: octacity_server_factory::FactoryPolicySelection::Project {
+        project_policy: policies.access_profile.reference().clone(),
+      },
       enabled: true,
     };
     let store = Arc::new(PostgresStore::new(pool.clone()));
+    octacity_server_store::testing::publish_factory_project_policies_fixture(store.as_ref(), &policies).await;
     store
       .create_factory_configuration(octacity_server_store::testing::management_mutation_with_request(
         CreateFactoryConfiguration {

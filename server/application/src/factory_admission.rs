@@ -115,11 +115,58 @@ where
     command: AdmitManualFactoryWorkCommand,
   ) -> Result<FactoryAdmissionOutcome, Self::Error> {
     let probe = admission_probe(context, &command)?;
-    self.admit_intent(context, command, probe, None).await
+    self
+      .admit_intent(
+        context,
+        command,
+        probe,
+        None,
+        octacity_server_factory::FactoryAdmissionOrigin::Manual,
+      )
+      .await
   }
 }
 
 impl<S: FactoryAdmissionStore + 'static> FactoryAdmissionHandlers<S> {
+  /// Gates fresh automatic intake before the worker reserves or prepares per-item inputs.
+  pub(super) async fn require_source_launch(
+    &self,
+    context: &crate::ManagementRequestContext,
+    input: &octacity_server_factory::WorkSourceInput,
+  ) -> Result<(), ApplicationError> {
+    use crate::factory_configuration_choices::require_visible_reference;
+    let definition = input.definition();
+    require_visible_reference(
+      self.policy.as_ref(),
+      context,
+      ManagementResourceKind::FactoryConfiguration,
+      definition.target.id(),
+    )
+    .await?;
+    require_visible_reference(
+      self.policy.as_ref(),
+      context,
+      ManagementResourceKind::Repository,
+      definition.repository.id,
+    )
+    .await?;
+    let selected = self
+      .store
+      .factory_admission_context(ReadFactoryAdmissionContext {
+        project_id: input.project_id(),
+        configuration_id: definition.target.id(),
+        configuration_version: definition.target.version(),
+        repository_id: Some(definition.repository.id),
+        repository_version: Some(definition.repository.version),
+      })
+      .await?;
+    validate_admission_project(&selected, input.project_id())?;
+    validate_launch_policy(
+      &selected,
+      octacity_server_factory::FactoryAdmissionOrigin::AutomaticSource,
+    )
+  }
+
   pub(super) async fn authorize_source_preparation(
     &self,
     context: &crate::ManagementRequestContext,
@@ -245,6 +292,7 @@ impl<S: FactoryAdmissionStore + 'static> FactoryAdmissionHandlers<S> {
     command: FactoryWorkAdmissionIntent,
     probe: FactoryAdmissionProbe,
     pinned_input: Option<&octacity_server_factory::WorkSourceInput>,
+    origin: octacity_server_factory::FactoryAdmissionOrigin,
   ) -> Result<FactoryAdmissionOutcome, ApplicationError> {
     if let Some(outcome) = self.store.replay_factory_admission(&probe).await? {
       self.require_visible_dependencies(context, &command).await?;
@@ -258,7 +306,9 @@ impl<S: FactoryAdmissionStore + 'static> FactoryAdmissionHandlers<S> {
       .await?;
       return Ok(outcome.into());
     }
-    let request = self.prepare_fresh_intent(context, command, probe, pinned_input).await?;
+    let request = self
+      .prepare_fresh_intent(context, command, probe, pinned_input, origin)
+      .await?;
     self
       .store
       .admit_factory_work(audited_mutation(context, request)?)
@@ -274,6 +324,7 @@ impl<S: FactoryAdmissionStore + 'static> FactoryAdmissionHandlers<S> {
     command: FactoryWorkAdmissionIntent,
     probe: FactoryAdmissionProbe,
     pinned_input: Option<&octacity_server_factory::WorkSourceInput>,
+    origin: octacity_server_factory::FactoryAdmissionOrigin,
   ) -> Result<AdmitFactoryWork, ApplicationError> {
     command.validate_source()?;
     self.require_visible_dependencies(context, &command).await?;
@@ -289,6 +340,7 @@ impl<S: FactoryAdmissionStore + 'static> FactoryAdmissionHandlers<S> {
       .await?;
     let configuration = &admission_context.configuration.configuration;
     validate_admission_project(&admission_context, command.project_id)?;
+    validate_launch_policy(&admission_context, origin)?;
     command
       .profile_overrides
       .validate(&configuration.flow().closure, command.project_id)
@@ -463,6 +515,23 @@ pub(crate) async fn authorize_project_admission(
   Ok(())
 }
 
+/// Uses exact retained contents. Callers assign origin from their trusted ingress, never task metadata.
+pub(crate) fn validate_launch_policy(
+  selected: &octacity_server_store::FactoryAdmissionContext,
+  origin: octacity_server_factory::FactoryAdmissionOrigin,
+) -> Result<(), ApplicationError> {
+  let policies = selected
+    .project_policies
+    .as_ref()
+    .map_err(|missing| crate::factory_configuration_policies::prerequisite(*missing))?;
+  if !policies.launch_policy.definition().allows(origin) {
+    return Err(ApplicationError::FactoryValidation(Box::new(
+      crate::FactoryValidationDiagnostics::single_issue("/admission_policy", "launch_policy_denied", None),
+    )));
+  }
+  Ok(())
+}
+
 // Shared ordinary Work/Run construction after trusted source resolution.
 pub(super) fn materialize_resolved_admission(
   command: FactoryWorkAdmissionIntent,
@@ -494,6 +563,13 @@ fn materialize_subject_admission(
   .map_err(|_| ApplicationError::invalid())?;
   let run = FactoryRun::admitted(FactoryRunId::generate(), &work);
   let flow = octacity_server_factory::AdmittedFlow::from_configuration(configuration, &run)
+    .and_then(|flow| {
+      let policies = admission_context
+        .project_policies
+        .as_ref()
+        .map_err(|_| octacity_server_factory::FactoryError::InconsistentSubject)?;
+      flow.with_access_profile(configuration, policies.access_profile.clone())
+    })
     .map_err(|_| ApplicationError::invalid())?;
   Ok(AdmitFactoryWork {
     probe,

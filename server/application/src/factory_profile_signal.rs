@@ -233,7 +233,7 @@ impl<S: FactoryRunStore + 'static> FactoryProfileSelectionDriver for FactoryProf
     let effective = resolve_factory_permissions(
       &profile.project_permissions,
       snapshot.admitted_flow.limits().permissions(),
-      node.permissions(),
+      &snapshot.admitted_flow.execution_permissions(node.permissions()),
       &profile.local_permissions,
     )
     .map_err(|_| ApplicationError::invalid())?;

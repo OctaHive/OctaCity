@@ -124,6 +124,10 @@ impl<S: IssueExecutionStore + octacity_server_store::IssueStore, F: FactoryAdmis
       })
       .await?;
     crate::factory_admission::validate_admission_project(&selected, intent.project_id)?;
+    crate::factory_admission::validate_launch_policy(
+      &selected,
+      octacity_server_factory::FactoryAdmissionOrigin::Manual,
+    )?;
     let mut actions =
       crate::factory_issue_status_authoring::flow_issue_status_selections(selected.configuration.configuration.flow())
         .peekable();

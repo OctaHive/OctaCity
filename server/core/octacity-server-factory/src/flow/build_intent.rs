@@ -140,10 +140,16 @@ impl FlowBuildIntent {
       }
     }
     .ok_or_else(invalid)?;
-    let permissions = candidate.map_or_else(
+    let mut permissions = candidate.map_or_else(
       || declared.permissions().clone(),
       |candidate| candidate.profile.definition().execution_permissions(),
     );
+    if let Some(profile) = admitted.access_profile() {
+      if profile.reference().project_id != input.subject().project_id() {
+        return Err(invalid());
+      }
+      permissions = admitted.execution_permissions(&permissions);
+    }
     if node.factory_run_id() != input.factory_run_id()
       || node.flow_run_id() != input.flow_run_id()
       || node.workflow_cycle_id() != input.cycle_id()

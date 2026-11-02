@@ -113,13 +113,14 @@ async fn stage_target(fixture: &mut Fixture, update: &FactoryStageSourceUpdate, 
     FactoryConfigurationId::generate(),
     Some(flow),
   );
-  fixture
-    .store
-    .seed_factory_configuration_version(PublishedFactoryConfiguration {
+  crate::factory_admission_tests::seed_permitted_configuration(
+    &fixture.store,
+    PublishedFactoryConfiguration {
       configuration: target.clone(),
       published_at: time(4),
-    })
-    .unwrap();
+    },
+  )
+  .unwrap();
   fixture.intent.inputs[0].definition.target = target.reference().clone();
 }
 

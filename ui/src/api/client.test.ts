@@ -246,6 +246,7 @@ it.each([
   'budget_exceeds_ceiling',
   'concurrency_exceeds_ceiling',
   'unmapped_legacy_policy',
+  'launch_policy_denied',
   'permission_exceeds_ceiling',
 ])('retains the authoritative %s validation code', async (code) => {
   const client = createManagementApiClient(async () =>

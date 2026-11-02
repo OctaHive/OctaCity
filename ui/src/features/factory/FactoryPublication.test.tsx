@@ -104,6 +104,10 @@ it('explains the exact locally exceeded budget with requested value and enclosin
   expect(screen.getByRole('button', { name: 'Step 1 · Maximum tokens' })).toBeTruthy();
 });
 it.each([
+  [
+    'launch_policy_denied',
+    'The selected launch policy does not allow this way of starting the pipeline. Choose an appropriate policy in the Configuration.',
+  ],
   ['budget_exceeds_ceiling', 'Budget exceeds its enclosing limit'],
   ['concurrency_exceeds_ceiling', 'Concurrency exceeds its enclosing limit'],
   [

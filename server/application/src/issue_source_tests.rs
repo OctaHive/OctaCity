@@ -1970,3 +1970,96 @@ fn issue_timeline_binds_source_watermark_and_marks_only_changed_source_section_s
     );
   });
 }
+
+#[test]
+fn explicit_execution_of_an_imported_issue_uses_manual_launch_rules() {
+  use octacity_server_domain::RepositoryId;
+  use octacity_server_factory::FactoryConfigurationId;
+  use octacity_server_store::{IssueExecutionStore as _, IssueStore as _, testing::MutationEvidenceProbe as _};
+  run_ready(async {
+    for manual in [false, true] {
+      let store = Arc::new(InMemoryProjectStore::new());
+      let project_id = project(&store).await;
+      let policy = Arc::new(TrustedNetworkManagementPolicy);
+      let imports = AuthorizedCommandHandler::new(
+        policy.clone(),
+        Arc::new(source_handlers(
+          store.clone(),
+          Arc::new(Reader::default()),
+          policy.clone(),
+        )),
+      );
+      let link = linked(
+        imports
+          .handle_command(&context(), import(selection(project_id), "imported-task"))
+          .await
+          .unwrap(),
+      );
+      let imported = store.issue(project_id, link.issue_id, None).await.unwrap();
+      let mut content = imported.content.clone();
+      content.acceptance = Some("Retain a reviewed triage decision".into());
+      let edits = AuthorizedCommandHandler::new(
+        policy.clone(),
+        Arc::new(IssueHandlers::new(store.clone(), policy.clone())),
+      );
+      let issue = edits
+        .handle_command(
+          &context(),
+          EditIssueCommand {
+            intent: EditIssueIntent {
+              project_id,
+              id: imported.id,
+              expected_version: imported.version,
+              content,
+            },
+            idempotency_key: key("review-acceptance"),
+            edited_at: at(31),
+          },
+        )
+        .await
+        .unwrap()
+        .issue;
+      let configuration = FactoryConfigurationId::generate();
+      let repository_id = RepositoryId::generate();
+      let factory = crate::factory_admission_tests::seeded_store_with_launch_rules(
+        project_id,
+        configuration,
+        crate::factory_admission_tests::repository(project_id, repository_id, Some("refs/heads/main".parse().unwrap())),
+        manual,
+        !manual,
+      );
+      let requests = AuthorizedCommandHandler::new(
+        policy.clone(),
+        Arc::new(IssueExecutionHandlers::new(store.clone(), factory.clone(), policy)),
+      );
+      let before = store.mutation_evidence_counts().await;
+      let result = requests
+        .handle_command(
+          &context(),
+          super::execution::request(&issue, configuration, repository_id, "execute-imported"),
+        )
+        .await;
+      if manual {
+        assert!(
+          result.is_ok(),
+          "explicit imported-Issue execution is manual: {result:?}"
+        );
+      } else {
+        let error = result.unwrap_err();
+        let Some(ApplicationError::FactoryValidation(diagnostics)) = error.application() else {
+          panic!("expected launch-policy denial: {error:?}")
+        };
+        assert_eq!(diagnostics.errors[0].code, "launch_policy_denied");
+        assert_eq!(store.mutation_evidence_counts().await, before);
+        assert!(
+          store
+            .issue_executions(project_id, issue.id, None, None, 10)
+            .await
+            .unwrap()
+            .items
+            .is_empty()
+        );
+      }
+    }
+  });
+}

@@ -93,6 +93,14 @@ impl Fixture {
     Self::enabled_with_flow(provider, None).await
   }
   pub(super) async fn enabled_with_flow(provider: &str, flow: Option<FactoryFlowConfiguration>) -> Self {
+    Self::enabled_with_launch_rules(provider, flow, true, true).await
+  }
+  pub(super) async fn enabled_with_launch_rules(
+    provider: &str,
+    flow: Option<FactoryFlowConfiguration>,
+    manual: bool,
+    automatic: bool,
+  ) -> Self {
     let root = tempfile::tempdir().unwrap();
     let dir = root.path().join(provider);
     std::fs::create_dir(&dir).unwrap();
@@ -110,6 +118,17 @@ impl Fixture {
         configuration: config.clone(),
         published_at: time(1),
       })
+      .unwrap();
+    store
+      .seed_factory_configuration_policies(
+        config.reference(),
+        octacity_server_store::testing::factory_project_policies_with_access(
+          project,
+          manual,
+          automatic,
+          config.flow().limits.permissions().clone(),
+        ),
+      )
       .unwrap();
     let repository = repository(project, RepositoryId::generate(), None);
     store.seed_repository_version(repository.clone()).unwrap();

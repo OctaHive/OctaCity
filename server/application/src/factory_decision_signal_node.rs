@@ -170,7 +170,7 @@ impl<S> FactoryDecisionSignalNodeExecutor<S> {
       })
       .ok_or_else(ApplicationError::invalid)?;
     let binding = &profile.binding;
-    let permissions = node.permissions();
+    let permissions = request.admitted.execution_permissions(node.permissions());
     if request.run_id != request.input.factory_run_id()
       || request.input.subject().project_id() != binding.project_id
       || node.kind() != FlowNodeKind::DecisionSignal
@@ -188,11 +188,11 @@ impl<S> FactoryDecisionSignalNodeExecutor<S> {
     let effective = resolve_factory_permissions(
       &binding.project_permissions,
       request.admitted.limits().permissions(),
-      permissions,
+      &permissions,
       &binding.local_permissions,
     )
     .map_err(|_| ApplicationError::invalid())?;
-    if &effective != permissions {
+    if effective != permissions {
       return Err(ApplicationError::invalid());
     }
     for output in &binding.outputs {

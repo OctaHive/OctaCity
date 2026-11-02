@@ -3,6 +3,81 @@ use crate::*;
 use crate::flow_test_support::*;
 
 #[test]
+fn retained_project_access_restricts_build_authority_and_survives_round_trip() {
+  let work = work();
+  let binding = binding(work.subject().project_id());
+  let grants = |restricted| {
+    FactoryPermissionSet::try_new(FactoryPermissionDraft {
+      plugins: vec![binding.plugin.clone()],
+      executables: vec![binding.tool.clone()],
+      tools: if restricted {
+        vec![reference("search")]
+      } else {
+        vec![reference("search"), reference("write")]
+      },
+      network_hosts: if restricted {
+        vec![NetworkHost::new("read.example").unwrap()]
+      } else {
+        vec![
+          NetworkHost::new("read.example").unwrap(),
+          NetworkHost::new("write.example").unwrap(),
+        ]
+      },
+      secret_profiles: if restricted {
+        vec![key("reader")]
+      } else {
+        vec![key("reader"), key("writer")]
+      },
+      mounts: vec![MountPermission::new(
+        FactoryPath::new(if restricted { "/workspace/docs" } else { "/workspace" }).unwrap(),
+        if restricted {
+          MountMode::ReadOnly
+        } else {
+          MountMode::ReadWrite
+        },
+      )],
+      ..Default::default()
+    })
+    .unwrap()
+  };
+  let broad = grants(false);
+  let restricted = grants(true);
+  let profile = FactoryAccessProfile::publish(
+    FactoryAccessProfileId::generate(),
+    work.subject().project_id(),
+    FactoryAccessProfileDefinition {
+      name: FactoryText::new("Read documentation").unwrap(),
+      permissions: restricted.clone(),
+    },
+  )
+  .unwrap();
+  let (_, admitted, _, input, attempt) =
+    execution_fixture_with_permissions(FlowNodeKind::Reasoning, work, binding, None, broad.clone());
+  let legacy = FlowBuildIntent::new(input.clone(), &admitted, attempt.clone(), BudgetUsage::default(), 0).unwrap();
+  assert_eq!(legacy.permissions(), &broad);
+  let mut frozen = serde_json::to_value(&admitted).unwrap();
+  frozen["access_profile"] = serde_json::to_value(&profile).unwrap();
+  let restored: AdmittedFlow = serde_json::from_value(frozen).unwrap();
+  restored.validated().unwrap();
+  let intent = FlowBuildIntent::new(input.clone(), &restored, attempt.clone(), BudgetUsage::default(), 0).unwrap();
+  assert_eq!(intent.permissions(), &restricted);
+  assert_ne!(intent.operation_id().unwrap(), legacy.operation_id().unwrap());
+  FlowBuildIntent::restore(
+    &serde_json::to_vec(&intent).unwrap(),
+    &input,
+    &restored,
+    &attempt,
+    intent.operation_id().unwrap(),
+  )
+  .unwrap();
+  assert!(
+    legacy.verify_admission(&restored).is_err(),
+    "an earlier broad intent cannot bypass the frozen ceiling"
+  );
+  assert_eq!(restored.access_profile(), Some(&profile));
+}
+
+#[test]
 fn confirmed_failures_do_not_occupy_capacity_after_a_later_configured_retry_completes() {
   let time = |value| octacity_server_domain::Timestamp::from_unix_millis(value).unwrap();
   let (_, admitted, schema, input, original) = execution_fixture_with_retries(FlowNodeKind::Reasoning, 2);

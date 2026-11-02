@@ -58,12 +58,14 @@ fn fixture() -> (
   let command = command(project, configuration.reference().id(), repository_id);
   let store = Arc::new(InMemoryFactoryConfigurationStore::new());
   store.seed_project(project).unwrap();
-  store
-    .seed_factory_configuration_version(PublishedFactoryConfiguration {
+  crate::factory_admission_tests::seed_permitted_configuration(
+    &store,
+    PublishedFactoryConfiguration {
       configuration: configuration.clone(),
       published_at: time(1),
-    })
-    .unwrap();
+    },
+  )
+  .unwrap();
   store
     .seed_repository_version(repository(
       project,

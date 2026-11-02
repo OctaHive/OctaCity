@@ -99,6 +99,43 @@ impl InMemoryFactoryConfigurationStore {
     Ok(())
   }
 
+  /// Seeds an explicitly resolved policy context for one exact retained Configuration.
+  /// Missing entries remain unresolved; seeding a Configuration never grants launch access.
+  pub fn seed_factory_configuration_policies(
+    &self,
+    reference: &octacity_server_factory::FactoryConfigurationRef,
+    policies: crate::FactoryResolvedConfigurationPolicies,
+  ) -> Result<(), StoreError> {
+    let mut state = self.lock()?;
+    let key = (reference.id(), reference.version());
+    let configuration = state
+      .versions
+      .get(&key)
+      .filter(|saved| saved.configuration.reference() == reference)
+      .ok_or_else(|| not_found(EntityKind::FactoryConfiguration))?;
+    if policies.launch_policy.reference().project_id != reference.project_id()
+      || policies.access_profile.reference().project_id != reference.project_id()
+      || configuration
+        .configuration
+        .admission_policy()
+        .project_policy()
+        .is_some_and(|pin| pin != policies.launch_policy.reference())
+      || configuration
+        .configuration
+        .permission_ceiling()
+        .project_policy()
+        .is_some_and(|pin| pin != policies.access_profile.reference())
+      || state
+        .project_policies
+        .get(&key)
+        .is_some_and(|saved| saved.as_ref() != &policies)
+    {
+      return Err(conflict());
+    }
+    state.project_policies.insert(key, Box::new(policies));
+    Ok(())
+  }
+
   /// Seeds one admitted Factory Run for worker and store contract tests.
   pub fn seed_factory_run(
     &self,
@@ -193,6 +230,8 @@ pub(super) struct FactoryConfigurationMemoryState {
   pub(super) choices: BTreeMap<ProjectId, FactoryConfigurationChoices>,
   current_versions: BTreeMap<FactoryConfigurationId, FactoryConfigurationVersion>,
   pub(super) versions: BTreeMap<(FactoryConfigurationId, FactoryConfigurationVersion), PublishedFactoryConfiguration>,
+  project_policies:
+    BTreeMap<(FactoryConfigurationId, FactoryConfigurationVersion), Box<crate::FactoryResolvedConfigurationPolicies>>,
   pub(super) repositories: BTreeMap<
     (
       octacity_server_domain::RepositoryId,
@@ -526,7 +565,11 @@ impl FactoryAdmissionStore for InMemoryFactoryConfigurationStore {
       _ => return Err(conflict()),
     };
     Ok(FactoryAdmissionContext {
-      project_policies: Err(crate::FactoryPolicyPrerequisite::LaunchUnmapped),
+      project_policies: state
+        .project_policies
+        .get(&(request.configuration_id, request.configuration_version))
+        .cloned()
+        .ok_or(crate::FactoryPolicyPrerequisite::LaunchUnmapped),
       configuration,
       repository,
     })
@@ -891,6 +934,15 @@ pub(super) fn admit_factory_work_locked(
     ));
   }
   request.validate_configuration(&configuration.configuration)?;
+  request.validate_access_profile(
+    state
+      .project_policies
+      .get(&(
+        request.work.configuration().id(),
+        request.work.configuration().version(),
+      ))
+      .map(|policies| policies.access_profile.reference()),
+  )?;
   let active_runs = state
     .factory_runs
     .values()

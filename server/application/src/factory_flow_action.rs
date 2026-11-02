@@ -25,7 +25,7 @@ pub struct FactoryFlowActionRequest<'a> {
   /// Published contracts for the finite declared outputs.
   pub schemas: &'a [FlowDataSchema],
   /// Maximum authority; the plugin must enforce it before any effect.
-  pub permissions: &'a FactoryPermissionSet,
+  pub permissions: FactoryPermissionSet,
   /// Hard resource ceiling; the plugin must enforce it during execution.
   pub budget: BudgetLimit,
   /// Authoritative stop deadline, never extended by a retry.
@@ -98,6 +98,7 @@ impl FactoryFlowActionAdapter {
       .node(request.attempt.node_key())
       .ok_or_else(ApplicationError::invalid)?;
     let binding = node.action().ok_or_else(ApplicationError::invalid)?;
+    let permissions = request.admitted.execution_permissions(node.permissions());
     if request.input.factory_run_id() != request.run_id
       || request.input.node() != request.attempt.node_key()
       || request.input.digest().map_err(|_| ApplicationError::invalid())? != request.attempt.input_digest()
@@ -106,7 +107,7 @@ impl FactoryFlowActionAdapter {
       || request.attempt.budget() != node.budget()
       || executing && request.observed_at >= request.attempt.deadline()
       || binding.plugin() != &self.plugin.identity()
-      || !node.permissions().plugins().any(|allowed| allowed == binding.plugin())
+      || !permissions.plugins().any(|allowed| allowed == binding.plugin())
       || request.attempt.execution() != &NodeExecutionIdentity::External(binding.plugin().clone())
     {
       return Err(ApplicationError::invalid());
@@ -138,7 +139,7 @@ impl FactoryFlowActionAdapter {
       binding,
       input: request.input,
       schemas: request.admitted.data_schemas(),
-      permissions: node.permissions(),
+      permissions,
       budget: node.budget(),
       deadline: request.attempt.deadline(),
       started_at: request.attempt.started_at(),

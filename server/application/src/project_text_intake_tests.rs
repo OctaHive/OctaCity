@@ -247,13 +247,27 @@ fn fixture() -> (
   Arc<RecordingResolver>,
   ProjectTextSubmission,
 ) {
+  fixture_with_launch_rules(true, true)
+}
+
+fn fixture_with_launch_rules(
+  manual: bool,
+  automatic: bool,
+) -> (
+  Arc<InMemoryFactoryConfigurationStore>,
+  Arc<Bytes>,
+  Arc<RecordingResolver>,
+  ProjectTextSubmission,
+) {
   let project = ProjectId::generate();
   let configuration = FactoryConfigurationId::generate();
   let repo = RepositoryId::generate();
-  let store = seeded_store(
+  let store = crate::factory_admission_tests::seeded_store_with_launch_rules(
     project,
     configuration,
     repository(project, repo, Some("refs/heads/main".parse().unwrap())),
+    manual,
+    automatic,
   );
   let bytes = Arc::new(Bytes {
     store: store.clone(),
@@ -271,6 +285,38 @@ fn fixture() -> (
     submission(project, configuration, repo),
   )
 }
+#[test]
+fn manual_policy_denial_prevents_project_text_reservation_revision_and_artifact_io() {
+  run(async {
+    let (store, bytes, resolver, submission) = fixture_with_launch_rules(false, true);
+    let intake = ProjectTextIntake::new(
+      store.clone(),
+      bytes.clone(),
+      resolver.clone(),
+      Arc::new(TrustedNetworkManagementPolicy),
+      Arc::new(Clock),
+    );
+    let error = intake.submit(&context(), submission.clone()).await.unwrap_err();
+    let ApplicationError::FactoryValidation(diagnostics) = error else {
+      panic!("expected policy denial: {error:?}")
+    };
+    assert_eq!(diagnostics.errors[0].code, "launch_policy_denied");
+    assert_eq!(resolver.call_count(), 0);
+    assert_eq!(bytes.writes.load(Ordering::SeqCst), 0);
+    assert!(
+      store
+        .project_text_preparation(
+          submission.intent.target.project_id,
+          &context().security_scope().to_store(),
+          &submission.intent.idempotency_key
+        )
+        .await
+        .unwrap()
+        .is_none()
+    );
+  });
+}
+
 struct Deny(ManagementResourceKind);
 #[async_trait::async_trait]
 impl ManagementAuthorizationPolicy for Deny {

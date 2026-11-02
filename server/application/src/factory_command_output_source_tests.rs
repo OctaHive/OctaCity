@@ -288,6 +288,51 @@ fn command_success_with_terminal_failure_facts_cannot_supply_semantic_evidence()
 }
 
 #[test]
+fn revoked_installation_blocks_retained_build_recovery_without_selecting_another_profile() {
+  crate::factory_admission_tests::run_ready(async {
+    let (_, _, profile) = crate::factory_command_tests::command_fixture();
+    let fixture = prepared(profile).await;
+    let build = fixture.query.build.build.id;
+    let attempt = fixture.query.attempt.id;
+    assert!(matches!(
+      fixture
+        .source(fixture.query.clone())
+        .published_outputs(build, attempt, 1000)
+        .await
+        .unwrap(),
+      FactoryNodeBuildOutputObservation::Verified(_)
+    ));
+    let before = fixture
+      .runs
+      .factory_run_snapshot(fixture.intent.input().factory_run_id())
+      .await
+      .unwrap();
+    let mut revoked = fixture.profile.clone();
+    revoked.local_permissions = LocalPermissionCeiling::fully_enforced(FactoryPermissionSet::deny_all());
+    let mut newer = fixture.profile.clone();
+    newer.identity = fixtures::reference("replacement-command");
+    let source = FactoryCommandBuildOutputSource::new(
+      fixture.runs.clone(),
+      Arc::new(fixture.query.clone()),
+      fixture.artifacts.clone(),
+      fixture.bytes.clone(),
+      vec![revoked, newer],
+      fixture.clock.clone(),
+    )
+    .unwrap();
+    assert!(source.published_outputs(build, attempt, 1000).await.is_err());
+    assert_eq!(
+      fixture
+        .runs
+        .factory_run_snapshot(fixture.intent.input().factory_run_id())
+        .await
+        .unwrap(),
+      before
+    );
+  });
+}
+
+#[test]
 fn retained_command_json_uses_installed_schema_and_charges_server_wall_time() {
   crate::factory_admission_tests::run_ready(async {
     let (_, _, profile) = crate::factory_command_tests::command_fixture();

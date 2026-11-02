@@ -706,6 +706,13 @@ async fn stage_owned_effects_override_input_mapping_and_keep_original_target_aft
         published_at: time(2),
       })
       .unwrap();
+    fixture
+      .store
+      .seed_factory_configuration_policies(
+        config.reference(),
+        octacity_server_store::testing::factory_project_policies(config.reference().project_id(), true, true),
+      )
+      .unwrap();
     let source = WorkSourceCapability {
       project_id: fixture.input.project_id(),
       role: WorkSourceCapabilityRole::Source,

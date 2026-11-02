@@ -216,7 +216,7 @@ fn issue_execution_requires_real_acceptance_but_manual_drafts_remain_valid() {
     }
   });
 }
-fn request(
+pub(super) fn request(
   issue: &IssueRevision,
   configuration_id: FactoryConfigurationId,
   repository_id: RepositoryId,
@@ -874,16 +874,18 @@ fn issue_execution_rejects_a_local_action_for_another_workflow_before_reserving_
     );
     let factory = Arc::new(testing::InMemoryFactoryConfigurationStore::new());
     factory.seed_project(issue.project_id).unwrap();
-    factory
-      .seed_factory_configuration_version(PublishedFactoryConfiguration {
+    crate::factory_admission_tests::seed_permitted_configuration(
+      &factory,
+      PublishedFactoryConfiguration {
         configuration: crate::factory_admission_tests::configuration_with_flow(
           issue.project_id,
           target.configuration_id,
           Some(flow),
         ),
         published_at: at(1),
-      })
-      .unwrap();
+      },
+    )
+    .unwrap();
     factory.seed_repository_version(selected.repository.unwrap()).unwrap();
     let before = store.mutation_evidence_counts().await;
     let commands = AuthorizedCommandHandler::new(

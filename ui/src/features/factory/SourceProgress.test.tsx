@@ -212,3 +212,24 @@ it('correlates pending reporting to the exact nested stage outcome and action be
   expect(within(panel).getByText('Awaiting external confirmation')).toBeTruthy();
   expect(diagnostics).toHaveBeenCalledTimes(1);
 });
+
+it('distinguishes a blocked automatic launch from provider failures without claiming admission', async () => {
+  const data = integrationFixture('WorkSourceDiagnostics');
+  data.scan = {
+    started_at: 123,
+    window: [10, 20],
+    reconciliation: false,
+    selection: null,
+    schedule: { retry_at: 123, attempts: 0, failure: 'policy_denied', exhausted: true },
+  };
+  data.admissions = [];
+  fixture(data);
+  await userEvent.click(
+    await screen.findByRole('button', { name: 'Source and reporting progress' }),
+  );
+  const panel = await screen.findByRole('region', { name: 'Retained source progress' });
+  expect(
+    within(panel).getByText(/Automatic admission denied by the pinned launch policy/),
+  ).toBeTruthy();
+  expect(within(panel).queryByRole('link', { name: 'Open Run' })).toBeNull();
+});

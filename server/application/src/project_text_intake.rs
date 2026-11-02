@@ -71,6 +71,10 @@ impl<S: ProjectTextInputStore + 'static, B: ArtifactBytePublisher + ArtifactByte
     }
     let selected = self.store.factory_admission_context(submission.intent.target).await?;
     crate::factory_admission::validate_admission_project(&selected, submission.intent.target.project_id)?;
+    crate::factory_admission::validate_launch_policy(
+      &selected,
+      octacity_server_factory::FactoryAdmissionOrigin::Manual,
+    )?;
     let source = crate::manual_trigger::select_source(
       &submission.intent.source,
       selected.repository.as_ref().ok_or_else(ApplicationError::invalid)?,

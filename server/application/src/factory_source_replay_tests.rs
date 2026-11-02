@@ -254,6 +254,9 @@ fn input_replacement_and_rotated_installation_descriptors_recover_the_original_i
         published_at: time(10),
       })
       .unwrap();
+    store
+      .seed_factory_configuration_policies(target.reference(), launch_policies(project, false, false))
+      .unwrap();
     for reference in [
       &mut authorized.capability.binding.installation,
       &mut authorized.capability.binding.configuration,
@@ -316,7 +319,11 @@ fn input_replacement_and_rotated_installation_descriptors_recover_the_original_i
       Arc::new(crate::TrustedNetworkManagementPolicy),
       Arc::new(InstalledSource(authorized)),
     );
-    assert_eq!(handler.recover(recovery(&fresh)).await.unwrap(), None);
+    let error = handler.recover(recovery(&fresh)).await.unwrap_err();
+    let ApplicationError::FactoryValidation(report) = error else {
+      panic!("expected closed replacement policy: {error:?}")
+    };
+    assert_eq!(report.errors[0].code, "launch_policy_denied");
     assert_eq!(resolver.call_count(), 1);
     assert_eq!(store.mutation_evidence_counts().await.idempotency, 1);
   });

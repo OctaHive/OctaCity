@@ -47,7 +47,7 @@ pub(crate) fn retained_action_request<'a>(
     binding: node.action().unwrap(),
     input,
     schemas: snapshot.admitted_flow.data_schemas(),
-    permissions: node.permissions(),
+    permissions: snapshot.admitted_flow.execution_permissions(node.permissions()),
     budget: node.budget(),
     deadline: attempt.deadline(),
     started_at: attempt.started_at(),

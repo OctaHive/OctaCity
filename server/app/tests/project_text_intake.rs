@@ -106,6 +106,13 @@ async fn setup_with_flow(
   store: &PostgresStore,
   flow: Option<FactoryFlowConfiguration>,
 ) -> (IssueRevision, ProjectTextSubmission) {
+  setup_target(store, flow, true).await
+}
+async fn setup_target(
+  store: &PostgresStore,
+  flow: Option<FactoryFlowConfiguration>,
+  project_policies: bool,
+) -> (IssueRevision, ProjectTextSubmission) {
   let project = ProjectId::generate();
   store
     .create_project(management_mutation(CreateProject {
@@ -161,6 +168,26 @@ async fn setup_with_flow(
   if let Some(flow) = flow {
     f.draft.hard_budget = flow.limits.budget();
     f.draft.flow = Some(flow);
+  }
+  if project_policies {
+    let policies = octacity_server_store::testing::factory_project_policies_with_access(
+      project,
+      true,
+      true,
+      f.draft
+        .flow
+        .as_ref()
+        .map_or_else(octacity_server_factory::FactoryPermissionSet::deny_all, |flow| {
+          flow.limits.permissions().clone()
+        }),
+    );
+    octacity_server_store::testing::publish_factory_project_policies_fixture(store, &policies).await;
+    f.draft.admission_policy = octacity_server_factory::FactoryPolicySelection::Project {
+      project_policy: policies.launch_policy.reference().clone(),
+    };
+    f.draft.permission_ceiling = octacity_server_factory::FactoryPolicySelection::Project {
+      project_policy: policies.access_profile.reference().clone(),
+    };
   }
   let id = FactoryConfigurationId::generate();
   let digest = FactoryDigest::from_bytes([7; 32]);
@@ -1539,7 +1566,8 @@ async fn issue_execution_http_resumes_original_inputs_after_runtime_restart() {
 async fn runtime_backfills_only_upgrade_work_without_factory_or_provider() {
   let database = postgres::TestDatabase::before_issue_backfill().await;
   let store = Arc::new(PostgresStore::new(database.pool.clone()));
-  let (draft, submission) = setup(&store).await;
+  let (draft, submission) = setup_target(&store, None, false).await;
+  let original = legacy::admit(&database.pool, &store, &submission).await;
   let intake = ProjectTextIntake::new(
     store.clone(),
     Arc::new(Bytes::new()),
@@ -1547,7 +1575,6 @@ async fn runtime_backfills_only_upgrade_work_without_factory_or_provider() {
     Arc::new(TrustedNetworkManagementPolicy),
     Arc::new(Clock(AtomicI64::new(20))),
   );
-  let original = intake.submit(&context(), submission.clone()).await.unwrap().admission;
   let mut url = url::Url::parse(&std::env::var("OCTACITY_POSTGRES_URL").unwrap()).unwrap();
   url.set_path(&database.name);
   let root = tempfile::tempdir().unwrap();
@@ -1626,3 +1653,6 @@ async fn runtime_backfills_only_upgrade_work_without_factory_or_provider() {
 
 #[path = "support/pilot_controls.rs"]
 mod pilot_controls;
+
+#[path = "project_text_intake/legacy.rs"]
+mod legacy;

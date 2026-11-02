@@ -351,6 +351,14 @@ pub fn source_scan_schedule(
       class,
       retry_after_millis,
     } => (*class, *retry_after_millis),
+    ApplicationError::FactoryValidation(diagnostics)
+      if diagnostics
+        .errors
+        .iter()
+        .any(|issue| issue.code == "launch_policy_denied") =>
+    {
+      (WorkSourceFailure::PolicyDenied, None)
+    }
     ApplicationError::CapabilityUnavailable => (WorkSourceFailure::Unavailable, None),
     ApplicationError::Store(StoreError::Unavailable) => (WorkSourceFailure::Transient, None),
     ApplicationError::Store(StoreError::Conflict {
@@ -362,7 +370,10 @@ pub fn source_scan_schedule(
   let previous = previous.map_or(0, |v| v.attempts);
   let neutral = matches!(
     class,
-    WorkSourceFailure::Cancelled | WorkSourceFailure::AdmissionCapacity | WorkSourceFailure::RetentionPending
+    WorkSourceFailure::Cancelled
+      | WorkSourceFailure::AdmissionCapacity
+      | WorkSourceFailure::RetentionPending
+      | WorkSourceFailure::PolicyDenied
   );
   let attempts = if neutral { previous } else { previous.saturating_add(1) };
   let earliest = hint.map(|v| add(u64::from(v))).transpose()?;
@@ -378,7 +389,10 @@ pub fn source_scan_schedule(
     exhausted: next.is_none()
       || matches!(
         class,
-        WorkSourceFailure::InvalidConfiguration | WorkSourceFailure::ProtocolFault | WorkSourceFailure::Conflict
+        WorkSourceFailure::InvalidConfiguration
+          | WorkSourceFailure::ProtocolFault
+          | WorkSourceFailure::Conflict
+          | WorkSourceFailure::PolicyDenied
       ),
   })
 }

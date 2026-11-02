@@ -244,6 +244,7 @@ function publicValidationIssues(value: unknown): readonly ManagementValidationIs
       (issue.code !== 'invalid_contract' &&
         issue.code !== 'unavailable_reference' &&
         issue.code !== 'unmapped_legacy_policy' &&
+        issue.code !== 'launch_policy_denied' &&
         issue.code !== 'permission_exceeds_ceiling' &&
         issue.code !== 'budget_exceeds_ceiling' &&
         issue.code !== 'concurrency_exceeds_ceiling')

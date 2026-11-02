@@ -158,12 +158,14 @@ fn selected_documents(unsupported_repository_context: bool) {
     .unwrap();
     request.configuration_id = FactoryConfigurationId::generate();
     request.admitted_at = time(22);
-    store
-      .seed_factory_configuration_version(PublishedFactoryConfiguration {
+    crate::factory_admission_tests::seed_permitted_configuration(
+      &store,
+      PublishedFactoryConfiguration {
         configuration: configuration_with_flow(request.project_id, request.configuration_id, Some(flow)),
         published_at: time(21),
-      })
-      .unwrap();
+      },
+    )
+    .unwrap();
     let admission = admit(
       &FactoryAdmissionHandlers::new(store.clone(), resolver.clone()).with_repositories(repositories),
       request,

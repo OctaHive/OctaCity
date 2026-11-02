@@ -15,6 +15,8 @@ pub struct AdmittedFlow {
   closure: PinnedFlowDefinitionClosure,
   #[serde(default, skip_serializing_if = "Vec::is_empty")]
   code_pins: Vec<super::FlowCodePin>,
+  #[serde(default, skip_serializing_if = "Option::is_none")]
+  access_profile: Option<Box<crate::FactoryAccessProfile>>,
   limits: FlowAdmissionLimits,
   wip_limits: crate::FactoryWipLimits,
   root_run: FlowRun,
@@ -39,6 +41,7 @@ impl AdmittedFlow {
     let admitted = Self {
       closure,
       code_pins: vec![],
+      access_profile: None,
       limits,
       wip_limits,
       root_run,
@@ -48,6 +51,42 @@ impl AdmittedFlow {
     };
     admitted.validate_root_bindings()?;
     Ok(admitted)
+  }
+
+  /// Freezes the exact resolved ceiling with the accepted Run, including legacy mappings.
+  /// Historical Runs without this field retain their original execution contract.
+  pub fn with_access_profile(
+    mut self,
+    configuration: &FactoryConfiguration,
+    profile: crate::FactoryAccessProfile,
+  ) -> Result<Self, FactoryError> {
+    if self.closure != configuration.flow().closure
+      || profile.reference().project_id != configuration.reference().project_id()
+      || configuration
+        .permission_ceiling()
+        .project_policy()
+        .is_some_and(|pin| pin != profile.reference())
+    {
+      return Err(FactoryError::InconsistentSubject);
+    }
+    self.access_profile = Some(Box::new(profile));
+    Ok(self)
+  }
+
+  /// Original reviewed ceiling, never a lookup of a current profile or Project default.
+  #[must_use]
+  pub fn access_profile(&self) -> Option<&crate::FactoryAccessProfile> {
+    self.access_profile.as_deref()
+  }
+
+  /// Narrows a step or selected Profile using the original accepted Project ceiling.
+  /// Independent current installation and Agent/backend checks still apply at dispatch.
+  #[must_use]
+  pub fn execution_permissions(&self, requested: &crate::FactoryPermissionSet) -> crate::FactoryPermissionSet {
+    self.access_profile().map_or_else(
+      || requested.clone(),
+      |profile| requested.intersection(&profile.definition().permissions),
+    )
   }
 
   /// Admits the exact journey selected by the immutable configuration.

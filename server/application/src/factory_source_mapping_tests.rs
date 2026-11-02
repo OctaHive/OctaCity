@@ -20,13 +20,28 @@ async fn reserved_with_snapshot(
   octacity_server_store::WorkSourcePreparation,
   WorkSourceScanClaim,
 ) {
+  reserved_with_launch_rules(provider, edit, true, true).await
+}
+
+async fn reserved_with_launch_rules(
+  provider: &str,
+  edit: impl FnOnce(&mut WorkSourceSnapshot),
+  manual: bool,
+  automatic: bool,
+) -> (
+  Arc<InMemoryFactoryConfigurationStore>,
+  octacity_server_store::WorkSourcePreparation,
+  WorkSourceScanClaim,
+) {
   let project = ProjectId::generate();
   let configuration = FactoryConfigurationId::generate();
   let repository_id = RepositoryId::generate();
-  let store = seeded_store(
+  let store = seeded_store_with_launch_rules(
     project,
     configuration,
     repository(project, repository_id, Some("refs/heads/main".parse().unwrap())),
+    manual,
+    automatic,
   );
   let authorized = installed(&store, &command(project, configuration, repository_id), provider).await;
   let item = crate::FactorySourceItem {

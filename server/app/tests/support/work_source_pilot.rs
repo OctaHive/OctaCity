@@ -22,17 +22,33 @@ pub(super) trait PilotStore:
 #[async_trait::async_trait]
 impl PilotStore for InMemoryFactoryConfigurationStore {
   async fn install_target(&self, target: FactoryConfiguration) {
+    let reference = target.reference().clone();
     self
       .seed_factory_configuration_version(PublishedFactoryConfiguration {
         configuration: target,
         published_at: time(2),
       })
       .unwrap();
+    self
+      .seed_factory_configuration_policies(
+        &reference,
+        octacity_server_store::testing::factory_project_policies(reference.project_id(), true, true),
+      )
+      .unwrap();
   }
 }
 #[async_trait::async_trait]
 impl PilotStore for octacity_server_store_postgres::PostgresStore {
   async fn install_target(&self, target: FactoryConfiguration) {
+    let policies =
+      octacity_server_store::testing::factory_project_policies(target.reference().project_id(), true, true);
+    octacity_server_store::testing::publish_factory_project_policies_fixture(self, &policies).await;
+    let target = target
+      .with_project_policies(
+        policies.launch_policy.reference().clone(),
+        policies.access_profile.reference().clone(),
+      )
+      .unwrap();
     self
       .create_factory_configuration(octacity_server_store::testing::management_mutation(
         CreateFactoryConfiguration {
@@ -45,10 +61,14 @@ impl PilotStore for octacity_server_store_postgres::PostgresStore {
             definition_digest: target.reference().definition_digest(),
             draft: FactoryConfigurationDraft {
               flow: Some(target.flow().clone()),
-              admission_policy: key("admission").into(),
+              admission_policy: octacity_server_factory::FactoryPolicySelection::Project {
+                project_policy: policies.launch_policy.reference().clone(),
+              },
               wip_limits: target.wip_limits(),
               hard_budget: target.hard_budget(),
-              permission_ceiling: key("permissions").into(),
+              permission_ceiling: octacity_server_factory::FactoryPolicySelection::Project {
+                project_policy: policies.access_profile.reference().clone(),
+              },
               enabled: true,
             },
           },

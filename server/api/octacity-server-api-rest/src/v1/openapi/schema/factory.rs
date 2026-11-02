@@ -107,7 +107,7 @@ pub(super) fn insert_factory_schemas(schemas: &mut Map<String, Value>) {
   schemas.insert("FactoryValidationDiagnostics".to_owned(), object([
     ("constraints",schema_ref("FactoryEffectiveConstraints")),
     ("errors", json!({"type":"array","maxItems":1,"items":object([
-      ("field",non_empty_string()),("code",json!({"enum":["unavailable_reference","unmapped_legacy_policy","invalid_contract","budget_exceeds_ceiling","concurrency_exceeds_ceiling","permission_exceeds_ceiling"]})),
+      ("field",non_empty_string()),("code",json!({"enum":["unavailable_reference","unmapped_legacy_policy","launch_policy_denied","invalid_contract","budget_exceeds_ceiling","concurrency_exceeds_ceiling","permission_exceeds_ceiling"]})),
       ("ceiling",json!({"enum":["flow_definition","flow_admission","configuration","configuration_wip","installation","installed_runtime_policy"]})),
       ("resource",json!({"enum":["attempts","elapsed_time","tokens","cost","output_bytes","active_nodes"]})),
       ("requested",non_negative_integer()),("maximum",non_negative_integer()),

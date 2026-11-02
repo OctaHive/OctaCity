@@ -86,6 +86,22 @@ pub struct AdmitFactoryWork {
 }
 
 impl AdmitFactoryWork {
+  /// Checks fresh acceptance against the owner's exact resolution, including legacy mappings.
+  /// Accepted receipt recovery does not reinterpret this immutable policy selection.
+  pub fn validate_access_profile(
+    &self,
+    expected: Option<&octacity_server_factory::FactoryAccessProfileRef>,
+  ) -> Result<(), StoreError> {
+    (self.flow.access_profile().map(|profile| profile.reference()) == expected)
+      .then_some(())
+      .ok_or_else(|| {
+        StoreError::invalid(
+          StoreOperation::AdmitFactoryWork,
+          StoreInputError::InvalidFactoryAdmission,
+        )
+      })
+  }
+
   /// Revalidates the complete initial admission relationship at the store seam.
   ///
   /// Mutable source resolution happens before this request exists, so adapters
@@ -123,6 +139,13 @@ impl AdmitFactoryWork {
         )
       })?;
     let expected = AdmittedFlow::from_configuration(configuration, &self.run)
+      .and_then(|flow| match self.flow.access_profile() {
+        Some(profile) => flow.with_access_profile(configuration, profile.clone()),
+        None if configuration.permission_ceiling().project_policy().is_some() => {
+          Err(octacity_server_factory::FactoryError::InconsistentSubject)
+        }
+        None => Ok(flow),
+      })
       .and_then(|flow| flow.with_code_pins(self.flow.code_pins().to_vec(), self.work.subject().project_id()))
       .map_err(|_| {
         StoreError::invalid(

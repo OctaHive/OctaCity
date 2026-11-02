@@ -108,6 +108,9 @@ impl Fixture {
     self.database.cleanup().await;
   }
   async fn restart(self) -> Self {
+    self.restart_with_installer(None).await
+  }
+  async fn restart_with_installer(self, installer: Option<Arc<dyn octacity_server::FactoryRuntimeInstaller>>) -> Self {
     let Self {
       runtime,
       client,
@@ -118,8 +121,24 @@ impl Fixture {
     runtime.shutdown().await.unwrap();
     let mut url = url::Url::parse(&std::env::var("OCTACITY_POSTGRES_URL").unwrap()).unwrap();
     url.set_path(&database.name);
-    let config = runtime_fixture::runtime_config(_directory.path(), url.as_str(), "http://127.0.0.1:19000");
-    let runtime = octacity_server::ServerRuntime::start(config).await.unwrap();
+    let extra = if installer.is_some() {
+      "[factory]\npoll_interval_milliseconds=10\nclaim_lifetime_milliseconds=5000\nbatch_size=4\nconcurrency=2"
+    } else {
+      ""
+    };
+    let config = octacity_server::ServerConfig::parse_toml(&runtime_fixture::runtime_config_source(
+      _directory.path(),
+      url.as_str(),
+      "http://127.0.0.1:19000",
+      extra,
+    ))
+    .unwrap();
+    let runtime = match installer {
+      Some(installer) => octacity_server::ServerRuntime::start_with_factory(config, installer)
+        .await
+        .unwrap(),
+      None => octacity_server::ServerRuntime::start(config).await.unwrap(),
+    };
     Self {
       runtime,
       client,
@@ -572,3 +591,6 @@ async fn launch_policy_http_publication_is_readable_without_installation_or_exec
 
 #[path = "factory_project_policy_http/configuration.rs"]
 mod configuration;
+
+#[path = "factory_project_policy_http/admission.rs"]
+mod admission;

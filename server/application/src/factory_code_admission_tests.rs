@@ -194,12 +194,14 @@ async fn code_fixture_for_execution(
   .unwrap();
   let store = Arc::new(InMemoryFactoryConfigurationStore::new());
   store.seed_project(project).unwrap();
-  store
-    .seed_factory_configuration_version(PublishedFactoryConfiguration {
+  crate::factory_admission_tests::seed_permitted_configuration(
+    &store,
+    PublishedFactoryConfiguration {
       configuration: configuration_with_flow(project, id, Some(selected)),
       published_at: time(1),
-    })
-    .unwrap();
+    },
+  )
+  .unwrap();
   let mut request = command(project, id, RepositoryId::generate());
   request.repository_id = None;
   request.repository_version = None;

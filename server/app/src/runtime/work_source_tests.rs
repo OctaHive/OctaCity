@@ -272,6 +272,13 @@ async fn exclusive_group_ambiguity_is_durable_and_later_one_match_uses_its_exact
       published_at: time(1),
     })
     .unwrap();
+  fixture
+    .store
+    .seed_factory_configuration_policies(
+      config.reference(),
+      octacity_server_store::testing::factory_project_policies(config.reference().project_id(), true, true),
+    )
+    .unwrap();
   let mut profile = fixture.profile.clone();
   profile.read.binding.configuration = exact("other-input", 45);
   profile.preparation.mapping.source = profile.read.binding.clone();
@@ -1827,5 +1834,46 @@ async fn explicit_source_target_retry_is_independent_of_supervisor_cadence() {
     schedule.retry_at,
     time(200),
     "target retry uses its configured 100ms delay, independently of 10ms supervisor polling"
+  );
+}
+
+#[tokio::test]
+async fn source_launch_policy_blocks_before_candidate_preparation_and_reports_no_provider_retry() {
+  let fixture = Fixture::enabled_with_launch_rules("reviewed-source", None, true, false).await;
+  let outcome = fixture.worker().run_once(CancellationToken::new()).await.unwrap();
+  assert_eq!(outcome.deferred, 1);
+  let project = fixture.input.project_id();
+  let target = WorkSourceScanTarget::Input {
+    id: fixture.input.id(),
+    version: fixture.input.version(),
+  };
+  let schedule = fixture
+    .store
+    .source_scan_schedule(project, target)
+    .await
+    .unwrap()
+    .unwrap();
+  assert_eq!(schedule.failure, Some(WorkSourceFailure::PolicyDenied));
+  assert!(schedule.exhausted);
+  assert_eq!(schedule.attempts, 0);
+  assert!(
+    fixture
+      .store
+      .pending_source_preparations(project, target, None, 64)
+      .await
+      .unwrap()
+      .is_empty()
+  );
+  assert!(fixture.bytes.0.lock().unwrap().is_empty());
+  assert!(fixture.runs().await.is_empty());
+  // An unchanged immutable denial cannot restart the provider or create a Work on the next pass.
+  assert_eq!(
+    fixture
+      .worker()
+      .run_once(CancellationToken::new())
+      .await
+      .unwrap()
+      .claimed,
+    0
   );
 }

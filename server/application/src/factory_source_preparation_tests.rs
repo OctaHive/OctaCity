@@ -61,6 +61,40 @@ fn settings(preparation: &octacity_server_store::WorkSourcePreparation) -> Sourc
   }
 }
 #[test]
+fn automatic_policy_denial_prevents_resumed_source_document_preparation() {
+  run_ready(async {
+    let (store, retained, claim) = reserved_with_launch_rules("github", |_| {}, true, false).await;
+    let project = retained.input.project_id();
+    let bytes = Arc::new(Bytes::default());
+    let preparer = FactoryWorkSourcePreparer::new(store.clone(), bytes.clone(), Arc::new(Clock(AtomicI64::new(11))));
+    let error = preparer
+      .prepare(claim, retained.id, settings(&retained))
+      .await
+      .unwrap_err();
+    let ApplicationError::FactoryValidation(diagnostics) = error else {
+      panic!("expected policy denial: {error:?}")
+    };
+    assert_eq!(diagnostics.errors[0].code, "launch_policy_denied");
+    assert!(bytes.objects.lock().unwrap().is_empty());
+    assert!(
+      store
+        .source_preparation(project, retained.id)
+        .await
+        .unwrap()
+        .policy
+        .is_none()
+    );
+    assert!(
+      store
+        .source_materialization(project, retained.id)
+        .await
+        .unwrap()
+        .is_none()
+    );
+  });
+}
+
+#[test]
 fn completion_policy_is_frozen_before_document_io_and_cannot_be_substituted() {
   run_ready(async {
     let (store, retained, claim) = reserved_with_snapshot("github", |snapshot| {

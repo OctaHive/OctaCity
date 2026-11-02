@@ -619,12 +619,14 @@ async fn admit_configuration(
       Some(octacity_server_domain::SourceReference::new("refs/heads/main").unwrap()),
     ))
     .unwrap();
-  store
-    .seed_factory_configuration_version(PublishedFactoryConfiguration {
+  crate::factory_admission_tests::seed_permitted_configuration(
+    &store,
+    PublishedFactoryConfiguration {
       configuration: config,
       published_at: at(1),
-    })
-    .unwrap();
+    },
+  )
+  .unwrap();
   let handlers = FactoryAdmissionHandlers::new(
     store.clone(),
     Arc::new(crate::factory_admission_tests::RecordingResolver::default()),

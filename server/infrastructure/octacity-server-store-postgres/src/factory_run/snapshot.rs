@@ -6,7 +6,7 @@ use octacity_server_factory::{
 use octacity_server_store::{
   FactoryBudgetRecord, FactoryLifecycleCheckpoint, FactoryRunSnapshot, MAX_FACTORY_RUN_SNAPSHOT_RECORDS, StoreError,
 };
-use sqlx::{PgPool, types::Json};
+use sqlx::{PgPool, Row as _, types::Json};
 
 use super::{LifecycleDocument, OutboxRow, decode_outbox, digest, history_rows, lock_run, read_claim};
 use crate::{
@@ -169,21 +169,25 @@ pub(super) async fn read_admitted_flow(
   if closure != expected {
     return Err(StoreError::Unavailable);
   }
-  let Json(limits): Json<octacity_server_factory::FlowAdmissionLimits> =
-    sqlx::query_scalar("SELECT flow_admission_limits FROM factory_runs WHERE id = $1")
+  let row =
+    sqlx::query("SELECT flow_admission_limits, flow_code_pins, flow_access_profile FROM factory_runs WHERE id = $1")
       .bind(locked.run.id().as_uuid())
       .fetch_one(&mut **transaction)
       .await
       .map_err(unavailable)?;
+  let Json(limits): Json<octacity_server_factory::FlowAdmissionLimits> =
+    row.try_get("flow_admission_limits").map_err(unavailable)?;
+  let pins: Option<Json<Vec<octacity_server_factory::FlowCodePin>>> =
+    row.try_get("flow_code_pins").map_err(unavailable)?;
+  let access_profile: Option<Json<octacity_server_factory::FactoryAccessProfile>> =
+    row.try_get("flow_access_profile").map_err(unavailable)?;
   let admitted_root = FlowRun::root(&locked.run, closure.root()).map_err(|_| StoreError::Unavailable)?;
   let admitted_cycle = WorkflowCycle::initial(&admitted_root).map_err(|_| StoreError::Unavailable)?;
-  let pins: Option<Json<Vec<octacity_server_factory::FlowCodePin>>> =
-    sqlx::query_scalar("SELECT flow_code_pins FROM factory_runs WHERE id = $1")
-      .bind(locked.run.id().as_uuid())
-      .fetch_one(&mut **transaction)
-      .await
-      .map_err(unavailable)?;
   let admitted = AdmittedFlow::from_configuration(&configuration, &locked.run)
+    .and_then(|flow| match access_profile {
+      Some(Json(profile)) => flow.with_access_profile(&configuration, profile),
+      None => Ok(flow),
+    })
     .and_then(|flow| {
       flow.with_code_pins(
         pins.map_or_else(Vec::new, |pins| pins.0),

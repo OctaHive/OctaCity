@@ -115,15 +115,31 @@ impl<S: WorkSourceArtifactStore, B: ArtifactBytePublisher> FactoryWorkSourcePrep
     settings: SourcePreparationSettings,
   ) -> Result<SourcePreparationOutcome, ApplicationError> {
     settings.mapping.validate().map_err(|_| ApplicationError::invalid())?;
+    let retained = self.store.source_preparation(claim.project_id, id).await?;
     if let Some((policy, context)) = &self.authorization {
-      let preparation = self.store.source_preparation(claim.project_id, id).await?;
-      settings.authorize(policy.as_ref(), context, &preparation).await?;
+      settings.authorize(policy.as_ref(), context, &retained).await?;
     }
     if let crate::SourceAcceptanceMapping::ProcessCompletion(document) = &settings.mapping.acceptance
       && document.project_id() != claim.project_id
     {
       return Err(ApplicationError::invalid());
     }
+    let input = retained.input.definition();
+    let selected = self
+      .store
+      .factory_admission_context(octacity_server_store::ReadFactoryAdmissionContext {
+        project_id: retained.input.project_id(),
+        configuration_id: input.target.id(),
+        configuration_version: input.target.version(),
+        repository_id: Some(input.repository.id),
+        repository_version: Some(input.repository.version),
+      })
+      .await?;
+    crate::factory_admission::validate_admission_project(&selected, retained.input.project_id())?;
+    crate::factory_admission::validate_launch_policy(
+      &selected,
+      octacity_server_factory::FactoryAdmissionOrigin::AutomaticSource,
+    )?;
     let policy = serde_json::to_vec(&settings).map_err(|_| ApplicationError::invalid())?;
     let digest = FactoryDigest::content_sha256(&policy);
     let preparation = self

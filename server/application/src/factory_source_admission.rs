@@ -137,10 +137,17 @@ impl<S: FactoryAdmissionStore + 'static> FactorySourceAdmissionHandlers<S> {
       )?,
       external_identity: source_item_identity(&authorized, &command.item)?,
     };
-    self
+    let original = self
       .admission
       .recover_source(&authorized.context, authorized.input.project_id(), &identity)
-      .await
+      .await?;
+    if original.is_none() {
+      self
+        .admission
+        .require_source_launch(&authorized.context, &authorized.input)
+        .await?;
+    }
+    Ok(original)
   }
 
   /// Authorizes installed-source intake before any admission store or VCS access.
@@ -174,7 +181,13 @@ impl<S: FactoryAdmissionStore + 'static> FactorySourceAdmissionHandlers<S> {
     )?;
     self
       .admission
-      .admit_intent(&authorized.context, command.intent, probe, Some(&authorized.input))
+      .admit_intent(
+        &authorized.context,
+        command.intent,
+        probe,
+        Some(&authorized.input),
+        octacity_server_factory::FactoryAdmissionOrigin::AutomaticSource,
+      )
       .await
   }
 }
@@ -226,7 +239,13 @@ impl<S: octacity_server_store::FactorySourceStore + 'static> FactorySourceAdmiss
     } else {
       self
         .admission
-        .prepare_fresh_intent(&authorized.context, intent.clone(), probe, Some(&preparation.input))
+        .prepare_fresh_intent(
+          &authorized.context,
+          intent.clone(),
+          probe,
+          Some(&preparation.input),
+          octacity_server_factory::FactoryAdmissionOrigin::AutomaticSource,
+        )
         .await?
     };
     // Revision resolution may yield after the initial grant/visibility checks.

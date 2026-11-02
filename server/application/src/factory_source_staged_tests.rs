@@ -275,12 +275,14 @@ fn staged_prepared_admission_keeps_one_run_per_input_and_common_issue_for_every_
       let (store, assessment, assessment_claim) = reserved(provider).await;
       let project = assessment.input.project_id();
       let target = crate::factory_admission_tests::configuration(project, FactoryConfigurationId::generate());
-      store
-        .seed_factory_configuration_version(octacity_server_store::PublishedFactoryConfiguration {
+      crate::factory_admission_tests::seed_permitted_configuration(
+        &store,
+        octacity_server_store::PublishedFactoryConfiguration {
           configuration: target.clone(),
           published_at: time(1),
-        })
-        .unwrap();
+        },
+      )
+      .unwrap();
       let mut definition = assessment.input.definition().clone();
       definition.target = target.reference().clone();
       let capability = authorization(&assessment).capability;
@@ -520,12 +522,14 @@ fn staged_replacement_and_label_churn_keep_the_original_prepared_run_and_manual_
       .unwrap();
       let original = store.factory_run_snapshot(first.factory_run_id).await.unwrap();
       let target = crate::factory_admission_tests::configuration(claim.project_id, FactoryConfigurationId::generate());
-      store
-        .seed_factory_configuration_version(octacity_server_store::PublishedFactoryConfiguration {
+      crate::factory_admission_tests::seed_permitted_configuration(
+        &store,
+        octacity_server_store::PublishedFactoryConfiguration {
           configuration: target.clone(),
           published_at: time(13),
-        })
-        .unwrap();
+        },
+      )
+      .unwrap();
       let mut definition = preparation.input.definition().clone();
       definition.target = target.reference().clone();
       definition.source.configuration = exact("replacement-selector-and-mapping", 70);
@@ -680,12 +684,14 @@ fn staged_source_labels_never_bypass_configured_eligibility_or_business_duplicat
             Some("refs/heads/main".parse().unwrap()),
           ))
           .unwrap();
-        store
-          .seed_factory_configuration_version(octacity_server_store::PublishedFactoryConfiguration {
+        crate::factory_admission_tests::seed_permitted_configuration(
+          &store,
+          octacity_server_store::PublishedFactoryConfiguration {
             configuration,
             published_at: time(1),
-          })
-          .unwrap();
+          },
+        )
+        .unwrap();
         let authorized = installed(&store, &command(project, configuration_id, repository_id), provider).await;
         store
           .publish_work_sources(PublishWorkSources {

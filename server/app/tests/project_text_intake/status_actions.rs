@@ -105,6 +105,22 @@ pub(super) async fn configure_status(
 ) -> ProjectTextSubmission {
   let mut f = postgres::factory_configuration::fixture(issue.project_id);
   f.draft.flow = Some(flow(issue));
+  let selected = store.factory_admission_context(submission.intent.target).await.unwrap();
+  let mut policies = selected.project_policies.unwrap();
+  policies.access_profile = octacity_server_store::testing::factory_project_policies_with_access(
+    issue.project_id,
+    true,
+    true,
+    f.draft.flow.as_ref().unwrap().limits.permissions().clone(),
+  )
+  .access_profile;
+  octacity_server_store::testing::publish_factory_project_policies_fixture(store, &policies).await;
+  f.draft.admission_policy = FactoryPolicySelection::Project {
+    project_policy: policies.launch_policy.reference().clone(),
+  };
+  f.draft.permission_ceiling = FactoryPolicySelection::Project {
+    project_policy: policies.access_profile.reference().clone(),
+  };
   let target = &mut submission.intent.target;
   let digest = FactoryDigest::from_bytes([38; 32]);
   let version = FactoryConfigurationVersion::new(2).unwrap();

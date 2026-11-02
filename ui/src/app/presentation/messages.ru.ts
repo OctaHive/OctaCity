@@ -140,6 +140,8 @@ export const ruMessages = {
   'factory.limitSource.project': 'Политика Project',
   'factory.limitSource.runtime': 'Установленный runtime',
   'factory.limitSource.installation': 'Установка',
+  'factory.launchPolicyDenied':
+    'Выбранная политика запуска не разрешает этот способ запуска pipeline. Выберите подходящую политику в конфигурации.',
   'factory.unmappedLegacyPolicy':
     'Для сохранённой ссылки установки нет проверенной привязки. Выберите политику запуска и профиль доступа проекта.',
   'factory.accessExceedsPolicyLimit':
@@ -1323,6 +1325,8 @@ export const ruMessages = {
   'factory.sourceFailure.admission_capacity': 'Достигнут предел допуска',
   'factory.sourceFailure.retention_pending': 'Ожидается сохранение входных данных',
   'factory.sourceFailure.protocol_fault': 'Ошибка протокола источника',
+  'factory.sourceFailure.policy_denied':
+    'Автоматический приём запрещён закреплённой политикой запуска',
   'factory.sourceFailure.invalid_configuration': 'Некорректная конфигурация источника',
   'factory.sourceFailure.conflict': 'Конфликт источника',
   'factory.retainedSourceProgress': 'Сохранённый прогресс источника',

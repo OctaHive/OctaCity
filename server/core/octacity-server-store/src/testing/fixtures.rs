@@ -320,3 +320,73 @@ pub fn source_free_store_contract_fixture() -> StoreContractFixture {
   fixture.request.validate().unwrap();
   fixture
 }
+
+/// Explicit policy contents for admission fixtures; the flags never default from a Configuration name.
+pub fn factory_project_policies(
+  project: ProjectId,
+  manual: bool,
+  automatic: bool,
+) -> crate::FactoryResolvedConfigurationPolicies {
+  factory_project_policies_with_access(
+    project,
+    manual,
+    automatic,
+    octacity_server_factory::FactoryPermissionSet::deny_all(),
+  )
+}
+
+/// Reviewed execution grants for a composed fixture, independent of production policy defaults.
+pub fn factory_project_policies_with_access(
+  project: ProjectId,
+  manual: bool,
+  automatic: bool,
+  permissions: octacity_server_factory::FactoryPermissionSet,
+) -> crate::FactoryResolvedConfigurationPolicies {
+  use octacity_server_factory::*;
+  crate::FactoryResolvedConfigurationPolicies {
+    launch_policy: FactoryLaunchPolicy::publish(
+      FactoryLaunchPolicyId::generate(),
+      project,
+      FactoryLaunchPolicyDefinition {
+        name: "Reviewed launch".parse().unwrap(),
+        allow_manual: manual,
+        allow_automatic_source: automatic,
+      },
+    )
+    .unwrap(),
+    access_profile: FactoryAccessProfile::publish(
+      FactoryAccessProfileId::generate(),
+      project,
+      FactoryAccessProfileDefinition {
+        name: "Reviewed access".parse().unwrap(),
+        permissions,
+      },
+    )
+    .unwrap(),
+  }
+}
+
+/// Publishes explicit admission-fixture contents through the ordinary policy journal.
+/// Callers pin these references on a new Configuration before installing it.
+pub async fn publish_factory_project_policies_fixture<S: crate::FactoryProjectPolicyStore>(
+  store: &S,
+  policies: &crate::FactoryResolvedConfigurationPolicies,
+) {
+  for policy in [
+    crate::FactoryProjectPolicyRecord::Launch(policies.launch_policy.clone()),
+    crate::FactoryProjectPolicyRecord::Access(Box::new(policies.access_profile.clone())),
+  ] {
+    let key = format!("fixture-policy-{}", policy.reference().id());
+    store
+      .publish_factory_project_policy(management_mutation(crate::PublishFactoryProjectPolicy {
+        intent: crate::FactoryProjectPolicyIntent {
+          policy,
+          expected_current: None,
+        },
+        idempotency_key: key.parse().unwrap(),
+        published_at: Timestamp::from_unix_millis(1).unwrap(),
+      }))
+      .await
+      .unwrap();
+  }
+}

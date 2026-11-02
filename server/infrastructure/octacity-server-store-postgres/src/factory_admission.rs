@@ -34,6 +34,7 @@ struct AdmissionRow {
   envelope: Json<WorkEnvelope>,
   configuration: Json<FactoryConfiguration>,
   code_pins: Option<Json<Vec<octacity_server_factory::FlowCodePin>>>,
+  access_profile: Option<Json<octacity_server_factory::FactoryAccessProfile>>,
   intent_digest: Vec<u8>,
   run_id: uuid::Uuid,
   admitted_at_millis: i64,
@@ -49,7 +50,7 @@ pub(crate) async fn recover(
   );
   let row = sqlx::query_as::<_, AdmissionRow>(
     "SELECT work.envelope, configuration.definition AS configuration, work.intent_digest, \
-            run.id AS run_id, run.flow_code_pins AS code_pins, \
+            run.id AS run_id, run.flow_code_pins AS code_pins, run.flow_access_profile AS access_profile, \
             FLOOR(EXTRACT(EPOCH FROM run.admitted_at) * 1000)::BIGINT AS admitted_at_millis \
      FROM factory_work_envelopes AS work \
      JOIN factory_runs AS run ON run.work_envelope_id = work.id \
@@ -98,7 +99,7 @@ async fn replay_admission_identity<'e>(
 ) -> Result<Option<FactoryAdmissionMutationOutcome>, StoreError> {
   let row = sqlx::query_as::<_, AdmissionRow>(
     "SELECT work.envelope, configuration.definition AS configuration, work.intent_digest, \
-            run.id AS run_id, run.flow_code_pins AS code_pins, \
+            run.id AS run_id, run.flow_code_pins AS code_pins, run.flow_access_profile AS access_profile, \
             FLOOR(EXTRACT(EPOCH FROM run.admitted_at) * 1000)::BIGINT AS admitted_at_millis \
      FROM factory_work_envelopes AS work \
      JOIN factory_runs AS run ON run.work_envelope_id = work.id \
@@ -229,6 +230,7 @@ async fn admit_once(
   };
   let configuration = lock_configuration(&mut transaction, &request).await?;
   request.validate_configuration(&configuration)?;
+  require_access_profile(&mut transaction, &configuration, &request).await?;
   require_repository(&mut transaction, &request).await?;
   let active: i64 = sqlx::query_scalar(
     "SELECT COUNT(*) FROM factory_runs \
@@ -292,8 +294,8 @@ async fn admit_once(
   sqlx::query(
     "INSERT INTO factory_runs \
        (id, project_id, work_envelope_id, factory_configuration_id, factory_configuration_version, \
-        state, version, subject_digest, flow_admission_limits, flow_code_pins, admitted_at, updated_at) \
-     VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $11, \
+        state, version, subject_digest, flow_admission_limits, flow_code_pins, flow_access_profile, admitted_at, updated_at) \
+     VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $11, $12, \
              to_timestamp($10::double precision / 1000.0), to_timestamp($10::double precision / 1000.0))",
   )
   .bind(request.run.id().as_uuid())
@@ -307,6 +309,7 @@ async fn admit_once(
   .bind(Json(request.flow.limits()))
   .bind(request.admitted_at.unix_millis())
   .bind((!request.flow.code_pins().is_empty()).then(|| Json(request.flow.code_pins())))
+  .bind(request.flow.access_profile().map(Json))
   .execute(&mut *transaction)
   .await
   .map_err(|error| classify(error, EntityKind::FactoryRun))?;
@@ -485,6 +488,35 @@ fn replay_identity(probe: &FactoryAdmissionProbe) -> Result<MutationIdentity, St
 
 fn validate_admission(request: &AdmitFactoryWork, audit: &MutationAuditContext) -> Result<(), StoreError> {
   request.validate(audit.security_scope())
+}
+
+// Recheck the exact typed pin or recorded legacy mapping in the admission transaction.
+// The profile type verifies its content digest; no mutable default or second pool lease is needed.
+async fn require_access_profile(
+  transaction: &mut Transaction<'_, Postgres>,
+  configuration: &FactoryConfiguration,
+  request: &AdmitFactoryWork,
+) -> Result<(), StoreError> {
+  use octacity_server_store::{FactoryLegacyPolicyReference, FactoryProjectPolicyRef};
+  if let Some(pin) = configuration.permission_ceiling().project_policy() {
+    return request.validate_access_profile(Some(pin));
+  }
+  let legacy = configuration
+    .permission_ceiling()
+    .legacy()
+    .ok_or(StoreError::Unavailable)?;
+  let mapping = crate::factory_project_policy_mapping::read(
+    &mut **transaction,
+    configuration.reference().project_id(),
+    &FactoryLegacyPolicyReference::Access(legacy.clone()),
+  )
+  .await?;
+  let expected = match mapping.map(|mapping| mapping.target) {
+    Some(FactoryProjectPolicyRef::Access(pin)) => Some(pin),
+    None => None,
+    _ => return Err(StoreError::Unavailable),
+  };
+  request.validate_access_profile(expected.as_ref())
 }
 
 async fn lock_configuration(
@@ -684,6 +716,10 @@ fn decode_admission(row: AdmissionRow) -> Result<PublishedFactoryAdmission, Stor
     &work,
   );
   let flow = AdmittedFlow::from_configuration(&configuration, &run)
+    .and_then(|flow| match row.access_profile {
+      Some(Json(profile)) => flow.with_access_profile(&configuration, profile),
+      None => Ok(flow),
+    })
     .and_then(|flow| {
       flow.with_code_pins(
         row.code_pins.map_or_else(Vec::new, |pins| pins.0),

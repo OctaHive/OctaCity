@@ -247,6 +247,141 @@ fn profile_request_is_frozen_and_reserved_before_consuming_a_receipt() {
 }
 
 #[test]
+fn project_access_removes_selector_credentials_before_reserving_a_provider_request() {
+  use crate::*;
+  use octacity_server_store::FactoryRunStore;
+  run_ready(async {
+    let (mut admission, old_input, ownership, plan) = fixture();
+    let sample = provider_request(
+      DecisionSignalPurpose::ProfileSelection,
+      DecisionSignalMode::BoundedControl,
+    );
+    let provider = Arc::new(CountingProvider::successful(&sample, "specialized"));
+    let permissions = FactoryPermissionSet::try_new(FactoryPermissionDraft {
+      secret_profiles: vec![key("selection-credential")],
+      ..Default::default()
+    })
+    .unwrap();
+    let mut selector = selector_binding(plan.clone(), old_input.subject().project_id(), provider.clone());
+    selector.credential_profile = Some(key("selection-credential"));
+    selector.project_permissions = permissions.clone();
+    selector.local_permissions = LocalPermissionCeiling::fully_enforced(permissions.clone());
+    let selector = selector.pin_policy().unwrap();
+    let prior = admission
+      .flow
+      .closure()
+      .definition(admission.flow.closure().root())
+      .unwrap();
+    let mut node = serde_json::to_value(&prior.nodes()[0]).unwrap();
+    node["permissions"] = serde_json::to_value(&permissions).unwrap();
+    node["profile_selection"]["policy"] = serde_json::to_value(FlowProfileSelectionPolicy::DecisionApi {
+      policy: selector.selection_policy.clone(),
+      input: plan.state_projection.clone(),
+    })
+    .unwrap();
+    let definition = FlowDefinition::new(FlowDefinitionInput {
+      id: prior.reference().id(),
+      version: prior.reference().version(),
+      input_schema: prior.input_schema().cloned(),
+      entry: prior.entry().clone(),
+      nodes: vec![serde_json::from_value(node).unwrap()],
+      transitions: prior.transitions().to_vec(),
+      terminals: prior.terminals().to_vec(),
+      context_projections: prior.context_projections().to_vec(),
+      data_projections: prior.data_projections().to_vec(),
+      execution: FlowExecutionPolicy::new(prior.execution().budget(), permissions.clone(), 1).unwrap(),
+    })
+    .unwrap();
+    let root = FlowRun::root(&admission.run, definition.reference()).unwrap();
+    let cycle = WorkflowCycle::initial(&root).unwrap();
+    let mut limits = serde_json::to_value(admission.flow.limits()).unwrap();
+    limits["permissions"] = serde_json::to_value(&permissions).unwrap();
+    let flow = AdmittedFlow::new(
+      PinnedFlowDefinitionClosure::new(definition.reference(), vec![definition]).unwrap(),
+      serde_json::from_value(limits).unwrap(),
+      root,
+      cycle,
+      admission.flow.wip_limits(),
+    )
+    .unwrap()
+    .with_data_schemas(admission.flow.data_schemas().to_vec())
+    .unwrap();
+    let access = FactoryAccessProfile::publish(
+      FactoryAccessProfileId::generate(),
+      old_input.subject().project_id(),
+      FactoryAccessProfileDefinition {
+        name: FactoryText::new("No provider credentials").unwrap(),
+        permissions: FactoryPermissionSet::deny_all(),
+      },
+    )
+    .unwrap();
+    let mut retained = serde_json::to_value(flow).unwrap();
+    retained["access_profile"] = serde_json::to_value(access).unwrap();
+    admission.flow = serde_json::from_value(retained).unwrap();
+    let input = FlowNodeInput::new(
+      &admission.work,
+      &admission.flow,
+      admission.flow.root_run(),
+      admission.flow.initial_cycle(),
+      old_input.node().clone(),
+      old_input.payload().clone(),
+    )
+    .unwrap()
+    .with_context(old_input.context().unwrap().clone(), vec![])
+    .unwrap();
+    for restricted in [true, false] {
+      let mut admission = admission.clone();
+      if !restricted {
+        let mut retained = serde_json::to_value(&admission.flow).unwrap();
+        retained.as_object_mut().unwrap().remove("access_profile");
+        admission.flow = serde_json::from_value(retained).unwrap();
+      }
+      let (store, claim) = crate::factory_node_tests::profile_selection::start(admission, ownership.clone()).await;
+      let clock = crate::factory_node_test_support::clock();
+      let driver =
+        Arc::new(FactoryProfileSelectors::new(store.clone(), vec![selector.clone()], clock.clone()).unwrap());
+      let runner = FactoryNodeRunner::new(
+        store.clone(),
+        Arc::new(crate::factory_node_tests::profile_selection::NoExecution),
+        clock,
+      )
+      .with_profile_selectors(driver);
+      let target = FactoryNodeTarget {
+        flow_run_id: input.flow_run_id(),
+        cycle_id: input.cycle_id(),
+        node: input.node().clone(),
+      };
+      let mut blocked = false;
+      for at in [11, 12, 13] {
+        let before = store.factory_run_snapshot(input.factory_run_id()).await.unwrap();
+        let result = runner
+          .run_once(
+            input.factory_run_id(),
+            claim.id,
+            target.clone(),
+            Some(input.clone()),
+            Timestamp::from_unix_millis(at).unwrap(),
+          )
+          .await;
+        if result.is_err() {
+          blocked = true;
+          assert_eq!(
+            store.factory_run_snapshot(input.factory_run_id()).await.unwrap(),
+            before
+          );
+          break;
+        }
+      }
+      assert_eq!(
+        blocked, restricted,
+        "only the accepted Project ceiling removes the provider credential"
+      );
+      assert_eq!(provider.dispatches(), u32::from(!restricted));
+    }
+  });
+}
+
+#[test]
 fn profile_selection_runs_through_the_common_fenced_journal_before_execution() {
   use crate::*;
   use octacity_server_store::FactoryRunStore;

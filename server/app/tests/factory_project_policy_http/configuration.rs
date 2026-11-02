@@ -47,7 +47,7 @@ impl octacity_server::FactoryRuntimeInstaller for ConfigurationAuthority {
     Ok(installation)
   }
 }
-fn host_permissions(hosts: &[&str]) -> Value {
+pub(super) fn host_permissions(hosts: &[&str]) -> Value {
   use octacity_server_factory::*;
   serde_json::to_value(
     FactoryPermissionSet::try_new(FactoryPermissionDraft {
@@ -152,7 +152,7 @@ async fn configuration_constraints_explain_project_access_and_reject_revoked_aut
   f.stop().await;
 }
 
-async fn policies(f: &Fixture) -> (Value, Value) {
+pub(super) async fn policies(f: &Fixture) -> (Value, Value) {
   let launch = f
     .post(
       "",
@@ -384,7 +384,7 @@ async fn legacy_configuration_publication_requires_exact_mapping_and_pins_its_co
   f.stop().await;
 }
 
-async fn flow(f: &Fixture) -> Value {
+pub(super) async fn flow(f: &Fixture) -> Value {
   flow_with_permissions(f, installed_fixture::permissions()).await
 }
 

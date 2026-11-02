@@ -314,6 +314,23 @@ impl FactoryWorkStatusProjector for AcceptedReporter {
   ) -> Result<(FactoryDigest, BudgetUsage), ApplicationError> {
     let snapshot = self.store.factory_run_snapshot(self.run).await.unwrap();
     validate_accepted_factory_status_request(&snapshot, &reference("reporter"), &request, at(25)).unwrap();
+    let mut restricted = snapshot.clone();
+    let access = FactoryAccessProfile::publish(
+      FactoryAccessProfileId::generate(),
+      snapshot.work.subject().project_id(),
+      FactoryAccessProfileDefinition {
+        name: FactoryText::new("No reporter grants").unwrap(),
+        permissions: FactoryPermissionSet::deny_all(),
+      },
+    )
+    .unwrap();
+    let mut retained = serde_json::to_value(&snapshot.admitted_flow).unwrap();
+    retained["access_profile"] = serde_json::to_value(access).unwrap();
+    restricted.admitted_flow = serde_json::from_value(retained).unwrap();
+    assert!(
+      validate_accepted_factory_status_request(&restricted, &reference("reporter"), &request, at(25)).is_err(),
+      "deferred reporting cannot reconstruct broader permissions from its node"
+    );
     let mut changed = request.clone();
     changed.status = FactorySafeText::new("unaccepted-value").unwrap();
     assert!(validate_accepted_factory_status_request(&snapshot, &reference("reporter"), &changed, at(25)).is_err());
@@ -660,6 +677,76 @@ fn actions_commit_common_typed_results_and_arbitrary_status_once_across_owner_re
     assert_eq!(requests[0].status.as_str(), "Ожидает уточнения");
   });
 }
+#[test]
+fn retained_access_profile_blocks_ungranted_action_effects_before_connector_delivery() {
+  crate::factory_admission_tests::run_ready(async {
+    for missing in ["plugins", "network_hosts", "secret_profiles"] {
+      let grants = FactoryPermissionSet::try_new(FactoryPermissionDraft {
+        plugins: vec![reference("reporter")],
+        network_hosts: vec![octacity_server_factory::NetworkHost::new("tickets.example").unwrap()],
+        secret_profiles: vec![key("ticket-writer")],
+        ..Default::default()
+      })
+      .unwrap();
+      let h = harness(
+        binding("reporter", "set_status", serde_json::json!({"status":"Ready"})),
+        grants.clone(),
+      );
+      let connector = Arc::new(Reporter {
+        requests: Mutex::new(vec![]),
+        unavailable: false,
+        scoped: true,
+      });
+      let adapter = Arc::new(FactoryFlowActionAdapter::new(Arc::new(FactoryWorkStatusAction::new(
+        reference("reporter"),
+        connector.clone(),
+        h.outcome,
+      ))));
+      FactoryNodeRunner::new(
+        h.store.clone(),
+        adapter.clone(),
+        crate::factory_node_test_support::clock(),
+      )
+      .run_once(h.run, h.claim, h.target, Some(h.input), at(11))
+      .await
+      .unwrap();
+      let snapshot = h.store.factory_run_snapshot(h.run).await.unwrap();
+      let mut permissions = serde_json::to_value(grants).unwrap();
+      permissions[missing] = serde_json::json!([]);
+      let profile = FactoryAccessProfile::publish(
+        FactoryAccessProfileId::generate(),
+        snapshot.work.subject().project_id(),
+        FactoryAccessProfileDefinition {
+          name: FactoryText::new("Restricted action").unwrap(),
+          permissions: serde_json::from_value(permissions).unwrap(),
+        },
+      )
+      .unwrap();
+      let mut retained = serde_json::to_value(&snapshot.admitted_flow).unwrap();
+      retained["access_profile"] = serde_json::to_value(profile).unwrap();
+      let admitted: AdmittedFlow = serde_json::from_value(retained).unwrap();
+      let attempt = &snapshot.flow.attempts[0];
+      let result = adapter
+        .observe(FactoryNodeExecutionRequest {
+          run_id: h.run,
+          admitted: &admitted,
+          work: &snapshot.work,
+          input: &snapshot.flow.data.inputs[0],
+          attempt,
+          build: None,
+          ownership: FactoryClaimOwnership::new(attempt.owner().clone(), attempt.claim()),
+          observed_at: at(12),
+        })
+        .await;
+      assert!(
+        result.is_err(),
+        "{missing} removed by the accepted access profile must block the effect"
+      );
+      assert!(connector.requests.lock().unwrap().is_empty());
+    }
+  });
+}
+
 #[test]
 fn invalid_plugin_parameters_claim_deadline_or_authority_cannot_reach_a_connector() {
   for invalid in 0..6 {

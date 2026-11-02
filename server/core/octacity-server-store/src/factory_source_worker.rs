@@ -23,6 +23,8 @@ pub enum WorkSourceFailure {
   ProtocolFault,
   /// Installed configuration or credentials require repair.
   InvalidConfiguration,
+  /// The pinned launch policy denies automatic admission; explicit definition replacement is required.
+  PolicyDenied,
   /// Definition, selection or owner changed.
   Conflict,
 }

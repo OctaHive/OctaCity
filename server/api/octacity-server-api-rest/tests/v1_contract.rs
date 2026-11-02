@@ -722,3 +722,14 @@ fn flow_context_contract_exposes_an_optional_explicit_work_task_without_payload_
       .contains(&serde_json::json!("work_task"))
   );
 }
+
+#[test]
+fn source_diagnostics_document_launch_denial_separately_from_provider_failures() {
+  let document = octacity_server_api_rest::v1::openapi_document();
+  let classes = &document["components"]["schemas"]["WorkSourceDiagnostics"]["properties"]["scan"]["anyOf"][0]["properties"]
+    ["schedule"]["anyOf"][0]["properties"]["failure"]["anyOf"][0]["enum"];
+  assert!(
+    classes.as_array().unwrap().contains(&json!("policy_denied")),
+    "a policy block must survive closed client generation: {classes}"
+  );
+}

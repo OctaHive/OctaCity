@@ -108,6 +108,61 @@ fn source_command(
 
 struct DeniedSource;
 
+#[test]
+fn pinned_launch_rules_govern_automatic_ingress_before_fresh_recovery_or_resolution() {
+  run_ready(async {
+    for (manual, automatic) in [(false, false), (false, true), (true, false), (true, true)] {
+      let project = ProjectId::generate();
+      let configuration_id = FactoryConfigurationId::generate();
+      let repository_id = RepositoryId::generate();
+      let store = unmapped_store(
+        project,
+        configuration_id,
+        repository(project, repository_id, Some("refs/heads/main".parse().unwrap())),
+      );
+      store
+        .seed_factory_configuration_policies(
+          configuration(project, configuration_id).reference(),
+          launch_policies(project, manual, automatic),
+        )
+        .unwrap();
+      let intent = command(project, configuration_id, repository_id);
+      let authorization = installed(&store, &intent, "github").await;
+      let request = source_command(&authorization, intent);
+      let resolver = Arc::new(RecordingResolver::default());
+      let handlers = FactorySourceAdmissionHandlers::new(
+        store.clone(),
+        resolver.clone(),
+        Arc::new(crate::TrustedNetworkManagementPolicy),
+        Arc::new(InstalledSource(authorization)),
+      );
+      let recovered = handlers
+        .recover(RecoverSourceFactoryWorkCommand {
+          input_id: request.input_id,
+          input_version: request.input_version,
+          item: request.item.clone(),
+        })
+        .await;
+      let outcome = handlers.admit(request).await;
+      if automatic {
+        assert_eq!(recovered.unwrap(), None);
+        assert_eq!(outcome.unwrap().disposition, MutationDisposition::Applied);
+        assert_eq!(resolver.call_count(), 1);
+      } else {
+        for error in [recovered.unwrap_err(), outcome.unwrap_err()] {
+          let ApplicationError::FactoryValidation(report) = error else {
+            panic!("automatic launch denial must be a policy outcome: {error:?}");
+          };
+          assert_eq!(report.errors[0].code, "launch_policy_denied");
+        }
+        assert_eq!(resolver.call_count(), 0);
+        assert_eq!(store.mutation_evidence_counts().await.idempotency, 0);
+        assert!(store.management_audit_facts().await.is_empty());
+      }
+    }
+  });
+}
+
 #[async_trait]
 impl FactorySourceAuthorizer for DeniedSource {
   async fn authorize(

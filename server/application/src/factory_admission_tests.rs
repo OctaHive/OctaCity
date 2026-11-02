@@ -20,7 +20,10 @@ use octacity_server_factory::{
 use octacity_server_store::{
   FactoryRunStore, IdempotencyKey, PublishedFactoryConfiguration, PublishedRepository, RepositoryDefinition,
   RepositorySelectionPolicy,
-  testing::{InMemoryFactoryConfigurationStore, ManagementAuditProbe, MutationEvidenceProbe},
+  testing::{
+    InMemoryFactoryConfigurationStore, ManagementAuditProbe, MutationEvidenceProbe,
+    factory_project_policies as launch_policies,
+  },
 };
 use uuid::Uuid;
 
@@ -87,6 +90,47 @@ pub(super) fn seeded_store(
   configuration_id: FactoryConfigurationId,
   repository: PublishedRepository,
 ) -> Arc<InMemoryFactoryConfigurationStore> {
+  seeded_store_with_launch_rules(project_id, configuration_id, repository, true, true)
+}
+
+pub(super) fn seeded_store_with_launch_rules(
+  project_id: ProjectId,
+  configuration_id: FactoryConfigurationId,
+  repository: PublishedRepository,
+  manual: bool,
+  automatic: bool,
+) -> Arc<InMemoryFactoryConfigurationStore> {
+  let store = unmapped_store(project_id, configuration_id, repository);
+  store
+    .seed_factory_configuration_policies(
+      configuration(project_id, configuration_id).reference(),
+      launch_policies(project_id, manual, automatic),
+    )
+    .unwrap();
+  store
+}
+
+/// Existing admission scenarios explicitly install allow-both policies for their exact fixtures.
+pub(super) fn seed_permitted_configuration(
+  store: &InMemoryFactoryConfigurationStore,
+  published: PublishedFactoryConfiguration,
+) -> Result<(), octacity_server_store::StoreError> {
+  let reference = published.configuration.reference().clone();
+  let policies = octacity_server_store::testing::factory_project_policies_with_access(
+    reference.project_id(),
+    true,
+    true,
+    published.configuration.flow().limits.permissions().clone(),
+  );
+  store.seed_factory_configuration_version(published)?;
+  store.seed_factory_configuration_policies(&reference, policies)
+}
+
+fn unmapped_store(
+  project_id: ProjectId,
+  configuration_id: FactoryConfigurationId,
+  repository: PublishedRepository,
+) -> Arc<InMemoryFactoryConfigurationStore> {
   let store = Arc::new(InMemoryFactoryConfigurationStore::new());
   store.seed_project(project_id).unwrap();
   store
@@ -132,6 +176,169 @@ pub(super) async fn admit(
       command,
     )
     .await
+}
+
+#[test]
+fn unmapped_launch_policy_blocks_manual_admission_before_revision_resolution_or_mutation() {
+  run_ready(async {
+    let project = ProjectId::generate();
+    let configuration = FactoryConfigurationId::generate();
+    let repository_id = RepositoryId::generate();
+    let store = unmapped_store(project, configuration, repository(project, repository_id, None));
+    let resolver = Arc::new(RecordingResolver::default());
+    let handlers = FactoryAdmissionHandlers::new(store.clone(), resolver.clone());
+    let mut request = command(project, configuration, repository_id);
+    request.source =
+      RepositorySourceSelection::ExactRevision(octacity_server_domain::ImmutableRevision::new("original").unwrap())
+        .into();
+    let error = admit(&handlers, request).await.unwrap_err();
+    let crate::ApplicationError::FactoryValidation(report) = error else {
+      panic!("missing policy must be an actionable prerequisite: {error:?}");
+    };
+    assert_eq!(report.errors[0].field, "/admission_policy");
+    assert_eq!(report.errors[0].code, "unmapped_legacy_policy");
+    assert_eq!(resolver.call_count(), 0);
+    assert_eq!(store.mutation_evidence_counts().await.idempotency, 0);
+    assert!(store.management_audit_facts().await.is_empty());
+  });
+}
+
+#[test]
+fn pinned_launch_rules_govern_manual_ingress_instead_of_caller_metadata() {
+  run_ready(async {
+    for (allow_manual, allow_automatic_source) in [(false, false), (false, true), (true, false), (true, true)] {
+      let project = ProjectId::generate();
+      let configuration_id = FactoryConfigurationId::generate();
+      let repository_id = RepositoryId::generate();
+      let main = SourceReference::new("refs/heads/main").unwrap();
+      let store = unmapped_store(
+        project,
+        configuration_id,
+        repository(project, repository_id, Some(main)),
+      );
+      let configuration = configuration(project, configuration_id);
+      store
+        .seed_factory_configuration_policies(
+          configuration.reference(),
+          launch_policies(project, allow_manual, allow_automatic_source),
+        )
+        .unwrap();
+      let resolver = Arc::new(RecordingResolver::default());
+      let handlers = FactoryAdmissionHandlers::new(store.clone(), resolver.clone());
+      let mut request = command(project, configuration_id, repository_id);
+      request.classification = WorkClassification::new(
+        WorkPriority::new(20).unwrap(),
+        RiskClass::Medium,
+        FactoryMetadata::try_new([("origin".to_owned(), "automatic_source".to_owned())]).unwrap(),
+      );
+      let outcome = admit(&handlers, request).await;
+      if allow_manual {
+        assert_eq!(outcome.unwrap().disposition, MutationDisposition::Applied);
+        assert_eq!(resolver.call_count(), 1);
+        assert_eq!(store.mutation_evidence_counts().await.idempotency, 1);
+      } else {
+        let error = outcome.unwrap_err();
+        let crate::ApplicationError::FactoryValidation(report) = error else {
+          panic!("launch denial must retain a safe policy diagnostic: {error:?}");
+        };
+        assert_eq!(report.errors[0].field, "/admission_policy");
+        assert_eq!(report.errors[0].code, "launch_policy_denied");
+        assert_eq!(resolver.call_count(), 0);
+        assert_eq!(store.mutation_evidence_counts().await.idempotency, 0);
+        assert!(store.management_audit_facts().await.is_empty());
+      }
+    }
+  });
+}
+
+#[test]
+fn admission_store_refuses_a_substituted_resolved_access_profile_without_writing() {
+  run_ready(async {
+    use octacity_server_store::FactoryAdmissionStore;
+    let project = ProjectId::generate();
+    let id = FactoryConfigurationId::generate();
+    let repository_id = RepositoryId::generate();
+    let store = seeded_store(
+      project,
+      id,
+      repository(
+        project,
+        repository_id,
+        Some(SourceReference::new("refs/heads/main").unwrap()),
+      ),
+    );
+    let handlers = FactoryAdmissionHandlers::new(store.clone(), Arc::new(RecordingResolver::default()));
+    let context = context();
+    let command = command(project, id, repository_id);
+    let probe = super::factory_admission::admission_probe(&context, &command).unwrap();
+    let mut prepared = handlers
+      .prepare_fresh_intent(
+        &context,
+        command,
+        probe,
+        None,
+        octacity_server_factory::FactoryAdmissionOrigin::Manual,
+      )
+      .await
+      .unwrap();
+    let configuration = octacity_server_store::FactoryConfigurationStore::factory_configuration_version(
+      store.as_ref(),
+      id,
+      FactoryConfigurationVersion::INITIAL,
+    )
+    .await
+    .unwrap();
+    prepared.flow = prepared
+      .flow
+      .with_access_profile(
+        &configuration.configuration,
+        launch_policies(project, true, true).access_profile,
+      )
+      .unwrap();
+    assert!(
+      store
+        .admit_factory_work(crate::management_security::audited_mutation(&context, prepared).unwrap())
+        .await
+        .is_err()
+    );
+    assert_eq!(store.mutation_evidence_counts().await.idempotency, 0);
+  });
+}
+
+#[test]
+fn admission_retains_the_exact_access_profile_without_resolving_defaults_on_replay() {
+  run_ready(async {
+    let project = ProjectId::generate();
+    let id = FactoryConfigurationId::generate();
+    let repository_id = RepositoryId::generate();
+    let store = unmapped_store(project, id, repository(project, repository_id, None));
+    let policies = launch_policies(project, true, true);
+    let expected = serde_json::to_value(&policies.access_profile).unwrap();
+    store
+      .seed_factory_configuration_policies(configuration(project, id).reference(), policies)
+      .unwrap();
+    let handlers = FactoryAdmissionHandlers::new(store.clone(), Arc::new(RecordingResolver::default()));
+    let mut request = command(project, id, repository_id);
+    request.source =
+      RepositorySourceSelection::ExactRevision(octacity_server_domain::ImmutableRevision::new("pinned").unwrap())
+        .into();
+    let accepted = admit(&handlers, request.clone()).await.unwrap();
+    let snapshot = store.factory_run_snapshot(accepted.factory_run_id).await.unwrap();
+    assert_eq!(
+      serde_json::to_value(&snapshot.admitted_flow).unwrap()["access_profile"],
+      expected
+    );
+    let replayed = admit(&handlers, request).await.unwrap();
+    assert_eq!(replayed.factory_run_id, accepted.factory_run_id);
+    assert_eq!(
+      store
+        .factory_run_snapshot(accepted.factory_run_id)
+        .await
+        .unwrap()
+        .admitted_flow,
+      snapshot.admitted_flow
+    );
+  });
 }
 
 #[test]
@@ -213,6 +420,29 @@ impl RevisionResolver for UnavailableResolver {
   ) -> Result<octacity_server_domain::ImmutableRevision, RevisionResolutionError> {
     Err(RevisionResolutionError::Unavailable)
   }
+}
+
+#[test]
+fn source_launch_denial_is_a_blocked_policy_outcome_without_dependency_retry() {
+  let error = crate::ApplicationError::FactoryValidation(Box::new(crate::FactoryValidationDiagnostics::single_issue(
+    "/admission_policy",
+    "launch_policy_denied",
+    None,
+  )));
+  let schedule = crate::source_scan_schedule(
+    None,
+    time(10),
+    std::time::Duration::from_secs(1),
+    crate::DurableRetryPolicy::new(8, 1000, 10000).unwrap(),
+    Some(&error),
+  )
+  .unwrap();
+  assert_eq!(serde_json::to_value(&schedule).unwrap()["failure"], "policy_denied");
+  assert!(
+    schedule.exhausted,
+    "changing the pinned policy requires an explicit definition replacement"
+  );
+  assert_eq!(schedule.attempts, 0, "a launch rule is not a failed provider attempt");
 }
 
 #[test]
@@ -898,12 +1128,14 @@ fn repository_free_admission_replays_exact_inputs_without_vcs_or_repository() {
     let configuration_id = FactoryConfigurationId::generate();
     let store = Arc::new(InMemoryFactoryConfigurationStore::new());
     store.seed_project(project).unwrap();
-    store
-      .seed_factory_configuration_version(PublishedFactoryConfiguration {
+    seed_permitted_configuration(
+      &store,
+      PublishedFactoryConfiguration {
         configuration: configuration(project, configuration_id),
         published_at: time(1),
-      })
-      .unwrap();
+      },
+    )
+    .unwrap();
     let resolver = Arc::new(RecordingResolver::default());
     let handler = FactoryAdmissionHandlers::new(store.clone(), resolver.clone());
     let mut wire = serde_json::to_value(command(project, configuration_id, RepositoryId::generate())).unwrap();

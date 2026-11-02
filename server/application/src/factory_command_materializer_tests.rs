@@ -105,6 +105,104 @@ fn context(profile: &FactoryCommandBuildProfile, intent: &FlowBuildIntent) -> Bu
 }
 
 #[test]
+fn accepted_project_access_reaches_signed_jobs_and_current_revocation_has_no_fallback() {
+  crate::factory_admission_tests::run_ready(async {
+    let (_, _, mut profile) = crate::factory_command_tests::command_fixture();
+    let work = crate::factory_node_test_support::fixtures::work();
+    crate::factory_command_output_source_tests::configure_profile(&mut profile, &work);
+    let mut permissions = serde_json::to_value(&profile.project_permissions).unwrap();
+    permissions["resources"]["elapsed_millis"] = serde_json::json!(1000);
+    let narrow: FactoryPermissionSet = serde_json::from_value(permissions.clone()).unwrap();
+    permissions["network_hosts"] = serde_json::json!(["unused.example"]);
+    permissions["secret_profiles"] = serde_json::json!(["unused-secret"]);
+    permissions["tools"] = serde_json::json!([crate::factory_node_test_support::fixtures::reference("unused-tool")]);
+    permissions["mounts"]
+      .as_array_mut()
+      .unwrap()
+      .push(serde_json::json!({"root":"/private","mode":"read_write"}));
+    let broader_request: FactoryPermissionSet = serde_json::from_value(permissions).unwrap();
+    profile.project_permissions = narrow.clone();
+    profile.local_permissions = LocalPermissionCeiling::fully_enforced(profile.project_permissions.clone());
+    let mut binding = crate::factory_node_test_support::fixtures::binding(work.subject().project_id());
+    binding.build_configuration = profile.build_configuration.clone();
+    binding.task_digest = profile.task_digest();
+    let access = FactoryAccessProfile::publish(
+      FactoryAccessProfileId::generate(),
+      work.subject().project_id(),
+      FactoryAccessProfileDefinition {
+        name: FactoryText::new("Reviewed command").unwrap(),
+        permissions: narrow.clone(),
+      },
+    )
+    .unwrap();
+    let (_, admitted, _, input, attempt) =
+      crate::factory_node_test_support::fixtures::execution_fixture_with_code_scope(
+        FlowNodeKind::BuildCommand,
+        work,
+        binding,
+        broader_request,
+        FlowCodeScope::Repository,
+      );
+    let mut retained = serde_json::to_value(admitted).unwrap();
+    retained["access_profile"] = serde_json::to_value(&access).unwrap();
+    let admitted: AdmittedFlow = serde_json::from_value(retained).unwrap();
+    let intent = FlowBuildIntent::new(input, &admitted, attempt, Default::default(), 0).unwrap();
+    let original_operation = intent.operation_id().unwrap();
+    let owner = FactoryClaimOwnership::new(intent.node().owner().clone(), intent.node().claim());
+    compile_factory_command_task(&intent, &admitted, &profile)
+      .expect("the exact installed command must compile under the retained ceiling");
+    profile
+      .validate_installation(&context(&profile, &intent).job_spec_toolchain)
+      .expect("the fixture uses a qualified command installation");
+    let inputs = Arc::new(Inputs::default());
+    let compiler = |profiles| {
+      FactoryCommandBuildMaterializer::new(
+        Arc::new(Context(context(&profile, &intent))),
+        Arc::new(FactoryExecutionInputPublisher::new(
+          inputs.clone(),
+          Arc::new(Bytes),
+          Arc::new(Clock),
+        )),
+        profiles,
+        Arc::new(Clock),
+      )
+      .unwrap()
+    };
+    let accepted = compiler(vec![profile.clone()])
+      .materialize(&intent, &admitted, owner.clone(), at(41))
+      .await
+      .unwrap();
+    accepted.validate_fresh().unwrap();
+    assert_eq!(
+      accepted.jobs[0]
+        .job_spec_template
+        .managed_intent()
+        .unwrap()
+        .permissions(),
+      &octacity_server_store::factory_job_permissions(&narrow).unwrap()
+    );
+    let publications = inputs.0.lock().unwrap().len();
+    let mut revoked = profile.clone();
+    revoked.local_permissions = LocalPermissionCeiling::fully_enforced(FactoryPermissionSet::deny_all());
+    let mut newer = profile.clone();
+    newer.identity = crate::factory_node_test_support::fixtures::reference("newer-command");
+    assert!(
+      compiler(vec![revoked, newer])
+        .materialize(&intent, &admitted, owner, at(41))
+        .await
+        .is_err()
+    );
+    assert_eq!(
+      inputs.0.lock().unwrap().len(),
+      publications,
+      "revocation blocks private input publication"
+    );
+    assert_eq!(intent.operation_id().unwrap(), original_operation);
+    assert_eq!(admitted.access_profile(), Some(&access));
+  });
+}
+
+#[test]
 fn selected_repository_mismatch_is_rejected_before_publishing_private_command_inputs() {
   crate::factory_admission_tests::run_ready(async {
     let (_, _, mut profile) = crate::factory_command_tests::command_fixture();

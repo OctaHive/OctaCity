@@ -137,6 +137,8 @@ export const enMessages = {
   'factory.limitSource.project': 'Project policy',
   'factory.limitSource.runtime': 'Installed runtime',
   'factory.limitSource.installation': 'Installation',
+  'factory.launchPolicyDenied':
+    'The selected launch policy does not allow this way of starting the pipeline. Choose an appropriate policy in the Configuration.',
   'factory.unmappedLegacyPolicy':
     'Select a Project launch policy and access profile; the saved installation reference has no verified mapping.',
   'factory.accessExceedsPolicyLimit':
@@ -1311,6 +1313,7 @@ export const enMessages = {
   'factory.sourceFailure.admission_capacity': 'Admission capacity reached',
   'factory.sourceFailure.retention_pending': 'Input retention pending',
   'factory.sourceFailure.protocol_fault': 'Source protocol failure',
+  'factory.sourceFailure.policy_denied': 'Automatic admission denied by the pinned launch policy',
   'factory.sourceFailure.invalid_configuration': 'Source configuration invalid',
   'factory.sourceFailure.conflict': 'Source conflict',
   'factory.retainedSourceProgress': 'Retained source progress',

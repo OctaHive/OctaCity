@@ -357,6 +357,40 @@ fn installed_signal_node_uses_shadow_baseline_and_replays_without_another_provid
       "an expired observer cannot declare even an undispatched operation stopped"
     );
     assert_eq!(provider.dispatches(), 0);
+    for removed in ["plugins", "network_hosts", "secret_profiles"] {
+      let mut restricted = serde_json::to_value(node.permissions()).unwrap();
+      restricted[removed] = serde_json::json!([]);
+      let access = FactoryAccessProfile::publish(
+        FactoryAccessProfileId::generate(),
+        input.subject().project_id(),
+        FactoryAccessProfileDefinition {
+          name: FactoryText::new("Restricted signal").unwrap(),
+          permissions: serde_json::from_value(restricted).unwrap(),
+        },
+      )
+      .unwrap();
+      let mut retained = serde_json::to_value(&admitted).unwrap();
+      retained["access_profile"] = serde_json::to_value(access).unwrap();
+      let restricted: AdmittedFlow = serde_json::from_value(retained).unwrap();
+      assert!(
+        executor
+          .observe(FactoryNodeExecutionRequest {
+            run_id: fixture.admission.run.id(),
+            admitted: &restricted,
+            work: &fixture.admission.work,
+            input: &input,
+            attempt: &attempt,
+            build: None,
+            ownership: ownership.clone(),
+            observed_at: Timestamp::from_unix_millis(15).unwrap(),
+          })
+          .await
+          .is_err(),
+        "the Project profile removed {removed}"
+      );
+      assert_eq!(provider.dispatches(), 0);
+      assert!(store.requests.lock().unwrap().is_empty());
+    }
     for _ in 0..2 {
       let step = executor
         .observe(FactoryNodeExecutionRequest {

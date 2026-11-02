@@ -10,8 +10,8 @@ Every executable slice below uses repository TDD: run its behavioral test to obs
 
 - [x] 2.1 Expose typed Project-scoped list/detail/validate/publication/default-selection contracts through ordinary REST composition and generate OpenAPI/Console types; verify authorized HTTP round trips, safe validation, stale-version/key conflicts and explicit legacy/new representation compatibility in REST contract tests.
 - [x] 2.2 Resolve and pin Project policies through Configuration publication, choices, readiness and admission context; verify exact defaults, explicit overrides, unavailable references, effective constraints and no repinning after policy/default replacement through application and persisted Configuration tests.
-- [ ] 2.3 Enforce trusted manual/automatic origins through the common admission boundary for explicit Work, Issue execution and automatic Source input; verify allowed/denied combinations, imported-Issue origin, independent disabled Source/Configuration, denial before per-item preparation and no Work/Run/Build on denial. Verify accepted replay after restart returns the original operation without redispatch.
-- [ ] 2.4 Feed pinned access profiles into the existing permission intersection, compiler and protected-operation path; verify restricted host/tool/path/secret selections remain restricted, unsupported/broader profiles fail with limiting-scope diagnostics, and current installation revocation blocks recovery without switching to a newer profile or weaker backend.
+- [x] 2.3 Enforce trusted manual/automatic origins through the common admission boundary for explicit Work, Issue execution and automatic Source input; verify allowed/denied combinations, imported-Issue origin, independent disabled Source/Configuration, denial before per-item preparation and no Work/Run/Build on denial. Verify accepted replay after restart returns the original operation without redispatch.
+- [x] 2.4 Feed pinned access profiles into the existing permission intersection, compiler and protected-operation path; verify restricted host/tool/path/secret selections remain restricted, unsupported/broader profiles fail with limiting-scope diagnostics, and current installation revocation blocks recovery without switching to a newer profile or weaker backend.
 
 ## 3. Project settings and Configuration UI
 
@@ -302,3 +302,152 @@ before and after the change rather than an artificial failing test of private st
 Rust commands retained debug/incremental storage limits from 2.2. The disposable test
 PostgreSQL container and its own volume were removed; personal stand data was untouched.
 No commits were made. Available disk space remained approximately 34 GiB.
+
+## Verification — 2.3 (2026-11-02)
+
+Fresh admission now checks the exact Configuration-pinned launch rules at the common
+application boundary. Trusted manual Work/Project text and explicit Issue execution
+use `Manual`, including an Issue imported through Source. Installed Source ingress and
+resumed candidate preparation use `AutomaticSource`. Provider names, imported links and
+caller metadata cannot select the origin. No client origin field or policy fallback was
+added. Missing legacy mappings remain actionable prerequisites.
+
+Fresh Source recovery checks the rule before reserving per-item preparation; resumed
+preparation checks it before freezing its mapping or publishing bytes. Manual text checks
+it before reservation, VCS and artifact publication. Disabled Configuration/Source and
+current dependency authorization remain independent. A launch denial has the closed
+`launch_policy_denied` diagnostic and durable Source `policy_denied` state: blocked,
+without spending a provider retry. Existing Console error/progress surfaces explain this
+in English and Russian; policy editors remain in section 3.
+
+Accepted replay still precedes fresh policy resolution. Real HTTP/PostgreSQL verification
+admits and executes one deterministic operation, replaces policy/default selections,
+restarts the server, then observes the original Work/Run with exactly one executor call.
+Denial creates no Run or Build and does not reserve its admission key. Source regression
+also recovers its original receipt after an input moves to a deny-both Configuration,
+while a genuinely new input is rejected. These use controlled external executor/provider
+ports; real Agent qualification remains in 4.2.
+
+Test fixtures explicitly publish/pin policies or seed exact resolved contexts; creating
+a fixture Configuration alone grants nothing. The pre-0093 migration rehearsal uses the
+existing frozen historical Work writer and retains its Project-text receipt, rather than
+making current admission bypass missing policy tables. After upgrade, the same intake
+returns the original receipt even without a legacy policy mapping. The status-action
+replacement fixture retains its original exact Project policy pins.
+
+Observed TDD (Rust commands used `--locked`, with storage flags below):
+
+| Public seam / test filter | Observed Red | Observed Green |
+| --- | --- | --- |
+| application `unmapped_launch_policy_blocks_manual` | An unmapped Configuration admitted Work/Run | Explicit prerequisite, no VCS or mutation |
+| application `pinned_launch_rules_govern_manual` | Manual-disabled rule admitted Work | All four flag combinations; misleading origin metadata cannot change ingress |
+| application `pinned_launch_rules_govern_automatic` | Fresh recovery returned None under an automatic-disabled rule | All four combinations; fresh recovery/admission reject before resolution |
+| application `automatic_policy_denial_prevents_resumed` | Preparation published both input documents | No frozen policy, materialization or byte publication |
+| application `manual_policy_denial_prevents_project_text` | Text submission created Work/Run | No reservation, VCS or byte writes |
+| application `explicit_execution_of_an_imported` | Automatic-only policy accepted explicit imported-Issue execution | Manual rule governs; denial leaves execution history unchanged |
+| application `source_launch_denial_is_a_blocked` | Denial became invalid-configuration/provider attempt | Distinct blocked state, zero dependency attempts |
+| HTTP `manual_policy_denial_and_accepted_replay` | Actual denial code was outside OpenAPI | Closed diagnostic, no Run/Build on denial, accepted replay after real restart |
+| REST `source_diagnostics_document_launch_denial` | Generated-client contract omitted the durable category | Source diagnostics retain the distinct policy block |
+| Console client/publication/progress | Client discarded the code; guidance/progress lacked its explanation | Closed code retained and operator guidance rendered |
+
+Regression and required checks:
+
+- `cargo test -p octacity-server-application --lib --all-features`: 975 passed.
+- `cargo test -p octacity-server --lib work_source_tests`: 92 passed, 48 service-dependent cases ignored. Includes the real controlled provider process and denial before candidate reservation.
+- `cargo test -p octacity-server --test factory_project_policy_http -- --include-ignored --test-threads=4`: 15 passed against disposable PostgreSQL.
+- `cargo test -p octacity-server --test factory_work_source_pilot -- --include-ignored --test-threads=4`: 5 passed, including PostgreSQL receipt/delivery recovery and imported-card association.
+- `cargo test -p octacity-server --test project_text_intake -- --include-ignored --test-threads=4`: 14 passed with disposable PostgreSQL/MinIO, including killed publishers, historical migration and Issue HTTP restart/replay.
+- `cargo test -p octacity-server-api-rest --test v1_handlers --test v1_contract -p octacity-server-store --lib --all-features`: REST library 13, handlers 252, contracts 30 and store 112 passed.
+- `cargo test -p octacity-server-application --lib --all-features input_replacement_and_rotated_installation`: passed after strengthening the replacement-policy replay assertion.
+- Exported authoritative OpenAPI; `OCTACITY_OPENAPI_SCHEMA_FILE=/private/tmp/octacity-23-openapi.json pnpm api:generate` and `pnpm typecheck`: passed. Generated artifacts retain the existing ignored-file convention.
+- Focused Console Vitest over client/publication/Source progress: 69 passed. ESLint, Prettier and `pnpm build` passed with unchanged bundle budgets.
+
+Rust checks use `CARGO_PROFILE_DEV_DEBUG=0 CARGO_PROFILE_TEST_DEBUG=0 CARGO_INCREMENTAL=0`.
+Integration commands use `OCTACITY_POSTGRES_URL` and, where required, `OCTACITY_MINIO_ENDPOINT`,
+`OCTACITY_MINIO_ACCESS_KEY` and `OCTACITY_MINIO_SECRET_KEY` for disposable local peers.
+Policy denial is not classified from infrastructure setup failures. No commits were made.
+Pinned access enforcement/compilation remains 2.4; no additional authoring controls were
+removed or added in this slice.
+
+Final checks: scoped Clippy over application/store/REST/server libraries and the affected
+integration contracts passed with `--all-features -- -D warnings`. `cargo fmt --all -- --check`,
+`git diff --check`, architecture validation (64 packages / 263 edges), and
+`openspec validate add-project-factory-policies --strict` passed. Only the two disposable
+policy-origin test containers and their own volumes were removed. The four personal stand
+volumes remain intact. Approximately 32 GiB is free; no commits were created.
+
+## Verification — 2.4 (2026-11-03)
+
+The accepted `AdmittedFlow` now retains the exact access-profile publication. Migration
+`0115_factory_run_access_profile.sql` adds its bounded nullable snapshot to the existing Run
+owner; NULL preserves historical execution contracts. Configuration bytes and old receipts
+are unchanged. Admission transactions verify the exact Project pin or recorded legacy mapping,
+without a mutable default lookup or acquiring another database connection inside the transaction.
+
+One intersection over the retained ceiling feeds ordinary Build intents (including selected
+AI Profiles), server actions, Decision Signal nodes, profile selectors and deferred Reporter
+requests. The existing compiler, signed JobSpec permissions, protected tool gate and current
+installation/Agent/backend checks continue to apply. This adds no permission language,
+credential owner or alternative runtime. Policy references attach no documents or credentials.
+
+TDD commands used `CARGO_PROFILE_DEV_DEBUG=0 CARGO_PROFILE_TEST_DEBUG=0 CARGO_INCREMENTAL=0`.
+For application rows below, the command was
+`cargo test --locked -p octacity-server-application --lib --all-features <filter>`:
+
+| Filter / public boundary | Observed Red | Observed Green |
+| --- | --- | --- |
+| `admission_retains_the_exact_access_profile` | Accepted Run serialized no access profile | Exact publication retained in the Run and receipt replay |
+| `retained_access_profile_blocks` | Server action reached its connector after the profile removed the plugin | Removed plugin/host/secret blocks delivery |
+| `installed_signal_node_uses_shadow_baseline` | Restricted signal still proceeded after plugin removal | Missing plugin/host/credential blocks provider reservation and dispatch; original permitted replay still works |
+| `optional_status_reporting_is_queued` | Deferred request validation reconstructed broader node permissions | Retained profile limits the reconstructed request |
+| `project_access_removes_selector` | Fenced selection continued after its credential was removed | Restricted selection writes no provider request; the same permitted graph proceeds |
+| `admission_store_refuses` | Store accepted a substituted resolved profile | Rejected before idempotency/audit/Run publication |
+
+Additional Red/Green boundaries:
+
+- `cargo test --locked -p octacity-server-factory --lib retained_project_access`:
+  Red retained broader tools, hosts, paths and secrets; Green emits exactly the reviewed
+  subset, preserves it through serialization/intent restoration, and refuses the earlier
+  broad intent. Legacy Runs retain their original permissions.
+- `cargo test --locked -p octacity-server --test factory_project_policy_http manual_policy_denial_and_accepted_replay -- --include-ignored`:
+  Red lost the access profile when reopening PostgreSQL state; Green preserves the exact
+  original publication after access/default replacement and a server restart, without redispatch.
+
+Existing compiler and recovery behavior was characterized through
+`accepted_project_access_reaches` and `revoked_installation_blocks`: signed ordinary Jobs
+contain the narrowed permissions; current installation revocation blocks rematerialization
+and retained Build output recovery even when another profile is installed. Original operation
+identities, private publications and Run state remain unchanged. Existing tests also verify
+unenforceable backends, out-of-envelope tool proposals and installation-scoped diagnostics
+for broader or unselectable access profiles.
+
+Regression results:
+
+- `cargo test --locked -p octacity-server-application --lib --all-features`: 980 passed.
+  After adding the recovery characterization, its focused command passed; after factoring
+  explicit fixture grants, `cargo test --locked -p octacity-server-application --lib --all-features factory_admission_tests`
+  passed all 145 admission/Source cases.
+- `cargo test --locked -p octacity-server-factory -p octacity-server-store --lib --all-features`:
+  343 core and 112 store tests passed.
+- `cargo test --locked -p octacity-server --test factory_project_policy_http -- --include-ignored --test-threads=4`:
+  all 15 HTTP/persisted-policy tests passed.
+- `cargo test --locked -p octacity-server-store-postgres --test migrations --test factory_project_policies -- --ignored --test-threads=4`:
+  8 migration and 9 policy-store tests passed, including historical-schema preservation.
+- `cargo test --locked -p octacity-server --test factory_work_source_pilot --test project_text_intake -- --include-ignored --test-threads=4`:
+  the Source pilot passed all 5 cases. Project text initially exposed two fixtures retaining
+  a deny-all profile for newly configured Reporter actions; after explicitly publishing the
+  reviewed fixture grants, its standalone rerun passed all 14 cases, including historical
+  backfill, killed publishers and restart recovery. The same explicit fixture helper fixed
+  the release journeys and Source pilot without relaxing production enforcement or assertions.
+
+Integration runs used separately created disposable PostgreSQL and MinIO services via
+`OCTACITY_POSTGRES_URL` and the `OCTACITY_MINIO_*` environment variables. No external provider
+or personal stand was used. Clippy over the changed core/store/PostgreSQL/application libraries
+and application test targets passed with `--all-features -- -D warnings`.
+Only section 2.4 is completed here; Project policy editors and stand provisioning remain in
+sections 3 and 4. No commits were created.
+
+Final `cargo fmt --all -- --check`, `git diff --check`, architecture validation (64 packages /
+263 edges), and `openspec validate add-project-factory-policies --strict` passed. The two
+disposable access-policy test containers and their anonymous volumes were removed; all four
+personal stand volumes remain present. Available disk space: approximately 32 GiB.

@@ -5,7 +5,7 @@ pub(super) fn insert(schemas: &mut Map<String, Value>) {
   let digest = || reference("FactoryDigest");
   let time = || json!({"type":"integer","format":"int64"});
   let nullable = |value: Value| json!({"anyOf":[value,{"type":"null"}]});
-  let failure = json!({"type":"string","enum":["unavailable","rate_limited","transient","timeout","cancelled","admission_capacity","retention_pending","protocol_fault","invalid_configuration","conflict"]});
+  let failure = json!({"type":"string","enum":["unavailable","rate_limited","transient","timeout","cancelled","admission_capacity","retention_pending","protocol_fault","invalid_configuration","policy_denied","conflict"]});
   let issue = object(
     json!({"project_id":id(),"issue_id":text(256)}),
     &["project_id", "issue_id"],

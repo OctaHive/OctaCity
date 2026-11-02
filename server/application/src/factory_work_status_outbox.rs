@@ -356,7 +356,7 @@ fn accepted_status_material<'a>(
       external_identity: snapshot.work.external_identity().clone(),
       subject: snapshot.work.subject().clone(),
       status: parameters.status,
-      permissions: node.permissions().clone(),
+      permissions: snapshot.admitted_flow.execution_permissions(node.permissions()),
       budget: node.budget(),
       deadline,
     },
