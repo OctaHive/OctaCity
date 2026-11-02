@@ -14,6 +14,7 @@ import type { IssueWorkflowsApi } from '../../api/issueWorkflows';
 import { factoryRolesApi } from './roleApi';
 import { factorySourcesApi } from './sourceApi';
 import { projectDocumentsApi } from '../../api/projectDocuments';
+import styles from './Factory.module.css';
 
 import type { SourceRepositories } from './SourceInputEditor';
 
@@ -78,12 +79,14 @@ export function FactoryAuthoring({
   });
   const visibleFlows = flows.data?.pages.flatMap((page) => page.items) ?? [];
   return (
-    <section>
+    <section className={styles.editor}>
       {kind === 'flow' ? <p>{t('factory.pipelineAuthoringHelp')}</p> : null}
       <p>{t('factory.memoryDraft')}</p>
-      <button type="button" onClick={onDiscard}>
-        {t('factory.discardDraft')}
-      </button>
+      <div className={styles.definitionActions}>
+        <button type="button" onClick={onDiscard}>
+          {t('factory.discardDraft')}
+        </button>
+      </div>
       <PagedExplorerBranch
         query={choices}
         empty={t('factory.noChoices')}

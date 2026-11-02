@@ -103,10 +103,6 @@
   border-radius: var(--radius-small);
   background: var(--color-surface);
 }
-.definitionDetails:has(.editor) {
-  padding: 0;
-  border: 0;
-}
 .definitionToolbar,
 .definitionActions {
   display: flex;
@@ -375,6 +371,11 @@
 
 /* Keep usable text fields after the persistent mobile navigation and nested inspectors. */
 @media (max-width: 40rem) {
+  .definitionDetails:has(.editor) {
+    padding: 0;
+    border: 0;
+    background: transparent;
+  }
   .workspace:has(.editor) {
     padding: var(--space-sm);
   }

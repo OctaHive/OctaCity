@@ -5,6 +5,113 @@ import { translate, type MessageKey } from '../../src/app/presentation/messages'
 
 for (const language of ['en', 'ru'] as const) {
   for (const width of [390, 1280]) {
+    test(`${language}: keeps the published flow editor padded and its actions separated at ${width}px`, async ({
+      page,
+    }, info) => {
+      await installOperatorFixture(page);
+      await page.setViewportSize({ width, height: 900 });
+      await page.addInitScript(
+        (language) =>
+          localStorage.setItem(
+            'octacity.console.preferences',
+            JSON.stringify({
+              version: 2,
+              language,
+              theme: 'light',
+              favorites: [],
+              recents: [],
+              expanded: [],
+              explorerOpen: false,
+              explorerWidth: 288,
+              notificationLastOpenedAt: null,
+            }),
+          ),
+        language,
+      );
+      const t = (key: MessageKey) => translate(language, key);
+      const configuration = configurationFixture().configuration;
+      const flow = configuration.flow;
+      const root = flow.closure.definitions.find(
+        (definition) => definition.reference.id === flow.closure.root.id,
+      )!;
+      root.name = null;
+      root.process = {
+        goals: {
+          artifact: { artifact_id: 'goals', content_digest: 'a'.repeat(64), encoded_size: 10 },
+          recipients: [],
+        },
+        criteria: {
+          artifact: { artifact_id: 'criteria', content_digest: 'b'.repeat(64), encoded_size: 10 },
+          recipients: [],
+        },
+      };
+      await page.route(`**/api/v1/flow-definitions/${flow.closure.root.id}/versions/*`, (route) =>
+        route.fulfill({
+          json: {
+            flow,
+            project_id: configuration.reference.project_id,
+            published_at_unix_ms: 1,
+          },
+        }),
+      );
+      await page.goto(
+        `/factory?project_id=${configuration.reference.project_id}&flow_definition_id=${flow.closure.root.id}&flow_version=1`,
+      );
+      await page.getByRole('button', { name: t('factory.editFlow'), exact: true }).click();
+      const heading = page.getByRole('heading', { name: t('factory.immutableFlow'), exact: true });
+      const card = heading.locator('..').locator('..');
+      const graph = page.getByRole('heading', { name: t('factory.graphEditor'), exact: true });
+      const discard = page.getByRole('button', { name: t('factory.discardDraft'), exact: true });
+      const memory = page.getByText(t('factory.memoryDraft'), { exact: true });
+      if (width >= 1280) {
+        expect(
+          (await heading.boundingBox())!.x - (await card.boundingBox())!.x,
+        ).toBeGreaterThanOrEqual(16);
+        expect(
+          (await graph.boundingBox())!.x - (await card.boundingBox())!.x,
+        ).toBeGreaterThanOrEqual(16);
+      }
+      const memoryBox = (await memory.boundingBox())!;
+      const discardBox = (await discard.boundingBox())!;
+      expect(discardBox.y - memoryBox.y - memoryBox.height).toBeGreaterThanOrEqual(8);
+      expect(
+        (await graph.boundingBox())!.y - discardBox.y - discardBox.height,
+      ).toBeGreaterThanOrEqual(8);
+      const accessHelp = page.getByText(t('factory.accessRequirementsHelp'), { exact: true });
+      const helpBox = (await accessHelp.boundingBox())!;
+      const reviewBox = (await page
+        .getByRole('button', { name: t('factory.reviewRequiredAccess'), exact: true })
+        .boundingBox())!;
+      expect(reviewBox.y - helpBox.y - helpBox.height).toBeGreaterThanOrEqual(8);
+      for (const kind of ['goals', 'criteria'] as const) {
+        const edit = (await page
+          .getByRole('button', {
+            name: t(
+              kind === 'goals' ? 'factory.editPipelineGoals' : 'factory.editCompletionCriteria',
+            ),
+            exact: true,
+          })
+          .boundingBox())!;
+        const detach = (await page
+          .getByRole('button', {
+            name: t(
+              kind === 'goals' ? 'factory.detachPipelineGoals' : 'factory.detachCompletionCriteria',
+            ),
+            exact: true,
+          })
+          .boundingBox())!;
+        expect(
+          detach.y > edit.y ? detach.y - edit.y - edit.height : detach.x - edit.x - edit.width,
+        ).toBeGreaterThanOrEqual(8);
+      }
+      expect(await page.evaluate(() => document.documentElement.scrollWidth)).toBeLessThanOrEqual(
+        width,
+      );
+      await heading.evaluate((element) => element.scrollIntoView({ block: 'start' }));
+      await page.evaluate(() => window.scrollBy(0, -80));
+      await page.screenshot({ path: info.outputPath('flow-editor-spacing.png') });
+    });
+
     test(`${language}: reads a spacious configuration and selects historical versions inside its dropdown at ${width}px`, async ({
       page,
     }, info) => {

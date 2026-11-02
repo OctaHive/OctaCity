@@ -5,6 +5,7 @@ import { useOverlayFocus } from '../../shared/useOverlayFocus';
 import { conflictingMounts, mergePermissions, requiredPermissions } from './flowRequirements';
 import { PermissionEditor } from './ResourceEditors';
 import styles from '../../shared/ConfirmedCommand.module.css';
+import layout from './Factory.module.css';
 
 type Draft = components['schemas']['FactoryFlowDefinitionDraft'];
 /** Explicitly reviews one exact draft change. Opening/cancelling never requests access. */
@@ -58,21 +59,23 @@ export function AccessRequirements({
       review.draft.limits.permissions,
     ].some(conflictingMounts);
   return (
-    <section ref={sectionRef} tabIndex={-1}>
+    <section className={layout.editor} ref={sectionRef} tabIndex={-1}>
       <p>{t('factory.accessRequirementsHelp')}</p>
-      <button
-        ref={triggerRef}
-        type="button"
-        disabled={!changed}
-        onClick={() =>
-          setReview({
-            baseline: JSON.stringify(value),
-            draft: structuredClone(proposed),
-          })
-        }
-      >
-        {t('factory.reviewRequiredAccess')}
-      </button>
+      <div className={layout.definitionActions}>
+        <button
+          ref={triggerRef}
+          type="button"
+          disabled={!changed}
+          onClick={() =>
+            setReview({
+              baseline: JSON.stringify(value),
+              draft: structuredClone(proposed),
+            })
+          }
+        >
+          {t('factory.reviewRequiredAccess')}
+        </button>
+      </div>
       {review ? (
         <div className={styles.layer}>
           <div

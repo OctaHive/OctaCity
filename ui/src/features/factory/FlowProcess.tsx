@@ -68,20 +68,26 @@ export function FlowProcess({
     }
   }
   return (
-    <fieldset>
+    <fieldset className={styles.editor}>
       <legend>{t('factory.processPurpose')}</legend>
       <p>{t('factory.processPurposeHelp')}</p>
       {(['goals', 'criteria'] as const).map((kind) => {
         const document = value.root.process?.[kind];
         const preview = previews[kind];
         return (
-          <section key={kind} aria-label={label(kind)}>
+          <section className={styles.editor} key={kind} aria-label={label(kind)}>
             <h4>{label(kind)}</h4>
-            <button type="button" disabled={editor !== null} onClick={() => void openEditor(kind)}>
-              {t(kind === 'goals' ? 'factory.editPipelineGoals' : 'factory.editCompletionCriteria')}
-            </button>
-            {document ? (
-              <>
+            <div className={styles.definitionActions}>
+              <button
+                type="button"
+                disabled={editor !== null}
+                onClick={() => void openEditor(kind)}
+              >
+                {t(
+                  kind === 'goals' ? 'factory.editPipelineGoals' : 'factory.editCompletionCriteria',
+                )}
+              </button>
+              {document ? (
                 <button
                   type="button"
                   disabled={editor !== null}
@@ -101,6 +107,10 @@ export function FlowProcess({
                       : 'factory.detachCompletionCriteria',
                   )}
                 </button>
+              ) : null}
+            </div>
+            {document ? (
+              <>
                 {preview?.digest === document.artifact.content_digest ? (
                   <pre className={styles.processPreview}>{preview.content}</pre>
                 ) : null}
