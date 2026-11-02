@@ -1,5 +1,6 @@
 import { expect } from '@playwright/test';
 import { test } from './sourceTest';
+import { translate, type MessageKey } from '../../src/app/presentation/messages';
 
 // Trust only the disposable gateway's selected public key, without modifying
 // workstation trust or accepting an unrelated self-signed certificate.
@@ -13,28 +14,7 @@ for (const language of ['en', 'ru'] as const) {
     page,
   }) => {
     const project = process.env.OCTACITY_RELEASE_PROJECT_ID!;
-    const labels =
-      language === 'en'
-        ? ([
-            'Set up triage',
-            'Review triage prerequisites',
-            'Retained Project document',
-            'Open document for viewing or editing',
-            'Document text',
-            'Review document publication',
-            'Publish document',
-            'Close',
-          ] as const)
-        : ([
-            'Настроить триаж',
-            'Проверить условия триажа',
-            'Сохранённый документ проекта',
-            'Открыть документ для просмотра или правки',
-            'Текст документа',
-            'Проверить публикацию документа',
-            'Опубликовать документ',
-            'Закрыть',
-          ] as const);
+    const t = (key: MessageKey, values = {}) => translate(language, key, values);
     await page.addInitScript(
       (language) =>
         localStorage.setItem(
@@ -54,16 +34,19 @@ for (const language of ['en', 'ru'] as const) {
       language,
     );
     await page.setViewportSize({ width: 390, height: 844 });
-    await page.goto(`/factory?project_id=${project}`);
-    await page.getByRole('button', { name: labels[0], exact: true }).press('Enter');
-    await page.getByRole('button', { name: labels[1], exact: true }).press('Enter');
-    await page.getByRole('combobox', { name: labels[2], exact: true }).press('Enter');
+    await page.goto(`/projects/${project}`);
     await page
-      .getByRole('option', { name: /OctaCity project goals/ })
+      .getByRole('button', { name: t('projectDocument.manage'), exact: true })
+      .press('Enter');
+    await page
+      .getByRole('button', {
+        name: t('projectDocument.view', { name: 'OctaCity project goals' }),
+        exact: true,
+      })
       .first()
       .press('Enter');
-    await page.getByRole('button', { name: labels[3], exact: true }).press('Enter');
-    const editor = page.getByRole('textbox', { name: labels[4], exact: true });
+    await page.getByRole('button', { name: t('projectDocument.edit'), exact: true }).press('Enter');
+    const editor = page.getByRole('textbox', { name: t('projectDocument.content'), exact: true });
     await expect(editor).toHaveValue(/Retain step states and results internally/);
     const revised = `# Console goals ${language}\nKeep accepted stage inputs immutable.`;
     await editor.fill(revised);
@@ -73,7 +56,9 @@ for (const language of ['en', 'ru'] as const) {
         exact: true,
       })
       .fill(`Console revised goals ${language}`);
-    await page.getByRole('button', { name: labels[5], exact: true }).press('Enter');
+    await page
+      .getByRole('button', { name: t('projectDocument.reviewChanges'), exact: true })
+      .press('Enter');
     const published = page.waitForResponse(
       (response) =>
         response.request().method() === 'POST' &&
@@ -81,7 +66,7 @@ for (const language of ['en', 'ru'] as const) {
     );
     await page
       .getByRole('dialog')
-      .getByRole('button', { name: labels[6], exact: true })
+      .getByRole('button', { name: t('projectDocument.publish'), exact: true })
       .press('Enter');
     const response = await published;
     expect(response.ok()).toBe(true);
@@ -92,7 +77,7 @@ for (const language of ['en', 'ru'] as const) {
     expect((await read.json()).content).toBe(revised);
     await page
       .getByRole('dialog')
-      .getByRole('button', { name: labels[7], exact: true })
+      .getByRole('button', { name: t('common.close'), exact: true })
       .press('Enter');
     expect(
       await page.evaluate(() => JSON.stringify({ ...localStorage, ...sessionStorage })),

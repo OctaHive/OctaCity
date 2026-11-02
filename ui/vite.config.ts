@@ -8,6 +8,10 @@ export default defineConfig(({ command }) => ({
   build: {
     rolldownOptions: {
       output: {
+        // Content hashes identify immutable chunks; keep repeated production import URLs compact.
+        entryFileNames: 'assets/[hash].js',
+        chunkFileNames: 'assets/[hash].js',
+        assetFileNames: 'assets/[hash][extname]',
         codeSplitting: {
           groups: [
             // Reduce shared-control chunk overhead while preserving Factory's composed CSS order.

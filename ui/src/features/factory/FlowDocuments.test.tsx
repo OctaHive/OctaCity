@@ -71,12 +71,13 @@ it('opens Project document management and returns with the exact pipeline draft 
     return extra;
   });
   await userEvent.click(section.getByRole('button', { name: 'Manage Project documents' }));
+  await userEvent.click(screen.getByRole('button', { name: 'New document' }));
   await userEvent.type(screen.getByRole('textbox', { name: 'Document name' }), 'Terminology');
   await userEvent.type(
     screen.getByRole('textbox', { name: 'Document text' }),
     'Project terminology',
   );
-  await userEvent.click(screen.getByRole('button', { name: 'Review document publication' }));
+  await userEvent.click(screen.getByRole('button', { name: 'Publish document' }));
   const dialog = within(screen.getByRole('dialog'));
   await userEvent.click(dialog.getByRole('button', { name: 'Publish document' }));
   expect(await dialog.findByText(/Document published/)).toBeTruthy();

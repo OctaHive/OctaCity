@@ -278,6 +278,15 @@ export const enMessages = {
   'triageResult.value.failed': 'Failed',
 
   'projectDocument.name': 'Document name',
+  'projectDocument.new': 'New document',
+  'projectDocument.view': 'View {name}',
+  'projectDocument.edit': 'Edit document',
+  'projectDocument.back': 'Back to documents',
+  'projectDocument.cancel': 'Cancel',
+  'projectDocument.write': 'Write',
+  'projectDocument.preview': 'Preview',
+  'projectDocument.previewTitle': 'Document preview',
+  'projectDocument.reviewChanges': 'Publish changes',
   'factory.documents': 'Documents',
   'factory.structuralSchemaHelp':
     'Schema validation checks structure. Document meaning requires declared checks or review.',
@@ -322,17 +331,11 @@ export const enMessages = {
   'projectDocument.choose': 'Choose a document to open',
   'projectDocument.expired':
     'This retained document has expired. Publish or select an available version.',
-  'projectDocument.empty':
-    'No retained Project documents. Publish a document to make it available for explicit step selection.',
-  'projectDocument.existing': 'Retained Project document',
-  'projectDocument.open': 'Open document for viewing or editing',
+  'projectDocument.empty': 'No documents yet. Choose New document to create one.',
   'projectDocument.content': 'Document text',
-  'projectDocument.review': 'Review document publication',
   'projectDocument.publish': 'Publish document',
-  'projectDocument.help':
-    'Open a retained document to view or edit it, or write a new one. Publication retains a new immutable document; existing Runs keep their original input. Select the published document explicitly for each stage.',
-  'projectDocument.published':
-    'Document published. Select it explicitly for the stages that need it.',
+  'projectDocument.help': 'Changes create a new document. Runs and steps keep the original.',
+  'projectDocument.published': 'Document published.',
   'triage.useSource': 'Use reviewed Source selection',
   'triage.preparationUnknown':
     'Preparation metadata is unavailable. Review the installed Source mapping before intake.',

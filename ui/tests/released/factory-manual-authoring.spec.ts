@@ -64,13 +64,16 @@ test('authors the first document-guided pipeline through the packaged Console', 
     ['Scratch guidance', 'Unused guidance must not reach either agent.'],
   ]) {
     await documents
+      .getByRole('button', { name: t('projectDocument.new'), exact: true })
+      .press('Enter');
+    await documents
       .getByRole('textbox', { name: t('projectDocument.name'), exact: true })
       .fill(name!);
     await documents
       .getByRole('textbox', { name: t('projectDocument.content'), exact: true })
       .fill(content!);
     await documents
-      .getByRole('button', { name: t('projectDocument.review'), exact: true })
+      .getByRole('button', { name: t('projectDocument.publish'), exact: true })
       .press('Enter');
     const dialog = page.getByRole('dialog');
     await expect(dialog).toContainText(content!);
@@ -79,6 +82,9 @@ test('authors the first document-guided pipeline through the packaged Console', 
       .press('Enter');
     await expect(dialog).toContainText(t('projectDocument.published'));
     await dialog.getByRole('button', { name: t('common.close'), exact: true }).press('Enter');
+    await documents
+      .getByRole('button', { name: t('projectDocument.back'), exact: true })
+      .press('Enter');
   }
   const catalog = await (await page.request.get(`${base}/input-documents?limit=100`)).json();
   expect(catalog.items).toHaveLength(5);

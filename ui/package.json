@@ -23,6 +23,7 @@
   "dependencies": {
     "@tanstack/react-query": "5.104.0",
     "lucide-react": "1.49.0",
+    "markdown-to-jsx": "9.10.4",
     "openapi-fetch": "0.17.0",
     "react": "19.3.0",
     "react-dom": "19.3.0",

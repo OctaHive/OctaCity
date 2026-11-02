@@ -30,6 +30,9 @@ not require creating a triage pipeline first.
 
 In Project settings, use **Project documents** to create, view or edit shared
 goals, component guidance, priority meanings and other reference material.
+Choose **New document** to create one, or **View** beside an existing publication
+to read its formatted Markdown. **Edit document** opens the full-width editor;
+switch between **Write** and **Preview**, then **Publish changes** or **Cancel**.
 Publishing an edit creates a new immutable Artifact, even when its name matches
 an older publication. Preview the intended publication and explicitly select it
 in each recipient step. Opening, editing or publishing a document attaches

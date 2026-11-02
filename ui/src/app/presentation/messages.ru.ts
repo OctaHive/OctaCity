@@ -282,6 +282,15 @@ export const ruMessages = {
   'triageResult.value.failed': 'Ошибка',
 
   'projectDocument.name': 'Название документа',
+  'projectDocument.new': 'Новый документ',
+  'projectDocument.view': 'Просмотреть {name}',
+  'projectDocument.edit': 'Редактировать документ',
+  'projectDocument.back': 'К списку документов',
+  'projectDocument.cancel': 'Отмена',
+  'projectDocument.write': 'Редактор',
+  'projectDocument.preview': 'Предпросмотр',
+  'projectDocument.previewTitle': 'Предпросмотр документа',
+  'projectDocument.reviewChanges': 'Опубликовать изменения',
   'factory.documents': 'Документы',
   'factory.structuralSchemaHelp':
     'Схема проверяет структуру. Соответствие смыслу документов требует заданных проверок или ревью.',
@@ -325,17 +334,12 @@ export const ruMessages = {
   'projectDocument.choose': 'Выберите документ для просмотра или правки',
   'projectDocument.expired':
     'Срок хранения документа истёк. Опубликуйте или выберите доступную версию.',
-  'projectDocument.empty':
-    'Сохранённых документов проекта нет. Опубликуйте документ, чтобы его можно было выбрать для шага.',
-  'projectDocument.existing': 'Сохранённый документ проекта',
-  'projectDocument.open': 'Открыть документ для просмотра или правки',
+  'projectDocument.empty': 'Документов пока нет. Создайте новый документ.',
   'projectDocument.content': 'Текст документа',
-  'projectDocument.review': 'Проверить публикацию документа',
   'projectDocument.publish': 'Опубликовать документ',
   'projectDocument.help':
-    'Откройте сохранённый документ для просмотра или правки либо напишите новый. Публикация сохраняет новый неизменяемый документ; существующие Run используют исходные данные. Явно выберите опубликованный документ для каждого этапа.',
-  'projectDocument.published':
-    'Документ опубликован. Явно выберите его для этапов, которым он нужен.',
+    'Изменения сохраняются отдельно. Запуски и шаги сохраняют прежний документ.',
+  'projectDocument.published': 'Документ опубликован.',
   'triage.useSource': 'Использовать проверенный Source',
   'triage.preparationUnknown':
     'Данные подготовки недоступны. Проверьте установленный mapping Source перед включением приёма.',

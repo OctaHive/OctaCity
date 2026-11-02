@@ -983,3 +983,42 @@ TDD. No API or runtime policy changed, and no commit was created.
 The complete `pnpm test:unit` run passes all 40 script contracts and 985 Vitest
 tests in 117 files. Strict OpenSpec validation and the final diff check pass.
 Available disk remains approximately 11 GiB.
+
+### Follow-up: Project document workspace usability
+
+The Project document manager now separates the publication list, read-only
+Markdown view and an explicit full-width editor. New/edit, preview, cancel and
+confirmed publication reuse the existing Project input and replay owners. A
+successful publication opens the new document; existing step selections, inputs
+and admitted Runs are not repinned. Private text stays in component memory.
+
+Observed Red/Green commands from `ui`:
+
+- `pnpm exec vitest run src/features/projects/ProjectDocuments.test.tsx -t 'opens a document as formatted read-only'`:
+  first exposed the editable empty form before selection, then passed the explicit
+  list/view workflow with formatted headings, emphasis and lists.
+- `pnpm exec vitest run src/features/projects/ProjectDocuments.test.tsx -t 'views exact content and publishes an edit'`:
+  first lacked preview, then passed preview/cancel, immutable publication and
+  checks that private text is absent from query/browser storage.
+- `pnpm exec vitest run src/features/projects/ProjectDocuments.test.tsx -t 'keeps Markdown links inert'`:
+  first exposed a navigable SVG data URL, then passed the explicit web/mail/relative
+  URL policy. Raw HTML and automatic image loading are disabled.
+- `pnpm exec playwright test tests/browser/project-documents.spec.ts`:
+  first exposed lost keyboard focus and a cramped phone editor, then passed all
+  four English/Russian desktop/phone journeys, including actual geometry,
+  cancellation, confirmed publication, inert content and browser-storage checks.
+
+Markdown uses one pinned React renderer, installed with dependency scripts
+disabled. The production dependency audit reports no known vulnerabilities.
+Production assets use compact content-hash names; browser targets and all bundle
+ceilings are unchanged. The real production-budget test observed the excess and
+now passes: JS is 1,572,794 / 1,572,864 bytes, so remaining aggregate JS headroom is
+tight. The 40 script contracts, 987 Vitest tests, production build, ESLint and
+Prettier pass. Both changed Project-page references were rendered and inspected
+on macOS and in a separate disposable Linux Playwright container; no baseline
+was synthesized from another platform. The running stand and its data were not
+restarted or changed. No commits were created.
+The full `pnpm exec playwright test` run against the production preview passes
+178 tests with 5 skipped. Strict OpenSpec validation and `git diff --check` pass.
+Available disk is approximately 38 GiB; build caches and the running stand were
+preserved.

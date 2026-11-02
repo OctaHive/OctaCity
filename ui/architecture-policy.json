@@ -3,6 +3,7 @@
   "allowedRuntimeDependencies": [
     "@tanstack/react-query",
     "lucide-react",
+    "markdown-to-jsx",
     "openapi-fetch",
     "react",
     "react-dom",

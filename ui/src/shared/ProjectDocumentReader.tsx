@@ -1,4 +1,3 @@
-import { useState } from 'react';
 import { useMutation } from '@tanstack/react-query';
 import type { components } from '../../.generated/api/schema';
 import { readExactProjectDocument, type ProjectDocumentsApi } from '../api/projectDocuments';
@@ -7,8 +6,8 @@ import { queryKeys } from '../app/query';
 import { formatTimestamp } from './display';
 import { PagedExplorerBranch, useCursorPage } from './PagedExplorerBranch';
 import { QueryFailureNotice } from './QueryStateNotice';
-import { SelectMenu } from './SelectMenu';
 import { useDeadline } from './useDeadline';
+import styles from './ProjectDocumentPublisher.module.css';
 
 type ExactDocumentSelection = Pick<
   components['schemas']['ProjectDocumentResource'],
@@ -26,11 +25,10 @@ export function ProjectDocumentReader({
 }: {
   api: ProjectDocumentsApi;
   projectId: string;
-  onLoad: (document: components['schemas']['PublishProjectDocumentRequest']) => void;
+  onLoad: (document: components['schemas']['ProjectDocumentResource'], content: string) => void;
   onLoading: (loading: boolean) => void;
 }) {
   const { t, locale } = usePresentation();
-  const [selected, setSelected] = useState('');
   const catalog = useCursorPage(
     queryKeys.projectInputDocuments(projectId),
     async (cursor, signal) => {
@@ -41,12 +39,7 @@ export function ProjectDocumentReader({
       };
     },
   );
-  const documents =
-    catalog.data?.pages
-      .flatMap((page) => page.items)
-      .filter((item) => item.project_id === projectId) ?? [];
-  const selectedDocument = documents.find((item) => item.id === selected);
-  const label = t('projectDocument.existing');
+  const label = t('projectDocument.manage');
   return (
     <>
       <PagedExplorerBranch
@@ -60,30 +53,30 @@ export function ProjectDocumentReader({
           loadMore: label,
         }}
       >
-        {() => (
-          <>
-            <SelectMenu
-              ariaLabel={label}
-              value={selected}
-              options={[
-                { value: '', label: t('projectDocument.choose') },
-                ...documents.map((document) => ({
-                  value: document.id,
-                  label: `${document.name} · ${formatTimestamp(document.published_at, locale).display}`,
-                })),
-              ]}
-              onValueChange={setSelected}
-            />
-            <ProjectDocumentRead
-              key={selectedDocument?.id ?? ''}
-              api={api}
-              projectId={projectId}
-              document={selectedDocument}
-              disabled={catalog.isError}
-              onLoad={onLoad}
-              onLoading={onLoading}
-            />
-          </>
+        {(documents) => (
+          <ul className={styles.list}>
+            {documents
+              .filter((document) => document.project_id === projectId)
+              .map((document) => (
+                <li className={styles.card} key={document.id}>
+                  <div>
+                    <h3>{document.name}</h3>
+                    <p className={styles.metadata}>
+                      {formatTimestamp(document.published_at, locale).display}
+                    </p>
+                  </div>
+                  <ProjectDocumentRead
+                    api={api}
+                    projectId={projectId}
+                    document={document}
+                    disabled={catalog.isError}
+                    onLoad={(loaded) => onLoad(document, loaded.content)}
+                    onLoading={onLoading}
+                    label={t('projectDocument.view', { name: document.name })}
+                  />
+                </li>
+              ))}
+          </ul>
         )}
       </PagedExplorerBranch>
     </>
@@ -109,6 +102,7 @@ export function ProjectDocumentRead({
   label?: string;
 }) {
   const { t } = usePresentation();
+  const readLabel = label ?? t('projectDocument.view', { name: document?.name ?? '' });
   const expired = useDeadline(document?.expires_at ?? null);
   const read = useMutation({
     gcTime: 0,
@@ -133,19 +127,16 @@ export function ProjectDocumentRead({
   return (
     <>
       <button
+        className={styles.button}
         type="button"
         disabled={!document || disabled || expired || read.isPending}
         onClick={open}
       >
-        {label ?? t('projectDocument.open')}
+        {readLabel}
       </button>
       {expired ? <p role="status">{t('projectDocument.expired')}</p> : null}
       {read.isError ? (
-        <QueryFailureNotice
-          error={read.error}
-          title={label ?? t('projectDocument.open')}
-          onRetry={open}
-        />
+        <QueryFailureNotice error={read.error} title={readLabel} onRetry={open} />
       ) : null}
     </>
   );
