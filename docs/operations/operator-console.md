@@ -277,7 +277,8 @@ browser from guessing a different type.
 
 `index.html`, API responses, health responses, deep-link fallbacks, and
 unhashed files receive `Cache-Control: no-store`. Only filenames under
-`/assets/` with a Vite-style content hash of at least eight characters receive
+`/assets/` with a compact eight-character content hash, or a legacy name followed
+by a hash of at least eight characters, receive
 `Cache-Control: public, max-age=31536000, immutable`. Never make `index.html`
 immutable: it is the pointer to the current hashed asset set and must change
 immediately during rollout or rollback.

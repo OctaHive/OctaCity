@@ -46,7 +46,8 @@ MAX_FILE_BYTES = 32 * 1024 * 1024
 MAX_MEMBERS = 1_024
 MAX_CHECKSUM_BYTES = 1_024
 ASSET_NAME = re.compile(
-    r"[^/]+-[A-Za-z0-9_-]{8,}\.(?:css|js|svg|png|jpe?g|webp|avif|ico|woff2)\Z"
+    r"(?:[A-Za-z0-9_-]{8}|[^/]+-[A-Za-z0-9_-]{8,})"
+    r"\.(?:css|js|svg|png|jpe?g|webp|avif|ico|woff2)\Z"
 )
 SHA256 = re.compile(r"[0-9a-f]{64}\Z")
 ENVIRONMENT_ORIGIN = re.compile(

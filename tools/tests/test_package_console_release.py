@@ -260,6 +260,26 @@ class ConsoleReleaseTests(unittest.TestCase):
                 all(len(asset["sha256"]) == 64 for asset in manifest["assets"])
             )
 
+    def test_compact_content_hash_assets_package_and_verify_without_renaming(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            distribution = self.distribution(root)
+            for original, compact in (
+                ("index-AbCd1234.js", "AbCd1234.js"),
+                ("index-EfGh5678.css", "EfGh5678.css"),
+            ):
+                (distribution / "assets" / original).rename(distribution / "assets" / compact)
+                entry = distribution / "index.html"
+                entry.write_text(entry.read_text().replace(original, compact))
+            archive = PACKAGE.package_console(
+                REPOSITORY, distribution, "1.2.3", "a" * 40, root / "console.tar.gz"
+            )
+            manifest = PACKAGE.verify_console(archive)
+            self.assertEqual(
+                [asset["path"] for asset in manifest["assets"]],
+                ["assets/AbCd1234.js", "assets/EfGh5678.css"],
+            )
+
     def test_local_stand_keeps_building_and_copying_the_same_ui_dist(self):
         dockerfile = (
             REPOSITORY / "deployment/local-stand/server.Dockerfile"
