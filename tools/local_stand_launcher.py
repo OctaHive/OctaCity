@@ -359,26 +359,41 @@ def _up(arguments: argparse.Namespace) -> dict[str, object]:
     initializer.initialize(root, repository=REPOSITORY, openssl=arguments.openssl)
     with lifecycle.LifecycleState(root) as owner:
         native = _prepare_native_installation(root)
+        factory_inputs = {
+            name: getattr(arguments, name) for name in (
+                "factory_profiles", "factory_runtime_bundle", "factory_delivery_bundle",
+                "factory_signal_connectors", "factory_issue_mcp_readers", "vcs_integrations",
+            )
+        }
+        previous_native = (
+            installation_update.installed_native_installation(root)
+            if arguments.factory_profiles is not None and arguments.factory_agent_profile is not None
+            else None
+        )
+        native_changed = previous_native is not None and previous_native.resolve() != native.path.resolve()
+        update_installation = arguments.update_factory_installation or native_changed
+        if native_changed and not arguments.update_factory_installation:
+            # Rebinding verified native paths does not authorize a new catalog
+            # or policy. Ordinary rebuilds must retain the installed authority.
+            agent_configurator.preflight_factory_agent_profile(root, native.path, arguments.factory_agent_profile)
+            server_configurator.generate_server_configuration(
+                root, previous_native, repository=REPOSITORY, openssl=arguments.openssl, **factory_inputs,
+            )
         update = nullcontext()
-        if arguments.update_factory_installation:
+        if update_installation:
             def preflight(staging: Path) -> None:
                 _build_images(native)
                 installation_update.validate_factory_installation(staging, SERVER_IMAGE)
 
             update = installation_update.factory_installation_update(
                 root, native.path, owner=owner,
-                factory_profiles=arguments.factory_profiles,
                 factory_agent_profile=arguments.factory_agent_profile,
-                factory_runtime_bundle=arguments.factory_runtime_bundle,
-                factory_delivery_bundle=arguments.factory_delivery_bundle,
-                factory_signal_connectors=arguments.factory_signal_connectors,
-                factory_issue_mcp_readers=arguments.factory_issue_mcp_readers,
-                vcs_integrations=arguments.vcs_integrations,
+                **factory_inputs,
                 openssl=arguments.openssl, preflight=preflight,
                 stop=lambda: _stop_halves(owner, root, arguments.https_port, remove_volumes=False),
             )
         with update:
-            if not arguments.update_factory_installation:
+            if not update_installation:
                 if arguments.factory_agent_profile is not None:
                     try:
                         agent_configurator.preflight_factory_agent_profile(root, native.path, arguments.factory_agent_profile)
@@ -389,12 +404,7 @@ def _up(arguments: argparse.Namespace) -> dict[str, object]:
                     native.path,
                     repository=REPOSITORY,
                     openssl=arguments.openssl,
-                    factory_profiles=arguments.factory_profiles,
-                    factory_signal_connectors=arguments.factory_signal_connectors,
-                    factory_delivery_bundle=arguments.factory_delivery_bundle,
-                    factory_runtime_bundle=arguments.factory_runtime_bundle,
-                    factory_issue_mcp_readers=arguments.factory_issue_mcp_readers,
-                    vcs_integrations=arguments.vcs_integrations,
+                    **factory_inputs,
                 )
                 _build_images(native)
                 if arguments.factory_profiles is not None:

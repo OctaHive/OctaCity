@@ -483,6 +483,72 @@ else:
             self.assertEqual(path.read_bytes(), contents)
         self.assertFalse(list(self.root.glob(".factory-update-*")))
 
+    def test_plain_up_rebinds_a_new_native_revision_without_replacing_retained_factory_state(self):
+        import local_stand_launcher as launcher
+
+        changed_profiles, changed_policy = self._factory_update_inputs()
+        policy = self.root / "config/factory-agent-profile.toml"
+        profiles = self.root / "config/server/factory-profiles.json"
+        candidate = Path(self.temporary.name).resolve() / "native-next-revision"
+        shutil.copytree(self.installation, candidate)
+        retained = {self.credential: self.credential.read_bytes(), policy: policy.read_bytes(),
+                    profiles: profiles.read_bytes()}
+        for name in ("agent/work/checkpoint", "agent/cache/retained", "evidence/factory-triage.json"):
+            path = self.root / name
+            path.parent.mkdir(mode=0o700, parents=True, exist_ok=True)
+            path.write_bytes(b"retained operator state\n")
+            path.chmod(0o600)
+            retained[path] = path.read_bytes()
+        original_configuration = (self.root / "config/agent.toml").read_bytes()
+
+        def start(root, installation, **kwargs):
+            receipt = CONFIGURATOR.generate_agent_configuration(root, installation,
+                factory_agent_profile=kwargs["factory_agent_profile"])
+            CONFIGURATOR.validated_launch_plan(root.resolve(), installation, receipt)
+            return types.SimpleNamespace(state="registered", pid=42)
+
+        with (
+            mock.patch.object(CONFIGURATOR, "_require_apple_silicon"),
+            mock.patch.object(launcher, "_prepare_native_installation",
+                return_value=launcher.NativeInstallation(candidate, {})),
+            mock.patch.object(launcher, "_build_images"),
+            mock.patch.object(launcher, "_run_compose") as compose,
+            mock.patch.object(launcher.installation_update, "validate_factory_installation"),
+            mock.patch.object(launcher.bootstrapper, "bootstrap",
+                return_value=types.SimpleNamespace(state="registered")),
+            mock.patch.object(launcher.agent_starter, "start_agent") as start_agent,
+        ):
+            arguments = launcher.parse_arguments(["up", "--root", str(self.root),
+                "--factory-profiles", str(profiles), "--factory-agent-profile", str(policy)])
+            for option, proposed in (("factory_profiles", changed_profiles), ("factory_agent_profile", changed_policy)):
+                with self.subTest(unreviewed_change=option):
+                    selected = types.SimpleNamespace(**vars(arguments))
+                    setattr(selected, option, proposed)
+                    with self.assertRaisesRegex(
+                        (CONFIGURATOR.AgentConfigurationError, launcher.server_configurator.ServerConfigurationError),
+                        "profile|differs",
+                    ):
+                        launcher.run(selected)
+                    compose.assert_not_called()
+                    start_agent.assert_not_called()
+                    self.assertEqual((self.root / "config/agent.toml").read_bytes(), original_configuration)
+            start_agent.side_effect = RuntimeError("registration failed")
+            with self.assertRaisesRegex(RuntimeError, "registration failed"):
+                launcher.run(arguments)
+            self.assertEqual((self.root / "config/agent.toml").read_bytes(), original_configuration)
+            for path, contents in retained.items():
+                self.assertEqual(path.read_bytes(), contents)
+            start_agent.side_effect = start
+            result = launcher.run(arguments)
+
+        self.assertEqual(result["state"], "running")
+        document = tomllib.loads((self.root / "config/agent.toml").read_text())
+        self.assertEqual(document["octa_release_root"], str(candidate / "octa"))
+        self.assertEqual(document["virtualization_providers"][0]["executable"], str(candidate / "microsandbox/bin/msb"))
+        for path, contents in retained.items():
+            self.assertEqual(path.read_bytes(), contents)
+        self.assertFalse(any("--volumes" in call.args[2] for call in compose.call_args_list))
+
     def test_restores_usable_factory_installation_when_candidate_startup_fails(self):
         import local_stand_installation_update as updates
         import local_stand_lifecycle as lifecycle

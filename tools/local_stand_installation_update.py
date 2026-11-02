@@ -132,6 +132,21 @@ def installed_factory_inputs(root: Path, exports: Path) -> dict[str, Path | None
     return selected
 
 
+def installed_native_installation(root: Path) -> Path | None:
+    """Select the pinned native generation; updating still verifies the old config."""
+    config = root / "config/agent.toml"
+    if not (config.exists() or config.is_symlink()):
+        return None
+    try:
+        document = tomllib.loads(state.read_regular_file(
+            config, "installed Agent configuration", max_bytes=256 * 1024,
+            modes=frozenset({state.PRIVATE_FILE_MODE}),
+        ).decode())
+        return Path(document["octa_release_root"]).parent
+    except (ValueError, KeyError, TypeError) as error:
+        raise state.StateError("installed Agent configuration is invalid") from error
+
+
 @contextmanager
 def factory_installation_update(
     root: Path,
@@ -159,11 +174,9 @@ def factory_installation_update(
     root = root.resolve()
     initialized = initializer.validate_initialized_state(root, openssl=openssl)
     original = _snapshot(root / "config")
-    installed_config = tomllib.loads(state.read_regular_file(
-        root / "config/agent.toml", "installed Agent configuration", max_bytes=256 * 1024,
-        modes=frozenset({state.PRIVATE_FILE_MODE}),
-    ).decode())
-    old_installation = Path(installed_config["octa_release_root"]).parent
+    old_installation = installed_native_installation(root)
+    if old_installation is None:
+        raise state.StateError("installed Agent configuration is absent")
     old_policy = root / "config/factory-agent-profile.toml"
     # An explicit update is not permission to overwrite unrecognized edits.
     agent.generate_agent_configuration(root, old_installation, openssl=openssl,

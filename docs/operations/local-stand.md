@@ -596,7 +596,12 @@ the public default applies only to a first installation. An explicitly different
 source is rejected. After a successful installation update, resume uses the
 effective private catalog, Agent policy and installed connector/credential inputs,
 rather than replaying their original seed files. It does not renew credentials
-or undo revocation. Existing unrelated Factory installations require a separate
+or undo revocation. When committed sources select a new native Agent installation,
+ordinary resume preflights and atomically rebinds the generated configuration to
+that installation, retaining the installed catalog and policy. Failed startup
+restores the previous configuration; no reset or volume deletion is needed.
+Changing catalog or policy still requires an explicit installation update.
+Existing unrelated Factory installations require a separate
 clean root; they are not migrated or reset implicitly. For rollback, disable
 intake, preserve database/object-store/private-root backups together, stop the
 stand and restore matching installation artifacts using the upstream updater.
