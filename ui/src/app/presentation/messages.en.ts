@@ -1,4 +1,46 @@
 export const enMessages = {
+  'factory.cancelSetup': 'Cancel',
+  'factory.calculation': 'Calculation',
+  'factory.entryInputHelp':
+    'The Flow input must match the entry step. Restore the matching format in advanced Flow settings, or update both manual contracts together.',
+  'factory.enclosingPermissionsHelp':
+    'This enclosing access ceiling does not cover the configured requests. Use “Review required access” or reconcile the manual Flow and admission permissions.',
+  'factory.accessMountConflict':
+    'Requested mount scopes overlap with different access. Reconcile them manually or choose compatible profiles; automatic calculation will not widen a parent directory.',
+  'factory.exactAccessFields': 'All access fields',
+  'factory.budgetValues': 'Exact budget values',
+  'factory.calculationUnavailable':
+    'No complete calculation is available yet. Configure the profiles or set limits manually.',
+  'factory.advancedStepSettings': 'Advanced step settings',
+  'factory.manualStepAccess': 'Manual step access',
+  'factory.manualPipelineAccess': 'Manual pipeline access and admission',
+  'factory.missingTerminalHelp':
+    'Add a pipeline completion in Flow settings and choose which result it retains.',
+  'factory.missingRouteHelp':
+    'Choose what happens after this result: another step or a pipeline completion. Control transitions do not pass data automatically.',
+  'factory.profileBudgetHelp':
+    'The step budget is below its profile requirements. Choose automatic calculation or increase the manual limits.',
+  'factory.profileContextHelp':
+    'A profile requires the input “{name}”. Connect it explicitly in the step inputs; optional entries do not satisfy a required input.',
+  'factory.missingInputHelp':
+    'The executor has no data input contract. Apply its profile to prepare the default input, or configure an advanced input mapping.',
+  'factory.profilePermissionsHelp':
+    'The step does not request all access declared by its profiles. Use “Review required access” or edit the step access request.',
+  'factory.graphBoundsCalculation': 'Graph limits · Calculation',
+  'factory.admissionBudgetSource':
+    'Uses the Run budget unless you set a separate admission ceiling manually.',
+  'factory.reviewRequiredAccess': 'Review required access',
+  'factory.requiredAccess': 'Required access',
+  'factory.applyToDraft': 'Apply to draft',
+  'factory.accessReviewStale': 'The draft changed. Close this review and calculate again.',
+  'factory.accessRequirementsHelp':
+    'Selected profiles declare required access. Review the resulting step, Flow and admission requests before applying. Existing requests are retained. This changes the draft only; server and agent policies still restrict execution.',
+  'factory.flowBudgetSource':
+    'Calculated from all step budgets, execution retries and bounded repeats. Mutually exclusive branches are included. For subflows, set the budget manually.',
+  'factory.profileBudgetSource':
+    'Calculated from selected profile limits and profile selection usage. Execution retries are included in the Flow budget.',
+  'factory.setManually': 'Set manually',
+  'factory.calculateAutomatically': 'Calculate automatically',
   'factory.existingExecutorConfigured': 'Existing executor is configured.',
   'factory.targetVersionUnavailable':
     'Selected version is no longer offered (v{version}). Select an available version explicitly; your draft is retained.',

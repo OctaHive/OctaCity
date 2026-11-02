@@ -22,7 +22,10 @@ import type { FlowIssueServices } from './FlowIssueStatus';
 import type { FlowSourceServices } from './FlowSourceUpdate';
 import { FlowProjections } from './FlowProjections';
 import { FlowTransitions } from './FlowTransitions';
-import { BudgetEditor, PermissionEditor } from './ResourceEditors';
+import { PermissionEditor } from './ResourceEditors';
+import { AccessRequirements } from './AccessRequirements';
+import { BudgetSettings } from './BudgetSettings';
+import { profileBudget, flowBudget, flatGraphLimits } from './flowRequirements';
 import { FlowDocuments, type FlowDocumentServices } from './FlowDocuments';
 import { FlowProcess } from './FlowProcess';
 
@@ -59,7 +62,7 @@ export function FlowGraphEditor({
   value,
   codeResources,
   authoring,
-  onChange,
+  onChange: commitDraft,
   choices,
   subflows,
   sources,
@@ -77,6 +80,36 @@ export function FlowGraphEditor({
     ),
   );
   const nodeKeys = useDraftRowKeys(value.root.nodes);
+  const [initialNodeKeys] = useState(() => new Set(nodeKeys));
+  const [newFlow] = useState(value.root.nodes.length === 0);
+  const [automaticBounds, setAutomaticBounds] = useState(newFlow);
+  const [budgetCalculation, setBudgetCalculation] = useState({ run: newFlow, admission: newFlow });
+  const [stepBudgetCalculation, setStepBudgetCalculation] = useState<Record<string, boolean>>({});
+  const onChange = (next: Draft, calculateBounds = automaticBounds) => {
+    const priorInput =
+      value.root.nodes.find((node) => node.key === value.root.entry)?.input_schema ?? null;
+    const entry = next.root.nodes.find((node) => node.key === next.root.entry);
+    // Preserve a deliberately separate manual edit. Otherwise the root follows
+    // its entry contract, as required by the existing server graph validator.
+    if (
+      entry &&
+      sameInputSchema(next.root.input_schema, value.root.input_schema) &&
+      sameInputSchema(priorInput, value.root.input_schema)
+    )
+      next = { ...next, root: { ...next.root, input_schema: entry.input_schema } };
+    const budget = budgetCalculation.run ? flowBudget(next.root) : null;
+    if (budget)
+      next = { ...next, root: { ...next.root, execution: { ...next.root.execution, budget } } };
+    if (budgetCalculation.admission)
+      next = { ...next, limits: { ...next.limits, budget: next.root.execution.budget } };
+    const bounds = flatGraphLimits(next.root);
+    if (calculateBounds && bounds) next = { ...next, limits: { ...next.limits, ...bounds } };
+    if (!bounds) {
+      if (automaticBounds) setAutomaticBounds(false);
+      if (budgetCalculation.run) setBudgetCalculation((current) => ({ ...current, run: false }));
+    }
+    commitDraft(next);
+  };
   const [stepDrafts, setStepDrafts] = useState<Record<string, PrimitiveDraft>>({});
   const [inputPending, setInputPending] = useState(false);
   const [resultDrafts, setResultDrafts] = useState<Record<string, ResultDraft>>({});
@@ -169,6 +202,7 @@ export function FlowGraphEditor({
   return (
     <section className={styles.editor} data-factory-field="/root" tabIndex={-1}>
       <h3>{t('factory.graphEditor')}</h3>
+      <AccessRequirements value={value} onChange={onChange} />
       {documents ? (
         <FlowProcess
           value={value}
@@ -217,6 +251,15 @@ export function FlowGraphEditor({
             />
           ) : null}
           <FlowSettings
+            budgetCalculation={budgetCalculation}
+            onBudgetCalculationChange={(kind, automatic) =>
+              setBudgetCalculation((current) => ({ ...current, [kind]: automatic }))
+            }
+            automaticBounds={automaticBounds}
+            onAutomaticBoundsChange={(automatic) => {
+              setAutomaticBounds(automatic);
+              onChange(value, automatic);
+            }}
             value={value}
             choices={choices}
             permissionDeclarations={permissionDeclarations}
@@ -241,36 +284,38 @@ export function FlowGraphEditor({
               </button>
             </>
           ) : null}
-          <label>
-            <input
-              type="checkbox"
-              checked={node.required}
-              onChange={(event) => updateNode({ required: event.target.checked })}
+          <details>
+            <summary>{t('factory.advancedStepSettings')}</summary>
+            <label>
+              <input
+                type="checkbox"
+                checked={node.required}
+                onChange={(event) => updateNode({ required: event.target.checked })}
+              />
+              {t('factory.requiredBranch')}
+            </label>
+            <label>
+              {t('factory.executionRetries')}
+              <input
+                type="number"
+                min={0}
+                max={value.root.execution.budget.max_attempts}
+                value={node.max_execution_retries ?? 0}
+                onChange={(event) =>
+                  updateNode({ max_execution_retries: Number(event.target.value) })
+                }
+              />
+            </label>
+            <SelectMenu
+              ariaLabel={t('factory.namedPool')}
+              value={node.phase_pool ?? ''}
+              options={[
+                { value: '', label: t('factory.none') },
+                ...Object.keys(value.pools ?? {}).map((name) => ({ value: name, label: name })),
+              ]}
+              onValueChange={(phase_pool) => updateNode({ phase_pool: phase_pool || null })}
             />
-            {t('factory.requiredBranch')}
-          </label>
-          <label>
-            {t('factory.executionRetries')}
-            <input
-              type="number"
-              min={0}
-              max={value.root.execution.budget.max_attempts}
-              value={node.max_execution_retries ?? 0}
-              onChange={(event) =>
-                updateNode({ max_execution_retries: Number(event.target.value) })
-              }
-            />
-          </label>
-          <SelectMenu
-            ariaLabel={t('factory.namedPool')}
-            value={node.phase_pool ?? ''}
-            options={[
-              { value: '', label: t('factory.none') },
-              ...Object.keys(value.pools ?? {}).map((name) => ({ value: name, label: name })),
-            ]}
-            onValueChange={(phase_pool) => updateNode({ phase_pool: phase_pool || null })}
-          />
-
+          </details>
           <button
             type="button"
             onClick={() => {
@@ -373,6 +418,7 @@ export function FlowGraphEditor({
           ) : null}
           <StepTask node={node} onChange={updateNode} />
           <StepExecutor
+            authoring={authoring}
             key={`${nodeKeys[selected]}:${bindingRevision}`}
             node={node}
             choices={choices}
@@ -411,21 +457,37 @@ export function FlowGraphEditor({
               processManaged={value.root.process != null}
             />
           ) : null}
-          <BudgetEditor
+          <BudgetSettings
+            key={`budget:${nodeKeys[selected]}`}
+            automatic={
+              stepBudgetCalculation[nodeKeys[selected]!] ??
+              !initialNodeKeys.has(nodeKeys[selected]!)
+            }
+            onAutomaticChange={(automatic) =>
+              setStepBudgetCalculation((current) => ({
+                ...current,
+                [nodeKeys[selected]!]: automatic,
+              }))
+            }
+            suggested={profileBudget(node)}
+            source={t('factory.profileBudgetSource')}
             fieldPath={`/root/nodes/${selected}/budget`}
             label={t('factory.nodeBudget')}
             value={node.budget}
             ceiling={value.root.execution.budget}
             onChange={(budget) => updateNode({ budget })}
           />
-          <PermissionEditor
-            fieldPath={`/root/nodes/${selected}/permissions`}
-            label={t('factory.nodePermissions')}
-            value={node.permissions}
-            ceiling={value.root.execution.permissions}
-            choices={choices}
-            onChange={(permissions) => updateNode({ permissions })}
-          />
+          <details>
+            <summary>{t('factory.manualStepAccess')}</summary>
+            <PermissionEditor
+              fieldPath={`/root/nodes/${selected}/permissions`}
+              label={t('factory.nodePermissions')}
+              value={node.permissions}
+              ceiling={value.root.execution.permissions}
+              choices={choices}
+              onChange={(permissions) => updateNode({ permissions })}
+            />
+          </details>
         </fieldset>
       )}
       <FlowProjections value={value.root} onChange={(root) => onChange({ ...value, root })} />
@@ -435,6 +497,20 @@ export function FlowGraphEditor({
         onChange={(root) => onChange({ ...value, root })}
       />
     </section>
+  );
+}
+
+function sameInputSchema(
+  left: Draft['root']['input_schema'],
+  right: Draft['root']['input_schema'],
+) {
+  return (
+    left === right ||
+    (!!left &&
+      !!right &&
+      left.identity === right.identity &&
+      left.version === right.version &&
+      left.digest === right.digest)
   );
 }
 

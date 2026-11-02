@@ -63,11 +63,53 @@ fn stage_with(project: ProjectId, change: impl Fn(&str, &mut FactoryRoleProfileD
 fn schema() -> FlowDataSchema {
   FlowDataSchema::new(key("stage.data"), key("v1"), FlowValueSchema::Boolean).unwrap()
 }
+
+#[test]
+fn work_context_and_an_empty_typed_input_form_an_independent_reasoning_contract() {
+  let project = ProjectId::generate();
+  let mut wire = stage_with(project, |_, definition| {
+    definition.context_requirements.clear();
+    definition.context_requirements.insert(key("task"));
+  });
+  let empty = FlowDataSchema::new(
+    key("input.generated"),
+    key("1"),
+    FlowValueSchema::Object {
+      fields: BTreeMap::new(),
+    },
+  )
+  .unwrap();
+  wire["input_schema"] = serde_json::to_value(empty.reference()).unwrap();
+  wire["input_binding"] = json!({"mapping":{"value":{"mapping":"object","fields":{}}},"sources":{}});
+  wire["context_binding"] = json!({"entries":{},"work_task":"task"});
+  assert!(serde_json::from_value::<FlowNodeDefinition>(wire.clone()).is_ok());
+  let configured = flow_with_input(serde_json::from_value(wire.clone()).unwrap(), empty.clone());
+  configured
+    .validate(
+      &FactoryConfigurationRef::new(
+        FactoryConfigurationId::generate(),
+        FactoryConfigurationVersion::INITIAL,
+        project,
+        FactoryDigest::from_bytes([1; 32]),
+      ),
+      budget(),
+      FactoryWipLimits::new(1, 1).unwrap(),
+    )
+    .unwrap();
+  wire["input_schema"] = Value::Null;
+  assert!(serde_json::from_value::<FlowNodeDefinition>(wire.clone()).is_err());
+  wire["input_schema"] = serde_json::to_value(empty.reference()).unwrap();
+  wire["context_binding"] = Value::Null;
+  assert!(serde_json::from_value::<FlowNodeDefinition>(wire).is_err());
+}
 fn flow(node: FlowNodeDefinition) -> FactoryFlowConfiguration {
+  flow_with_input(node, schema())
+}
+fn flow_with_input(node: FlowNodeDefinition, input: FlowDataSchema) -> FactoryFlowConfiguration {
   let definition = FlowDefinition::new(FlowDefinitionInput {
     id: FlowDefinitionId::generate(),
     version: FlowDefinitionVersion::INITIAL,
-    input_schema: Some(schema().reference().clone()),
+    input_schema: Some(input.reference().clone()),
     entry: node.key().clone(),
     nodes: vec![node],
     transitions: vec![FlowTransition::new(
@@ -84,7 +126,11 @@ fn flow(node: FlowNodeDefinition) -> FactoryFlowConfiguration {
   FactoryFlowConfiguration::new(
     PinnedFlowDefinitionClosure::new(definition.reference(), vec![definition]).unwrap(),
     FlowAdmissionLimits::product_defaults(1, budget(), FactoryPermissionSet::deny_all()).unwrap(),
-    vec![schema()],
+    if input.reference() == schema().reference() {
+      vec![schema()]
+    } else {
+      vec![schema(), input]
+    },
     BTreeMap::new(),
   )
   .unwrap()

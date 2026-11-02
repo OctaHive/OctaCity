@@ -41,5 +41,8 @@ export function focusFactoryField(requestedField: string) {
 function revealAndFocus(element: HTMLElement) {
   for (let ancestor = element.parentElement; ancestor; ancestor = ancestor.parentElement)
     if (ancestor instanceof HTMLDetailsElement) ancestor.open = true;
-  element.focus();
+  const budgetMode = element.matches(':disabled')
+    ? element.closest('[data-factory-budget]')?.querySelector<HTMLElement>('[role="combobox"]')
+    : null;
+  (budgetMode ?? element).focus();
 }

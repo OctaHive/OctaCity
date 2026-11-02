@@ -5,6 +5,22 @@ For the operator procedure, see
 This guide describes qualification fixtures and their evidence, not required
 business definitions for a deployment.
 
+The Console setup regressions additionally exercise creating an AI step without
+editing schemas, explicit Work attachment, computed/manual budgets, access review
+and cancellation, and retained advanced controls. Run:
+
+```sh
+cd ui
+pnpm exec vitest run src/features/factory/StepExecutor.test.tsx src/features/factory/BudgetSettings.test.tsx src/features/factory/FlowGraphEditor.test.tsx src/features/factory/FactoryPublication.test.tsx src/features/factory/validateDraft.test.ts
+pnpm exec playwright test tests/browser/factory-setup.spec.ts
+```
+
+The browser test uses bounded API fixtures and does not certify a live model or
+MCP call. `cargo test --locked -p octacity-server-factory --test role_profiles`
+separately checks that the server accepts an empty typed input plus required Work
+Context, and rejects either missing contract. The disposable end-to-end fixture
+below remains the execution and isolation qualification.
+
 `factory_manual_authoring` qualifies tasks 5.1–5.4 of
 `enable-manual-factory-pipeline-authoring`. It starts the actual Server and Agent
 executables against PostgreSQL and S3 and executes ordinary Jobs in separate

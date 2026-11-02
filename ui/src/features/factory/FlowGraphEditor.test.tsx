@@ -14,6 +14,184 @@ import { emptyFlowDraft } from './emptyFlowDraft';
 
 afterEach(cleanup);
 
+it('calculates branch bounds immediately across different outcomes of the same step', async () => {
+  const flow = configurationFixture().configuration.flow;
+  const schema = flow.data_schemas[0]!.reference;
+  const sample = flow.closure.definitions[0]!.nodes[0]!;
+  let observed = emptyFlowDraft();
+  observed.data_schemas = flow.data_schemas;
+  observed.limits.max_fan_out = 64;
+  observed.root.entry = 'first';
+  observed.root.nodes = ['first', 'second', 'third'].map((key) => ({
+    ...structuredClone(sample),
+    key,
+    outcomes: [
+      { key: 'accepted', kind: 'success', schema },
+      ...(key === 'first' ? [{ key: 'review', kind: 'failure' as const, schema }] : []),
+    ],
+  }));
+  observed.root.transitions = [
+    {
+      predecessor: 'first',
+      outcome: 'accepted',
+      target: { kind: 'node', key: 'second' },
+      max_repeats: 0,
+      exhausted_terminal: null,
+    },
+    {
+      predecessor: 'first',
+      outcome: 'review',
+      target: { kind: 'node', key: 'third' },
+      max_repeats: 0,
+      exhausted_terminal: null,
+    },
+  ];
+  function Harness() {
+    const [value, setValue] = useState(observed);
+    return (
+      <FlowGraphEditor
+        value={value}
+        choices={[]}
+        subflows={[]}
+        onChange={(next) => {
+          observed = next;
+          setValue(next);
+        }}
+      />
+    );
+  }
+  render(<Harness />);
+  await userEvent.click(screen.getByRole('button', { name: 'Flow settings' }));
+  await userEvent.click(screen.getByText('Flow admission ceilings'));
+  await userEvent.click(screen.getByRole('combobox', { name: 'Graph limits · Calculation' }));
+  await userEvent.click(screen.getByRole('option', { name: 'Calculate automatically' }));
+  expect(observed.limits.max_fan_out).toBe(2);
+  expect(observed.limits.max_expanded_nodes).toBe(3);
+});
+
+it('keeps manual step and access settings available inside collapsed advanced sections', async () => {
+  const flow = configurationFixture().configuration.flow;
+  const { reference: _reference, ...root } = flow.closure.definitions[0]!;
+  void _reference;
+  root.nodes.find((node) => node.key === root.entry)!.permissions.network_hosts = ['keep.example'];
+  root.execution.permissions.network_hosts = ['keep.example'];
+  render(
+    <FlowGraphEditor
+      value={{ root, limits: flow.limits, data_schemas: flow.data_schemas }}
+      choices={[]}
+      subflows={[]}
+      onChange={() => {}}
+    />,
+  );
+  const options = screen.getByText('Advanced step settings');
+  expect(options.closest('details')).toHaveProperty('open', false);
+  await userEvent.click(options);
+  expect(screen.getByRole('checkbox', { name: 'Required branch' })).toBeTruthy();
+  expect(screen.getByRole('spinbutton', { name: 'Maximum execution retries' })).toBeTruthy();
+  expect(screen.getByRole('combobox', { name: 'Named phase pool' })).toBeTruthy();
+  const access = screen.getByText('Manual step access');
+  expect(access.closest('details')).toHaveProperty('open', false);
+  await userEvent.click(access);
+  expect(screen.getByRole('group', { name: 'Step access request' })).toBeTruthy();
+  expect(screen.getByRole('checkbox', { name: 'Network host · keep.example' })).toBeTruthy();
+});
+
+it('keeps fresh Flow limits in sync with new steps while leaving every limit editable in manual mode', async () => {
+  let observed = emptyFlowDraft();
+  function Harness() {
+    const [value, setValue] = useState(observed);
+    return (
+      <FlowGraphEditor
+        value={value}
+        choices={[]}
+        subflows={[]}
+        onChange={(next) => {
+          observed = next;
+          setValue(next);
+        }}
+      />
+    );
+  }
+  render(<Harness />);
+  await userEvent.click(screen.getByRole('button', { name: 'Add step' }));
+  await userEvent.type(screen.getByRole('textbox', { name: 'Step name' }), 'first');
+  await userEvent.click(screen.getByRole('button', { name: 'Add step' }));
+  await userEvent.type(screen.getByRole('textbox', { name: 'Step name' }), 'second');
+  await userEvent.click(screen.getByRole('button', { name: 'Flow settings' }));
+  expect(observed.limits.max_expanded_nodes).toBe(2);
+  expect(observed.root.execution.budget.max_attempts).toBe(2);
+  expect(observed.limits.budget.max_attempts).toBe(2);
+  await userEvent.click(screen.getByRole('combobox', { name: 'Run budget · Calculation' }));
+  await userEvent.click(screen.getByRole('option', { name: 'Set manually' }));
+  const attempts = screen.getByRole('spinbutton', { name: 'Run budget · Maximum attempts' });
+  await userEvent.clear(attempts);
+  await userEvent.type(attempts, '8');
+  expect(observed.root.execution.budget.max_attempts).toBe(8);
+  expect(observed.limits.budget.max_attempts).toBe(8);
+  await userEvent.click(screen.getByRole('button', { name: 'Flow settings' }));
+  await userEvent.click(screen.getByRole('button', { name: 'Flow settings' }));
+  expect(observed.root.execution.budget.max_attempts).toBe(8);
+});
+
+it('calculates a Flow budget from every step and retry without changing its manually selected admission ceiling', async () => {
+  let observed = emptyFlowDraft();
+  const node = configurationFixture().configuration.flow.closure.definitions[0]!.nodes[0]!;
+  observed.root.entry = 'first';
+  observed.root.nodes = [
+    {
+      ...structuredClone(node),
+      key: 'first',
+      max_execution_retries: 1,
+      budget: {
+        max_attempts: 2,
+        max_elapsed_millis: 1000,
+        max_tokens: 100,
+        max_cost_micro_units: 10,
+        max_output_bytes: 1000,
+      },
+    },
+    {
+      ...structuredClone(node),
+      key: 'second',
+      max_execution_retries: 0,
+      budget: {
+        max_attempts: 1,
+        max_elapsed_millis: 2000,
+        max_tokens: 200,
+        max_cost_micro_units: 20,
+        max_output_bytes: 2000,
+      },
+    },
+  ];
+  const admission = structuredClone(observed.limits);
+  function Harness() {
+    const [value, setValue] = useState(observed);
+    return (
+      <FlowGraphEditor
+        value={value}
+        choices={[]}
+        subflows={[]}
+        onChange={(next) => {
+          observed = next;
+          setValue(next);
+        }}
+      />
+    );
+  }
+  render(<Harness />);
+  await userEvent.click(screen.getByRole('button', { name: 'Flow settings' }));
+  await userEvent.click(screen.getByRole('combobox', { name: 'Run budget · Calculation' }));
+  await userEvent.click(screen.getByRole('option', { name: 'Calculate automatically' }));
+  expect(observed.root.execution.budget).toEqual({
+    max_attempts: 5,
+    max_elapsed_millis: 4000,
+    max_tokens: 400,
+    max_cost_micro_units: 40,
+    max_output_bytes: 4000,
+  });
+  expect(observed.limits).toEqual(admission);
+});
+
 it('authors permission declarations for an empty Flow from a visible server preset and retains the selection after collapse', async () => {
   const permissions = structuredClone(configurationFixture().configuration.flow.limits.permissions);
   const executable = { identity: 'visible.checker', version: 'v1', digest: 'a'.repeat(64) };
@@ -680,6 +858,11 @@ it('separates queue, limits and access while preserving distinct admission and p
   expect(screen.getByRole('group', { name: 'Start and queue' })).toBeTruthy();
   expect(screen.getByRole('group', { name: 'Execution limits' })).toBeTruthy();
   expect(screen.getByRole('group', { name: 'Pipeline access' })).toBeTruthy();
+  await userEvent.click(screen.getByRole('combobox', { name: 'Run budget · Calculation' }));
+  await userEvent.click(screen.getByRole('option', { name: 'Set manually' }));
+  await userEvent.click(screen.getByText('Flow admission ceilings'));
+  await userEvent.click(screen.getByRole('combobox', { name: 'Admission budget · Calculation' }));
+  await userEvent.click(screen.getByRole('option', { name: 'Set manually' }));
   const before = structuredClone(observed.limits.budget);
   const tokens = screen.getByRole('spinbutton', { name: 'Run budget · Maximum tokens' });
   await userEvent.clear(tokens);

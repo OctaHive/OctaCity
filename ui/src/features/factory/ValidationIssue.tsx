@@ -3,6 +3,7 @@ import { usePresentation } from '../../app/presentation/PresentationProvider';
 import type { ManagementValidationIssue } from '../../api/client';
 import type { DraftIssue } from './validateDraft';
 import { constraintSourceLabels } from './ConstraintReview';
+import { BUDGET_LABELS } from './ResourceEditors';
 const fields: Record<string, MessageKey> = {
   key: 'factory.nodeName',
   input_schema: 'factory.inputSchema',
@@ -19,6 +20,7 @@ const fields: Record<string, MessageKey> = {
   input_binding: 'factory.inputMapping',
   outcomes: 'factory.expectedResult',
   transitions: 'factory.controlTransitions',
+  terminals: 'factory.terminals',
   execution: 'factory.executionLimits',
   limits: 'factory.executionLimits',
   wip_limits: 'factory.startAndQueue',
@@ -33,7 +35,14 @@ export function validationFieldLabel(field: string, t: ReturnType<typeof usePres
       ? t('factory.stepFieldLabel', { number: Number(node[1]) + 1, field: label })
       : label;
   }
-  const label = t(key ? fields[key]! : 'factory.flowSettings');
+  const budgetKey = parts.find((part) => Object.hasOwn(BUDGET_LABELS, part));
+  const label = t(
+    budgetKey
+      ? BUDGET_LABELS[budgetKey as keyof typeof BUDGET_LABELS]
+      : key
+        ? fields[key]!
+        : 'factory.flowSettings',
+  );
   return node ? t('factory.stepFieldLabel', { number: Number(node[1]) + 1, field: label }) : label;
 }
 const resources = {

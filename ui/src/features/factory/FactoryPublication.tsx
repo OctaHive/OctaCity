@@ -34,6 +34,14 @@ export type FactoryPublicationProps = {
   ready?: boolean;
 };
 const ISSUE_LABELS = {
+  missing_input: 'factory.missingInputHelp',
+  profile_permissions: 'factory.profilePermissionsHelp',
+  profile_budget: 'factory.profileBudgetHelp',
+  profile_context: 'factory.profileContextHelp',
+  missing_terminal: 'factory.missingTerminalHelp',
+  missing_route: 'factory.missingRouteHelp',
+  entry_input: 'factory.entryInputHelp',
+  enclosing_permissions: 'factory.enclosingPermissionsHelp',
   invalid_contract: 'factory.invalidContract',
   unavailable_reference: 'factory.unavailableReference',
   unbounded_cycle: 'factory.unboundedCycle',
@@ -56,7 +64,7 @@ export function FactoryPublication({
   const regionId = 'factory-validation';
   const [currentVersion, setCurrentVersion] = useState(version);
   const [pending, setPending] = useState(false);
-  const [error, setError] = useState<Error | null>(null);
+  const [failure, setFailure] = useState<{ signature: string; error: Error } | null>(null);
   const [proof, setProof] = useState<{ signature: string; preview: Preview } | null>(null);
   const [review, setReview] = useState<{
     subject: Subject;
@@ -65,6 +73,10 @@ export function FactoryPublication({
   } | null>(null);
   const latestSignatureRef = useRef('');
   const signature = JSON.stringify(subject);
+  const error = failure?.signature === signature ? failure.error : null;
+  function setError(error: Error | null) {
+    setFailure(error ? { signature, error } : null);
+  }
   latestSignatureRef.current = signature;
   const local =
     subject.kind === 'flow'
@@ -72,7 +84,10 @@ export function FactoryPublication({
       : validateConfigurationDraft(subject.request.definition);
   const server = error instanceof ManagementApiError ? error.validationIssues : [];
   const issues = [...local, ...server];
-  const valid = proof?.signature === signature && issues.length === 0;
+  const returnedErrors =
+    proof?.signature === signature ? (proof.preview.value.diagnostics?.errors ?? []) : [];
+  const valid =
+    proof?.signature === signature && issues.length === 0 && returnedErrors.length === 0;
   async function validate() {
     if (local.length) return;
     setPending(true);
@@ -136,7 +151,6 @@ export function FactoryPublication({
       setError(failure instanceof Error ? failure : new Error('Baseline refresh failed'));
     }
   }
-  const returnedErrors = proof?.preview.value.diagnostics?.errors ?? [];
   const displayedIssues = [
     ...new Map(
       [...issues, ...returnedErrors].map((issue) => [`${issue.field}:${issue.code}`, issue]),
@@ -152,7 +166,11 @@ export function FactoryPublication({
               <button type="button" onClick={() => focusFactoryField(issue.field)}>
                 {validationFieldLabel(issue.field, t)}
               </button>{' '}
-              · {t(ISSUE_LABELS[issue.code])}
+              ·{' '}
+              {t(ISSUE_LABELS[issue.code], {
+                name:
+                  issue.field.split('/').at(-1)?.replaceAll('~1', '/').replaceAll('~0', '~') ?? '',
+              })}
               <LimitFailure issue={issue} />
               <details>
                 <summary>{t('factory.routeDetails')}</summary>

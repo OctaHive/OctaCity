@@ -12,6 +12,7 @@ async function openGraph(page: Page, options: { language?: 'en' | 'ru'; executor
   const root = flow.closure.definitions.find((item) => item.reference.id === flow.closure.root.id)!;
   const schema = flow.data_schemas[0]!.reference;
   root.entry = 'first';
+  root.input_schema = null;
   root.nodes = ['first', 'second', 'third'].map((key) => ({
     key,
     kind: 'human_gate',
@@ -407,6 +408,24 @@ for (const language of ['en', 'ru'] as const) {
     await inputs.getByRole('button', { name: t('factory.useAcceptedField'), exact: true }).click();
     await expect(inputs.getByRole('listitem')).toContainText('summary ← first');
     await inputs.screenshot({ path: testInfo.outputPath('result-connection.png') });
+    // A data connection grants no control route. Declare the new outcome's
+    // route independently, as required by the server graph contract.
+    await page.getByRole('button', { name: t('factory.addTransition'), exact: true }).click();
+    const transition = page.getByRole('group', {
+      name: translate(language, 'factory.transitionNumber', { number: 4 }),
+      exact: true,
+    });
+    await transition
+      .getByRole('combobox', { name: t('factory.transitionOutcome'), exact: true })
+      .click();
+    await page.getByRole('option', { name: 'assessment', exact: true }).click();
+    await transition.getByRole('combobox', { name: t('factory.target'), exact: true }).click();
+    await page
+      .getByRole('option', {
+        name: translate(language, 'factory.nodeTarget', { name: 'second' }),
+        exact: true,
+      })
+      .click();
     await page.getByRole('button', { name: t('factory.validateDraft'), exact: true }).click();
     await expect.poll(() => validations.length).toBe(1);
     const node = validations[0]!.definition.root.nodes.find((item) => item.key === 'second')!;

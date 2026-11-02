@@ -65,6 +65,12 @@ For each reasoning step:
    Profile in **Executor** and explicitly use the
    profile. Compatibility and the execution binding come from Server. Inspect
    **View profile** for that selected version; browsing does not assign it.
+   A fresh executor also gets a server-normalized empty data input. This is
+   independent of Context: it does not copy the ticket or connect Work on your
+   behalf. Existing manual input schemas and mappings are retained. Advanced
+   schema and Context controls remain available for custom contracts.
+   The Flow input follows the entry step while their contracts agree; an explicit
+   manual divergence is preserved and must be reconciled before publication.
 2. In **Step task**, write this invocation's assignment. Keep capabilities,
    reusable methods and shared skills in the agent. The same exact Profile can
    serve another step with different instructions and independent inputs.
@@ -75,10 +81,20 @@ For each reasoning step:
 4. Select exact **Documents** and their roles for this step. In **Tools and
    access**, inspect the selected Profile's MCP bindings and readable scopes.
    Technical references are under **Details**; secret values are not displayed.
-   Narrow requests within the Profile and enclosing policy; editing task text
-   cannot add a tool, credential or network destination.
-5. Review **Step code**, its budget and retry settings. Reconcile any missing or
-   unsupported resource rather than relying on a sibling's selection.
+   Every candidate Profile's declared requirements must fit the step and
+   enclosing ceilings; editing task text cannot add a tool, credential or
+   network destination. **Review required access** previews the resulting step,
+   Flow and admission requests before **Apply to draft**. It retains existing
+   requests; cancelling changes nothing. Server/agent policy still determines
+   effective authority. Manual access controls remain in expandable sections.
+   Overlapping mount requests that would widen a read-only parent require manual
+   reconciliation; the preview does not silently broaden that parent.
+5. Review **Step code**, its budget and retry settings. New steps calculate
+   budgets from their candidate Profiles and selection overhead when available.
+   Choose **Set manually** to override; changing Profiles or closing settings
+   does not discard the override. Retry, required-branch and phase-pool controls
+   remain under **Advanced step settings**. Reconcile unsupported resources
+   rather than relying on a sibling's selection.
 
 For example, the following assignments need no specialized agent or stage name:
 
@@ -167,8 +183,21 @@ Review the policy sections before publication:
   limits separately bound active Runs and nodes across that Configuration.
 - **Execution limits**: cumulative Run spending, including attempts and retries;
   step/Profile budgets narrow it. A retry does not receive a fresh Run allowance.
+  New Flows calculate this budget conservatively from every declared branch,
+  execution retry and bounded repeat. Admission budget initially follows it.
+  Either budget can be switched independently to manual values. Graph admission
+  bounds are also calculated for a new flat graph and can be set manually.
+  Subflows require manual budget/bound review; incomplete calculation is not
+  presented as a resolved limit. Existing published Flow edits start in manual
+  mode and retain their saved values.
 - **Pipeline access**: requested capability ceiling, with independently narrowed
   step access. It attaches no documents, code or credentials by itself.
+
+Local validation identifies missing executor inputs, Profile access/budget/Context
+requirements, unrouted outcomes and absent completions before the server request.
+Budget failures identify the resource, requested value and enclosing ceiling;
+technical field paths remain under Details. A server rejection belongs only to
+the exact draft validated; after an edit, validate again before publication.
 
 Validate and review **Effective constraints**, their scopes and limiting sources.
 Each candidate Profile has a separate access/resource ceiling, including its

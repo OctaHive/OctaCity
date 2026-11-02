@@ -7,16 +7,19 @@ import { QueryFailureNotice } from '../../shared/QueryStateNotice';
 import { SelectMenu } from '../../shared/SelectMenu';
 import { catalogLabels } from './catalogLabels';
 import type { FactoryRolesApi } from './roleApi';
+import type { FlowAuthoringServices } from './FlowPrimitives';
 
 type Schema = components['schemas'];
 type Props = {
   node: Schema['FactoryFlowNodeDefinition'];
   services: { api: FactoryRolesApi; projectId: string };
+  authoring?: FlowAuthoringServices | undefined;
   requiredRole?: Schema['FactoryRoleReference'] | undefined;
   onRoleChange?: ((role: Schema['FactoryRoleReference'] | null) => void) | undefined;
   onResolved: (
     profile: Schema['FactoryRoleProfile'],
     build: Schema['FactoryFlowBuildBinding'],
+    input?: Schema['FactoryFlowDataSchema'],
   ) => void;
 };
 
@@ -45,6 +48,7 @@ export function ExecutorPicker({
   node,
   services: { api, projectId },
   requiredRole,
+  authoring,
   onRoleChange,
   onResolved,
 }: Props) {
@@ -153,7 +157,22 @@ export function ExecutorPicker({
         setProblem(resolved.incompatibility ?? 'build_unavailable');
         return;
       }
-      onResolved(exact, resolved.build);
+      // Context (including Work) is independent of the typed data payload. A fresh
+      // reasoning step starts with an empty payload, never a copy of its task.
+      const input =
+        !node.input_schema && !node.input_binding && authoring
+          ? await authoring.api.normalizeSchema(
+              {
+                project_id: projectId,
+                identity: `input.${crypto.randomUUID()}`,
+                version: '1',
+                shape: { type: 'object', fields: {} },
+              },
+              controller.signal,
+            )
+          : undefined;
+      if (controller.signal.aborted) return;
+      onResolved(exact, resolved.build, input);
     } catch (failure) {
       if (!controller.signal.aborted) setError(failure instanceof Error ? failure : new Error());
     } finally {

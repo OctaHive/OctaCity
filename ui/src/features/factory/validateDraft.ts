@@ -2,8 +2,12 @@ import type { components } from '../../../.generated/api/schema';
 import { FACTORY_AUTHORING_SCHEMAS } from '../../../.generated/api/factory-authoring';
 import { validFactoryValue } from '../../shared/FactoryValueInput';
 import { exactSchemaInteger } from '../../shared/factoryIntegerBound';
+import { mergePermissions, profileBudget, requiredPermissions } from './flowRequirements';
 
-export type DraftIssue = {
+type PublicIssue = components['schemas']['FactoryValidationDiagnostics']['errors'][number];
+export type DraftIssue = Partial<
+  Pick<PublicIssue, 'resource' | 'requested' | 'maximum' | 'ceiling'>
+> & {
   field: string;
   code:
     | 'invalid_contract'
@@ -11,7 +15,15 @@ export type DraftIssue = {
     | 'unbounded_cycle'
     | 'unreachable_node'
     | 'incompatible_schema'
-    | 'budget_exceeded';
+    | 'budget_exceeded'
+    | 'missing_input'
+    | 'profile_permissions'
+    | 'profile_budget'
+    | 'profile_context'
+    | 'missing_terminal'
+    | 'missing_route'
+    | 'entry_input'
+    | 'enclosing_permissions';
 };
 type Draft = components['schemas']['FactoryFlowDefinitionDraft'];
 type Contract = {
@@ -42,6 +54,13 @@ type Contract = {
 };
 const contracts: Readonly<Record<string, Contract>> = FACTORY_AUTHORING_SCHEMAS;
 const pointer = (value: string) => value.replaceAll('~', '~0').replaceAll('/', '~1');
+const budgetResources = {
+  max_attempts: 'attempts',
+  max_elapsed_millis: 'elapsed_time',
+  max_tokens: 'tokens',
+  max_cost_micro_units: 'cost',
+  max_output_bytes: 'output_bytes',
+} as const;
 /** Reads retained declarative parameters using the generated contract, without claiming server approval. */
 export function isFactoryGateProgram(
   value: unknown,
@@ -65,6 +84,12 @@ export function validateFlowDraft(value: Draft): DraftIssue[] {
     if (reference && !schemas.has(referenceKey(reference))) add(field, 'unavailable_reference');
   };
   if (!nodes.has(value.root.entry)) add('/root/entry', 'unavailable_reference');
+  else if (
+    referenceKey(nodes.get(value.root.entry)?.input_schema) !==
+    referenceKey(value.root.input_schema)
+  )
+    add('/root/input_schema', 'entry_input');
+  if (!value.root.terminals.length) add('/root/terminals', 'missing_terminal');
   schema(value.root.input_schema, '/root/input_schema');
   const names = new Set<string>();
   value.root.nodes.forEach((node, index) => {
@@ -72,15 +97,58 @@ export function validateFlowDraft(value: Draft): DraftIssue[] {
     if (names.has(node.key)) add(`${field}/key`, 'invalid_contract');
     names.add(node.key);
     schema(node.input_schema, `${field}/input_schema`);
+    if (
+      JSON.stringify(mergePermissions(value.root.execution.permissions, node.permissions)) !==
+      JSON.stringify(value.root.execution.permissions)
+    )
+      add('/root/execution/permissions', 'enclosing_permissions');
+    if ((node.build || node.profile_selection) && !node.input_schema)
+      add(`${field}/input_schema`, 'missing_input');
+    if (
+      node.profile_selection &&
+      JSON.stringify(requiredPermissions(node)) !== JSON.stringify(node.permissions)
+    )
+      add(`${field}/permissions`, 'profile_permissions');
+    const requiredBudget = profileBudget(node);
+    if (
+      requiredBudget &&
+      Object.keys(requiredBudget).some(
+        (key) =>
+          node.budget[key as keyof typeof node.budget] <
+          requiredBudget[key as keyof typeof requiredBudget],
+      )
+    )
+      add(`${field}/budget`, 'profile_budget');
+    for (const { profile } of Object.values(node.profile_selection?.candidates ?? {}))
+      for (const name of profile.definition.context_requirements)
+        if (
+          node.context_binding?.work_task !== name &&
+          (!node.context_binding?.entries[name] ||
+            node.context_binding.entries[name].when_present != null)
+        )
+          add(`${field}/context_binding/entries/${pointer(name)}`, 'profile_context');
     const outcomes = new Set<string>();
     node.outcomes.forEach((outcome, position) => {
       if (outcomes.has(outcome.key)) add(`${field}/outcomes/${position}/key`, 'invalid_contract');
       outcomes.add(outcome.key);
       schema(outcome.schema, `${field}/outcomes/${position}/schema`);
+      if (
+        !value.root.transitions.some(
+          (edge) => edge.predecessor === node.key && edge.outcome === outcome.key,
+        )
+      )
+        add(`${field}/outcomes/${position}`, 'missing_route');
     });
     for (const key of Object.keys(node.budget) as (keyof typeof node.budget)[])
       if (node.budget[key] > value.root.execution.budget[key])
-        add(`${field}/budget/${key}`, 'budget_exceeded');
+        issues.push({
+          field: `${field}/budget/${key}`,
+          code: 'budget_exceeded',
+          resource: budgetResources[key],
+          requested: node.budget[key],
+          maximum: value.root.execution.budget[key],
+          ceiling: 'flow_definition',
+        });
     if (node.kind === 'subflow_call' && !node.subflow)
       add(`${field}/subflow`, 'unavailable_reference');
     if (
@@ -178,7 +246,19 @@ export function validateFlowDraft(value: Draft): DraftIssue[] {
     value.root.execution.budget,
   ) as (keyof typeof value.limits.budget)[])
     if (value.root.execution.budget[key] > value.limits.budget[key])
-      add(`/root/execution/budget/${key}`, 'budget_exceeded');
+      issues.push({
+        field: `/root/execution/budget/${key}`,
+        code: 'budget_exceeded',
+        resource: budgetResources[key],
+        requested: value.root.execution.budget[key],
+        maximum: value.limits.budget[key],
+        ceiling: 'flow_admission',
+      });
+  if (
+    JSON.stringify(mergePermissions(value.limits.permissions, value.root.execution.permissions)) !==
+    JSON.stringify(value.limits.permissions)
+  )
+    add('/limits/permissions', 'enclosing_permissions');
   return unique(issues);
 }
 export function validateConfigurationDraft(
@@ -186,8 +266,10 @@ export function validateConfigurationDraft(
 ): DraftIssue[] {
   return unique(validateContract(value, contracts.FactoryConfigurationDefinition!, ''));
 }
-function referenceKey(reference: components['schemas']['FactoryImmutableReferenceResource']) {
-  return `${reference.identity}:${reference.version}:${reference.digest}`;
+function referenceKey(
+  reference: components['schemas']['FactoryImmutableReferenceResource'] | null | undefined,
+) {
+  return reference ? `${reference.identity}:${reference.version}:${reference.digest}` : '';
 }
 function unique(issues: DraftIssue[]) {
   return issues

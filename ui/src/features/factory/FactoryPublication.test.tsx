@@ -13,6 +13,96 @@ import { FlowGraphEditor } from './FlowGraphEditor';
 import { FactoryPublication } from './FactoryPublication';
 import { configurationFixture } from '../../../tests/fixtures/factory';
 afterEach(cleanup);
+it.each(['rejection', 'diagnostics'] as const)(
+  'does not present %s for an older draft as the current validation result',
+  async (response) => {
+    const { config, request } = setup();
+    const api = {
+      ...factoryApi,
+      validateFlow: vi.fn<FactoryApi['validateFlow']>(async () => {
+        if (response === 'diagnostics')
+          return {
+            ...config.flow,
+            diagnostics: {
+              errors: [{ field: '/root/nodes/0', code: 'invalid_contract' }],
+              effective_permissions: [],
+              required_node_capabilities: [],
+              required_agent_capabilities: [],
+              required_backend_capabilities: [],
+              unavailable_references: [],
+              warnings: [],
+            },
+          };
+        throw new ManagementApiError({
+          code: 'invalid_request',
+          message: 'Old rejected draft',
+          requestId: null,
+          status: 400,
+          retryAfterMilliseconds: null,
+          validationIssues: [{ field: '/root/nodes/0', code: 'invalid_contract' }],
+        });
+      }),
+    };
+    function Harness() {
+      const [current, setCurrent] = useState(request);
+      return (
+        <>
+          <button
+            onClick={() =>
+              setCurrent({
+                ...current,
+                definition: {
+                  ...current.definition,
+                  root: {
+                    ...current.definition.root,
+                    nodes: current.definition.root.nodes.map((node) => ({
+                      ...node,
+                      required: !node.required,
+                    })),
+                  },
+                },
+              })
+            }
+          >
+            Change draft
+          </button>
+          <FactoryPublication api={api} subject={{ kind: 'flow', request: current }} />
+        </>
+      );
+    }
+    render(
+      <QueryClientProvider client={createConsoleQueryClient()}>
+        <RouterProvider router={createMemoryRouter([{ path: '*', element: <Harness /> }])} />
+      </QueryClientProvider>,
+    );
+    await userEvent.click(screen.getByRole('button', { name: 'Validate draft' }));
+    await screen.findByText(/Invalid contract/);
+    expect(screen.queryByText('Authoritative validation passed.')).toBeNull();
+    await userEvent.click(screen.getByRole('button', { name: 'Change draft' }));
+    expect(screen.queryByText('Old rejected draft')).toBeNull();
+    expect(screen.queryByText(/Invalid contract/)).toBeNull();
+    expect(api.validateFlow).toHaveBeenCalledTimes(1);
+    expect(screen.getByRole('button', { name: 'Review publication' })).toHaveProperty(
+      'disabled',
+      true,
+    );
+  },
+);
+it('explains the exact locally exceeded budget with requested value and enclosing limit', () => {
+  const { request } = setup();
+  request.definition.root.execution.budget.max_tokens = 100000;
+  request.definition.limits.budget.max_tokens = 300000;
+  request.definition.root.nodes[0]!.budget.max_tokens = 150000;
+  render(
+    <QueryClientProvider client={createConsoleQueryClient()}>
+      <FactoryPublication api={factoryApi} subject={{ kind: 'flow', request }} />
+    </QueryClientProvider>,
+  );
+  expect(
+    screen.getByText('Tokens: requested 150,000; maximum 100,000. Limit: Flow execution policy.'),
+  ).toBeTruthy();
+  expect(screen.getByRole('button', { name: 'Step 1 · Maximum tokens' })).toBeTruthy();
+});
 it.each([
   ['budget_exceeds_ceiling', 'Budget exceeds its enclosing limit'],
   ['concurrency_exceeds_ceiling', 'Concurrency exceeds its enclosing limit'],
@@ -784,7 +874,7 @@ it.each([
     );
     await userEvent.click(screen.getByRole('button', { name: 'Validate draft' }));
     await screen.findByText('Rejected');
-    await userEvent.click(screen.getByRole('button', { name: 'Execution limits' }));
+    await userEvent.click(screen.getByRole('button', { name: 'Maximum tokens' }));
     const input = screen.getByRole('spinbutton', { name: label });
     if (field.startsWith('/limits')) expect(input.closest('details')).toHaveProperty('open', true);
     expect(document.activeElement).toBe(input);

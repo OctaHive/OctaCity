@@ -9,14 +9,56 @@ import { factoryRoleFixture } from '../../../tests/fixtures/factoryRoles';
 import { queryKeys, createConsoleQueryClient } from '../../app/query';
 import { FlowGraphEditor } from './FlowGraphEditor';
 import { emptyFlowDraft } from './emptyFlowDraft';
+import { emptyFactoryPermissions } from './emptyFlowDraft';
 import { factoryRolesApi } from './roleApi';
+import { factoryApi } from './api';
 
 afterEach(cleanup);
 
-it.each(['profile', 'binding'] as const)(
+it('reviews and explicitly applies missing profile access at step, Flow and admission levels without modifying bindings', async () => {
+  const { draft } = setup({ selected: true, requiredAccess: true });
+  const before = structuredClone(draft());
+  const review = await screen.findByRole('button', { name: 'Review required access' });
+  await userEvent.click(review);
+  const dialog = within(screen.getByRole('dialog', { name: 'Required access' }));
+  expect(dialog.getAllByText(/api.allowed.example/).length).toBeGreaterThan(0);
+  expect(draft()).toEqual(before);
+  await userEvent.click(dialog.getByRole('button', { name: 'Cancel' }));
+  expect(draft()).toEqual(before);
+  expect(document.activeElement).toBe(review);
+  await userEvent.click(review);
+  await userEvent.click(
+    within(screen.getByRole('dialog')).getByRole('button', { name: 'Apply to draft' }),
+  );
+  for (const permissions of [
+    draft().root.nodes[0]!.permissions,
+    draft().root.execution.permissions,
+    draft().limits.permissions,
+  ]) {
+    expect(permissions.network_hosts).toEqual(['api.allowed.example']);
+    expect(permissions.secret_profiles).toEqual(['private-model']);
+    expect(permissions.resources.memory_bytes).toBe(1073741824);
+  }
+  expect(draft().root.nodes[0]!.context_binding).toEqual(before.root.nodes[0]!.context_binding);
+  expect(draft().root.nodes[0]!.profile_selection).toEqual(before.root.nodes[0]!.profile_selection);
+});
+
+it('calculates a step budget from its profiles without silently granting access', async () => {
+  const { profile, draft } = setup({ selected: true });
+  const before = structuredClone(draft().root.nodes[0]!.permissions);
+  await userEvent.click(await screen.findByRole('combobox', { name: 'Step budget · Calculation' }));
+  await userEvent.click(screen.getByRole('option', { name: 'Calculate automatically' }));
+  expect(draft().root.nodes[0]!.budget).toEqual(profile.definition.budget);
+  expect(draft().root.nodes[0]!.permissions).toEqual(before);
+});
+
+it.each(['profile', 'binding', 'input'] as const)(
   'ignores a late %s response after its step is removed instead of changing the sibling',
   async (pending) => {
-    const { api, profile, build, draft } = setup({ selected: true });
+    const { api, authoringApi, profile, build, draft } = setup({
+      selected: true,
+      freshInput: pending === 'input',
+    });
     const sibling = structuredClone(draft().root.nodes[1]!);
     const executor = within(await screen.findByRole('group', { name: 'Executor' }));
     await executor.findByText('test.model');
@@ -28,11 +70,22 @@ it.each(['profile', 'binding'] as const)(
             complete = () => resolve(profile);
           }),
       );
-    else
+    else if (pending === 'binding')
       api.resolveExecutionBinding.mockImplementationOnce(
         () =>
           new Promise((resolve) => {
             complete = () => resolve({ build, incompatibility: null });
+          }),
+      );
+    else
+      authoringApi.normalizeSchema.mockImplementationOnce(
+        () =>
+          new Promise((resolve) => {
+            complete = () =>
+              resolve({
+                reference: { identity: 'input.generated', version: '1', digest: 'e'.repeat(64) },
+                shape: { type: 'object', fields: {} },
+              });
           }),
       );
     await userEvent.click(await executor.findByRole('combobox', { name: 'Role' }));
@@ -87,6 +140,8 @@ it('presents a first reasoning executor without an empty copy-from-Flow selector
 function setup(
   options: {
     selected?: boolean;
+    freshInput?: boolean;
+    requiredAccess?: boolean;
     legacy?: boolean;
     roleVersion?: number;
     multipleOutcomes?: boolean;
@@ -98,6 +153,12 @@ function setup(
   } = {},
 ) {
   const { role, profile, choice, capability } = factoryRoleFixture();
+  if (options.requiredAccess) {
+    profile.definition.permissions = emptyFactoryPermissions();
+    profile.definition.permissions.network_hosts = ['api.allowed.example'];
+    profile.definition.permissions.secret_profiles = ['private-model'];
+    profile.definition.permissions.resources.memory_bytes = 1073741824;
+  }
   if (options.mcp) {
     const reference = { identity: 'issues-reader', version: 'v1', digest: '8'.repeat(64) };
     profile.definition.execution!.mcp_servers = { issues: { configuration: reference } };
@@ -200,6 +261,13 @@ function setup(
     resolveExecutionBinding: vi.fn(async () => ({ build, incompatibility: null })),
   };
   let draft = emptyFlowDraft();
+  const authoringApi = {
+    ...factoryApi,
+    normalizeSchema: vi.fn(async () => ({
+      reference: { identity: 'input.generated', version: '1', digest: 'e'.repeat(64) },
+      shape: { type: 'object' as const, fields: {} },
+    })),
+  };
   draft.data_schemas = [schema];
   draft.root.entry = 'Project';
   draft.root.nodes = [
@@ -207,7 +275,7 @@ function setup(
       key: 'Project',
       kind: 'reasoning',
       required: true,
-      input_schema: schema.reference,
+      input_schema: options.freshInput ? null : schema.reference,
       subflow: null,
       outcomes: [{ key: 'completed', kind: 'success', schema: schema.reference }],
       budget: draft.root.execution.budget,
@@ -263,6 +331,7 @@ function setup(
       <FlowGraphEditor
         value={value}
         roles={{ api, projectId: role.reference.project_id }}
+        authoring={{ api: authoringApi, projectId: role.reference.project_id }}
         choices={[]}
         subflows={[]}
         onChange={(next) => {
@@ -278,8 +347,42 @@ function setup(
       <Harness />
     </QueryClientProvider>,
   );
-  return { api, role, profile, build, capability, client, draft: () => draft };
+  return { api, authoringApi, role, profile, build, capability, client, draft: () => draft };
 }
+
+it('prepares an empty data input when assigning a fresh reasoning step without exposing schemas', async () => {
+  const { authoringApi, profile, draft } = setup({ freshInput: true });
+  const executor = within(await screen.findByRole('group', { name: 'Executor' }));
+  await userEvent.click(await executor.findByRole('combobox', { name: 'Role' }));
+  await userEvent.click(await screen.findByRole('option', { name: 'Project · v1' }));
+  await userEvent.click(await executor.findByRole('combobox', { name: 'Profile' }));
+  await userEvent.click(await screen.findByRole('option', { name: 'default · v1' }));
+  await executor.findByRole('combobox', { name: 'Execution runtime' });
+  await userEvent.click(executor.getByRole('button', { name: 'Use this profile' }));
+  await executor.findByText('Selected profile: default · v1');
+  expect(authoringApi.normalizeSchema).toHaveBeenCalledWith(
+    expect.objectContaining({
+      project_id: profile.reference.project_id,
+      shape: { type: 'object', fields: {} },
+    }),
+    expect.any(AbortSignal),
+  );
+  const node = draft().root.nodes[0]!;
+  expect(draft().root.input_schema).toEqual(node.input_schema);
+  expect(node.input_schema).toEqual({
+    identity: 'input.generated',
+    version: '1',
+    digest: 'e'.repeat(64),
+  });
+  expect(node.input_binding).toEqual({
+    mapping: { value: { mapping: 'object', fields: {} } },
+    sources: {},
+  });
+  expect(node.context_binding?.work_task).toBeUndefined();
+  expect(
+    draft().data_schemas.find((item) => item.reference.digest === node.input_schema?.digest)?.shape,
+  ).toEqual({ type: 'object', fields: {} });
+});
 
 it('assigns the first reasoning executor from installed choices only after explicit profile confirmation', async () => {
   const { api, profile, build, draft } = setup();
