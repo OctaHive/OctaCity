@@ -88,6 +88,8 @@ class FactoryStandTriageTests(unittest.TestCase):
         source = {"purpose": "task_read", "binding": binding, "connection_configuration": pin,
             "predicate_states": ["open", "closed"], "predicate_label_presence": ["any", "none"]}
         choices = {"connection_id": connection, "connection_version": 3, "access_version": 7, "items": [source]}
+        defaults = {kind: {"project_id": project, "id": str(uuid.uuid4()), "version": version, "digest": "c" * 64}
+                    for kind, version in (("launch_policy", 3), ("access_profile", 5))}
         reads = []
 
         class Management(BaseHTTPRequestHandler):
@@ -111,7 +113,7 @@ class FactoryStandTriageTests(unittest.TestCase):
                 profiles = {"eligibility": {"profile": "reviewed-project"}, "classification": {"profile": "reviewed-analyst"}}
                 context = {"project_id": project, "goals": "frozen-goals", "rules": "frozen-rules", "documents": {}}
                 selection = setup.pipeline_selection(client, {"project": project, "repository": repository},
-                    profiles, context, {"id": connection, "version": 3}, namespace, {"network_hosts": []})
+                    profiles, context, {"id": connection, "version": 3}, namespace, {"network_hosts": []}, policy_defaults=defaults)
                 self.assertEqual(selection["profiles"], profiles)
                 self.assertEqual(selection["context"], {stage: context for stage in profiles})
                 self.assertEqual(selection["input"]["connection"], {"id": connection, "version": 3,
@@ -122,12 +124,17 @@ class FactoryStandTriageTests(unittest.TestCase):
                 self.assertIsNone(selection["input"]["reporter"])
                 self.assertEqual(selection["effects"], {})
                 self.assertEqual(selection["execution"]["budget"]["max_tokens"], 300000)
-                self.assertEqual(selection["configuration"]["hard_budget"]["max_tokens"], 300000)
+                self.assertEqual(selection["configuration"], {
+                    "admission_policy": {"project_policy": defaults["launch_policy"]},
+                    "permission_ceiling": {"project_policy": defaults["access_profile"]},
+                    "wip_limits": {"max_active_runs": 1, "max_active_nodes": 1},
+                    "hard_budget": selection["execution"]["budget"],
+                })
                 self.assertEqual(selection["repository"]["definition_digest"], "b" * 64)
                 source["predicate_label_presence"] = ["any"]
                 with self.assertRaisesRegex(ValueError, "unlabeled"):
                     setup.pipeline_selection(client, {"project": project, "repository": repository}, profiles,
-                        context, {"id": connection, "version": 3}, namespace, {"network_hosts": []})
+                        context, {"id": connection, "version": 3}, namespace, {"network_hosts": []}, policy_defaults=defaults)
             finally:
                 server.shutdown()
                 thread.join(timeout=2)
@@ -184,6 +191,11 @@ class FactoryStandTriageTests(unittest.TestCase):
                 self.assertEqual(result, again)
                 catalog = json.loads(Path(result["profiles"]).read_text())
                 compiled, = catalog["codex"]
+                installed, = [entry for entry in catalog["projects"][0]["references"]
+                    if entry["kind"] == "permission_ceiling"]
+                contents = json.dumps(installed["metadata"]["permission_declarations"],
+                    sort_keys=True, separators=(",", ":")).encode()
+                self.assertEqual(installed["reference"]["digest"], hashlib.sha256(contents).hexdigest())
                 self.assertEqual(compiled["authentication"], "native_login_file")
                 self.assertEqual(compiled["usage_policy"], {"kind": "subscription"})
                 outputs = compiled["project_permissions"]["outputs"]
@@ -569,7 +581,8 @@ class FactoryStandTriageTests(unittest.TestCase):
         input_id = str(uuid.uuid4())
         selected = {"profiles": profiles, "context": {},
             "execution": {"budget": budget, "permissions": permissions, "max_active_nodes": 1},
-            "configuration": {"admission_policy": "reviewed-admission", "permission_ceiling": "reviewed-ceiling",
+            "configuration": {"admission_policy": {"project_policy": reference(str(uuid.uuid4()))},
+                "permission_ceiling": {"project_policy": reference(str(uuid.uuid4()))},
                 "wip_limits": {"max_active_runs": 1, "max_active_nodes": 1}, "hard_budget": budget},
             "input": {"id": input_id, "source": "reviewed-source", "reporter": None,
                 "predicate": {"state": "open", "label_presence": "none", "all_of": [], "any_of": [], "none_of": []}},
@@ -662,6 +675,18 @@ class FactoryStandTriageTests(unittest.TestCase):
                 self.assertEqual(stand.publish_triage(client, project, selected, namespace), receipt)
                 self.assertEqual(calls[len(first):], first[1:], "repeat setup retains exact publication bodies and keys")
                 worker_source[0] = {"kind": "repository"}
+                # An older launch can lose its final receipt after publishing v1.
+                # Preserve the committed Configuration even if the current
+                # worker cannot validate that old definition again.
+                retained = {**published["configurations"][receipt["configuration"]["id"]],
+                            "reference": receipt["configuration"],
+                            "admission_policy": {"identity": "legacy-launch", "version": "v1", "digest": "a" * 64},
+                            "permission_ceiling": {"identity": "legacy-access", "version": "v1", "digest": "b" * 64}}
+                before = len(calls)
+                self.assertEqual(stand.publish_triage(client, project, selected, namespace,
+                    retained_configuration=retained), receipt)
+                self.assertEqual([path for path, _, _ in calls[before:]],
+                    [f"{base}/factory-source-inputs/{input_id}/versions"])
                 with self.assertRaisesRegex(ValueError, "source-free"):
                     stand.publish_triage(client, project, selected, uuid.uuid4())
             finally:
@@ -671,6 +696,9 @@ class FactoryStandTriageTests(unittest.TestCase):
         self.assertFalse(any("factory-presets" in path for path in reads))
         self.assertEqual(len(published["flows"]), 1)
         self.assertEqual(len(published["configurations"]), 1)
+        configuration = published["configurations"][receipt["configuration"]["id"]]
+        for field in ("admission_policy", "permission_ceiling"):
+            self.assertEqual(configuration[field], original["configuration"][field])
         flow = next(iter(published["flows"].values()))
         nodes = {node["key"]: node for node in flow["root"]["nodes"]}
         self.assertEqual(set(nodes), {"eligibility", "eligibility_gate", "classification", "classification_gate"})

@@ -9,6 +9,8 @@ mod console_journey;
 #[allow(dead_code)]
 #[path = "../factory_pilot/models.rs"]
 mod models;
+#[path = "source_triage_policies.rs"]
+mod policies;
 #[path = "source_triage_profiles.rs"]
 mod profiles;
 #[path = "source_triage_reporting.rs"]
@@ -247,7 +249,15 @@ async fn run_pipeline(defect: bool, console: bool) {
   } else {
     profiles::install(&mut execution, defect, &connection).await
   };
-  let mut target = installed["target"].clone();
+  let policy_matrix = if scenario.policy_matrix() {
+    Some(policies::Matrix::prepare(&execution, &installed).await)
+  } else {
+    None
+  };
+  let mut target = policy_matrix
+    .as_ref()
+    .map_or(&installed["target"], |matrix| &matrix.automatic)
+    .clone();
   scenario.after_install(&mut execution).await;
   {
     let mut replies = execution.environment.provider.replies.lock().await;
@@ -369,6 +379,9 @@ async fn run_pipeline(defect: bool, console: bool) {
     intent["inputs"][0]["definition"]["reporter"] = selected["reporter"].clone();
     intent["inputs"][0]["definition"]["reporting"] = selected["mapping"].clone();
     intent["inputs"][0]["definition"]["connection"]["reporter_configuration"] = selected["configuration"].clone();
+  }
+  if let Some(matrix) = &policy_matrix {
+    matrix.verify_denials(&execution, &intent).await;
   }
   let admission_checkpoint = scenario.admission_checkpoint(&project).await;
   let input_publication = if let Some(observed) = &console_setup {
@@ -631,6 +644,16 @@ async fn run_pipeline(defect: bool, console: bool) {
   }
   worker.kill().await.unwrap();
   worker.wait().await.unwrap();
+  if let Some(matrix) = policy_matrix {
+    let evidence = matrix
+      .verify_restart(&mut execution, &run, &admissions_path, &diagnostics)
+      .await;
+    fs::write(
+      execution.environment.evidence.join("triage-project-policies.json"),
+      serde_json::to_vec_pretty(&evidence).unwrap(),
+    )
+    .unwrap();
+  }
   execution.environment.stop().await;
   fs::write(
     execution.environment.evidence.join("triage-profile-results.json"),

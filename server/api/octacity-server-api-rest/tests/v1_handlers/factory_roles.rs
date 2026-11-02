@@ -937,6 +937,7 @@ unavailable_role_use_cases!(query:
   GetProjectSkillQuery=>"get_project_skill",
 );
 unavailable_role_use_cases!(command:
+  ProvisionFactoryProjectPoliciesCommand=>"provision_factory_project_policies",
   PublishFactoryProjectPolicyCommand=>"publish_factory_project_policy",
   SelectFactoryProjectPolicyDefaultsCommand=>"select_factory_project_policy_defaults",
   DeleteFactoryRoleCommand=>"delete_factory_role", PublishFactoryRoleProfilesCommand=>"publish_factory_role_profiles", CopyFactoryRoleTemplateCommand=>"copy_factory_role_template",

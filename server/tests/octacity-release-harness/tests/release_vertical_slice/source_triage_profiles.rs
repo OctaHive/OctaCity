@@ -329,6 +329,20 @@ async fn install_reviewed(
   } else {
     None
   };
+  let legacy_launch = source_factory_configuration::reference("source-admission");
+  let legacy_access = source_factory_configuration::reference("source-ceiling");
+  let policy_setup = post_management(
+    &client,
+    &origin,
+    &format!("/api/v1/projects/{project}/factory-policies/provision"),
+    &format!("{}-factory-policies", execution.run),
+    json!({
+      "designated_access":legacy_access,
+      "legacy_references":[{"kind":"launch","reference":legacy_launch},{"kind":"access","reference":legacy_access}]
+    }),
+  )
+  .await;
+  assert_eq!(policy_setup["unresolved"], json!([]));
   let target = publish_preset(execution, &permissions, &profiles, command.as_ref(), reporting.as_ref()).await;
   let setup = Path::new(input["setup_file"].as_str().unwrap());
   fs::write(
@@ -344,7 +358,7 @@ async fn install_reviewed(
     );
     sleep(Duration::from_millis(20)).await;
   }
-  json!({"target":target,"authority":authority,"reporting":reporting,
+  json!({"target":target,"authority":authority,"reporting":reporting,"policy_setup":policy_setup,
     "native_codex_sha256":native_pin.digest(),"external_mcp_sha256":external_pin.digest(),
     "factory_catalog_sha256":FactoryDigest::content_sha256(&fs::read(authority["catalog"].as_str().unwrap()).unwrap()),
     "profiles":profiles.iter().map(|(alias,(role,profile))|json!({"stage":alias,"role":role.reference(),"profile":profile.reference()})).collect::<Vec<_>>()

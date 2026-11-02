@@ -11,6 +11,7 @@ from __future__ import annotations
 from contextlib import contextmanager, nullcontext
 import ctypes
 import hashlib
+import json
 import os
 from pathlib import Path
 import shutil
@@ -147,6 +148,23 @@ def installed_native_installation(root: Path) -> Path | None:
         raise state.StateError("installed Agent configuration is invalid") from error
 
 
+def _access_declarations(path: Path) -> dict:
+    catalog = state.load_json_object(state.read_regular_file(path, "Factory profile catalog",
+        max_bytes=server.MAX_FACTORY_PROFILE_BYTES, modes=frozenset({state.PRIVATE_FILE_MODE})),
+        "Factory profile catalog")
+    declarations = {}
+    for project in catalog.get("projects", ()):
+        for entry in project["references"]:
+            if entry["kind"] != "permission_ceiling":
+                continue
+            permissions = (entry.get("metadata") or {}).get("permission_declarations")
+            if permissions is not None:
+                pin = entry["reference"]
+                key = (project["project_id"], pin["identity"], pin["version"], pin["digest"])
+                declarations.setdefault(key, set()).add(json.dumps(permissions, sort_keys=True))
+    return declarations
+
+
 @contextmanager
 def factory_installation_update(
     root: Path,
@@ -184,6 +202,11 @@ def factory_installation_update(
     with tempfile.TemporaryDirectory(prefix=".factory-update-", dir=root) as temporary:
         staging = Path(temporary)
         inherited = installed_factory_inputs(root, staging)
+        if inherited["factory_profiles"] is not None:
+            original_access = _access_declarations(inherited["factory_profiles"])
+            for reference, grants in _access_declarations(factory_profiles).items():
+                if reference in original_access and grants != original_access[reference]:
+                    raise state.StateError(f"installed access ceiling {reference[1]} changes an exact reference")
         server.generate_server_configuration(root, old_installation, openssl=openssl,
             **{name: path for name, path in inherited.items() if name != "factory_agent_profile"})
         for group in ("credentials", "pki"):

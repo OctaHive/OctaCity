@@ -2,9 +2,10 @@
 use super::*;
 use octacity_server_application::{
   ApplicationError, AuthorizedManagementCommandHandler, AuthorizedManagementQueryHandler, FactoryLegacyPolicyReference,
-  FactoryProjectPolicyDefaultsDraft, FactoryProjectPolicyDraft, GetFactoryProjectPolicyDefaultsQuery,
-  GetFactoryProjectPolicyQuery, ListFactoryProjectPoliciesQuery, PublishFactoryProjectPolicyCommand,
-  ResolveFactoryLegacyPolicyQuery, SelectFactoryProjectPolicyDefaultsCommand, ValidateFactoryProjectPolicyQuery,
+  FactoryProjectPolicyDefaultsDraft, FactoryProjectPolicyDraft, FactoryProjectPolicyProvisionDraft,
+  GetFactoryProjectPolicyDefaultsQuery, GetFactoryProjectPolicyQuery, ListFactoryProjectPoliciesQuery,
+  ProvisionFactoryProjectPoliciesCommand, PublishFactoryProjectPolicyCommand, ResolveFactoryLegacyPolicyQuery,
+  SelectFactoryProjectPolicyDefaultsCommand, ValidateFactoryProjectPolicyQuery,
 };
 
 /// Authorized policy handlers, independent of optional Factory execution providers.
@@ -12,6 +13,8 @@ pub struct FactoryPolicyManagementApplication {
   legacy: Arc<dyn AuthorizedManagementQueryHandler<ResolveFactoryLegacyPolicyQuery, Error = ApplicationError>>,
   list: Arc<dyn AuthorizedManagementQueryHandler<ListFactoryProjectPoliciesQuery, Error = ApplicationError>>,
   defaults: Arc<dyn AuthorizedManagementQueryHandler<GetFactoryProjectPolicyDefaultsQuery, Error = ApplicationError>>,
+  provision:
+    Arc<dyn AuthorizedManagementCommandHandler<ProvisionFactoryProjectPoliciesCommand, Error = ApplicationError>>,
   select_defaults:
     Arc<dyn AuthorizedManagementCommandHandler<SelectFactoryProjectPolicyDefaultsCommand, Error = ApplicationError>>,
   validate: Arc<dyn AuthorizedManagementQueryHandler<ValidateFactoryProjectPolicyQuery, Error = ApplicationError>>,
@@ -24,6 +27,7 @@ impl FactoryPolicyManagementApplication {
   where
     C: AuthorizedManagementCommandHandler<PublishFactoryProjectPolicyCommand, Error = ApplicationError>
       + AuthorizedManagementCommandHandler<SelectFactoryProjectPolicyDefaultsCommand, Error = ApplicationError>
+      + AuthorizedManagementCommandHandler<ProvisionFactoryProjectPoliciesCommand, Error = ApplicationError>
       + 'static,
     Q: AuthorizedManagementQueryHandler<ResolveFactoryLegacyPolicyQuery, Error = ApplicationError>
       + AuthorizedManagementQueryHandler<ListFactoryProjectPoliciesQuery, Error = ApplicationError>
@@ -35,6 +39,7 @@ impl FactoryPolicyManagementApplication {
     Self {
       legacy: queries.clone(),
       select_defaults: commands.clone(),
+      provision: commands.clone(),
       list: queries.clone(),
       defaults: queries.clone(),
       publish: commands,
@@ -188,6 +193,27 @@ pub(super) async fn select_defaults(
     .map_err(|e| invalid_input(e, &id))?;
   let result = endpoints(&app, &id)?
     .select_defaults
+    .handle_authorized_command(&context, command)
+    .await
+    .map_err(|e| authorized_handler_error(e, &id))?;
+  Ok(([("cache-control", "no-store")], Json(encode(result, &id)?)))
+}
+
+pub(super) async fn provision(
+  State(app): State<Arc<ManagementApplication>>,
+  Extension(crate::ManagementRequest(id, context)): Extension<crate::ManagementRequest>,
+  Path(project): Path<String>,
+  headers: HeaderMap,
+  payload: Result<Json<FactoryProjectPolicyProvisionDraft>, JsonRejection>,
+) -> Result<impl IntoResponse, ApiError> {
+  let draft = body(payload, &id)?;
+  let key = idempotency_key(&headers, &id)?;
+  let command = app
+    .inputs
+    .provision_factory_project_policies(&project, draft, key.as_str(), now_unix_ms(&id)?)
+    .map_err(|e| invalid_input(e, &id))?;
+  let result = endpoints(&app, &id)?
+    .provision
     .handle_authorized_command(&context, command)
     .await
     .map_err(|e| authorized_handler_error(e, &id))?;

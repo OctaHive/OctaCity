@@ -14,6 +14,20 @@ const LEGACY_PRESET_MIGRATION: &str = "Legacy preset queries retain their origin
 
 pub(super) const OPERATIONS: &[ManagementOperation] = &[
   operation!(
+    octacity_server_application::ProvisionFactoryProjectPoliciesCommand,
+    "POST",
+    "/api/v1/projects/{project_id}/factory-policies/provision",
+    "provisionFactoryProjectPolicies",
+    "Factory",
+    "Initialize Project policies and backfill reviewed exact legacy references",
+    Some("FactoryProjectPolicyProvisionDraft"),
+    "FactoryProjectPolicyProvisionOutcome",
+    "200",
+    true,
+    false
+  )
+  .with_no_store_response(),
+  operation!(
     octacity_server_application::ResolveFactoryLegacyPolicyQuery,
     "POST",
     "/api/v1/projects/{project_id}/factory-policies/legacy/resolve",

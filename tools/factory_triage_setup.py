@@ -18,11 +18,15 @@ import uuid
 from urllib.parse import urlencode
 
 import configure_local_stand_agent as agent
+import configure_local_stand_server as server
 import factory_local_runtime as runtime
 import local_stand_state as state
 import local_stand_build_inputs as build_inputs
 
 POLICY = Path(__file__).resolve().parents[1] / "deployment/local-stand/factory-triage.json"
+# Installed identities are retained for compatibility with earlier stand publications.
+_INSTALLED_ADMISSION = "triage-admission"
+_INSTALLED_ACCESS_DEFAULT = "triage-ceiling"
 
 
 def prepare_guest_image(root: Path, native: Path, *, execute=subprocess.run) -> str:
@@ -106,7 +110,7 @@ def preparation_mapping(project: str) -> dict:
 
 
 def pipeline_selection(client, resources: dict, profiles: dict, context: dict,
-                     connection: dict, namespace: uuid.UUID, permissions: dict) -> dict:
+                     connection: dict, namespace: uuid.UUID, permissions: dict, *, policy_defaults: dict | None) -> dict:
     """Pin current public Source choices; unsupported narrowing cannot fall back."""
     project = resources["project"]
     query = urlencode({"connection_id": connection["id"], "connection_version": connection["version"]})
@@ -119,12 +123,19 @@ def pipeline_selection(client, resources: dict, profiles: dict, context: dict,
         raise ValueError("triage Source does not support the reviewed open unlabeled scope")
     repository = client.get(f"/api/v1/repositories/{resources['repository']}/versions/1")
     budget = json.loads(POLICY.read_text())["flow_budget"]
+    configuration = None
+    if policy_defaults is not None:
+        launch, access = (policy_defaults[key] for key in ("launch_policy", "access_profile"))
+        if any(not pin or pin["project_id"] != project for pin in (launch, access)):
+            raise ValueError("stand Configuration requires exact Project launch and access defaults")
+        configuration = {"admission_policy": {"project_policy": launch},
+            "permission_ceiling": {"project_policy": access},
+            "wip_limits": {"max_active_runs": 1, "max_active_nodes": 1}, "hard_budget": budget}
     return {"profiles": profiles, "context": {stage: copy.deepcopy(context) for stage in profiles},
         "repository": {"project_id": project, "id": resources["repository"], "version": 1,
             "definition_digest": repository["definition_digest"]},
         "execution": {"budget": budget, "permissions": permissions, "max_active_nodes": 1},
-        "configuration": {"admission_policy": "triage-admission", "permission_ceiling": "triage-ceiling",
-            "wip_limits": {"max_active_runs": 1, "max_active_nodes": 1}, "hard_budget": budget}, "effects": {},
+        "configuration": configuration, "effects": {},
         "input": {"id": str(uuid.uuid5(namespace, "input/triage")), "source": source["binding"],
             "reporter": None, "reporting": None,
             "connection": {"id": choices["connection_id"], "version": choices["connection_version"],
@@ -145,6 +156,41 @@ def _publish(path: Path, value: dict) -> None:
 def _reference(identity: str, version: str = "v1", digest: str | None = None) -> dict:
     return {"identity": identity, "version": version,
             "digest": digest or hashlib.sha256(identity.encode()).hexdigest()}
+
+
+def provision_project_policies(client, project: str, namespace: uuid.UUID, catalog: Path,
+                               retained: dict | None = None) -> dict:
+    """Designate the reviewed installation ceiling and import only exact retained legacy pins."""
+    legacy = [
+        {"kind": kind, "reference": retained[field]}
+        for kind, field in (("launch", "admission_policy"), ("access", "permission_ceiling"))
+        if retained is not None and "project_policy" not in retained[field]
+    ]
+    installed = state.load_json_object(state.read_regular_file(catalog, "Factory profile catalog",
+        max_bytes=server.MAX_FACTORY_PROFILE_BYTES, modes=frozenset({state.PRIVATE_FILE_MODE})),
+        "Factory profile catalog")
+    designated = [entry["reference"] for owner in installed["projects"] if owner["project_id"] == project
+        for entry in owner["references"]
+        if entry["kind"] == "permission_ceiling" and entry["alias"] == _INSTALLED_ACCESS_DEFAULT]
+    if len(designated) > 1:
+        raise ValueError("stand Factory access default is ambiguous")
+    base = f"/api/v1/projects/{project}/factory-policies"
+    request = {"designated_access": next(iter(designated), None), "legacy_references": legacy}
+    key = uuid.uuid5(namespace, "factory-policies/" + json.dumps(request, sort_keys=True, separators=(",", ":")))
+    receipt = client.post(f"{base}/provision", str(key), request)
+    unresolved = receipt["unresolved"]
+    if unresolved and receipt["disposition"] == "replayed":
+        # The original receipt is historical. Only recheck references still missing.
+        unresolved = [item for item in unresolved if client.post(
+            f"{base}/legacy/resolve", str(uuid.uuid4()), item["legacy"])["mapping"] is None]
+        if unresolved:
+            receipt = client.post(f"{base}/provision", str(uuid.uuid4()), request)
+            unresolved = receipt["unresolved"]
+    if unresolved:
+        pending = ", ".join(f"{item['legacy']['reference']['identity']} "
+            f"({item['reason']})" for item in unresolved)
+        raise ValueError(f"unresolved Factory policies: {pending}. Restore the exact installed declarations and retry.")
+    return receipt
 
 
 def _issue_reader(root: Path, project: str, lifetime: int) -> tuple[Path, Path]:
@@ -253,15 +299,16 @@ def prepare_runtime(root: Path, native: dict, resources: dict, client) -> dict:
         for pin in toolchain.values()]
     references += [{"kind":"node_capability", "alias":pin["identity"], "reference":pin} for pin in companion_references]
     references += [{"kind": kind, "alias": name, "reference": _reference(name)} for kind, name in
-        (("admission_policy", "triage-admission"), ("permission_ceiling", "triage-ceiling"),
+        (("admission_policy", _INSTALLED_ADMISSION),
          ("secret_profile", "triage-model"), ("secret_profile", "triage-mcp"))]
     references.append({"kind": "node_capability", "alias": "triage-runtime", "reference": executable})
     references.append({"kind": "node_capability", "alias": policy["mcp_evidence_verifier"]["identity"],
                        "reference": policy["mcp_evidence_verifier"]})
-    for reference in references:
-        if reference["kind"] == "permission_ceiling":
-            reference["metadata"] = {"node_kinds": [], "signal_purposes": [], "enforcement": [],
-                "compatible_choices": [], "permission_declarations": permissions}
+    permission_digest = hashlib.sha256(json.dumps(permissions, sort_keys=True, separators=(",", ":")).encode()).hexdigest()
+    references.append({"kind": "permission_ceiling", "alias": _INSTALLED_ACCESS_DEFAULT,
+        "reference": _reference(_INSTALLED_ACCESS_DEFAULT, digest=permission_digest),
+        "metadata": {"node_kinds": [], "signal_purposes": [], "enforcement": [],
+            "compatible_choices": [], "permission_declarations": permissions}})
     catalog = {"version": 1, "projects": [{"project_id": resources["project"], "references": references,
         "build_configurations": [{"alias": "triage-worker", "reference": build}],
         "role_profiles": {"triage-runtime": {"ceiling": ceiling, "parameters": native["policy"]["parameters"],

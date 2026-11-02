@@ -556,6 +556,10 @@ fn registered_routes() -> ManagementRoutes {
     .post::<SubmitFactoryNodeResponseCommand, _, _>("submitFactoryNodeResponse", submit_factory_node_response)
     .post::<RetryFactoryNodeCommand, _, _>("retryFactoryNode", retry_factory_node)
     .post::<ConfirmFactoryNodeOperationCommand, _, _>("confirmFactoryNodeOperation", confirm_factory_node_operation)
+    .post::<octacity_server_application::ProvisionFactoryProjectPoliciesCommand, _, _>(
+      "provisionFactoryProjectPolicies",
+      super::factory_policies::provision,
+    )
     .post::<octacity_server_application::ResolveFactoryLegacyPolicyQuery, _, _>(
       "resolveFactoryLegacyPolicy",
       super::factory_policies::legacy,

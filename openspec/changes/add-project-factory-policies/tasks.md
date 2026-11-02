@@ -20,9 +20,9 @@ Every executable slice below uses repository TDD: run its behavioral test to obs
 
 ## 4. Stand compatibility and operator verification
 
-- [ ] 4.1 Update `tools/factory-stand` to designate reviewed installed default authority and provision policies through ordinary management commands, without business-name switches or overwriting retained Project settings; verify clean setup, operator edits, failed/retried provisioning and rebuild/resume preserving pipeline/Run/document identities in launcher and provisioning tests.
-- [ ] 4.2 Extend the durable Factory qualification journey with real HTTP, PostgreSQL and the qualified ordinary Agent path: demonstrate manual-only vs automatic-only admission, effective restricted access, policy replacement and restart, plus legacy Configuration/Run preservation. Verify accepted operation counts and retained references/results; use disposable fixtures rather than a personal stand or real paid model/provider writes.
-- [ ] 4.3 Document Project policy setup, Standard behavior, Configuration adoption and compatible stand upgrades; run focused Rust/REST/store/Console regressions, production bundle checks with unchanged budgets, formatting/lint, architecture checks and `openspec validate add-project-factory-policies --strict`, recording results and remaining installation prerequisites.
+- [x] 4.1 Update `tools/factory-stand` to designate reviewed installed default authority and provision policies through ordinary management commands, without business-name switches or overwriting retained Project settings; verify clean setup, operator edits, failed/retried provisioning and rebuild/resume preserving pipeline/Run/document identities in launcher and provisioning tests.
+- [x] 4.2 Extend the durable Factory qualification journey with real HTTP, PostgreSQL and the qualified ordinary Agent path: demonstrate manual-only vs automatic-only admission, effective restricted access, policy replacement and restart, plus legacy Configuration/Run preservation. Verify accepted operation counts and retained references/results; use disposable fixtures rather than a personal stand or real paid model/provider writes.
+- [x] 4.3 Document Project policy setup, Standard behavior, Configuration adoption and compatible stand upgrades; run focused Rust/REST/store/Console regressions, production bundle checks with unchanged budgets, formatting/lint, architecture checks and `openspec validate add-project-factory-policies --strict`, recording results and remaining installation prerequisites.
 
 ## Verification — 1.1 (2026-11-02)
 
@@ -568,3 +568,135 @@ All 15 HTTP regressions passed with the final visibility projection using
 OpenAPI generation, Console type checking, scoped lint and formatting, strict
 OpenSpec validation, and `git diff --check` passed. The disposable database
 was stopped. Available disk space was approximately 32 GiB.
+
+## Verification — 4.1 (2026-11-03)
+
+The default stand designates the exact reviewed installed access ceiling and
+uses the authorized Project provisioning command. Fresh seed Configurations pin
+the two policy references returned by the command. Rebuild reads the retained
+Configuration and supplies its exact legacy bindings for backfill. Startup
+recovery includes provisioning before Agent startup, so an interrupted VCS
+installation update can retry provisioning and its existing Source recovery.
+If the final stand receipt was lost after Configuration publication, startup
+uses the retained Flow and Configuration and completes the existing Source
+publication with its stable key.
+
+Red and Green:
+
+| Command or focused test | Observed Red | Observed Green |
+| --- | --- | --- |
+| `cargo test --locked -p octacity-server --test factory_project_policy_http policy_http_legacy_resolution -- --include-ignored` | HTTP 404 on the missing provisioning route | Exact designated authority, defaults and mappings are returned. Restart replays the original receipt. Duplicate inputs and a changed replay body are rejected. |
+| `PYTHONPATH=tools:tools/tests python3 -m unittest test_factory_stand_triage.FactoryStandTriageTests.test_triage_selection_pins_current_source_access_and_unlabeled_scope_without_reporter_writes` | Selection could not receive Project defaults | The Configuration draft pins both exact references and retains the reviewed Source scope. |
+| `test_factory_stand_recovery.FactoryStandRecoveryTests.test_first_publication_starts_with_the_same_pinned_vcs_bundle_as_its_bootstrap` | Clean setup issued no provisioning command | Clean setup obtains both exact defaults before Configuration publication. |
+| `test_factory_stand_recovery.FactoryStandRecoveryTests.test_rebuild_retries_exact_legacy_provisioning_without_republishing_retained_state` | Rebuild skipped provisioning and returned success after the injected failure | Rebuild retries the same exact intent and preserves the receipt and operator defaults. |
+| `test_factory_stand_triage.FactoryStandTriageTests.test_publishes_the_resolved_two_stage_pipeline_without_starting_intake_or_work` | Publication could not recover a retained Configuration after loss of the final receipt | The retained Flow and Configuration identities survive and only the Source command is replayed. |
+| `test_factory_stand_recovery.FactoryStandRecoveryTests.test_vcs_upgrade_retries_exhausted_enabled_source_through_versioned_publication` | A provisioning failure consumed the VCS upgrade and lost the pending Source recovery | The update retries after the failure and recovers only the eligible existing Source. |
+
+The Python filters use the same `PYTHONPATH` and `unittest` invocation as the
+first launcher row. Real setup and restart passed with a current Server binary,
+disposable PostgreSQL and MinIO using `python3 -m unittest
+test_factory_triage_setup_rest.FactoryTriageSetupRestTests`. This test verifies
+the clean policies, exact disabled Configuration, changed operator default and
+original/edited Project documents across restart. The PostgreSQL HTTP suite
+also verifies that provisioning preserves a retained completed Run and its
+accepted Work receipt and does not dispatch again.
+
+- `cargo test --locked -p octacity-server --test factory_project_policy_http -- --include-ignored --test-threads=4`: 15 passed.
+- `cargo test --locked -p octacity-server-store-postgres --test factory_project_policy_provisioning -- --include-ignored --test-threads=4`: 8 passed, including legacy Configuration bytes/digest and interrupted transaction recovery.
+- `cargo test --locked -p octacity-server -p octacity-server-api-rest --test v1_handlers`: 252 passed, including OpenAPI and authorization inventory.
+- `PYTHONPATH=tools:tools/tests python3 -m unittest test_bootstrap_local_stand test_local_stand_launcher test_factory_stand_recovery test_factory_stand_triage test_factory_stand_native test_factory_triage_setup_rest`: 72 passed, 3 opt-in tests skipped.
+- `cargo fmt --all -- --check`, `python3 tools/check_architecture.py`,
+  `openspec validate add-project-factory-policies --strict` and `git diff --check` passed.
+
+The opt-in native stand journey requires packaged development inputs. The
+ordinary Agent qualification remains in 4.2.
+
+## Verification — 4.2 (2026-11-03)
+
+- With the packaged macOS ARM64 Server and Agent, Microsandbox, the pinned guest
+  image, and disposable PostgreSQL and MinIO, follow the
+  [native policy qualification procedure](../../../docs/operations/factory.md#qualify-project-policies-with-the-native-agent).
+  The fixture uses local GitHub and model peers. The first policy run reached the
+  Source denial and rejected the fixture's duplicate task and acceptance
+  artifact before manual policy validation. The corrected fixture uses
+  distinct artifacts and unique operation keys per qualification. The full
+  scenario passed in 150 seconds on a clean disposable database.
+- Manual admission to the automatic-only Configuration and Source admission to
+  the manual-only Configuration produced no Run or Build. One Source operation
+  was accepted and executed by the ordinary Agent in two Builds, with four
+  retained node completions. Both managed Job templates recorded the smaller
+  descendant limit from the exact Project access profile. A manual operation
+  and a legacy operation brought the total to three. Restart after replacing
+  both policies and selecting the replacements as defaults preserved the
+  original Configuration, Run pins, results and accepted operation receipts.
+- The release harness passed 27 regular tests, with 21 opt-in tests skipped in
+  that invocation. The Python fixture suite passed 4 regular tests, with 6
+  opt-in tests skipped. The disposable PostgreSQL checks passed 15 HTTP policy
+  tests and 8 provisioning tests.
+
+## Verification — 4.3 (2026-11-03)
+
+Updated [Factory operations](../../../docs/operations/factory.md#project-launch-policies-and-access-profiles),
+[pipeline authoring](../../../docs/operations/factory-pipeline-authoring.md#review-purpose-limits-and-publication),
+and the [retained stand upgrade procedure](../../../docs/operations/local-stand.md#upgrade-a-retained-factory-stand).
+This slice changes documentation only, so no executable behavior required a
+new Red/Green cycle.
+
+- Ran the existing `target/debug/deps` executables for
+  `octacity_server_factory`, `v1_handlers`, `v1_contract`,
+  `factory_project_policy_http`, `factory_project_policies`,
+  `factory_project_policy_provisioning` and `migrations` with
+  `--include-ignored --test-threads=4` and a fresh disposable PostgreSQL
+  database. All 665 tests passed.
+- `cargo clippy --locked -j2 -p octacity-server-factory -p octacity-server-application -p octacity-server-api-rest -p octacity-server-store-postgres -p octacity-server --lib --test factory_project_policy_http --test factory_project_policies --test factory_project_policy_provisioning --test v1_handlers --test v1_contract --all-features -- -D warnings`
+  passed.
+- From `ui`, `pnpm test:unit` passed 41 script tests and 1,047 Vitest tests.
+  `pnpm test:browser tests/browser/factory{,-definitions,-canvas,-inputs,-triage,-triage-results}.spec.ts`
+  passed all 42 scenarios, including keyboard selection in English and Russian.
+  `pnpm lint`, `pnpm format` and `pnpm build` passed. Production output was
+  1,578,222 bytes of JavaScript, 87,332 bytes of CSS and 1,666,141 bytes of
+  static output under the existing budgets.
+- `PYTHONPATH=tools:tools/tests python3 -m unittest test_factory_stand_recovery test_factory_stand_triage test_bootstrap_local_stand test_local_stand_launcher`
+  passed all 72 tests.
+- `cargo fmt --all -- --check`, `python3 tools/check_architecture.py`,
+  `openspec validate add-project-factory-policies --strict` and
+  `git diff --check` passed.
+
+Installation still requires a compatible Server/Agent and a qualified
+installed ceiling for Standard access. Retained legacy bindings require
+exact installed declarations. Source activation and provider credentials
+remain independent setup steps. The temporary PostgreSQL was stopped.
+Available disk space was 6.1 GiB.
+
+## Review follow-up — 4.1–4.3
+
+- `cargo test --locked -j2 -p octacity-server-application --lib factory_admission_tests`
+  passed 146 tests. Before the change, the focused
+  `source_waits_for_legacy_policy_backfill_without_exhausting_its_scan` test
+  observed `InvalidConfiguration`. The updated schedule waits at the configured
+  polling cadence without spending provider attempts and clears on success.
+- `PYTHONPATH=tools:tools/tests python3 -m unittest test_factory_stand_recovery test_factory_stand_triage test_factory_stand_native test_local_stand_launcher test_bootstrap_local_stand`
+  passed 74 tests with one opt-in test skipped. The focused Red runs observed
+  stale defaults after provisioning replay, successful startup with an
+  unresolved mapping, a name-only digest, and an update that accepted different
+  grants under the same ceiling reference. The updated launcher reads current
+  defaults and rechecks unresolved mappings. Generated ceilings bind the
+  declarations by digest, and installation updates reject redefining an exact
+  ceiling.
+- `test_factory_triage_setup_rest.FactoryTriageSetupRestTests` passed with
+  disposable PostgreSQL and MinIO. The revised
+  [qualification instructions](../../../docs/operations/factory.md#qualify-project-policies-with-the-native-agent)
+  list the required packages, service endpoints and environment variables.
+  The documentation-only corrections did not require a separate Red/Green
+  cycle.
+- `cargo clippy --locked -j2 -p octacity-server-factory -p octacity-server-application -p octacity-server-api-rest -p octacity-server-store-postgres -p octacity-server --lib --all-features -- -D warnings`
+  passed. Formatting, the architecture check and strict OpenSpec validation
+  passed.
+- `OCTACITY_TEST_PACKAGED_TRIAGE=1 python3 -m unittest -v tools.tests.test_factory_triage_pipeline.PackagedTriagePipelineTests.test_project_policies_survive_agent_execution_and_server_restart`
+  first failed with an empty list of guest observations. The updated probe
+  completed both Builds with a kernel process limit of 96 on all six model
+  requests and verified that the guest could not raise it. The policy matrix
+  retained three admitted operations and their pinned state across restart.
+  The final native run passed in 150 seconds using the staged Server and Agent
+  packages. The Source scheduling change was verified separately by the
+  application regression test above.

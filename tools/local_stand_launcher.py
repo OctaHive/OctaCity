@@ -339,7 +339,8 @@ def _stop_halves(
     return disposition
 
 
-def _up(arguments: argparse.Namespace) -> dict[str, object]:
+def up(arguments: argparse.Namespace, *, before_agent: Callable[[], None] | None = None) -> dict[str, object]:
+    """Start the stack and finish optional Project preparation inside startup recovery."""
     if arguments.update_factory_installation and (arguments.factory_profiles is None or arguments.factory_agent_profile is None):
         raise LocalStandError("--update-factory-installation requires --factory-profiles and --factory-agent-profile")
     if (arguments.factory_signal_connectors is not None or arguments.factory_delivery_bundle is not None or arguments.factory_runtime_bundle is not None or arguments.factory_issue_mcp_readers is not None) and arguments.factory_profiles is None:
@@ -436,6 +437,8 @@ def _up(arguments: argparse.Namespace) -> dict[str, object]:
                     lifecycle_state=owner,
                     repository=REPOSITORY,
                 )
+                if before_agent is not None:
+                    before_agent()
                 agent_result = agent_starter.start_agent(
                     root,
                     native.path,
@@ -808,7 +811,7 @@ def parse_arguments(arguments: Sequence[str] | None = None) -> argparse.Namespac
 
 def run(arguments: argparse.Namespace) -> dict[str, object]:
     handlers = {
-        "up": _up,
+        "up": up,
         "down": _down,
         "status": _status,
         "logs": _logs,

@@ -29,5 +29,12 @@ pub(super) fn management_requests() -> Vec<Request<Body>> {
       r#"{"expected_version":null,"launch_policy":null,"access_profile":null}"#,
     ),
     json_request("POST", &format!("{base}/legacy/resolve"), "unused", None, &legacy),
+    json_request(
+      "POST",
+      &format!("{base}/provision"),
+      "provision",
+      None,
+      r#"{"designated_access":null,"legacy_references":[]}"#,
+    ),
   ]
 }

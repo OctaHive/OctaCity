@@ -109,13 +109,14 @@ def serving(handler, certificate=None, *, host="127.0.0.1"):
         thread.join(timeout=3)
 
 
-def compile_native_launcher(root, model_port, *, native_guest="/opt/octacity/tools/tool-1"):
+def compile_native_launcher(root, model_port, *, native_guest="/opt/octacity/tools/tool-1", observe_process_limit=False):
     """Pin a finite model provider without changing native MCP argv or secrets."""
     inputs = json.loads((REPOSITORY / "deployment/local-stand/inputs.json").read_text())
     fixture = PEER.with_name("native-model-cli.rs")
     launcher = root / "native-model-cli"
     subprocess.run(["docker", "run", "--rm", "--network", "none", "--mount", f"type=bind,src={fixture.parent},dst=/fixture,readonly",
         "--mount", f"type=bind,src={root},dst=/out", "--env", f"OCTACITY_FINITE_CODEX_PATH={native_guest}", "--env", f"OCTACITY_FINITE_MODEL_URL=http://host.microsandbox.internal:{model_port}/v1",
+        "--env", f"OCTACITY_FINITE_OBSERVE_PROCESS_LIMIT={int(observe_process_limit)}",
         inputs["images"]["rust"]["reference"], "rustc", "--edition=2024", "-C", "strip=symbols", "/fixture/native-model-cli.rs", "-o", "/out/native-model-cli"],
         check=True, capture_output=True, timeout=60)
     return launcher

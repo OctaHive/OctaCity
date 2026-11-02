@@ -88,6 +88,23 @@ def _resume_vcs_intake(client, project: str, configuration: str, namespace: uuid
             expected_version=version)
 
 
+def _seed_configuration_id(namespace: uuid.UUID) -> str:
+    return str(uuid.uuid5(namespace, "configuration/triage/manual-v1"))
+
+
+def _read_seed_configuration(client, project: str, identity: str, version: int = 1, *, required: bool = False) -> dict | None:
+    try:
+        result = client.get(f"/api/v1/factory-configurations/{identity}/versions/{version}")["configuration"]
+    except bootstrap.HttpStatusError as error:
+        if error.status == 404 and not required:
+            return None
+        raise
+    reference = result["reference"]
+    if (reference["project_id"], reference["id"], reference["version"]) != (project, identity, version):
+        raise ValueError("stand Configuration differs from its retained identity")
+    return result
+
+
 def run_triage_stand(root: Path, source: str | None, revision: str | None, *,
                      github_repository: str | None = None, github_token_file: Path | None = None) -> dict:
     """Install the actual two-stage pipeline, leaving activation to ordinary review.
@@ -136,9 +153,25 @@ def run_triage_stand(root: Path, source: str | None, revision: str | None, *,
         repository = installed_github_resource(root)["resource"]["locator"]
         if github_repository is not None and github_repository != repository:
             raise ValueError("the triage installation has another selected GitHub repository")
+        retained = _read_json(receipt_file)
+        reference = retained["configuration"]
+
+        # A provisioning failure must leave the installation update retryable,
+        # including the one-time recovery of exhausted Source scans.
+        def prepare_project() -> None:
+            client = integration.LocalStandClient(root, bootstrap.DEFAULT_ORIGIN)
+            configuration = _read_seed_configuration(client, retained["project"], reference["id"],
+                reference["version"], required=True)
+            if configuration["reference"] != reference:
+                raise ValueError("stand Configuration differs from its retained identity")
+            triage.provision_project_policies(client, retained["project"], namespace, catalog, configuration)
+            if upgraded_vcs:
+                _resume_vcs_intake(client, retained["project"], reference["id"], namespace, vcs_digest)
+
         with tempfile.TemporaryDirectory(prefix=".factory-resume-", dir=root) as temporary:
             inputs = installation_update.installed_factory_inputs(root, Path(temporary))
-            if inputs["factory_profiles"] is None or inputs["factory_agent_profile"] is None:
+            catalog = inputs["factory_profiles"]
+            if catalog is None or inputs["factory_agent_profile"] is None:
                 raise ValueError("the retained triage installation is incomplete")
             arguments = ["up", "--root", str(root)]
             for name, path in inputs.items():
@@ -149,11 +182,7 @@ def run_triage_stand(root: Path, source: str | None, revision: str | None, *,
             upgraded_vcs = installed_vcs is None or installed_vcs.read_bytes() != vcs.read_bytes()
             if upgraded_vcs:
                 arguments.append("--update-factory-installation")
-            launcher.run(launcher.parse_arguments(arguments))
-        retained = _read_json(receipt_file)
-        if upgraded_vcs:
-            _resume_vcs_intake(integration.LocalStandClient(root, bootstrap.DEFAULT_ORIGIN),
-                retained["project"], retained["configuration"]["id"], namespace, vcs_digest)
+            launcher.up(launcher.parse_arguments(arguments), before_agent=prepare_project)
         return retained
     executable = install_runtime_executable(root, native.path)
     if not resources_file.exists() or not assets_file.exists():
@@ -179,6 +208,8 @@ def run_triage_stand(root: Path, source: str | None, revision: str | None, *,
         "--factory-profiles", assets["profiles"], "--factory-agent-profile", assets["agent_profile"],
         "--factory-issue-mcp-readers", assets["issue_mcp_readers"], "--vcs-integrations", str(vcs)]))
     client = integration.LocalStandClient(root, bootstrap.DEFAULT_ORIGIN)
+    configuration = _read_seed_configuration(client, resources["project"], _seed_configuration_id(namespace))
+    triage.provision_project_policies(client, resources["project"], namespace, Path(assets["profiles"]), configuration)
     connection = ensure_github_connection(client, root, resources["project"], installed_github_resource(root),
         github_token_file, namespace)
     settings = _read_json(Path(assets["runtime_settings"]))
@@ -187,8 +218,14 @@ def run_triage_stand(root: Path, source: str | None, revision: str | None, *,
     profiles = publish_triage_roles(client, resources["project"], namespace,
         runtime="triage-runtime", model_credential_profile="triage-model")
     context = publish_triage_context(client, resources["project"], namespace)
-    selection = triage.pipeline_selection(client, resources, profiles, context, connection, namespace, settings["permissions"])
-    published = publish_triage(client, resources["project"], selection, namespace)
+    defaults = None
+    if configuration is None:
+        defaults = client.get(f"/api/v1/projects/{resources['project']}/factory-policies/defaults")["defaults"]
+        if defaults is None:
+            raise ValueError("stand Configuration requires Project policy defaults")
+    selection = triage.pipeline_selection(client, resources, profiles, context, connection, namespace,
+        settings["permissions"], policy_defaults=defaults)
+    published = publish_triage(client, resources["project"], selection, namespace, retained_configuration=configuration)
     receipt = {"schema_version": 1, "origin": bootstrap.DEFAULT_ORIGIN, "project": resources["project"],
         "profiles": profiles, "context": context, **published}
     _private_json(receipt_file, receipt)
@@ -375,28 +412,33 @@ def publish_triage_roles(client, project: str, namespace: uuid.UUID, *,
     return selections
 
 
-def publish_triage(client, project: str, selection: dict, namespace: uuid.UUID) -> dict:
+def publish_triage(client, project: str, selection: dict, namespace: uuid.UUID, *,
+                   retained_configuration: dict | None = None) -> dict:
     """Publish the ordinary example, retaining exact server references and disabled intake."""
-    flow_id = str(uuid.uuid5(namespace, "flow/triage/manual-v1"))
-    configuration_id = str(uuid.uuid5(namespace, "configuration/triage/manual-v1"))
-    criteria = client.post(f"/api/v1/projects/{project}/input-documents", f"{namespace}-manual-v1-criteria",
-        {"name": "Triage completion criteria", "content": json.loads((launcher.REPOSITORY /
-            "config/factory/presets/triage/completion-v2.json").read_text())["content"]})["artifact"]
-    draft = factory_stand_flow.flow_draft(client, project, selection, namespace, criteria)
-    body = {"id": flow_id, "project_id": project, "definition": draft}
-    preview = client.post("/api/v1/flow-definitions/validate", f"{namespace}-manual-v1-flow-review", body)
-    if preview.get("diagnostics", {}).get("errors"):
-        raise ValueError("stand Flow requires explicit review before publication")
-    reviewed = {key: preview[key] for key in ("closure", "limits", "data_schemas", "pools") if key in preview}
-    definition = {**copy.deepcopy(selection["configuration"]), "flow": reviewed, "enabled": False}
-    validation = client.post("/api/v1/factory-configurations/validate", f"{namespace}-manual-v1-configuration-review",
-        {"id": configuration_id, "project_id": project, "definition": definition})
-    if validation.get("diagnostics", {}).get("errors"):
-        raise ValueError("stand Configuration requires explicit review before publication")
-    flow = client.post("/api/v1/flow-definitions", f"{namespace}-manual-v1-flow", body)["resource"]["flow"]
-    definition["flow"] = flow
-    configuration = client.post("/api/v1/factory-configurations", f"{namespace}-manual-v1-configuration",
-        {"id": configuration_id, "project_id": project, "definition": definition})["resource"]["configuration"]
+    if retained_configuration is not None:
+        configuration = retained_configuration
+        flow = configuration["flow"]
+    else:
+        flow_id = str(uuid.uuid5(namespace, "flow/triage/manual-v1"))
+        configuration_id = _seed_configuration_id(namespace)
+        criteria = client.post(f"/api/v1/projects/{project}/input-documents", f"{namespace}-manual-v1-criteria",
+            {"name": "Triage completion criteria", "content": json.loads((launcher.REPOSITORY /
+                "config/factory/presets/triage/completion-v2.json").read_text())["content"]})["artifact"]
+        draft = factory_stand_flow.flow_draft(client, project, selection, namespace, criteria)
+        body = {"id": flow_id, "project_id": project, "definition": draft}
+        preview = client.post("/api/v1/flow-definitions/validate", f"{namespace}-manual-v1-flow-review", body)
+        if preview.get("diagnostics", {}).get("errors"):
+            raise ValueError("stand Flow requires explicit review before publication")
+        reviewed = {key: preview[key] for key in ("closure", "limits", "data_schemas", "pools") if key in preview}
+        definition = {**copy.deepcopy(selection["configuration"]), "flow": reviewed, "enabled": False}
+        validation = client.post("/api/v1/factory-configurations/validate", f"{namespace}-manual-v1-configuration-review",
+            {"id": configuration_id, "project_id": project, "definition": definition})
+        if validation.get("diagnostics", {}).get("errors"):
+            raise ValueError("stand Configuration requires explicit review before publication")
+        flow = client.post("/api/v1/flow-definitions", f"{namespace}-manual-v1-flow", body)["resource"]["flow"]
+        definition["flow"] = flow
+        configuration = client.post("/api/v1/factory-configurations", f"{namespace}-manual-v1-configuration",
+            {"id": configuration_id, "project_id": project, "definition": definition})["resource"]["configuration"]
     installed_input = None
     if selection.get("input") is not None:
         chosen = copy.deepcopy(selection["input"])

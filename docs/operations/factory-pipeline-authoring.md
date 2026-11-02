@@ -234,11 +234,18 @@ Profile budget. Review these alongside the Flow/step ceiling; no candidate is
 shown as selected by this preview. Exact Profile references are under **Details**.
 Correct over-ceiling requests explicitly; unresolved support is not confirmed
 enforcement. Validation creates no Flow, Build, Work or external effect. Confirm
-the Flow publication, then create/edit a Factory Configuration selecting that
-exact published Flow. Review its admission policy, pool/capability prerequisites,
-limits and access ceiling. Keep it disabled until ready, then explicitly publish
-an enabled version. Keep automated inputs disabled for a manual trial: enabling
-the Configuration permits admission by an already activated Source as well.
+the Flow publication, then create a Factory Configuration selecting that exact
+published **Root Flow**. Review the **Launch policy** under **Start and queue**
+and the **Access profile** under **Pipeline access**, alongside the queue and
+execution limits. A new draft starts with the Project's exact defaults. Use
+**View / Edit** to inspect them or select a different published version.
+See [Project policy setup](factory.md#project-launch-policies-and-access-profiles)
+if a default is missing or access is insufficient.
+
+Keep the Configuration disabled until ready, then validate and publish an
+enabled version. For a manual trial, use a policy that allows manual admission
+and leave automatic inputs disabled. Automatic admission requires both an
+enabled, authorized Source and a launch policy that allows it.
 
 ## Admit one task and inspect its result
 

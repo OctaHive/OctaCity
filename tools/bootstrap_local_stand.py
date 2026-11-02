@@ -236,7 +236,7 @@ class BootstrapClient:
             "GET", path, headers, None, timeout_seconds=timeout_seconds
         )
         if response.status != 200:
-            raise BootstrapError(f"management query returned HTTP {response.status}")
+            raise HttpStatusError("management query", response.status)
         return _json_object(response.body, "management query response")
 
     def post(

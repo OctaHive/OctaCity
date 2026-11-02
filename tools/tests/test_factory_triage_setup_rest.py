@@ -157,16 +157,34 @@ class FactoryTriageSetupRestTests(unittest.TestCase):
                     context = stand.publish_triage_context(client, project, namespace)
                     repository = client.get(f"/api/v1/repositories/{resources['repository']}/versions/1")
                     budget = json.loads(triage.POLICY.read_text())["flow_budget"]
+                    policies = f"/api/v1/projects/{project}/factory-policies"
+                    self.assertIsNone(client.get(policies + "/defaults")["defaults"])
+                    provisioned = triage.provision_project_policies(client, project, namespace, Path(assets["profiles"]))
+                    self.assertTrue(provisioned["created"])
+                    self.assertIsNone(provisioned["provisioning"]["access_prerequisite"])
+                    defaults = provisioned["defaults"]
+                    launch, access = defaults["launch_policy"], defaults["access_profile"]
+                    self.assertEqual(len(client.get(policies)["items"]), 2)
                     selected = {"profiles": profiles, "context": {stage: context for stage in profiles},
                         "repository": {"project_id": project, "id": resources["repository"], "version": 1,
                             "definition_digest": repository["definition_digest"]},
                         "execution": {"budget": budget, "permissions": settings["permissions"], "max_active_nodes": 1},
-                        "configuration": {"admission_policy": "triage-admission", "permission_ceiling": "triage-ceiling",
+                        "configuration": {"admission_policy": {"project_policy": launch}, "permission_ceiling": {"project_policy": access},
                             "wip_limits": {"max_active_runs": 1, "max_active_nodes": 1}, "hard_budget": budget}, "effects": {}}
                     published = stand.publish_triage(client, project, selected, namespace)
                     self.assertEqual(stand.publish_triage(client, project, selected, namespace), published)
                     self.assertEqual(published["configuration"]["version"], 1)
                     self.assertIsNone(published["input"])
+                    configuration_path = f"/api/v1/factory-configurations/{published['configuration']['id']}/versions/1"
+                    original_configuration = client.get(configuration_path)
+                    self.assertEqual(original_configuration["configuration"]["admission_policy"], {"project_policy": launch})
+                    self.assertEqual(original_configuration["configuration"]["permission_ceiling"], {"project_policy": access})
+                    edited_launch = client.post(policies, f"{namespace}-operator-launch",
+                        {"kind": "launch", "id": launch["id"], "expected_current": launch,
+                            "definition": {"name": "Manual triage", "allow_manual": True, "allow_automatic_source": False}})
+                    edited_defaults = client.post(policies + "/defaults", f"{namespace}-operator-default",
+                        {"expected_version": defaults["version"], "launch_policy": edited_launch["policy"]["policy"]["reference"],
+                            "access_profile": None})["defaults"]
                     self.assertEqual(client.get(f"/api/v1/projects/{project}/factory-runs?limit=10")["items"], [])
                     flow = client.get(f"/api/v1/flow-definitions/{published['flow']['id']}/versions/1")
                     nodes = {node["key"]: node for node in flow["flow"]["closure"]["definitions"][0]["nodes"]}
@@ -191,8 +209,11 @@ class FactoryTriageSetupRestTests(unittest.TestCase):
                     changed = client.get(f"/api/v1/projects/{project}/input-documents/{edited['artifact']['artifact_id']}")
                     self.assertIn("An independently published operator revision", changed["content"])
                     self.assertEqual(client.get(f"/api/v1/projects/{project}/factory-role-profiles/{old_id}/versions/1"), old_profile)
-                    configuration = client.get(f"/api/v1/factory-configurations/{published['configuration']['id']}/versions/1")
-                    self.assertFalse(configuration["configuration"]["enabled"])
+                    self.assertEqual(triage.provision_project_policies(client, project, namespace,
+                        Path(assets["profiles"]), original_configuration["configuration"])["disposition"], "replayed")
+                    self.assertEqual(client.get(policies + "/defaults")["defaults"], edited_defaults)
+                    self.assertEqual(client.get(configuration_path), original_configuration)
+                    self.assertFalse(original_configuration["configuration"]["enabled"])
                     self.assertEqual(client.get(f"/api/v1/projects/{project}/factory-runs?limit=10")["items"], [])
         finally:
             subprocess.run([*psql, f'DROP DATABASE "{database}" WITH (FORCE)'], check=True, capture_output=True)

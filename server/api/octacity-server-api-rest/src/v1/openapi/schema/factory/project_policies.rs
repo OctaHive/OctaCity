@@ -209,4 +209,82 @@ pub(super) fn insert(schemas: &mut Map<String, Value>) {
       &["mapping"],
     ),
   );
+  let max_legacy = octacity_server_application::MAX_FACTORY_LEGACY_POLICY_REFERENCES;
+  let installed_reference = || schema_ref("FactoryImmutableReferenceResource");
+  let prerequisite = || {
+    json!({"type":"string","enum":[
+      "no_designated_access_default","reference_not_installed","missing_permission_declarations",
+      "ambiguous_permission_declarations"
+    ]})
+  };
+  schemas.insert(
+    "FactoryProjectPolicyProvisionDraft".into(),
+    object(
+      [
+        ("designated_access", nullable(installed_reference())),
+        (
+          "legacy_references",
+          bounded_array(schema_ref("FactoryLegacyPolicyReference"), max_legacy),
+        ),
+      ],
+      &["legacy_references"],
+    ),
+  );
+  schemas.insert(
+    "FactoryProjectPolicyProvisioning".into(),
+    object(
+      [
+        ("project_id", uuid()),
+        ("standard_launch", schema_ref("FactoryLaunchPolicyRef")),
+        ("standard_access", schema_ref("FactoryAccessProfileRef")),
+        ("access_origin", nullable(installed_reference())),
+        ("access_prerequisite", nullable(prerequisite())),
+      ],
+      &[
+        "project_id",
+        "standard_launch",
+        "standard_access",
+        "access_origin",
+        "access_prerequisite",
+      ],
+    ),
+  );
+  schemas.insert(
+    "FactoryProjectPolicyProvisionOutcome".into(),
+    object(
+      [
+        ("disposition", schema_ref("MutationDisposition")),
+        ("created", boolean()),
+        ("provisioning", schema_ref("FactoryProjectPolicyProvisioning")),
+        ("defaults", schema_ref("FactoryProjectPolicyDefaults")),
+        (
+          "mappings",
+          bounded_array(schema_ref("FactoryLegacyPolicyMapping"), max_legacy),
+        ),
+        (
+          "unresolved",
+          bounded_array(
+            object(
+              [
+                ("legacy", schema_ref("FactoryLegacyPolicyReference")),
+                ("reason", prerequisite()),
+              ],
+              &["legacy", "reason"],
+            ),
+            max_legacy,
+          ),
+        ),
+        ("provisioned_at", integer()),
+      ],
+      &[
+        "disposition",
+        "created",
+        "provisioning",
+        "defaults",
+        "mappings",
+        "unresolved",
+        "provisioned_at",
+      ],
+    ),
+  );
 }

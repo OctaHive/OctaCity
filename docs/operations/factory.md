@@ -39,6 +39,94 @@ supported private-file inputs. Server-side Signal connectors use a separate
 private catalogue and credential file. Never put a provider key, private URL,
 raw provider payload or mutable model alias into a Flow or management command.
 
+### Project launch policies and access profiles
+
+In a Project, open **Factory settings** to review **Launch policies** and
+**Access profiles**. A launch policy controls two kinds of admission.
+
+- **Manual** covers explicit Work and Issue execution requests, including
+  requests for Issues imported from GitHub.
+- **Automatic Source** covers admission by an enabled, authorized Source.
+  Preview shows which tasks match the Source filters. Publish an enabled
+  Source separately to start automatic intake.
+
+Clear both launch options to deny new admission for Configurations that pin
+that version. A denied request creates no Work, Run or Build. Source progress
+reports policy denial separately from transient provider failures.
+
+An access profile sets the maximum authority a Configuration can use. Review
+its tool, executable, command, filesystem and network grants, and resource
+and output limits. A step's effective access also depends on its Flow, step
+request, AI-agent profile, Runtime, installed Server authority and Agent
+backend. Attach documents and code to individual steps in their own settings.
+Install and authorize MCP connections and secret references separately.
+Review **Effective constraints** before publishing a Configuration.
+
+The deployment initializes the Project through the authorized
+`POST /api/v1/projects/{project_id}/factory-policies/provision` management
+command. It creates a Standard launch policy that allows both admission modes.
+Standard access copies the exact reviewed installed ceiling named in
+`designated_access` by identity, version and digest. Without a qualified
+designation, Standard has no execution grants. Review the Server installation
+before adding grants or choosing a usable Project default. The command also
+accepts a bounded `legacy_references` list for exact compatibility backfill.
+Provisioning retains existing operator edits and selected defaults.
+
+Publish a new policy version, then choose **Use as Project default** to select
+it for future Configuration drafts. For an existing pipeline, open a
+Configuration replacement draft, select the intended policy version, validate
+and publish. **View / Edit** opens policy settings while keeping the draft.
+Explicitly adopt the new version on return. Published Configurations and
+accepted Runs retain their exact references. Current installation revocation
+can still block a retained invocation. See
+[upgrading a retained Factory stand](local-stand.md#upgrade-a-retained-factory-stand).
+The [native policy qualification](#qualify-project-policies-with-the-native-agent)
+uses disposable services and finite peers.
+
+#### Qualify Project policies with the native Agent
+
+On Apple Silicon, stage matching macOS ARM64 Server and Agent packages,
+the Console bundle and compatible Linux ARM64 Octa. Include the local-stand
+Codex fixture in the Agent package. Use the qualified Microsandbox installation
+and repaired guest agent from the local-stand inputs. Provide Docker and OpenSSL
+for the finite CLI launcher and peer certificates.
+
+Start disposable PostgreSQL and MinIO. Use a fresh database for each invocation
+because the fixture registers a fixed stand Agent identity. Create the
+`octacity-artifacts` bucket and give the fixture's S3 user `octacity` with
+password `octacity-secret` read/write access in that disposable MinIO.
+
+Set the following variables with absolute paths and the disposable endpoints.
+Create the evidence, work and state directories before running.
+
+| Variables | Values |
+| --- | --- |
+| `OCTACITY_RELEASE_SERVER_ROOT`, `OCTACITY_RELEASE_AGENT_ROOT`, `OCTACITY_RELEASE_CONSOLE_ROOT` | Verified extracted Server, Agent and Console package roots |
+| `OCTACITY_CONTRACT_OCTA_RELEASE_ROOT` | Verified Linux ARM64 Octa package root |
+| `OCTACITY_RELEASE_GITHUB_BINARY`, `OCTACITY_RELEASE_NGINX`, `OCTACITY_RELEASE_NGINX_MIME`, `OCTACITY_CONTRACT_GIT_EXECUTABLE` | Host GitHub adapter, nginx, its MIME table and Git |
+| `OCTACITY_POSTGRES_URL`, `OCTACITY_MINIO_ENDPOINT` | Disposable database URL and object endpoint |
+| `OCTACITY_RELEASE_BACKEND`, `OCTACITY_CONTRACT_MICROSANDBOX_ENVIRONMENT_IDENTITY` | `microsandbox` and an isolated test environment name |
+| `OCTACITY_CONTRACT_MICROSANDBOX_EXECUTABLE`, `OCTACITY_CONTRACT_MICROSANDBOX_LIBKRUNFW`, `MSB_AGENTD_PATH` | Qualified `msb`, firmware and repaired guest agent |
+| `OCTACITY_CONTRACT_MICROSANDBOX_WORK_ROOT`, `OCTACITY_CONTRACT_MICROSANDBOX_STATE_ROOT`, `OCTACITY_CONTRACT_WORKSPACE_BYTES` | Private disposable work and state directories and the workspace size in bytes, for example `1073741824` |
+| `OCTACITY_CONTRACT_MICROSANDBOX_IMAGE`, `OCTACITY_FACTORY_PILOT_IMAGE_ARCHIVE` | Exact digest-pinned image reference and its matching archive |
+| `OCTACITY_FACTORY_MCP_POLICY_HELPER` | Built `octacity-release-harness` executable for rendering Job policy |
+| `OCTACITY_FACTORY_PILOT_CLI`, `OCTACITY_TEST_GITHUB_MCP_GUEST` | Reviewed Linux ARM64 native Codex CLI and GitHub MCP executables |
+| `OCTACITY_RELEASE_EVIDENCE_DIR` | Private directory for logs and JSON results |
+
+Run from the repository root.
+
+```sh
+OCTACITY_TEST_PACKAGED_TRIAGE=1 python3 -m unittest -v \
+  tools.tests.test_factory_triage_pipeline.PackagedTriagePipelineTests.test_project_policies_survive_agent_execution_and_server_restart
+```
+
+The fixture starts its own Server, gateway, ordinary Agent, and finite GitHub
+and model peers. Inspect `source-*/triage-project-policies.json` under the evidence
+directory for the retained policy references, accepted operation count and
+results. The companion `triage-guest-process-limits.json` records the kernel
+limit observed by the native model launcher after its attempt to raise that
+limit was rejected.
+
 ### Explicit local Issue status actions
 
 The ordinary file installer accepts an optional `issue_status_actions` array:

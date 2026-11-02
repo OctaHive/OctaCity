@@ -600,12 +600,47 @@ or undo revocation. When committed sources select a new native Agent installatio
 ordinary resume preflights and atomically rebinds the generated configuration to
 that installation, retaining the installed catalog and policy. Failed startup
 restores the previous configuration; no reset or volume deletion is needed.
+
+##### Upgrade a retained Factory stand
+
+Use the same stop and resume commands above with the same private root and
+named volumes. Stand builds use the committed revision. Before upgrading,
+retain matching backups of PostgreSQL, the object store and the private root.
+Keep the installed capability catalog available with its exact declarations.
+
+On startup the default Factory launcher uses the reviewed installed ceiling to
+provision [Project Factory policies](factory.md#project-launch-policies-and-access-profiles)
+and imports the retained triage Configuration's exact legacy bindings. The
+original Configuration version and digest, existing Work and Runs, and
+operator-selected defaults are preserved. A clean installation starts with
+its Project defaults selected and admission disabled for review.
+
+For other retained Configurations in the same installation, have a Project
+administrator provision the exact original launch and access references through
+the same management command. If an access declaration cannot be recovered, new
+admission reports an unresolved binding. Recover the exact declaration and retry
+provisioning with a new idempotency key, or review and publish a Configuration
+replacement using verified Project policies. Reuse the original key when the
+previous response was lost. The default launcher checks unresolved references
+again on resume and opens a new provisioning operation for those still missing.
+Keep the original Configuration version for historical inspection.
+An enabled Source waiting for a legacy mapping can scan again after import
+without using up provider retry attempts.
+
+New stand catalogs pin the generated ceiling by the digest of its permission
+declarations. When updating an existing catalog, keep the grants for a retained
+exact ceiling reference intact. Publish changed grants under a new reference.
+For a new Configuration, the launcher reads the current Project defaults after
+provisioning.
+
 Changing catalog or policy still requires an explicit installation update.
-Existing unrelated Factory installations require a separate
-clean root; they are not migrated or reset implicitly. For rollback, disable
-intake, preserve database/object-store/private-root backups together, stop the
-stand and restore matching installation artifacts using the upstream updater.
-Confirmed reset below is only for deliberately disposable data.
+Use a separate clean root for an unrelated Factory installation.
+For binary rollback, stop new admissions and restore compatible application
+and data together from matching backups using the upstream updater. An older
+binary cannot interpret Configuration versions published with Project policy
+bindings. Confirmed reset below is only for deliberately disposable data.
+
+##### Other installation options
 
 Additional external MCP servers are optional. Configure them through the
 selected AI plugin's supported Runtime editor/private installation with exact

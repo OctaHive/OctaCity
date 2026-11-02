@@ -1,6 +1,31 @@
 //! Typed policy request construction; no transport caller computes publication digests.
 use super::*;
 impl ManagementInputFactory {
+  /// Parses explicit initial authority and bounded backfill without accepting client declarations.
+  pub fn provision_factory_project_policies(
+    &self,
+    project: &str,
+    draft: crate::FactoryProjectPolicyProvisionDraft,
+    key: &str,
+    now: i64,
+  ) -> Result<crate::ProvisionFactoryProjectPoliciesCommand, ManagementInputError> {
+    let intent = octacity_server_store::FactoryProjectProvisionIntent {
+      project_id: parse(project, "project_id")?,
+      designated_access: draft.designated_access,
+      legacy_references: draft.legacy_references,
+    };
+    intent
+      .validate()
+      .map_err(|_| ManagementInputError::Invalid("policy provisioning"))?;
+    Ok(crate::ProvisionFactoryProjectPoliciesCommand {
+      request: octacity_server_store::ProvisionFactoryProjectPolicies {
+        intent,
+        idempotency_key: parse(key, "idempotency_key")?,
+        provisioned_at: timestamp(now)?,
+      },
+    })
+  }
+
   /// Resolves only an explicit legacy installation reference; Project pins use exact content reads.
   pub fn resolve_factory_legacy_policy(
     &self,

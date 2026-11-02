@@ -1915,6 +1915,7 @@ async fn every_management_operation_is_allowed_before_application_dispatch() {
       "get_factory_project_policy_defaults",
       "select_factory_project_policy_defaults",
       "resolve_factory_legacy_policy",
+      "provision_factory_project_policies",
       "list_factory_presets",
       "resolve_factory_preset",
       "get_factory_readiness",

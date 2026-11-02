@@ -225,10 +225,14 @@ class PackagedTriagePipelineTests(unittest.TestCase):
     def test_source_invokes_both_reviewed_profiles_with_native_mcp_evidence(self):
         self.run_pipeline(defect=False)
 
+    def test_project_policies_survive_agent_execution_and_server_restart(self):
+        self.run_pipeline(defect=False, case="policy_matrix")
+
     def test_defect_requires_accepted_command_observation(self):
         self.run_pipeline(defect=True)
 
     def run_pipeline(self, *, defect, console=False, inspect=False, case=None):
+        process_limit = 96 if case == "policy_matrix" else None
         unverified_cases = {"malformed_model", "malformed_tool", "incomplete_lookup", "mcp_token_revoked", "mcp_connection_revoked"}
         revoked_mcp = case in {"mcp_token_revoked", "mcp_connection_revoked"}
         analyst_expected = case not in {"out_of_scope", "duplicate", "reproduction_failed", *unverified_cases}
@@ -236,7 +240,7 @@ class PackagedTriagePipelineTests(unittest.TestCase):
         from tools.tests.test_factory_mcp_credentials import compile_native_launcher, TOKENS, REPOSITORY
         native = Path(os.environ["OCTACITY_FACTORY_PILOT_CLI"])
         external = Path(os.environ["OCTACITY_TEST_GITHUB_MCP_GUEST"])
-        calls, requests, invocations, issue_calls = [], [], [], []
+        calls, requests, invocations, issue_calls, process_limits = [], [], [], [], []
         evidence_root = Path(os.environ["OCTACITY_RELEASE_EVIDENCE_DIR"])
         before = set(evidence_root.glob("source-*/triage-profile-results.json"))
         with tempfile.TemporaryDirectory(prefix="octacity-triage-peers-", dir="/tmp") as directory:
@@ -313,6 +317,10 @@ class PackagedTriagePipelineTests(unittest.TestCase):
 
             class Model(finite_model):
                 def do_POST(self):
+                    if self.path.startswith("/v1/process-limit/"):
+                        _, _, _, limit, endpoint = self.path.split("/")
+                        process_limits.append(int(limit))
+                        self.path = f"/v1/{endpoint}"
                     if (case == "admission_restart" and not requests
                             or case in {"stage_restart", "writer_revoked"} and len(requests) == 5):
                         deadline = time.monotonic() + 45
@@ -329,7 +337,8 @@ class PackagedTriagePipelineTests(unittest.TestCase):
                 selectors = sorted(["OCTA_CODEX_EXECUTABLE"] + ["OCTA_TOOL_" + hashlib.sha256(name.encode()).hexdigest()
                     for name in ("native-codex", "github-mcp-server")])
                 guest = lambda name: f"/opt/octacity/tools/tool-{selectors.index('OCTA_TOOL_' + hashlib.sha256(name.encode()).hexdigest())}"
-                launcher = compile_native_launcher(root, model_port, native_guest=guest("native-codex"))
+                launcher = compile_native_launcher(root, model_port, native_guest=guest("native-codex"),
+                    observe_process_limit=process_limit is not None)
                 selected_native, selected_external = root / "codex-native", root / "github-mcp-server"
                 for source, destination in [(native, selected_native), (external, selected_external)]:
                     shutil.copyfile(source, destination)
@@ -394,6 +403,7 @@ class PackagedTriagePipelineTests(unittest.TestCase):
                         ("packaged_triage_console_reads_retained_results" if inspect else "packaged_triage_console_uses_real_management_routes" if console else "packaged_triage_reproduces_raw_unlabeled_defect_before_classification" if defect else "packaged_triage_uses_two_distinct_profiles_before_accepted_results"), "--", "--ignored", "--exact", "--nocapture"],
                         cwd=REPOSITORY, env={**os.environ, "OCTACITY_FACTORY_PILOT_CLI": str(launcher), "OCTACITY_FACTORY_PILOT_NATIVE_MCP": str(configuration),
                             **({"OCTACITY_TEST_TRIAGE_CASE": case} if case else {}),
+                            **({"OCTACITY_TEST_TRIAGE_PROCESS_LIMIT": str(process_limit)} if process_limit is not None else {}),
                             **({"OCTACITY_TEST_TRIAGE_CONSOLE_RESULTS": "1"} if inspect else {})},
                         state_receipt=state_receipt, timeout=600)
                 finally:
@@ -420,6 +430,16 @@ class PackagedTriagePipelineTests(unittest.TestCase):
         self.assertEqual(report["image"], os.environ["OCTACITY_CONTRACT_MICROSANDBOX_IMAGE"])
         self.assertEqual(report["schema_version"], 1)
         self.assertEqual(report["scenario"], case or "baseline")
+        if case == "policy_matrix":
+            policies = json.loads((report_path.parent / "triage-project-policies.json").read_text())
+            self.assertEqual(policies["accepted_runs"], 3)
+            self.assertEqual(policies["automatic"], report["configuration"])
+            self.assertEqual(policies["access_replacement"]["version"], 2)
+            self.assertEqual(len(policies["automatic_results"]["builds"]), 2)
+            self.assertTrue(requests)
+            self.assertEqual(process_limits, [process_limit] * len(requests),
+                "every model request must come from a guest with the effective process limit")
+            (report_path.parent / "triage-guest-process-limits.json").write_text(json.dumps(process_limits))
         if case == "writer_revoked":
             self.assertEqual(report["checkpoints"][0]["at"], "writer_revocation")
             self.assertEqual([item["purpose"] for item in report["checkpoints"][0]["choices"]["items"]], ["task_read"])

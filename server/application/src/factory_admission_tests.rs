@@ -446,6 +446,29 @@ fn source_launch_denial_is_a_blocked_policy_outcome_without_dependency_retry() {
 }
 
 #[test]
+fn source_waits_for_legacy_policy_backfill_without_exhausting_its_scan() {
+  let missing = crate::factory_configuration_policies::prerequisite(
+    octacity_server_store::FactoryPolicyPrerequisite::AccessUnmapped,
+  );
+  let interval = std::time::Duration::from_secs(1);
+  let retry = crate::DurableRetryPolicy::new(2, 1000, 10000).unwrap();
+  let mut previous = None;
+  for at in [10, 1010, 2010] {
+    let schedule = crate::source_scan_schedule(previous.as_ref(), time(at), interval, retry, Some(&missing)).unwrap();
+    assert_eq!(
+      schedule.failure,
+      Some(octacity_server_store::WorkSourceFailure::Unavailable)
+    );
+    assert_eq!(schedule.retry_at, time(at + 1000));
+    assert_eq!(schedule.attempts, 0);
+    assert!(!schedule.exhausted);
+    previous = Some(schedule);
+  }
+  let recovered = crate::source_scan_schedule(previous.as_ref(), time(3010), interval, retry, None).unwrap();
+  assert!(recovered.failure.is_none());
+}
+
+#[test]
 fn missing_vcs_resolution_is_a_configuration_failure_without_transient_retries() {
   run_ready(async {
     let project = ProjectId::generate();

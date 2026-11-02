@@ -163,6 +163,31 @@ impl ManagementAuthorizationTarget for GetFactoryProjectPolicyQuery {
     management_security::instance_resource(ManagementResourceKind::Project, self.reference.project_id())
   }
 }
+/// Reviewed installation selection and bounded exact legacy backfill.
+#[derive(Debug, serde::Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct FactoryProjectPolicyProvisionDraft {
+  /// Exact installed ceiling designated by the deployment.
+  pub designated_access: Option<ImmutableReference>,
+  /// Original immutable legacy references to import.
+  pub legacy_references: Vec<FactoryLegacyPolicyReference>,
+}
+
+/// Explicit Project initialization through ordinary administration.
+#[derive(Clone, Debug)]
+pub struct ProvisionFactoryProjectPoliciesCommand {
+  /// Bounded lifecycle intent with trusted acceptance time and scoped replay identity.
+  pub request: octacity_server_store::ProvisionFactoryProjectPolicies,
+}
+impl Command for ProvisionFactoryProjectPoliciesCommand {
+  type Outcome = octacity_server_store::ProvisionFactoryProjectPoliciesOutcome;
+}
+impl ManagementAuthorizationTarget for ProvisionFactoryProjectPoliciesCommand {
+  const AUTHORIZATION: ManagementAuthorizationMapping = PublishFactoryProjectPolicyCommand::AUTHORIZATION;
+  fn management_resource(&self) -> ManagementResourceResult {
+    management_security::instance_resource(ManagementResourceKind::Project, self.request.intent.project_id)
+  }
+}
 /// One policy owner, independent of role profiles, Runtime installation and execution.
 pub struct FactoryProjectPolicyHandlers<S> {
   store: std::sync::Arc<S>,
@@ -174,6 +199,29 @@ impl<S> FactoryProjectPolicyHandlers<S> {
     Self { store, policy }
   }
 }
+#[async_trait::async_trait]
+impl<S: FactoryProjectPolicyStore> ManagementCommandUseCase<ProvisionFactoryProjectPoliciesCommand>
+  for FactoryProjectPolicyHandlers<S>
+{
+  type Error = ApplicationError;
+  async fn execute_management_command(
+    &self,
+    context: &ManagementRequestContext,
+    grant: &ManagementAuthorizationGrant,
+    command: ProvisionFactoryProjectPoliciesCommand,
+  ) -> Result<<ProvisionFactoryProjectPoliciesCommand as Command>::Outcome, ApplicationError> {
+    crate::factory_role_profiles::require_project_visibility(grant, command.request.intent.project_id)?;
+    Ok(
+      self
+        .store
+        .provision_factory_project_policies(management_security::audited_mutation(context, command.request)?)
+        .await?,
+    )
+  }
+}
+
+pub use octacity_server_store::MAX_FACTORY_LEGACY_POLICY_REFERENCES;
+
 #[async_trait::async_trait]
 impl<S: FactoryProjectPolicyStore + FactoryConfigurationStore>
   ManagementCommandUseCase<PublishFactoryProjectPolicyCommand> for FactoryProjectPolicyHandlers<S>

@@ -34,25 +34,65 @@ class FactoryStandRecoveryTests(unittest.TestCase):
         self.profiles, self.policy = self.fixture._factory_update_inputs()
         self.project = "10000000-0000-4000-8000-000000000001"
         self.source_records, self.source_diagnostics, self.source_publications = [], {}, []
+        self.policy_requests = []
+        self.fail_policy_request = False
+        self.retained_configuration = {
+            "reference": {"project_id": self.project, "id": str(uuid.uuid4()), "version": 1, "digest": "03" * 32},
+            "admission_policy": {"identity": "retained-admission", "version": "v2", "digest": "01" * 32},
+            "permission_ceiling": {"identity": "retained-access", "version": "v3", "digest": "02" * 32},
+        }
+        self.policy_defaults = {"version": 4, "launch_policy": None, "access_profile": None}
+        catalog = json.loads(self.profiles.read_text())
+        catalog["projects"][0]["references"].append({"kind": "permission_ceiling", "alias": "triage-ceiling",
+            "reference": {"identity": "triage-ceiling", "version": "v1", "digest": "06" * 32}})
+        self.profiles.write_text(json.dumps(catalog))
+        self.provisioned_defaults = None
+        self.unresolved_policy_receipts = {}
+        self.resolved_policy_references = []
+        self.legacy_access_available = True
         fixture = self
 
         class Management(BaseHTTPRequestHandler):
             def log_message(self, *_):
                 pass
-            def reply(self, value):
+            def reply(self, value, status=200):
                 contents = json.dumps(value).encode()
-                self.send_response(200)
+                self.send_response(status)
                 self.send_header("Content-Length", str(len(contents)))
                 self.end_headers()
                 self.wfile.write(contents)
             def do_GET(self):
+                if self.path.endswith("/factory-policies/defaults"):
+                    return self.reply({"defaults": fixture.policy_defaults})
+                if self.path.startswith("/api/v1/factory-configurations/"):
+                    if fixture.retained_configuration is None:
+                        return self.reply({"error": "missing"}, 404)
+                    return self.reply({"configuration": fixture.retained_configuration})
                 if "/diagnostics" in self.path:
                     self.reply(fixture.source_diagnostics[self.path.split("/factory-source-inputs/")[1].split("/")[0]])
                 else:
                     self.reply({"items": fixture.source_records, "next_cursor": None})
             def do_POST(self):
-                fixture.source_publications.append((self.path, self.headers.get("If-Match"),
-                    json.loads(self.rfile.read(int(self.headers["Content-Length"])))))
+                body = json.loads(self.rfile.read(int(self.headers["Content-Length"])))
+                if self.path.endswith("/factory-policies/legacy/resolve"):
+                    return self.reply({"mapping": {"legacy": body} if body in fixture.resolved_policy_references else None})
+                if self.path.endswith("/factory-policies/provision"):
+                    fixture.policy_requests.append((self.path, self.headers.get("Idempotency-Key"), body))
+                    if fixture.fail_policy_request:
+                        fixture.fail_policy_request = False
+                        return self.reply({"error": "temporarily unavailable"}, 503)
+                    key = self.headers.get("Idempotency-Key")
+                    replayed = key in fixture.unresolved_policy_receipts
+                    unresolved = fixture.unresolved_policy_receipts.setdefault(key, [] if fixture.legacy_access_available else [
+                        {"legacy": body["legacy_references"][-1], "reason": "reference_not_installed"}
+                    ])
+                    if not unresolved:
+                        fixture.resolved_policy_references.extend(body["legacy_references"])
+                    return self.reply({"disposition": "replayed" if replayed else "applied",
+                        "defaults": fixture.provisioned_defaults or fixture.policy_defaults, "unresolved": unresolved})
+                if self.path.endswith("/factory-runtimes/triage-runtime"):
+                    return self.reply({})
+                fixture.source_publications.append((self.path, self.headers.get("If-Match"), body))
                 self.reply({"publication": {"inputs": []}})
 
         self.management = ThreadingHTTPServer(("127.0.0.1", 0), Management)
@@ -66,7 +106,7 @@ class FactoryStandRecoveryTests(unittest.TestCase):
         integrations.configure_integrations(self.root, "Example/Tickets", native_repository_id="1234", adapter_digest="ab" * 32,
             preparation_mapping=stand.triage.preparation_mapping(self.project))
         self.installation = {"namespace": str(uuid.uuid4()), "source": "https://github.com/OctaHive/OctaCity", "revision": None}
-        self.receipt = {"project": self.project, "configuration": {"id": str(uuid.uuid4()), "version": 1}}
+        self.receipt = {"project": self.project, "configuration": self.retained_configuration["reference"]}
         for name, value in {
             "factory-triage-installation": self.installation,
             "factory-triage-resources": {"project": self.project},
@@ -94,7 +134,7 @@ class FactoryStandRecoveryTests(unittest.TestCase):
                     factory_issue_mcp_readers=readers, preflight=lambda _: None, stop=lambda: None):
                 pass
 
-    def _resume(self, *arguments):
+    def _resume(self, *arguments, expected_error=None):
         execute = subprocess.run
 
         def artifact_process(command, *args, **options):
@@ -122,8 +162,32 @@ class FactoryStandRecoveryTests(unittest.TestCase):
                 mock.patch.object(subprocess, "run", side_effect=artifact_process), \
                 redirect_stdout(output), redirect_stderr(errors):
             code = stand.main(["--root", str(self.root), *arguments])
+        if expected_error is not None:
+            self.assertEqual(code, 1)
+            self.assertIn(expected_error, errors.getvalue())
+            return
         self.assertEqual(code, 0, errors.getvalue())
         self.assertEqual(json.loads(output.getvalue().splitlines()[-1]), self.receipt)
+
+    def test_rebuild_retries_exact_legacy_provisioning_without_republishing_retained_state(self):
+        before = (self.root / "evidence/factory-triage.json").read_bytes()
+        self.fail_policy_request = True
+        self._resume(expected_error="HTTP 503")
+        self._resume()
+        self.assertEqual(len(self.policy_requests), 2)
+        self.assertEqual(self.policy_requests[0], self.policy_requests[1])
+        path, key, request = self.policy_requests[1]
+        self.assertEqual(path, f"/api/v1/projects/{self.project}/factory-policies/provision")
+        self.assertTrue(key)
+        self.assertEqual(request["designated_access"]["identity"], "triage-ceiling")
+        self.assertEqual(request["designated_access"]["digest"], "06" * 32)
+        self.assertEqual(request["legacy_references"], [
+            {"kind": "launch", "reference": self.retained_configuration["admission_policy"]},
+            {"kind": "access", "reference": self.retained_configuration["permission_ceiling"]},
+        ])
+        self.assertEqual((self.root / "evidence/factory-triage.json").read_bytes(), before)
+        self.assertEqual(self.source_publications, [])
+        self.assertEqual(self.policy_defaults, {"version": 4, "launch_policy": None, "access_profile": None})
 
     def test_default_resume_uses_the_retained_custom_code_repository(self):
         path = self.root / "evidence/factory-triage-installation.json"
@@ -133,6 +197,16 @@ class FactoryStandRecoveryTests(unittest.TestCase):
         self._resume()
         self.assertEqual(path.read_bytes(), before)
 
+    def test_resume_reports_unresolved_policy_and_rechecks_after_catalog_repair(self):
+        self.legacy_access_available = False
+        self._resume(expected_error="retained-access")
+        self.legacy_access_available = True
+        self._resume()
+        self.assertNotEqual(self.policy_requests[0][1], self.policy_requests[-1][1])
+        self.assertEqual(self.policy_requests[0][2], self.policy_requests[-1][2])
+        self._resume()
+        self.assertEqual(self.policy_requests[-1][1], self.policy_requests[0][1])
+
     def test_first_publication_starts_with_the_same_pinned_vcs_bundle_as_its_bootstrap(self):
         import tomllib
         (self.root / "evidence/factory-triage.json").unlink()
@@ -141,6 +215,13 @@ class FactoryStandRecoveryTests(unittest.TestCase):
         import shutil
         shutil.rmtree(self.root / "config/server")
         shutil.rmtree(self.root / "config/integrations")
+        self.retained_configuration = None
+        self.policy_defaults.update(
+            launch_policy={"project_id": self.project, "id": str(uuid.uuid4()), "version": 1, "digest": "01" * 32},
+            access_profile={"project_id": self.project, "id": str(uuid.uuid4()), "version": 1, "digest": "02" * 32},
+        )
+        self.provisioned_defaults = {**self.policy_defaults, "version": 3,
+            "access_profile": {**self.policy_defaults["access_profile"], "version": 2, "digest": "04" * 32}}
         settings = self.root / "triage/runtime-settings.json"
         stand._private_json(settings, {"permissions": {}})
         assets = self.root / "evidence/factory-triage-assets.json"
@@ -156,9 +237,12 @@ class FactoryStandRecoveryTests(unittest.TestCase):
                 mock.patch.object(stand, "ensure_github_connection", return_value={}), \
                 mock.patch.object(stand, "publish_triage_roles", return_value={}), \
                 mock.patch.object(stand, "publish_triage_context", return_value={}), \
-                mock.patch.object(stand.triage, "pipeline_selection", return_value={}), \
+                mock.patch.object(stand.triage, "pipeline_selection", return_value={}) as select, \
                 mock.patch.object(stand, "publish_triage", return_value=published):
             self._resume("--github-repository", "Example/Tickets")
+        self.assertEqual(len(self.policy_requests), 1)
+        self.assertEqual(self.policy_requests[0][2]["legacy_references"], [])
+        self.assertEqual(select.call_args.kwargs["policy_defaults"], self.policy_defaults)
         configured = tomllib.loads((self.root / "config/server/server.toml").read_text())
         self.assertEqual(configured["vcs_integrations"][0]["integration_id"],
             str(uuid.uuid5(uuid.UUID(self.installation["namespace"]), "source")))
@@ -190,6 +274,9 @@ class FactoryStandRecoveryTests(unittest.TestCase):
             self.source_diagnostics[identity] = {"scan": {"schedule": {"exhausted": exhausted, "failure": "transient"}}}
         self.source_records.append({"kind": "group", "definition": {
             "members": [self.source_records[-1]["definition"]]}})
+        self.fail_policy_request = True
+        self._resume(expected_error="HTTP 503")
+        self.assertEqual(self.source_publications, [])
         self._resume()
         self.assertEqual(len(self.source_publications), 1)
         path, precondition, request = self.source_publications[0]
@@ -226,3 +313,14 @@ class FactoryStandRecoveryTests(unittest.TestCase):
         self.assertEqual({path.relative_to(installed): path.read_bytes() for path in installed.rglob("*") if path.is_file()}, before)
         self.assertEqual(self.fixture.credential.read_bytes(), credential)
         self.assertEqual((installed / "server/factory-issue-mcp-0000-credential").read_text(), "ocmcp.recovery." + "cd" * 32)
+
+    def test_installation_update_rejects_redefining_an_exact_access_ceiling(self):
+        catalog = json.loads(self.profiles.read_text())
+        ceiling, = catalog["projects"][0]["references"]
+        ceiling["metadata"] = {"permission_declarations": {"network_hosts": ["old.example"]}}
+        self.profiles.write_text(json.dumps(catalog))
+        self._update(self.readers)
+        ceiling["metadata"]["permission_declarations"]["network_hosts"] = ["new.example"]
+        self.profiles.write_text(json.dumps(catalog))
+        with self.assertRaisesRegex(stand.state.StateError, "access ceiling.*triage-ceiling"):
+            self._update(self.readers)

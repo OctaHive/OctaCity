@@ -250,7 +250,18 @@ async fn manual_policy_denial_and_accepted_replay_survive_policy_replacement_and
   )
   .await;
   let before = runs(&f).await;
+  let defaults = f.get("/defaults", StatusCode::OK).await;
   let f = f.restart_with_installer(Some(installer)).await;
+  let provisioned = f
+    .post(
+      "/provision",
+      "stand-rebuild",
+      &json!({"legacy_references":[]}),
+      StatusCode::OK,
+    )
+    .await;
+  assert_eq!(provisioned["defaults"], defaults["defaults"]);
+  assert_eq!(runs(&f).await, before);
   let replay = request(&f, &path, "same-admission-key", &body, StatusCode::CREATED).await;
   assert_eq!(replay["disposition"], "replayed");
   assert_eq!(replay["work_envelope_id"], accepted["work_envelope_id"]);

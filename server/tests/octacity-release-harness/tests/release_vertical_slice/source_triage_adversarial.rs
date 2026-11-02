@@ -22,6 +22,7 @@ impl Scenario {
   pub(super) fn selected() -> Self {
     match std::env::var("OCTACITY_TEST_TRIAGE_CASE").as_deref() {
       Err(std::env::VarError::NotPresent) => Self::Baseline,
+      Ok("policy_matrix") => Self::Baseline,
       Ok("injected_text") => Self::InjectedText,
       Ok("out_of_scope") => Self::OutOfScope,
       Ok("duplicate") => Self::Duplicate,
@@ -39,8 +40,13 @@ impl Scenario {
     }
   }
 
+  pub(super) fn policy_matrix(self) -> bool {
+    matches!(self, Self::Baseline) && std::env::var("OCTACITY_TEST_TRIAGE_CASE").as_deref() == Ok("policy_matrix")
+  }
+
   pub(super) fn name(self) -> &'static str {
     match self {
+      Self::Baseline if self.policy_matrix() => "policy_matrix",
       Self::Baseline => "baseline",
       Self::InjectedText => "injected_text",
       Self::OutOfScope => "out_of_scope",

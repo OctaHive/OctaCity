@@ -325,29 +325,37 @@ async fn policy_http_legacy_resolution_is_explicit_and_cannot_be_confused_with_p
     json!({"mapping":null})
   );
   assert_eq!(f.get("/defaults", StatusCode::OK).await, json!({"defaults":null}));
-  // Lifecycle provisioning is the already-tested store command; this slice exposes its retained mapping read.
-  use octacity_server_store::{
-    FactoryProjectPolicyStore, FactoryProjectProvisionIntent, IdempotencyKey, ProvisionFactoryProjectPolicies,
-  };
-  let store = octacity_server_store_postgres::PostgresStore::with_factory_capabilities(
-    f.database.pool.clone(),
-    Arc::new(PolicyAuthority(Arc::new(AtomicBool::new(true)))),
+  let intent = json!({"designated_access":legacy["reference"],"legacy_references":[legacy]});
+  let document = octacity_server_api_rest::v1::openapi_document();
+  openapi_contract::assert_json_matches_component(&document, "FactoryProjectPolicyProvisionDraft", &intent);
+  f.post(
+    "/provision",
+    "duplicates",
+    &json!({"legacy_references":[legacy, legacy]}),
+    StatusCode::BAD_REQUEST,
+  )
+  .await;
+  assert_eq!(f.get("/defaults", StatusCode::OK).await, json!({"defaults":null}));
+  let saved = f.post("/provision", "initialize", &intent, StatusCode::OK).await;
+  openapi_contract::assert_json_matches_component(&document, "FactoryProjectPolicyProvisionOutcome", &saved);
+  assert_eq!(saved["provisioning"]["access_origin"], legacy["reference"]);
+  assert_eq!(
+    saved["defaults"]["access_profile"],
+    saved["provisioning"]["standard_access"]
   );
-  let saved = store
-    .provision_factory_project_policies(octacity_server_store::testing::management_mutation(
-      ProvisionFactoryProjectPolicies {
-        intent: FactoryProjectProvisionIntent {
-          project_id: f.project.parse().unwrap(),
-          designated_access: Some(serde_json::from_value(legacy["reference"].clone()).unwrap()),
-          legacy_references: vec![serde_json::from_value(legacy.clone()).unwrap()],
-        },
-        idempotency_key: IdempotencyKey::new("initialize").unwrap(),
-        provisioned_at: octacity_server_domain::Timestamp::from_unix_millis(10).unwrap(),
-      },
-    ))
-    .await
-    .unwrap();
-  let saved = serde_json::to_value(saved).unwrap();
+  assert_eq!(f.get("/defaults", StatusCode::OK).await["defaults"], saved["defaults"]);
+  let f = f.restart().await;
+  let replay = f.post("/provision", "initialize", &intent, StatusCode::OK).await;
+  assert_eq!(replay["disposition"], "replayed");
+  assert_eq!(replay["defaults"], saved["defaults"]);
+  assert_eq!(replay["mappings"], saved["mappings"]);
+  f.post(
+    "/provision",
+    "initialize",
+    &json!({"legacy_references":[]}),
+    StatusCode::CONFLICT,
+  )
+  .await;
   assert_eq!(saved["mappings"][0]["legacy"], legacy);
   let mapped = f.post("/legacy/resolve", "unused", &legacy, StatusCode::OK).await;
   assert_eq!(mapped["mapping"], saved["mappings"][0]);

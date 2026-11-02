@@ -346,6 +346,11 @@ pub fn source_scan_schedule(
       exhausted: false,
     });
   };
+  // Startup can observe a retained input before its exact legacy policy has
+  // been imported. That prerequisite can clear without replacing the input.
+  let awaiting_legacy_policy = matches!(error, ApplicationError::FactoryValidation(diagnostics)
+    if diagnostics.errors.iter().any(|issue|
+      issue.code == octacity_server_store::FactoryPolicyPrerequisite::LaunchUnmapped.reason()));
   let (class, hint) = match error {
     ApplicationError::SourceDependency {
       class,
@@ -359,6 +364,7 @@ pub fn source_scan_schedule(
     {
       (WorkSourceFailure::PolicyDenied, None)
     }
+    ApplicationError::FactoryValidation(_) if awaiting_legacy_policy => (WorkSourceFailure::Unavailable, None),
     ApplicationError::CapabilityUnavailable => (WorkSourceFailure::Unavailable, None),
     ApplicationError::Store(StoreError::Unavailable) => (WorkSourceFailure::Transient, None),
     ApplicationError::Store(StoreError::Conflict {
@@ -368,13 +374,14 @@ pub fn source_scan_schedule(
     _ => (WorkSourceFailure::InvalidConfiguration, None),
   };
   let previous = previous.map_or(0, |v| v.attempts);
-  let neutral = matches!(
-    class,
-    WorkSourceFailure::Cancelled
-      | WorkSourceFailure::AdmissionCapacity
-      | WorkSourceFailure::RetentionPending
-      | WorkSourceFailure::PolicyDenied
-  );
+  let neutral = awaiting_legacy_policy
+    || matches!(
+      class,
+      WorkSourceFailure::Cancelled
+        | WorkSourceFailure::AdmissionCapacity
+        | WorkSourceFailure::RetentionPending
+        | WorkSourceFailure::PolicyDenied
+    );
   let attempts = if neutral { previous } else { previous.saturating_add(1) };
   let earliest = hint.map(|v| add(u64::from(v))).transpose()?;
   let next = if neutral {
