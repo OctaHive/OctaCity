@@ -148,6 +148,12 @@ and three shared snippets also consumed by the local stand:
 
 ## Release archive
 
+Production builds compact the Russian message catalog against the English key
+order to avoid shipping long translation keys twice. Both source catalogs remain
+complete and type checked. The build rejects missing/extra keys, duplicates and
+nonliteral entries; translation text is preserved. The build-plugin test exercises
+the emitted module with reordered keys, Unicode and escaped text.
+
 The platform-independent `octacity-console-<version>.tar.gz` release contains
 the same `ui/dist` application consumed by the local-stand gateway. Packaging
 does not rebuild or transform the SPA, so local stand and the downloadable

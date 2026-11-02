@@ -1,8 +1,9 @@
 import react from '@vitejs/plugin-react';
 import { defineConfig } from 'vitest/config';
+import { compactMessageCatalogs } from './scripts/compact-message-catalogs.mjs';
 
 export default defineConfig(({ command }) => ({
-  plugins: [react()],
+  plugins: [react(), compactMessageCatalogs()],
   // Compact production selectors without changing local class names or development diagnostics.
   css: command === 'build' ? { modules: { generateScopedName: 'c[hash:base64:8]' } } : {},
   build: {
