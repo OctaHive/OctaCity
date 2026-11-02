@@ -3,6 +3,10 @@ use thiserror::Error;
 /// Stable classification of an entity owned by the Factory core.
 #[derive(Clone, Copy, Debug, Eq, Hash, Ord, PartialEq, PartialOrd)]
 pub enum FactoryEntityKind {
+  /// Stable Project-owned policy governing manual and Source admission.
+  FactoryLaunchPolicy,
+  /// Stable Project-owned execution access profile.
+  FactoryAccessProfile,
   /// Stable Project-owned AI-agent role.
   FactoryRole,
   /// Stable configuration profile belonging to one AI-agent role.

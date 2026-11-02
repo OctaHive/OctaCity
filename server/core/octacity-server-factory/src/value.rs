@@ -174,6 +174,14 @@ macro_rules! sequence {
 }
 
 sequence!(
+  FactoryAccessProfileVersion,
+  "Positive immutable Project access-profile version."
+);
+sequence!(
+  FactoryLaunchPolicyVersion,
+  "Positive immutable Project launch-policy version."
+);
+sequence!(
   FactoryConfigurationVersion,
   "Positive immutable Factory Configuration version."
 );

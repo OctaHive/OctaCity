@@ -83,6 +83,9 @@ mod permission;
 #[cfg(test)]
 mod permission_tests;
 mod phase_pool;
+mod project_policy;
+#[cfg(test)]
+mod project_policy_tests;
 mod protected_test;
 pub use candidate_deliverable::{
   CandidateDeliverableBinding, CandidateDeliverableContract, CandidateDeliverablePolicy,
@@ -213,9 +216,10 @@ pub use flow::{
 pub(crate) use flow_graph::{FactoryFlowEdge, analyze_factory_flow_graph};
 pub use identity::{
   AssessmentId, ChangeSetId, ContextManifestId, DecisionId, DecisionSignalReceiptId, DecisionSignalRequestId,
-  DeliveryAttemptId, EscalationId, EvaluationPlanId, EvidenceManifestId, FactoryConfigurationId, FactoryRoleId,
-  FactoryRoleProfileId, FactoryRunId, FlowDefinitionId, FlowRunId, NodeAttemptId, ReportingAttemptId,
-  RetrievalReceiptId, TaskEnvelopeId, WorkEnvelopeId, WorkSourceGroupId, WorkSourceInputId, WorkflowCycleId,
+  DeliveryAttemptId, EscalationId, EvaluationPlanId, EvidenceManifestId, FactoryAccessProfileId,
+  FactoryConfigurationId, FactoryLaunchPolicyId, FactoryRoleId, FactoryRoleProfileId, FactoryRunId, FlowDefinitionId,
+  FlowRunId, NodeAttemptId, ReportingAttemptId, RetrievalReceiptId, TaskEnvelopeId, WorkEnvelopeId, WorkSourceGroupId,
+  WorkSourceInputId, WorkflowCycleId,
 };
 pub use journey::FactoryFlowConfiguration;
 pub use lifecycle::{
@@ -235,6 +239,10 @@ pub use permission::{
 };
 pub use phase_pool::{
   FlowPoolSettings, MAX_PHASE_POOL_BATCH, MAX_PHASE_POOL_WIP, PhasePoolOrder, PhasePoolPolicy, reserve_phase_budget,
+};
+pub use project_policy::{
+  FactoryAccessProfile, FactoryAccessProfileDefinition, FactoryAccessProfileRef, FactoryAdmissionOrigin,
+  FactoryLaunchPolicy, FactoryLaunchPolicyDefinition, FactoryLaunchPolicyRef, MAX_FACTORY_POLICY_DEFINITION_BYTES,
 };
 pub use protected_test::{
   ProtectedTestBundle, ProtectedTestCoverage, ProtectedTestFile, ProtectedTestHandoff, ProtectedTestPlan,
@@ -262,10 +270,11 @@ pub use task_contract::{
   RepositoryFragment, RetrievalReceipt,
 };
 pub use value::{
-  DecisionPolicyVersion, DeliveryAttemptNumber, ExternalWorkIdentity, FactoryConfigurationVersion, FactoryDigest,
-  FactoryKey, FactoryMetadata, FactoryRoleProfileVersion, FactoryRoleVersion, FactoryRunVersion,
-  FactoryRuntimeSettingsVersion, FactorySafeText, FactoryText, FlowDefinitionVersion, MAX_EXTERNAL_WORK_IDENTITY_BYTES,
-  MAX_FACTORY_KEY_BYTES, MAX_FACTORY_METADATA_BYTES, MAX_FACTORY_METADATA_ENTRIES, MAX_FACTORY_METADATA_KEY_BYTES,
+  DecisionPolicyVersion, DeliveryAttemptNumber, ExternalWorkIdentity, FactoryAccessProfileVersion,
+  FactoryConfigurationVersion, FactoryDigest, FactoryKey, FactoryLaunchPolicyVersion, FactoryMetadata,
+  FactoryRoleProfileVersion, FactoryRoleVersion, FactoryRunVersion, FactoryRuntimeSettingsVersion, FactorySafeText,
+  FactoryText, FlowDefinitionVersion, MAX_EXTERNAL_WORK_IDENTITY_BYTES, MAX_FACTORY_KEY_BYTES,
+  MAX_FACTORY_METADATA_BYTES, MAX_FACTORY_METADATA_ENTRIES, MAX_FACTORY_METADATA_KEY_BYTES,
   MAX_FACTORY_METADATA_VALUE_BYTES, MAX_FACTORY_SAFE_TEXT_BYTES, MAX_FACTORY_TEXT_BYTES, MAX_WORK_PRIORITY,
   NodeAttemptNumber, ReportingAttemptNumber, WorkPriority, WorkSourceGroupVersion, WorkSourceInputVersion,
   WorkflowCycleNumber, contains_sensitive_material,

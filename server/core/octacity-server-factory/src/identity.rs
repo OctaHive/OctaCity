@@ -72,6 +72,16 @@ macro_rules! factory_id {
 }
 
 factory_id!(
+  FactoryAccessProfileId,
+  FactoryEntityKind::FactoryAccessProfile,
+  "Stable Project-owned access-profile identity."
+);
+factory_id!(
+  FactoryLaunchPolicyId,
+  FactoryEntityKind::FactoryLaunchPolicy,
+  "Stable Project-owned launch-policy identity."
+);
+factory_id!(
   FactoryConfigurationId,
   FactoryEntityKind::FactoryConfiguration,
   "Stable identity shared by immutable Factory Configuration versions."

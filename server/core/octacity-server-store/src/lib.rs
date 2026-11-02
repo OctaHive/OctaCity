@@ -950,7 +950,13 @@ mod project_skill_import_testing;
 #[cfg(any(test, feature = "test-support"))]
 mod factory_role_package_testing;
 
+mod factory_project_policy;
+mod factory_project_provision;
+pub use factory_project_provision::*;
 mod factory_runtime_settings;
+pub use factory_project_policy::*;
+#[cfg(any(test, feature = "test-support"))]
+mod factory_project_policy_contract_testing;
 pub use factory_runtime_settings::*;
 #[cfg(any(test, feature = "test-support"))]
 mod factory_runtime_settings_testing;

@@ -4,6 +4,14 @@ use thiserror::Error;
 /// Atomic store operation associated with a classified failure.
 #[derive(Clone, Copy, Debug, Eq, Hash, Ord, PartialEq, PartialOrd)]
 pub enum StoreOperation {
+  /// Initialize Factory defaults and backfill exact legacy policy bindings.
+  ProvisionFactoryProjectPolicies,
+  /// Publish an immutable Project Factory policy.
+  PublishFactoryProjectPolicy,
+  /// Discover current Project Factory policies without private document contents.
+  ListFactoryProjectPolicies,
+  /// Select exact Project Factory policy defaults for future drafts.
+  SelectFactoryProjectPolicyDefaults,
   /// Publish an independently enabled Project task-source import configuration.
   PublishIssueSourceImport,
   /// Publish a reviewed Project Runtime configuration.
@@ -373,6 +381,9 @@ pub enum StoreOperation {
 /// Invalid caller input rejected before any authoritative state changes.
 #[derive(Clone, Copy, Debug, Eq, Error, PartialEq)]
 pub enum StoreInputError {
+  /// Invalid immutable Project policy shape, owner or revision.
+  #[error("invalid Project Factory policy")]
+  InvalidFactoryProjectPolicy,
   /// Task-source import metadata or selector bounds are invalid.
   #[error("invalid Project source import")]
   InvalidIssueSourceImport,

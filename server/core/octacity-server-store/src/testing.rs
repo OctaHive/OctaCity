@@ -90,6 +90,7 @@ pub use crate::factory_phase_pool_contract_testing::{
   FactoryPhasePoolContractScenario, freeze_phase_pool_contract_input, phase_pool_contract_input,
   verify_factory_phase_pool_contract, verify_factory_phase_pool_progress, verify_factory_phase_pool_scan_invalidation,
 };
+pub use crate::factory_project_policy_contract_testing::verify_factory_project_policy_publication;
 pub use crate::factory_role_deletion_contract_testing::{
   verify_factory_role_deletion, verify_factory_role_deletion_blocks_automatic_selection,
   verify_factory_role_deletion_blocks_live_selection,
