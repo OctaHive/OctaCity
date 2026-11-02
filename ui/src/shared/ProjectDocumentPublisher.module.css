@@ -165,6 +165,12 @@ textarea.input {
   .panel {
     padding: var(--space-sm);
   }
+  /* Keep the writing area usable beside navigation and non-overlay scrollbars. */
+  .editor {
+    padding-inline: 0;
+    border: 0;
+    background: transparent;
+  }
   .card {
     grid-template-columns: minmax(0, 1fr);
   }
