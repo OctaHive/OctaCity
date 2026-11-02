@@ -242,70 +242,75 @@ it('retains only bounded public validation field codes from an error without exp
   expect(JSON.stringify(error.validationIssues)).not.toContain('private');
 });
 
-it.each(['budget_exceeds_ceiling', 'concurrency_exceeds_ceiling'])(
-  'retains the authoritative %s validation code',
-  async (code) => {
-    const client = createManagementApiClient(async () =>
-      jsonResponse(
-        {
-          code: 'invalid_request',
-          message: 'Requested limit exceeds its ceiling.',
-          request_id: REQUEST_ID,
-          diagnostics: { errors: [{ field: '/execution/budget', code }] },
-        },
-        400,
-      ),
-    );
-    const error = await captureApiError(client.GET(OPENAPI_PATH));
-    expect(error.validationIssues).toEqual([{ field: '/execution/budget', code }]);
-  },
-);
-
-it('retains only closed bound metadata needed to explain an authoritative execution ceiling', async () => {
+it.each([
+  'budget_exceeds_ceiling',
+  'concurrency_exceeds_ceiling',
+  'unmapped_legacy_policy',
+  'permission_exceeds_ceiling',
+])('retains the authoritative %s validation code', async (code) => {
   const client = createManagementApiClient(async () =>
     jsonResponse(
       {
         code: 'invalid_request',
-        message: 'private remote message',
+        message: 'Requested limit exceeds its ceiling.',
         request_id: REQUEST_ID,
-        diagnostics: {
-          errors: [
-            {
-              field: '/budget',
-              node: 'private-node',
-              code: 'budget_exceeds_ceiling',
-              ceiling: 'flow_definition',
-              resource: 'tokens',
-              requested: 150000,
-              maximum: 100000,
-              secret: 'private-token',
-            },
-            {
-              field: '/budget',
-              code: 'invalid_contract',
-              node: 'private user text!',
-              ceiling: 'private provider data',
-              resource: 'unknown',
-              requested: 'private',
-              maximum: -1,
-            },
-          ],
-        },
+        diagnostics: { errors: [{ field: '/execution/budget', code }] },
       },
       400,
     ),
   );
   const error = await captureApiError(client.GET(OPENAPI_PATH));
-  expect(error.validationIssues).toEqual([
-    {
-      field: '/budget',
-      code: 'budget_exceeds_ceiling',
-      ceiling: 'flow_definition',
-      resource: 'tokens',
-      requested: 150000,
-      maximum: 100000,
-    },
-    { field: '/budget', code: 'invalid_contract' },
-  ]);
-  expect(JSON.stringify(error.validationIssues)).not.toContain('private');
+  expect(error.validationIssues).toEqual([{ field: '/execution/budget', code }]);
 });
+
+it.each(['flow_definition', 'installation', 'installed_runtime_policy'])(
+  'retains only closed %s metadata needed to explain an authoritative execution ceiling',
+  async (ceiling) => {
+    const client = createManagementApiClient(async () =>
+      jsonResponse(
+        {
+          code: 'invalid_request',
+          message: 'private remote message',
+          request_id: REQUEST_ID,
+          diagnostics: {
+            errors: [
+              {
+                field: '/budget',
+                node: 'private-node',
+                code: 'budget_exceeds_ceiling',
+                ceiling,
+                resource: 'tokens',
+                requested: 150000,
+                maximum: 100000,
+                secret: 'private-token',
+              },
+              {
+                field: '/budget',
+                code: 'invalid_contract',
+                node: 'private user text!',
+                ceiling: 'private provider data',
+                resource: 'unknown',
+                requested: 'private',
+                maximum: -1,
+              },
+            ],
+          },
+        },
+        400,
+      ),
+    );
+    const error = await captureApiError(client.GET(OPENAPI_PATH));
+    expect(error.validationIssues).toEqual([
+      {
+        field: '/budget',
+        code: 'budget_exceeds_ceiling',
+        ceiling,
+        resource: 'tokens',
+        requested: 150000,
+        maximum: 100000,
+      },
+      { field: '/budget', code: 'invalid_contract' },
+    ]);
+    expect(JSON.stringify(error.validationIssues)).not.toContain('private');
+  },
+);

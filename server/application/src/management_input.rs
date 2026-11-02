@@ -38,6 +38,7 @@ mod configuration;
 mod enrollment;
 mod execution;
 pub(crate) mod factory;
+mod factory_policies;
 mod project;
 mod retention;
 mod trigger;

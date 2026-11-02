@@ -151,10 +151,10 @@ fn valid_fixture_for_project(project_id: ProjectId) -> Fixture {
     .expect("fixture choices are valid");
   let draft = FactoryConfigurationDraft {
     flow: None,
-    admission_policy: key("admission-default"),
+    admission_policy: key("admission-default").into(),
     wip_limits: FactoryWipLimits::new(8, 16).expect("fixture WIP limits are valid"),
     hard_budget: hard_budget(),
-    permission_ceiling: key("permissions-default"),
+    permission_ceiling: key("permissions-default").into(),
     enabled: true,
   };
   let draft = crate::testing::with_contract_flow_with_rework_limit(
@@ -187,6 +187,66 @@ fn publish(fixture: &Fixture) -> FactoryConfiguration {
   .expect("fixture configuration is valid")
 }
 
+#[test]
+fn configuration_retains_explicit_project_policy_pins_without_installation_aliases() {
+  let fixture = valid_fixture();
+  let launch = crate::FactoryLaunchPolicy::publish(
+    crate::FactoryLaunchPolicyId::generate(),
+    fixture.project_id,
+    crate::FactoryLaunchPolicyDefinition {
+      name: crate::FactoryText::new("Manual only").unwrap(),
+      allow_manual: true,
+      allow_automatic_source: false,
+    },
+  )
+  .unwrap();
+  let access = crate::FactoryAccessProfile::publish(
+    crate::FactoryAccessProfileId::generate(),
+    fixture.project_id,
+    crate::FactoryAccessProfileDefinition {
+      name: crate::FactoryText::new("Restricted").unwrap(),
+      permissions: FactoryPermissionSet::deny_all(),
+    },
+  )
+  .unwrap();
+  let mut wire = serde_json::to_value(&fixture.draft).unwrap();
+  wire["admission_policy"] = serde_json::json!({"project_policy": launch.reference()});
+  wire["permission_ceiling"] = serde_json::json!({"project_policy": access.reference()});
+  let draft: FactoryConfigurationDraft =
+    serde_json::from_value(wire.clone()).expect("Project pins have a separate representation from legacy aliases");
+  let configuration = FactoryConfiguration::publish(
+    FactoryConfigurationId::generate(),
+    FactoryConfigurationVersion::INITIAL,
+    fixture.project_id,
+    digest(11),
+    draft,
+    &fixture.choices,
+  )
+  .unwrap();
+  let retained = serde_json::to_value(&configuration).unwrap();
+  assert_eq!(retained["admission_policy"], wire["admission_policy"]);
+  assert_eq!(retained["permission_ceiling"], wire["permission_ceiling"]);
+  assert_eq!(
+    serde_json::from_value::<FactoryConfiguration>(retained).unwrap(),
+    configuration
+  );
+
+  wire["permission_ceiling"] = serde_json::json!("permissions-default");
+  let mixed = serde_json::from_value(wire).unwrap();
+  assert!(
+    FactoryConfiguration::publish(
+      FactoryConfigurationId::generate(),
+      FactoryConfigurationVersion::INITIAL,
+      fixture.project_id,
+      digest(11),
+      mixed,
+      &fixture.choices,
+    )
+    .is_err(),
+    "mixed legacy and Project policy pairs are ambiguous"
+  );
+}
+
 fn admitted_run(fixture: &Fixture, configuration: &FactoryConfiguration) -> FactoryRun {
   let work = WorkEnvelope::new(
     WorkEnvelopeId::generate(),
@@ -214,11 +274,11 @@ fn publication_resolves_every_alias_to_an_exact_identity() {
   let configuration = publish(&fixture);
 
   assert_eq!(
-    configuration.admission_policy().identity().as_str(),
+    configuration.admission_policy().legacy().unwrap().identity().as_str(),
     "manual.medium-risk"
   );
   assert_eq!(
-    configuration.permission_ceiling().identity().as_str(),
+    configuration.permission_ceiling().legacy().unwrap().identity().as_str(),
     "permissions.restricted"
   );
   assert!(configuration.is_enabled());
@@ -368,7 +428,7 @@ fn choice_catalogs_reject_duplicates_and_publication_rejects_unknown_aliases() {
   );
 
   let mut fixture = valid_fixture();
-  fixture.draft.permission_ceiling = key("missing");
+  fixture.draft.permission_ceiling = key("missing").into();
   assert_eq!(
     FactoryConfiguration::publish(
       FactoryConfigurationId::generate(),

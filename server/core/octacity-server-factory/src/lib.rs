@@ -19,6 +19,7 @@ mod budget;
 mod budget_cost;
 pub use budget_cost::BudgetCost;
 mod configuration;
+mod configuration_policy;
 #[cfg(test)]
 mod configuration_tests;
 #[cfg(test)]
@@ -153,6 +154,7 @@ pub use configuration::{
   FactoryProfileSelectorMetadata, FactoryReferenceChoice, FactoryWipLimits, ImmutableReference,
   MAX_CONFIGURATION_CHOICES_PER_KIND, MAX_FACTORY_ACTIVE_NODES, MAX_FACTORY_ACTIVE_RUNS,
 };
+pub use configuration_policy::{FactoryPolicyBinding, FactoryPolicySelection};
 pub use credential::{
   AuthorizedFactoryCredentialProfile, FactoryCredentialConsumer, FactoryCredentialProfiles, FactoryCredentialPurpose,
 };

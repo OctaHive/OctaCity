@@ -149,10 +149,10 @@ async fn accepted_reporting_fixture(
   );
   let draft = FactoryConfigurationDraft {
     flow: Some(target.flow().clone()),
-    admission_policy: key("admission"),
+    admission_policy: key("admission").into(),
     wip_limits: target.wip_limits(),
     hard_budget: target.hard_budget(),
-    permission_ceiling: key("permissions"),
+    permission_ceiling: key("permissions").into(),
     enabled: true,
   };
   fixture

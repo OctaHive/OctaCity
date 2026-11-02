@@ -916,6 +916,11 @@ macro_rules! unavailable_role_use_cases {
   )+};
 }
 unavailable_role_use_cases!(query:
+  GetFactoryProjectPolicyQuery=>"get_factory_project_policy",
+  ValidateFactoryProjectPolicyQuery=>"validate_factory_project_policy",
+  ListFactoryProjectPoliciesQuery=>"list_factory_project_policies",
+  GetFactoryProjectPolicyDefaultsQuery=>"get_factory_project_policy_defaults",
+  ResolveFactoryLegacyPolicyQuery=>"resolve_factory_legacy_policy",
   ResolveFactoryExecutionBindingQuery=>"resolve_factory_execution_binding",
   GetFactoryAuthoringCapabilitiesQuery=>"get_factory_authoring_capabilities",
   ValidateFactoryGateProgramQuery=>"validate_factory_gate_program",
@@ -932,6 +937,8 @@ unavailable_role_use_cases!(query:
   GetProjectSkillQuery=>"get_project_skill",
 );
 unavailable_role_use_cases!(command:
+  PublishFactoryProjectPolicyCommand=>"publish_factory_project_policy",
+  SelectFactoryProjectPolicyDefaultsCommand=>"select_factory_project_policy_defaults",
   DeleteFactoryRoleCommand=>"delete_factory_role", PublishFactoryRoleProfilesCommand=>"publish_factory_role_profiles", CopyFactoryRoleTemplateCommand=>"copy_factory_role_template",
   ImportProjectSkill=>"import_project_skill", SelectFactoryProfileCommand=>"select_factory_profile",
   PublishFactoryRuntimeSettingsCommand=>"publish_factory_runtime_settings",

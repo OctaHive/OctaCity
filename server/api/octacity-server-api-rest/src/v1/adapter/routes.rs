@@ -556,6 +556,34 @@ fn registered_routes() -> ManagementRoutes {
     .post::<SubmitFactoryNodeResponseCommand, _, _>("submitFactoryNodeResponse", submit_factory_node_response)
     .post::<RetryFactoryNodeCommand, _, _>("retryFactoryNode", retry_factory_node)
     .post::<ConfirmFactoryNodeOperationCommand, _, _>("confirmFactoryNodeOperation", confirm_factory_node_operation)
+    .post::<octacity_server_application::ResolveFactoryLegacyPolicyQuery, _, _>(
+      "resolveFactoryLegacyPolicy",
+      super::factory_policies::legacy,
+    )
+    .get::<octacity_server_application::ListFactoryProjectPoliciesQuery, _, _>(
+      "listFactoryProjectPolicies",
+      super::factory_policies::list,
+    )
+    .get::<octacity_server_application::GetFactoryProjectPolicyDefaultsQuery, _, _>(
+      "getFactoryProjectPolicyDefaults",
+      super::factory_policies::defaults,
+    )
+    .post::<octacity_server_application::SelectFactoryProjectPolicyDefaultsCommand, _, _>(
+      "selectFactoryProjectPolicyDefaults",
+      super::factory_policies::select_defaults,
+    )
+    .post::<octacity_server_application::ValidateFactoryProjectPolicyQuery, _, _>(
+      "validateFactoryProjectPolicy",
+      super::factory_policies::validate,
+    )
+    .post::<octacity_server_application::PublishFactoryProjectPolicyCommand, _, _>(
+      "publishFactoryProjectPolicy",
+      super::factory_policies::publish,
+    )
+    .get::<octacity_server_application::GetFactoryProjectPolicyQuery, _, _>(
+      "getFactoryProjectPolicy",
+      super::factory_policies::detail,
+    )
     .get::<octacity_server_application::ListFactoryRoleProfileCapabilitiesQuery, _, _>(
       "listFactoryProfileCapabilities",
       super::factory_roles::capabilities,

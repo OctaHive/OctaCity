@@ -29,9 +29,17 @@ export function ConfigurationEditor({
         ariaLabel={t(
           kind === 'admission_policy' ? 'factory.admissionPolicy' : 'factory.permissionCeiling',
         )}
-        value={value[kind]}
+        value={typeof value[kind] === 'string' ? value[kind] : JSON.stringify(value[kind])}
         options={[
           { value: '', label: t('factory.none') },
+          ...(typeof value[kind] === 'string'
+            ? []
+            : [
+                {
+                  value: JSON.stringify(value[kind]),
+                  label: `${t('factory.version')} ${value[kind].project_policy.version}`,
+                },
+              ]),
           ...choices
             .filter((choice) => choice.kind === kind && choice.reference.kind === 'immutable')
             .map((choice) => ({
@@ -39,7 +47,9 @@ export function ConfigurationEditor({
               label: `${choice.alias} · ${choice.reference.reference.version}`,
             })),
         ]}
-        onValueChange={(alias) => onChange({ ...value, [kind]: alias })}
+        onValueChange={(alias) => {
+          if (alias !== JSON.stringify(value[kind])) onChange({ ...value, [kind]: alias });
+        }}
       />
       {kind === 'admission_policy' ? (
         <p className={styles.supportingText}>{t('factory.admissionPolicyHelp')}</p>

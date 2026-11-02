@@ -358,6 +358,7 @@ impl ManagementQueryUseCase<octacity_server_application::ListFactoryConfiguratio
     assert_eq!(query.project_id().to_string(), "11111111-1111-4111-8111-111111111111");
     assert_eq!(query.kind().unwrap().as_str(), "criterion_pack");
     Ok(octacity_server_application::FactoryConfigurationChoicePageProjection {
+      project_policy_defaults: None,
       total: 1,
       items: vec![octacity_server_application::FactoryConfigurationChoiceProjection {
         identity: format!("{}:criterion_pack:quality", query.project_id())
@@ -440,7 +441,7 @@ impl ManagementQueryUseCase<octacity_server_application::ValidateFactoryConfigur
       return Err(ApplicationError::unavailable());
     }
     assert_eq!(query.project_id.to_string(), "11111111-1111-4111-8111-111111111111");
-    if query.draft.admission_policy.as_str() == "unavailable" {
+    if serde_json::to_value(&query.draft.admission_policy).unwrap() == serde_json::json!("unavailable") {
       return Err(ApplicationError::FactoryValidation(Box::new(
         octacity_server_application::FactoryValidationDiagnostics {
           errors: vec![octacity_server_application::FactoryValidationIssue {
@@ -553,11 +554,27 @@ async fn creates_a_factory_configuration_through_an_idempotent_typed_command() {
 fn factory_configuration_documents_publish_a_closed_graph_contract_for_management_clients() {
   let document = openapi_document();
   let schemas = &document["components"]["schemas"];
-  assert_eq!(schemas["FactoryConfigurationDefinition"]["additionalProperties"], false);
-  assert_eq!(
-    schemas["FactoryConfigurationDefinition"]["properties"]["flow"]["$ref"],
-    "#/components/schemas/FactoryFlowConfiguration"
-  );
+  for name in ["FactoryConfigurationDefinition", "FactoryConfigurationDocument"] {
+    let bindings = schemas[name]["oneOf"].as_array().unwrap();
+    assert_eq!(
+      bindings.len(),
+      2,
+      "legacy and Project pairs have distinct closed representations"
+    );
+    for binding in bindings {
+      assert_eq!(binding["additionalProperties"], false);
+      assert_eq!(
+        binding["properties"]["flow"]["$ref"],
+        "#/components/schemas/FactoryFlowConfiguration"
+      );
+      assert!(
+        binding["required"]
+          .as_array()
+          .unwrap()
+          .contains(&serde_json::json!("flow"))
+      );
+    }
+  }
   assert_eq!(schemas["FactoryFlowConfiguration"]["additionalProperties"], false);
   assert_eq!(
     schemas["FactoryFlowConfiguration"]["properties"]["closure"]["$ref"],

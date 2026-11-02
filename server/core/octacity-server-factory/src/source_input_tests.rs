@@ -121,11 +121,11 @@ fn target_version(
   .unwrap();
   let draft = crate::testing::with_contract_flow(
     FactoryConfigurationDraft {
-      admission_policy: key("default"),
+      admission_policy: key("default").into(),
       flow: None,
       wip_limits: FactoryWipLimits::new(2, 4).unwrap(),
       hard_budget: budget,
-      permission_ceiling: key("default"),
+      permission_ceiling: key("default").into(),
       enabled,
     },
     vec![crate::testing::FactoryStageDraft {

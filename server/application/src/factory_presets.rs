@@ -410,10 +410,10 @@ impl<S: FactoryConfigurationStore + octacity_server_store::FactoryRoleProfileSto
     let config = p.configuration.unwrap();
     let configuration = FactoryConfigurationDraft {
       flow: Some(flow),
-      admission_policy: config.admission_policy,
+      admission_policy: config.admission_policy.into(),
       wip_limits: config.wip_limits,
       hard_budget: config.hard_budget,
-      permission_ceiling: config.permission_ceiling,
+      permission_ceiling: config.permission_ceiling.into(),
       enabled: false,
     };
     let target = FactoryConfiguration::publish(

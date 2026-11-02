@@ -32,10 +32,10 @@ impl Fixture {
     let configuration = context.configuration.configuration;
     let draft = FactoryConfigurationDraft {
       flow: Some(configuration.flow().clone()),
-      admission_policy: key("admission"),
+      admission_policy: key("admission").into(),
       wip_limits: configuration.wip_limits(),
       hard_budget: configuration.hard_budget(),
-      permission_ceiling: key("permissions"),
+      permission_ceiling: key("permissions").into(),
       enabled: true,
     };
     let store = Arc::new(PostgresStore::new(pool.clone()));

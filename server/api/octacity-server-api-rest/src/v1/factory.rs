@@ -174,6 +174,9 @@ pub struct FactoryConfigurationChoiceResource {
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
 #[serde(deny_unknown_fields)]
 pub struct FactoryConfigurationChoicePage {
+  /// Exact Project-selected defaults; absent when no visible selection is available.
+  #[serde(skip_serializing_if = "Option::is_none")]
+  pub project_policy_defaults: Option<octacity_server_application::FactoryProjectPolicyDefaults>,
   /// Count after visibility and category selection, before continuation.
   pub total: u64,
   /// Choices ordered by technical category and alias.

@@ -44,6 +44,8 @@ pub struct FactoryAdmissionProbe {
 /// Exact immutable definitions required to validate and resolve one admission.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct FactoryAdmissionContext {
+  /// Exact Configuration-selected contents, or a prerequisite; never current defaults.
+  pub project_policies: Result<Box<crate::FactoryResolvedConfigurationPolicies>, crate::FactoryPolicyPrerequisite>,
   /// Selected immutable Factory Configuration version.
   pub configuration: PublishedFactoryConfiguration,
   /// Selected Repository version; absent for Project/input admission.

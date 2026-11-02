@@ -380,14 +380,17 @@ function ConfigurationDetails({
           <div>
             <dt>{t('factory.admissionPolicy')}</dt>
             <dd>
-              {configuration.admission_policy.identity} · {configuration.admission_policy.version}
+              {'project_policy' in configuration.admission_policy
+                ? `${configuration.admission_policy.project_policy.id} · ${configuration.admission_policy.project_policy.version}`
+                : `${configuration.admission_policy.identity} · ${configuration.admission_policy.version}`}
             </dd>
           </div>
           <div>
             <dt>{t('factory.permissionCeiling')}</dt>
             <dd>
-              {configuration.permission_ceiling.identity} ·{' '}
-              {configuration.permission_ceiling.version}
+              {'project_policy' in configuration.permission_ceiling
+                ? `${configuration.permission_ceiling.project_policy.id} · ${configuration.permission_ceiling.project_policy.version}`
+                : `${configuration.permission_ceiling.identity} · ${configuration.permission_ceiling.version}`}
             </dd>
           </div>
           {Object.entries(configuration.hard_budget).map(([key, amount]) => (

@@ -304,11 +304,11 @@ async fn existing_configuration_backfill_maps_exact_references_without_rewriting
     .bind(configuration.reference().id().as_uuid()).fetch_one(&database.pool).await.unwrap();
   octacity_server_store_postgres::migrate(&database.pool).await.unwrap();
   let store = PostgresStore::with_factory_capabilities(database.pool.clone(), Arc::new(Installed(choices)));
-  let launch = FactoryLegacyPolicyReference::Launch(configuration.admission_policy().clone());
-  let access = FactoryLegacyPolicyReference::Access(configuration.permission_ceiling().clone());
+  let launch = FactoryLegacyPolicyReference::Launch(configuration.admission_policy().legacy().unwrap().clone());
+  let access = FactoryLegacyPolicyReference::Access(configuration.permission_ceiling().legacy().unwrap().clone());
   let unknown = FactoryLegacyPolicyReference::Access(ImmutableReference::new(
-    configuration.permission_ceiling().identity().clone(),
-    configuration.permission_ceiling().version().clone(),
+    configuration.permission_ceiling().legacy().unwrap().identity().clone(),
+    configuration.permission_ceiling().legacy().unwrap().version().clone(),
     FactoryDigest::from_bytes([99; 32]),
   ));
   assert!(
@@ -317,6 +317,22 @@ async fn existing_configuration_backfill_maps_exact_references_without_rewriting
       .await
       .unwrap()
       .is_none()
+  );
+  let admission_selection = ReadFactoryAdmissionContext {
+    project_id: project,
+    configuration_id: configuration.reference().id(),
+    configuration_version: FactoryConfigurationVersion::INITIAL,
+    repository_id: None,
+    repository_version: None,
+  };
+  assert_eq!(
+    store
+      .factory_admission_context(admission_selection)
+      .await
+      .unwrap()
+      .project_policies,
+    Err(FactoryPolicyPrerequisite::LaunchUnmapped),
+    "a historical Configuration must expose its prerequisite instead of selecting Standard",
   );
   let (mut request, audit) = provision(project, None, "legacy-backfill").into_parts();
   request.intent.legacy_references = vec![launch.clone(), access.clone(), unknown.clone()];
@@ -361,6 +377,20 @@ async fn existing_configuration_backfill_maps_exact_references_without_rewriting
     panic!("access")
   };
   assert_eq!(profile.definition().permissions, permissions("legacy.example.com"));
+  let resolved = store
+    .factory_admission_context(admission_selection)
+    .await
+    .unwrap()
+    .project_policies
+    .unwrap();
+  assert_eq!(
+    FactoryProjectPolicyRef::Launch(resolved.launch_policy.reference().clone()),
+    mapped_launch.target
+  );
+  assert_eq!(
+    FactoryProjectPolicyRef::Access(resolved.access_profile.reference().clone()),
+    mapped_access.target
+  );
   assert!(
     store
       .factory_legacy_policy_mapping(project, &unknown)

@@ -196,14 +196,32 @@ function ConfigurationDraft({
   flows: readonly FactoryFlowDetails[];
 }) {
   const [draft, setDraft] = useState<components['schemas']['FactoryConfigurationDefinition']>(
-    () => ({
-      enabled: baseline.enabled,
-      admission_policy: alias(baseline.admission_policy, 'admission_policy', choices),
-      permission_ceiling: alias(baseline.permission_ceiling, 'permission_ceiling', choices),
-      hard_budget: structuredClone(baseline.hard_budget),
-      wip_limits: { ...baseline.wip_limits },
-      flow: structuredClone(baseline.flow),
-    }),
+    () => {
+      const common = {
+        enabled: baseline.enabled,
+        hard_budget: structuredClone(baseline.hard_budget),
+        wip_limits: { ...baseline.wip_limits },
+        flow: structuredClone(baseline.flow),
+      };
+      if (
+        'project_policy' in baseline.admission_policy &&
+        'project_policy' in baseline.permission_ceiling
+      ) {
+        return {
+          ...common,
+          admission_policy: structuredClone(baseline.admission_policy),
+          permission_ceiling: structuredClone(baseline.permission_ceiling),
+        };
+      }
+      if ('identity' in baseline.admission_policy && 'identity' in baseline.permission_ceiling) {
+        return {
+          ...common,
+          admission_policy: alias(baseline.admission_policy, 'admission_policy', choices),
+          permission_ceiling: alias(baseline.permission_ceiling, 'permission_ceiling', choices),
+        };
+      }
+      throw new Error('incompatible Configuration policy bindings');
+    },
   );
   return (
     <>

@@ -958,7 +958,7 @@ impl EvaluationPolicy {
 #[serde(deny_unknown_fields)]
 pub struct FactoryConfigurationDraft {
   /// Alias of the immutable admission policy governing later Work selection.
-  pub admission_policy: FactoryKey,
+  pub admission_policy: crate::FactoryPolicySelection<crate::FactoryLaunchPolicyRef>,
   /// Explicit pinned Flow journey; publication rejects an absent definition.
   #[serde(default, skip_serializing_if = "Option::is_none")]
   pub flow: Option<crate::FactoryFlowConfiguration>,
@@ -967,7 +967,7 @@ pub struct FactoryConfigurationDraft {
   /// Hard budget enclosing every configured node and nested Flow execution.
   pub hard_budget: BudgetLimit,
   /// Alias of the deny-by-default permission ceiling selected for later intersection.
-  pub permission_ceiling: FactoryKey,
+  pub permission_ceiling: crate::FactoryPolicySelection<crate::FactoryAccessProfileRef>,
   /// Whether later Work admission may select this version.
   pub enabled: bool,
 }
@@ -977,11 +977,11 @@ pub struct FactoryConfigurationDraft {
 #[serde(deny_unknown_fields)]
 pub struct FactoryConfiguration {
   reference: FactoryConfigurationRef,
-  admission_policy: ImmutableReference,
+  admission_policy: crate::FactoryPolicyBinding<crate::FactoryLaunchPolicyRef>,
   flow: crate::FactoryFlowConfiguration,
   wip_limits: FactoryWipLimits,
   hard_budget: BudgetLimit,
-  permission_ceiling: ImmutableReference,
+  permission_ceiling: crate::FactoryPolicyBinding<crate::FactoryAccessProfileRef>,
   enabled: bool,
 }
 
@@ -995,9 +995,33 @@ impl FactoryConfiguration {
     draft: FactoryConfigurationDraft,
     choices: &FactoryConfigurationChoices,
   ) -> Result<Self, FactoryError> {
-    let admission_policy = choices.resolve_reference(FactoryChoiceKind::AdmissionPolicy, &draft.admission_policy)?;
-    let permission_ceiling =
-      choices.resolve_reference(FactoryChoiceKind::PermissionCeiling, &draft.permission_ceiling)?;
+    use crate::{FactoryPolicyBinding as Binding, FactoryPolicySelection as Selection};
+    if draft.admission_policy.project_policy().is_some() != draft.permission_ceiling.project_policy().is_some()
+      || draft
+        .admission_policy
+        .project_policy()
+        .is_some_and(|r| r.project_id != project_id)
+      || draft
+        .permission_ceiling
+        .project_policy()
+        .is_some_and(|r| r.project_id != project_id)
+    {
+      return Err(FactoryError::InvalidConfiguration {
+        field: "Project policy bindings",
+      });
+    }
+    let admission_policy = match draft.admission_policy {
+      Selection::Legacy(alias) => {
+        Binding::Legacy(choices.resolve_reference(FactoryChoiceKind::AdmissionPolicy, &alias)?)
+      }
+      Selection::Project { project_policy } => Binding::Project { project_policy },
+    };
+    let permission_ceiling = match draft.permission_ceiling {
+      Selection::Legacy(alias) => {
+        Binding::Legacy(choices.resolve_reference(FactoryChoiceKind::PermissionCeiling, &alias)?)
+      }
+      Selection::Project { project_policy } => Binding::Project { project_policy },
+    };
 
     let flow = draft
       .flow
@@ -1056,8 +1080,25 @@ impl FactoryConfiguration {
 
   /// Returns the exact immutable admission policy.
   #[must_use]
-  pub const fn admission_policy(&self) -> &ImmutableReference {
+  pub const fn admission_policy(&self) -> &crate::FactoryPolicyBinding<crate::FactoryLaunchPolicyRef> {
     &self.admission_policy
+  }
+
+  /// Pins verified Project contents on a newly resolved publication; never edits a retained version.
+  /// The application must resolve each reference through the authorized Project policy owner first.
+  pub fn with_project_policies(
+    mut self,
+    launch: crate::FactoryLaunchPolicyRef,
+    access: crate::FactoryAccessProfileRef,
+  ) -> Result<Self, FactoryError> {
+    if launch.project_id != self.reference.project_id() || access.project_id != self.reference.project_id() {
+      return Err(FactoryError::InvalidConfiguration {
+        field: "Project policy bindings",
+      });
+    }
+    self.admission_policy = crate::FactoryPolicyBinding::Project { project_policy: launch };
+    self.permission_ceiling = crate::FactoryPolicyBinding::Project { project_policy: access };
+    Ok(self)
   }
 
   /// Returns the required exact immutable Flow journey.
@@ -1080,7 +1121,7 @@ impl FactoryConfiguration {
 
   /// Returns the exact permission ceiling selected for later pure intersection.
   #[must_use]
-  pub const fn permission_ceiling(&self) -> &ImmutableReference {
+  pub const fn permission_ceiling(&self) -> &crate::FactoryPolicyBinding<crate::FactoryAccessProfileRef> {
     &self.permission_ceiling
   }
 

@@ -79,6 +79,8 @@ mod definition_discovery;
 mod error;
 mod execution;
 mod factory;
+mod factory_policies;
+pub use factory_policies::FactoryPolicyManagementApplication;
 mod factory_readiness;
 mod factory_schema_wire;
 pub use factory_readiness::FactoryReadinessManagementApplication;
@@ -218,6 +220,7 @@ pub struct ManagementApplication {
   issue_discussion: Option<IssueDiscussionManagementApplication>,
   factory_actions: Option<FactoryActionManagementApplication>,
   factory_roles: Option<FactoryRoleManagementApplication>,
+  factory_policies: Option<FactoryPolicyManagementApplication>,
   factory_readiness: Option<FactoryReadinessManagementApplication>,
   factory_presets: Option<FactoryPresetManagementApplication>,
   issue_sources: Option<IssueSourceManagementApplication>,
@@ -325,6 +328,7 @@ impl ManagementApplication {
       issue_discussion: None,
       factory_actions: None,
       factory_roles: None,
+      factory_policies: None,
       factory_readiness: None,
       factory_presets: None,
       issue_activity: None,

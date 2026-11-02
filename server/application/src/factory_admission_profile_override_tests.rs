@@ -45,8 +45,8 @@ fn fixture() -> (
         )
         .unwrap(),
       ),
-      admission_policy: key("admission"),
-      permission_ceiling: key("permissions"),
+      admission_policy: key("admission").into(),
+      permission_ceiling: key("permissions").into(),
       hard_budget: admission.flow.limits().budget(),
       wip_limits: FactoryWipLimits::new(2, 4).unwrap(),
       enabled: true,

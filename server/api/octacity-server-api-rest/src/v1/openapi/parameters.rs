@@ -7,6 +7,7 @@ pub(super) fn parameters(operation: &ManagementOperation) -> Vec<Value> {
   for name in [
     "project_id",
     "role_id",
+    "policy_id",
     "profile_id",
     "identity",
     "alias",
@@ -55,6 +56,9 @@ pub(super) fn parameters(operation: &ManagementOperation) -> Vec<Value> {
       }));
     }
   }
+  if operation.path.contains("{kind}") {
+    parameters.push(json!({"name":"kind","in":"path","required":true,"schema":string_enum(&["launch","access"])}));
+  }
   if operation.path.contains("{retention_kind}") {
     parameters.push(
       json!({"name":"retention_kind","in":"path","required":true,"schema":string_enum(&["requirements","discussion"])}),
@@ -63,7 +67,10 @@ pub(super) fn parameters(operation: &ManagementOperation) -> Vec<Value> {
   if operation.path.contains("{collection}") {
     parameters.push(json!({"name":"collection","in":"path","required":true,"schema":{"type":"string","enum":octacity_server_application::FactoryDiagnosticCollection::ALL.into_iter().map(|kind| kind.as_str()).collect::<Vec<_>>()}}));
   }
-  if matches!(operation.operation_id, "getFactoryRoleTemplate" | "getProjectSkill") {
+  if matches!(
+    operation.operation_id,
+    "getFactoryRoleTemplate" | "getProjectSkill" | "getFactoryProjectPolicy"
+  ) {
     parameters.push(json!({"name":"digest","in":"query","required":true,"schema":schema_ref("FactoryDigest")}));
   }
   if operation.operation_id == "getProjectSkill" {

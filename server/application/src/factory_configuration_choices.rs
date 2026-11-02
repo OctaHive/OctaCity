@@ -307,6 +307,8 @@ pub struct FactoryConfigurationChoiceProjection {
 /// Visible count and deterministic bounded choices, derived after authorization.
 #[derive(Clone, Debug, Default, Eq, PartialEq)]
 pub struct FactoryConfigurationChoicePageProjection {
+  /// Exact Project defaults for a new draft; never replace an existing selection.
+  pub project_policy_defaults: Option<octacity_server_store::FactoryProjectPolicyDefaults>,
   /// Matching visible count before continuation.
   pub total: u64,
   /// Choices ordered by category and alias.
@@ -431,6 +433,10 @@ async fn visible_factory_choices_from<S: octacity_server_store::FactoryConfigura
           octacity_server_factory::FactoryChoiceMetadata {
             node_kinds: metadata.node_kinds.clone(),
             profile_selection: metadata.profile_selection.clone(),
+            // Internal qualification consumes the exact visible ceiling's declarations.
+            // Generic discovery uses its separate safe metadata projection.
+            permission_declarations: metadata.permission_declarations.clone(),
+            enforcement: metadata.enforcement.clone(),
             ..Default::default()
           },
         )

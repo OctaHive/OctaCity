@@ -139,6 +139,11 @@ export const ruMessages = {
   'factory.limitSource.configurationWip': 'Очередь конфигурации',
   'factory.limitSource.project': 'Политика Project',
   'factory.limitSource.runtime': 'Установленный runtime',
+  'factory.limitSource.installation': 'Установка',
+  'factory.unmappedLegacyPolicy':
+    'Для сохранённой ссылки установки нет проверенной привязки. Выберите политику запуска и профиль доступа проекта.',
+  'factory.accessExceedsPolicyLimit':
+    'Выбранный профиль доступа превышает текущие ограничения установки или Runtime. Сузьте профиль или восстановите необходимую установленную возможность.',
   'factory.limitSource.agent': 'Лимиты Agent',
   'factory.limitSource.backend': 'Среда выполнения',
   'factory.workSubject': 'Основание работы',

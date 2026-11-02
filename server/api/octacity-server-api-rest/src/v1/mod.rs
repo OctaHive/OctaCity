@@ -77,3 +77,5 @@ pub use adapter::FactoryActionManagementApplication;
 
 pub use adapter::FactoryRoleManagementApplication;
 pub use adapter::{FactoryPresetManagementApplication, FactoryReadinessManagementApplication};
+
+pub use adapter::FactoryPolicyManagementApplication;

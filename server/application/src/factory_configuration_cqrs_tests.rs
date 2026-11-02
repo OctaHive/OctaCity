@@ -249,10 +249,10 @@ fn fixture(build_project_id: ProjectId) -> Fixture {
   };
   let draft = FactoryConfigurationDraft {
     flow: None,
-    admission_policy: key("admission"),
+    admission_policy: key("admission").into(),
     wip_limits: FactoryWipLimits::new(2, 4).unwrap(),
     hard_budget: budget(10),
-    permission_ceiling: key("permissions"),
+    permission_ceiling: key("permissions").into(),
     enabled: true,
   };
   let draft = octacity_server_factory::testing::with_contract_flow(
@@ -437,7 +437,7 @@ fn invalid_configuration_and_disabled_mode_fail_before_mutation_but_history_stay
   run_ready(async {
     let project_id = ProjectId::generate();
     let mut invalid_configuration = fixture(project_id);
-    invalid_configuration.draft.permission_ceiling = key("not-authorized");
+    invalid_configuration.draft.permission_ceiling = key("not-authorized").into();
     let store = Arc::new(InMemoryFactoryConfigurationStore::new());
     store.seed_project(project_id).unwrap();
     store.enable_project(project_id, invalid_configuration.choices).unwrap();
@@ -1266,7 +1266,7 @@ fn validation_explains_an_unavailable_alias_without_disclosing_catalogue_choices
   run_ready(async {
     let project = ProjectId::generate();
     let mut fixture = fixture(project);
-    fixture.draft.admission_policy = key("private-policy");
+    fixture.draft.admission_policy = key("private-policy").into();
     let store = Arc::new(InMemoryFactoryConfigurationStore::new());
     store.seed_project(project).unwrap();
     store.enable_project(project, fixture.choices).unwrap();

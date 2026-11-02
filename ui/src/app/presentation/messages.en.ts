@@ -136,6 +136,11 @@ export const enMessages = {
   'factory.limitSource.configurationWip': 'Configuration queue',
   'factory.limitSource.project': 'Project policy',
   'factory.limitSource.runtime': 'Installed runtime',
+  'factory.limitSource.installation': 'Installation',
+  'factory.unmappedLegacyPolicy':
+    'Select a Project launch policy and access profile; the saved installation reference has no verified mapping.',
+  'factory.accessExceedsPolicyLimit':
+    'The selected access profile exceeds current installation or runtime limits. Narrow the profile or restore the required installed capability.',
   'factory.limitSource.agent': 'Agent limits',
   'factory.limitSource.backend': 'Execution backend',
   'factory.workSubject': 'Work subject',

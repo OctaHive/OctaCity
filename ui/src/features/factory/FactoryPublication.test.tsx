@@ -106,6 +106,14 @@ it('explains the exact locally exceeded budget with requested value and enclosin
 it.each([
   ['budget_exceeds_ceiling', 'Budget exceeds its enclosing limit'],
   ['concurrency_exceeds_ceiling', 'Concurrency exceeds its enclosing limit'],
+  [
+    'unmapped_legacy_policy',
+    'Select a Project launch policy and access profile; the saved installation reference has no verified mapping.',
+  ],
+  [
+    'permission_exceeds_ceiling',
+    'The selected access profile exceeds current installation or runtime limits. Narrow the profile or restore the required installed capability.',
+  ],
 ] as const)(
   'shows the authoritative %s blocker without permitting publication',
   async (code, label) => {

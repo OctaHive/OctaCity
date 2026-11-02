@@ -177,6 +177,7 @@ mod factory_configuration_choices;
 mod factory_configuration_cqrs;
 #[cfg(test)]
 mod factory_configuration_cqrs_tests;
+mod factory_configuration_policies;
 mod factory_control;
 pub use factory_action::*;
 pub use factory_action_projection::*;
@@ -908,3 +909,6 @@ mod factory_runtime_settings;
 pub use factory_runtime_settings::*;
 
 mod factory_mcp;
+
+mod factory_project_policies;
+pub use factory_project_policies::*;

@@ -11,6 +11,43 @@ use sqlx::types::Json;
 
 #[async_trait::async_trait]
 impl FactoryProjectPolicyStore for PostgresStore {
+  async fn replay_factory_project_policy(
+    &self,
+    request: ManagementMutation<ReplayFactoryProjectPolicy>,
+  ) -> Result<Option<FactoryProjectPolicyOutcome>, StoreError> {
+    let (request, audit) = request.into_parts();
+    let identity = MutationIdentity::new_management(
+      &audit,
+      MutationKind::PublishFactoryProjectPolicy,
+      request.idempotency_key.to_string(),
+      octacity_server_domain::Timestamp::from_unix_millis(0).map_err(|_| StoreError::Unavailable)?,
+      octacity_server_domain::EntityKind::Project,
+      &request.intent,
+    )?;
+    let row: Option<(Vec<u8>, Json<serde_json::Value>)> = sqlx::query_as(
+      "SELECT request_digest, outcome FROM idempotency_records WHERE scope=$1 AND security_scope=$2 AND idempotency_key=$3"
+    ).bind(identity.kind.scope()).bind(identity.persisted_security_scope()).bind(&identity.key).fetch_optional(self.pool()).await.map_err(unavailable)?;
+    match row {
+      None => Ok(None),
+      Some((digest, Json(value))) if digest == identity.request_digest => {
+        let mut outcome: FactoryProjectPolicyOutcome = decode_outcome(value)?;
+        outcome.disposition = MutationDisposition::Replayed;
+        Ok(Some(outcome))
+      }
+      Some(_) => Err(StoreError::Conflict {
+        entity: EntityKind::Project,
+      }),
+    }
+  }
+
+  async fn validate_factory_project_policy(
+    &self,
+    intent: &FactoryProjectPolicyIntent,
+  ) -> Result<(), FactoryProjectPolicyPublicationError> {
+    intent.validate()?;
+    crate::discovery::require_project(self.pool(), intent.policy.reference().project_id()).await?;
+    check_head(self.pool(), intent).await
+  }
   async fn factory_legacy_policy_mapping(
     &self,
     project: ProjectId,
@@ -207,13 +244,7 @@ impl FactoryProjectPolicyStore for PostgresStore {
     };
     request.intent.validate()?;
     lock_project(&mut *tx, reference.project_id()).await?;
-    let current: Option<Json<FactoryProjectPolicyRecord>> = sqlx::query_scalar(
-      "SELECT document FROM factory_project_policies WHERE project_id=$1 AND kind=$2 AND id=$3 ORDER BY version DESC LIMIT 1"
-    ).bind(reference.project_id().as_uuid()).bind(kind(&reference)).bind(reference.id())
-      .fetch_optional(&mut *tx).await.map_err(unavailable)?;
-    if current.map(|Json(value)| value.reference()) != request.intent.expected_current {
-      return Err(FactoryProjectPolicyPublicationError::PreconditionFailed);
-    }
+    check_head(&mut *tx, &request.intent).await?;
     append_policy(&mut *tx, &request.intent.policy).await?;
     let outcome = FactoryProjectPolicyOutcome {
       disposition: MutationDisposition::Applied,
@@ -230,6 +261,21 @@ impl FactoryProjectPolicyStore for PostgresStore {
     .await?;
     Ok(outcome)
   }
+}
+
+async fn check_head<'e>(
+  executor: impl sqlx::PgExecutor<'e>,
+  intent: &FactoryProjectPolicyIntent,
+) -> Result<(), FactoryProjectPolicyPublicationError> {
+  let reference = intent.policy.reference();
+  let current: Option<Json<FactoryProjectPolicyRecord>> = sqlx::query_scalar(
+    "SELECT document FROM factory_project_policies WHERE project_id=$1 AND kind=$2 AND id=$3 ORDER BY version DESC LIMIT 1"
+  ).bind(reference.project_id().as_uuid()).bind(kind(&reference)).bind(reference.id())
+    .fetch_optional(executor).await.map_err(unavailable)?;
+  if current.map(|Json(value)| value.reference()) != intent.expected_current {
+    return Err(FactoryProjectPolicyPublicationError::PreconditionFailed);
+  }
+  Ok(())
 }
 
 fn kind(reference: &FactoryProjectPolicyRef) -> &'static str {

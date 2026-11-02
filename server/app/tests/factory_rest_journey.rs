@@ -53,14 +53,6 @@ async fn openapi_only_client_drives_a_nested_factory_run() {
       None,
     )
     .await;
-  let choice = |kind: &str| {
-    choices.body["items"]
-      .as_array()
-      .unwrap()
-      .iter()
-      .find(|item| item["kind"] == kind)
-      .unwrap()
-  };
   let plugin = choices.body["items"]
     .as_array()
     .unwrap()
@@ -241,8 +233,32 @@ async fn openapi_only_client_drives_a_nested_factory_run() {
       .len(),
     2
   );
+  let mut policy_pins = Vec::new();
+  for (kind, definition) in [
+    (
+      "launch",
+      json!({"name":"Operator admission","allow_manual":true,"allow_automatic_source":false}),
+    ),
+    (
+      "access",
+      json!({"name":"No undeclared access","permissions":fixture::permissions()}),
+    ),
+  ] {
+    let policy = client
+      .ok(
+        "publishFactoryProjectPolicy",
+        &[("project_id", project)],
+        Some(json!({
+          "kind":kind,"id":Uuid::new_v4().to_string(),"definition":definition,
+        })),
+        Some(kind),
+        None,
+      )
+      .await;
+    policy_pins.push(policy.body["policy"]["policy"]["reference"].clone());
+  }
   let configuration = client.ok("createFactoryConfiguration",&[],Some(json!({"id":Uuid::new_v4().to_string(),"project_id":project,"definition":{
-    "admission_policy":choice("admission_policy")["alias"],"permission_ceiling":choice("permission_ceiling")["alias"],
+    "admission_policy":{"project_policy":policy_pins[0]},"permission_ceiling":{"project_policy":policy_pins[1]},
     "hard_budget":fixture::budget(),"wip_limits":{"max_active_runs":8,"max_active_nodes":8},"enabled":true,"flow":parent.body["resource"]["flow"],
   }})),Some("configuration"),None).await;
   let repository = client

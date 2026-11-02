@@ -425,11 +425,11 @@ fn publication_draft(template: &FlowDefinitionTemplate) -> Result<FactoryConfigu
     BTreeMap::new(),
   )?;
   Ok(FactoryConfigurationDraft {
-    admission_policy: key("admission"),
+    admission_policy: key("admission").into(),
     flow: Some(flow),
     wip_limits: FactoryWipLimits::new(1, 1)?,
     hard_budget: budget,
-    permission_ceiling: key("ceiling"),
+    permission_ceiling: key("ceiling").into(),
     enabled: true,
   })
 }

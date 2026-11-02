@@ -243,6 +243,8 @@ function publicValidationIssues(value: unknown): readonly ManagementValidationIs
       !/^\/[a-zA-Z0-9_.~/-]{1,512}$/u.test(issue.field) ||
       (issue.code !== 'invalid_contract' &&
         issue.code !== 'unavailable_reference' &&
+        issue.code !== 'unmapped_legacy_policy' &&
+        issue.code !== 'permission_exceeds_ceiling' &&
         issue.code !== 'budget_exceeds_ceiling' &&
         issue.code !== 'concurrency_exceeds_ceiling')
     )
@@ -250,7 +252,14 @@ function publicValidationIssues(value: unknown): readonly ManagementValidationIs
     const ceiling =
       'ceiling' in issue
         ? (
-            ['flow_definition', 'flow_admission', 'configuration', 'configuration_wip'] as const
+            [
+              'flow_definition',
+              'flow_admission',
+              'configuration',
+              'configuration_wip',
+              'installation',
+              'installed_runtime_policy',
+            ] as const
           ).find((value) => value === issue.ceiling)
         : undefined;
     const resource =

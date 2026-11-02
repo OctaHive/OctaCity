@@ -561,6 +561,7 @@ macro_rules! project_catalog_visibility {
 project_catalog_visibility!(
   crate::ListFactoryPresetsQuery,
   crate::ListFactoryRolesQuery,
+  crate::ListFactoryProjectPoliciesQuery,
   crate::ListFactoryRoleProfilesQuery,
   crate::ListFactoryRoleTemplatesQuery,
   crate::ListFactoryRoleProfileCapabilitiesQuery,

@@ -44,6 +44,8 @@ const ISSUE_LABELS = {
   enclosing_permissions: 'factory.enclosingPermissionsHelp',
   invalid_contract: 'factory.invalidContract',
   unavailable_reference: 'factory.unavailableReference',
+  unmapped_legacy_policy: 'factory.unmappedLegacyPolicy',
+  permission_exceeds_ceiling: 'factory.accessExceedsPolicyLimit',
   unbounded_cycle: 'factory.unboundedCycle',
   unreachable_node: 'factory.unreachableNode',
   incompatible_schema: 'factory.incompatibleSchema',

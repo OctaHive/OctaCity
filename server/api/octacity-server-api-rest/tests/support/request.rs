@@ -92,6 +92,18 @@ pub fn request_examples() -> Vec<(&'static str, serde_json::Value)> {
   let repository_version: serde_json::Value = serde_json::from_str(&repository_version_body()).unwrap();
   vec![
     (
+      "FactoryProjectPolicyDraft",
+      serde_json::json!({"kind":"launch","id":"22222222-2222-4222-8222-222222222222","expected_current":null,"definition":{"name":"Manual","allow_manual":true,"allow_automatic_source":false}}),
+    ),
+    (
+      "FactoryProjectPolicyDefaultsDraft",
+      serde_json::json!({"expected_version":null,"launch_policy":null,"access_profile":null}),
+    ),
+    (
+      "FactoryLegacyPolicyReference",
+      serde_json::json!({"kind":"access","reference":{"identity":"old-policy","version":"v1","digest":"11".repeat(32)}}),
+    ),
+    (
       "PublishProjectDocumentRequest",
       serde_json::json!({"name":"Reviewed Project goals", "content":"Private goals"}),
     ),

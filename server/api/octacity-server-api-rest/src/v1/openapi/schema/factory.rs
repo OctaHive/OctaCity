@@ -11,6 +11,7 @@ mod diagnostics;
 mod flow;
 mod permissions;
 mod presets;
+mod project_policies;
 mod readiness;
 mod roles;
 mod runtime_settings;
@@ -50,6 +51,7 @@ pub(super) fn insert_factory_schemas(schemas: &mut Map<String, Value>) {
   let bounds = octacity_server_application::factory_configuration_document_bounds();
   diagnostics::insert(schemas);
   roles::insert(schemas);
+  project_policies::insert(schemas);
   presets::insert(schemas);
   readiness::insert(schemas);
   runtime_settings::insert(schemas);
@@ -105,8 +107,8 @@ pub(super) fn insert_factory_schemas(schemas: &mut Map<String, Value>) {
   schemas.insert("FactoryValidationDiagnostics".to_owned(), object([
     ("constraints",schema_ref("FactoryEffectiveConstraints")),
     ("errors", json!({"type":"array","maxItems":1,"items":object([
-      ("field",non_empty_string()),("code",json!({"enum":["unavailable_reference","invalid_contract","budget_exceeds_ceiling","concurrency_exceeds_ceiling"]})),
-      ("ceiling",json!({"enum":["flow_definition","flow_admission","configuration","configuration_wip"]})),
+      ("field",non_empty_string()),("code",json!({"enum":["unavailable_reference","unmapped_legacy_policy","invalid_contract","budget_exceeds_ceiling","concurrency_exceeds_ceiling","permission_exceeds_ceiling"]})),
+      ("ceiling",json!({"enum":["flow_definition","flow_admission","configuration","configuration_wip","installation","installed_runtime_policy"]})),
       ("resource",json!({"enum":["attempts","elapsed_time","tokens","cost","output_bytes","active_nodes"]})),
       ("requested",non_negative_integer()),("maximum",non_negative_integer()),
       ("definition",schema_ref("FactoryFlowDefinitionReference")),("node",non_empty_string())
@@ -118,10 +120,10 @@ pub(super) fn insert_factory_schemas(schemas: &mut Map<String, Value>) {
     ("effective_permissions",json!({"type":"array","items":object([
       ("definition",schema_ref("FactoryFlowDefinitionReference")),("node",non_empty_string()),("permissions",schema_ref("FactoryPermissions")),
       ("requested",schema_ref("FactoryPermissions")),
-      ("sources",bounded_array(json!({"enum":["flow_admission","flow_definition","node"]}),3)),
+      ("sources",bounded_array(json!({"enum":["flow_admission","flow_definition","node","project_policy"]}),4)),
       ("profiles",bounded_array(object([
         ("profile",schema_ref("FactoryRoleProfileReference")),("permissions",schema_ref("FactoryPermissions")),
-        ("sources",bounded_array(json!({"enum":["role_profile","profile_budget","node","flow_definition","flow_admission"]}),5)),
+        ("sources",bounded_array(json!({"enum":["role_profile","profile_budget","node","flow_definition","flow_admission","project_policy"]}),6)),
       ], &["profile","permissions","sources"]),bounds.role_entries)),
       ("unresolved_sources",bounded_array(json!({"enum":["project_policy","installed_runtime_policy","agent_local","backend_placement"]}),4)),
     ], &["definition","node","permissions"])})),
@@ -624,50 +626,50 @@ pub(super) fn insert_factory_schemas(schemas: &mut Map<String, Value>) {
       &["id", "project_id", "definition"],
     ),
   );
-  schemas.insert(
-    "FactoryConfigurationDefinition".to_owned(),
-    object(
-      [
-        ("admission_policy", key()),
+  for (name, published) in [
+    ("FactoryConfigurationDefinition", false),
+    ("FactoryConfigurationDocument", true),
+  ] {
+    let variant = |project: bool| {
+      let binding = |reference: &str| object([("project_policy", schema_ref(reference))], &["project_policy"]);
+      let legacy = || {
+        if published {
+          schema_ref("FactoryImmutableReferenceResource")
+        } else {
+          key()
+        }
+      };
+      let mut fields = vec![
+        (
+          "admission_policy",
+          if project {
+            binding("FactoryLaunchPolicyRef")
+          } else {
+            legacy()
+          },
+        ),
         ("flow", schema_ref("FactoryFlowConfiguration")),
         ("wip_limits", schema_ref("FactoryWipLimits")),
         ("hard_budget", schema_ref("FactoryBudget")),
-        ("permission_ceiling", key()),
+        (
+          "permission_ceiling",
+          if project {
+            binding("FactoryAccessProfileRef")
+          } else {
+            legacy()
+          },
+        ),
         ("enabled", boolean()),
-      ],
-      &[
-        "admission_policy",
-        "flow",
-        "wip_limits",
-        "hard_budget",
-        "permission_ceiling",
-        "enabled",
-      ],
-    ),
-  );
-  schemas.insert(
-    "FactoryConfigurationDocument".to_owned(),
-    object(
-      [
-        ("reference", schema_ref("FactoryConfigurationReference")),
-        ("admission_policy", schema_ref("FactoryImmutableReferenceResource")),
-        ("flow", schema_ref("FactoryFlowConfiguration")),
-        ("wip_limits", schema_ref("FactoryWipLimits")),
-        ("hard_budget", schema_ref("FactoryBudget")),
-        ("permission_ceiling", schema_ref("FactoryImmutableReferenceResource")),
-        ("enabled", boolean()),
-      ],
-      &[
-        "reference",
-        "admission_policy",
-        "flow",
-        "wip_limits",
-        "hard_budget",
-        "permission_ceiling",
-        "enabled",
-      ],
-    ),
-  );
+      ];
+      if published {
+        fields.push(("reference", schema_ref("FactoryConfigurationReference")));
+      }
+      let required: Vec<_> = fields.iter().map(|(name, _)| *name).collect();
+      object(fields, &required)
+    };
+    // Whole-pair variants reject ambiguous mixed legacy/Project requests.
+    schemas.insert(name.into(), json!({"oneOf":[variant(false),variant(true)]}));
+  }
   schemas.insert(
     "FactoryConfigurationMutationResponse".to_owned(),
     super::super::mutation_response("FactoryConfigurationDetails"),
@@ -771,6 +773,7 @@ pub(super) fn insert_factory_schemas(schemas: &mut Map<String, Value>) {
     "FactoryConfigurationChoicePage".to_owned(),
     object(
       [
+        ("project_policy_defaults", schema_ref("FactoryProjectPolicyDefaults")),
         ("total", non_negative_integer()),
         ("items", array(schema_ref("FactoryConfigurationChoiceResource"))),
         (

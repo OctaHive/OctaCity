@@ -277,6 +277,7 @@ pub(super) async fn list_factory_configuration_choices(
     .await
     .map_err(|error| authorized_handler_error(error, &request_id))?;
   Ok(Json(FactoryConfigurationChoicePage {
+    project_policy_defaults: page.project_policy_defaults,
     total: page.total,
     items: page
       .items

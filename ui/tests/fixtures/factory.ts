@@ -7,7 +7,12 @@ import type {
 } from '../../src/features/factory/api';
 
 /** Uses the canonical management fixture verified by the server's OpenAPI tests. */
-export function configurationFixture(): FactoryConfigurationDetails {
+export function configurationFixture(): Omit<FactoryConfigurationDetails, 'configuration'> & {
+  configuration: Extract<
+    FactoryConfigurationDetails['configuration'],
+    { admission_policy: { identity: string } }
+  >;
+} {
   return JSON.parse(
     readFileSync(
       resolve(

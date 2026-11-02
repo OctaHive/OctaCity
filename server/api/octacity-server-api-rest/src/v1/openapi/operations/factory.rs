@@ -14,6 +14,109 @@ const LEGACY_PRESET_MIGRATION: &str = "Legacy preset queries retain their origin
 
 pub(super) const OPERATIONS: &[ManagementOperation] = &[
   operation!(
+    octacity_server_application::ResolveFactoryLegacyPolicyQuery,
+    "POST",
+    "/api/v1/projects/{project_id}/factory-policies/legacy/resolve",
+    "resolveFactoryLegacyPolicy",
+    "Factory",
+    "Read an exact retained legacy mapping without creating one or substituting defaults",
+    Some("FactoryLegacyPolicyReference"),
+    "FactoryLegacyPolicyMappingRead",
+    "200",
+    false,
+    false
+  )
+  .with_no_store_response(),
+  operation!(
+    octacity_server_application::ListFactoryProjectPoliciesQuery,
+    "GET",
+    "/api/v1/projects/{project_id}/factory-policies",
+    "listFactoryProjectPolicies",
+    "Factory",
+    "List current Project policy metadata with typed stable-identity continuation",
+    None,
+    "FactoryProjectPolicyPage",
+    "200",
+    false,
+    false
+  )
+  .with_visibility::<octacity_server_application::ListFactoryProjectPoliciesQuery>()
+  .with_parameters(ParameterProfile::CurrentDefinitionList)
+  .with_no_store_response(),
+  operation!(
+    octacity_server_application::GetFactoryProjectPolicyDefaultsQuery,
+    "GET",
+    "/api/v1/projects/{project_id}/factory-policies/defaults",
+    "getFactoryProjectPolicyDefaults",
+    "Factory",
+    "Read exact Project defaults without provisioning or adopting newer policies",
+    None,
+    "FactoryProjectPolicyDefaultsRead",
+    "200",
+    false,
+    false
+  )
+  .with_no_store_response(),
+  operation!(
+    octacity_server_application::SelectFactoryProjectPolicyDefaultsCommand,
+    "POST",
+    "/api/v1/projects/{project_id}/factory-policies/defaults",
+    "selectFactoryProjectPolicyDefaults",
+    "Factory",
+    "Select or deliberately clear exact Project defaults with a current-selection precondition",
+    Some("FactoryProjectPolicyDefaultsDraft"),
+    "FactoryProjectPolicyDefaultsPublication",
+    "200",
+    true,
+    false
+  )
+  .with_precondition_failed_response()
+  .with_no_store_response(),
+  operation!(
+    octacity_server_application::ValidateFactoryProjectPolicyQuery,
+    "POST",
+    "/api/v1/projects/{project_id}/factory-policies/validate",
+    "validateFactoryProjectPolicy",
+    "Factory",
+    "Review Project policy contents and preconditions without mutation",
+    Some("FactoryProjectPolicyDraft"),
+    "FactoryProjectPolicyDetails",
+    "200",
+    false,
+    false
+  )
+  .with_precondition_failed_response()
+  .with_no_store_response(),
+  operation!(
+    octacity_server_application::PublishFactoryProjectPolicyCommand,
+    "POST",
+    "/api/v1/projects/{project_id}/factory-policies",
+    "publishFactoryProjectPolicy",
+    "Factory",
+    "Publish immutable Project policy contents with an exact current-head precondition",
+    Some("FactoryProjectPolicyDraft"),
+    "FactoryProjectPolicyPublication",
+    "200",
+    true,
+    false
+  )
+  .with_precondition_failed_response()
+  .with_no_store_response(),
+  operation!(
+    octacity_server_application::GetFactoryProjectPolicyQuery,
+    "GET",
+    "/api/v1/projects/{project_id}/factory-policies/{kind}/{policy_id}/versions/{version}",
+    "getFactoryProjectPolicy",
+    "Factory",
+    "Read exact Project policy contents by version and digest",
+    None,
+    "FactoryProjectPolicyDetails",
+    "200",
+    false,
+    false
+  )
+  .with_no_store_response(),
+  operation!(
     octacity_server_application::GetFactoryReadinessQuery,
     "POST",
     "/api/v1/factory-configurations/{factory_configuration_id}/versions/{version}/readiness",

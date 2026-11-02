@@ -82,7 +82,7 @@ impl TryFrom<RetainedLaunchPolicy> for FactoryLaunchPolicy {
   type Error = FactoryError;
 
   fn try_from(value: RetainedLaunchPolicy) -> Result<Self, Self::Error> {
-    let expected = Self::at_version(
+    let expected = Self::new(
       value.reference.id,
       value.reference.project_id,
       value.reference.version,
@@ -102,10 +102,12 @@ impl FactoryLaunchPolicy {
     project_id: ProjectId,
     definition: FactoryLaunchPolicyDefinition,
   ) -> Result<Self, FactoryError> {
-    Self::at_version(id, project_id, FactoryLaunchPolicyVersion::INITIAL, definition)
+    Self::new(id, project_id, FactoryLaunchPolicyVersion::INITIAL, definition)
   }
 
-  fn at_version(
+  /// Reconstructs one bounded immutable revision and computes its content digest.
+  /// Store publication must independently enforce the current-head precondition.
+  pub fn new(
     id: FactoryLaunchPolicyId,
     project_id: ProjectId,
     version: FactoryLaunchPolicyVersion,
@@ -135,7 +137,7 @@ impl FactoryLaunchPolicy {
     if self.reference.version.get().checked_add(1) != Some(version.get()) {
       return Err(invalid("launch policy replacement version"));
     }
-    Self::at_version(self.reference.id, self.reference.project_id, version, definition)
+    Self::new(self.reference.id, self.reference.project_id, version, definition)
   }
 
   /// Borrows the exact version and verified content identity.
@@ -204,7 +206,7 @@ impl TryFrom<RetainedAccessProfile> for FactoryAccessProfile {
   type Error = FactoryError;
 
   fn try_from(value: RetainedAccessProfile) -> Result<Self, Self::Error> {
-    let expected = Self::at_version(
+    let expected = Self::new(
       value.reference.id,
       value.reference.project_id,
       value.reference.version,
@@ -224,10 +226,12 @@ impl FactoryAccessProfile {
     project_id: ProjectId,
     definition: FactoryAccessProfileDefinition,
   ) -> Result<Self, FactoryError> {
-    Self::at_version(id, project_id, FactoryAccessProfileVersion::INITIAL, definition)
+    Self::new(id, project_id, FactoryAccessProfileVersion::INITIAL, definition)
   }
 
-  fn at_version(
+  /// Reconstructs one bounded immutable revision and computes its content digest.
+  /// Store publication must independently enforce the current-head precondition.
+  pub fn new(
     id: FactoryAccessProfileId,
     project_id: ProjectId,
     version: FactoryAccessProfileVersion,
@@ -257,7 +261,7 @@ impl FactoryAccessProfile {
     if self.reference.version.get().checked_add(1) != Some(version.get()) {
       return Err(invalid("access profile replacement version"));
     }
-    Self::at_version(self.reference.id, self.reference.project_id, version, definition)
+    Self::new(self.reference.id, self.reference.project_id, version, definition)
   }
 
   /// Borrows the exact version and verified content identity.

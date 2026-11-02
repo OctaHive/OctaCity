@@ -49,10 +49,10 @@ pub fn fixture(project_id: ProjectId) -> Fixture {
   };
   let draft = FactoryConfigurationDraft {
     flow: None,
-    admission_policy: key("admission"),
+    admission_policy: key("admission").into(),
     wip_limits: FactoryWipLimits::new(20, 20).unwrap(),
     hard_budget: budget(),
-    permission_ceiling: key("permissions"),
+    permission_ceiling: key("permissions").into(),
     enabled: true,
   };
   let draft = octacity_server_factory::testing::with_contract_flow(

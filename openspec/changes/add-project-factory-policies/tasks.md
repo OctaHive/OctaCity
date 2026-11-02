@@ -8,8 +8,8 @@ Every executable slice below uses repository TDD: run its behavioral test to obs
 
 ## 2. API and authoritative execution
 
-- [ ] 2.1 Expose typed Project-scoped list/detail/validate/publication/default-selection contracts through ordinary REST composition and generate OpenAPI/Console types; verify authorized HTTP round trips, safe validation, stale-version/key conflicts and explicit legacy/new representation compatibility in REST contract tests.
-- [ ] 2.2 Resolve and pin Project policies through Configuration publication, choices, readiness and admission context; verify exact defaults, explicit overrides, unavailable references, effective constraints and no repinning after policy/default replacement through application and persisted Configuration tests.
+- [x] 2.1 Expose typed Project-scoped list/detail/validate/publication/default-selection contracts through ordinary REST composition and generate OpenAPI/Console types; verify authorized HTTP round trips, safe validation, stale-version/key conflicts and explicit legacy/new representation compatibility in REST contract tests.
+- [x] 2.2 Resolve and pin Project policies through Configuration publication, choices, readiness and admission context; verify exact defaults, explicit overrides, unavailable references, effective constraints and no repinning after policy/default replacement through application and persisted Configuration tests.
 - [ ] 2.3 Enforce trusted manual/automatic origins through the common admission boundary for explicit Work, Issue execution and automatic Source input; verify allowed/denied combinations, imported-Issue origin, independent disabled Source/Configuration, denial before per-item preparation and no Work/Run/Build on denial. Verify accepted replay after restart returns the original operation without redispatch.
 - [ ] 2.4 Feed pinned access profiles into the existing permission intersection, compiler and protected-operation path; verify restricted host/tool/path/secret selections remain restricted, unsupported/broader profiles fail with limiting-scope diagnostics, and current installation revocation blocks recovery without switching to a newer profile or weaker backend.
 
@@ -148,3 +148,157 @@ Final regression/check commands and observed results:
 The disposable PostgreSQL container and its own volume were removed. Personal stand services,
 volumes and operator data were untouched. No commits were made; available host disk space
 at completion was approximately 5 GiB.
+
+
+## Verification — 2.1 (2026-11-02)
+
+Added seven ordinary Project-scoped management operations: current policy metadata catalog,
+exact typed policy read, read-only validation, immutable publication, defaults read and explicit
+selection, and read-only exact legacy mapping resolution. Launch/access drafts carry editable
+contents and an exact previous head; the server computes the next version and content digest.
+Legacy installation references and Project-owned references have separate closed wire schemas.
+Mixed or unknown fields are rejected without echoing submitted private values.
+
+All operations use existing management authorization. Writes retain the shared policy journal,
+Project lock, scoped idempotency, audit and outbox transaction. Validation reuses the publication
+head check without writing or reserving a key. Publication recovers accepted receipts before
+current installation qualification. Access requests must fit one whole visible installed ceiling
+and use selectable dependencies; declarations from multiple ceilings are never unioned. Deny-all
+profiles remain editable without installation grants. Existing permission validation and safe
+limiting-source diagnostics are reused. The internal choice filter now retains visible ceiling
+declarations for qualification; ordinary discovery still applies its separate safe projection.
+
+TDD used `cargo test --locked -p octacity-server --test factory_project_policy_http <filter> -- --ignored`
+against a disposable PostgreSQL instance and real released HTTP listeners:
+
+| Filter | Observed Red before implementation | Observed Green |
+| --- | --- | --- |
+| `launch_policy_http_publication` | Publication route returned 404 | Publication and exact digest/version read passed with Factory execution disabled |
+| `launch_policy_http_replacement` | Replacement candidate returned 400 | Consecutive replacement, 412 stale head, 409 changed-key body and original replay passed; final regression also restarted the server on the same database |
+| `policy_validation` | Validation route returned 404 | Read-only review, unchanged exact read, reusable mutation key, stale precondition and safe unknown-field rejection passed |
+| `policy_http_catalog` | Defaults route returned 404 | Bounded stable catalog pages, explicit pinned defaults, deliberate clearing, stale selection and historical replay passed |
+| `access_policy_http_qualification` | Typed access draft was rejected as an unknown variant | Exact declared narrowing, no ceiling union, no key reservation on failure, deny-all without authority and accepted replay after revocation passed |
+| `policy_http_legacy` | Legacy resolution route returned 404 | Existing lifecycle-command mappings resolve exactly; unknown digests remain unmapped and Project references cannot be interpreted as legacy references |
+| `policy_http_wire` | Required OpenAPI component was absent | Actual HTTP responses match typed schemas; foreign Project reads/pins/replacements and mixed legacy/new input are rejected |
+| `access_policy_http_rejects_unselectable` | Validation incorrectly accepted an unavailable plugin from a ceiling declaration (200 instead of 400) | Shared selectable-dependency checks reject both validation and publication with safe field diagnostics and no published policy |
+
+The existing authorization-before-dispatch contract initially failed its complete route inventory
+(219 requests versus 226 operations). The common request corpus was extended for all seven new
+operations; both allowed dispatch and denial-before-handler/protected-effects contracts passed.
+No separate authentication mechanism or execution-state owner was introduced.
+
+Final verification:
+
+- `cargo test --locked -p octacity-server --test factory_project_policy_http -- --ignored`: 8 passed.
+- `cargo test --locked -p octacity-server-api-rest --test v1_handlers --test v1_contract`: 252 handler tests and 29 contract tests passed.
+- Application library filters `factory_configuration`, `factory_runtime_settings_tests` and `factory_role_profiles_tests`: 52, 14 and 9 passed respectively.
+- PostgreSQL tests `factory_project_policies`, `factory_project_policy_provisioning` and `migrations` with `-- --ignored`: 9, 8 and 8 passed respectively, including unchanged historical Configuration data and transaction/replay regressions.
+- `cargo test --locked -p octacity-server-factory --lib project_policy_`: 6 passed.
+- `cargo test --locked -p octacity-server-store --lib --all-features`: 112 passed.
+- `cargo clippy --locked -p octacity-server-application -p octacity-server-api-rest -p octacity-server-store-postgres -p octacity-server --lib --test factory_project_policy_http --test v1_handlers --test v1_contract --all-features -- -D warnings`: passed. The editable access draft uses indirection for its larger variant; no lint suppression was added.
+- Exported OpenAPI through the ordinary `export_openapi` example, generated Console types with `OCTACITY_OPENAPI_SCHEMA_FILE=/tmp/octacity-project-policy-openapi.json pnpm api:generate`, and ran `pnpm typecheck`: passed. Generated files follow the existing ignored-artifact convention; no Console screen or bundle budget changed.
+- `cargo fmt --all -- --check`, `git diff --check`, architecture validation and strict OpenSpec validation: passed.
+
+Rust commands used `CARGO_PROFILE_DEV_DEBUG=0 CARGO_PROFILE_TEST_DEBUG=0 CARGO_INCREMENTAL=0`
+to bound build storage. Only unused host incremental caches were removed; personal stand data,
+services and native staging artifacts were untouched. The disposable PostgreSQL service and its
+own volume were removed after verification. No commits were made. Approximately 9 GiB remained
+available on the host. Configuration adoption, admission-origin enforcement and final execution
+intersection remain in 2.2–2.4; Project editors and stand integration remain in sections 3–4.
+
+## Verification — 2.2 (2026-11-02)
+
+Configuration publication now distinguishes legacy aliases/references from typed
+`project_policy` selections. New publications retain exact Project launch/access pins;
+legacy clients require an exact retained mapping rather than a default or name lookup.
+Both policy fields must use the same representation. The old serialized representation
+and immutable Configuration bytes/digests remain unchanged, and an older reader cannot
+interpret a Project object as an installation alias.
+
+The existing policy store supplies one exact resolver shared by Configuration management,
+readiness and persisted admission contexts. Configuration choices expose authorized exact
+Project defaults without provisioning or changing a mounted selection. Publication validates
+policy ownership, version/digest availability and the current visible configured authority.
+Access qualification reuses the profile-publication rule: a request must fit one complete
+verified ceiling, never a union. Authoring diagnostics retain the requested permissions,
+show their Project-profile intersection and identify the limiting owner. Readiness observes
+retained policy contents separately from current permission availability. Admission contexts
+retain either the exact resolved contents or a typed missing/unmapped prerequisite, without
+consulting current defaults.
+
+Console transport compatibility preserves exact pins while editing unrelated settings.
+New policy diagnostics have English/Russian explanations, and the HTTP error adapter keeps
+only the closed public codes/scopes while continuing to remove private diagnostic data.
+Full Project catalogs and Configuration policy-selection UX remain in 3.1–3.2. Trusted-origin
+enforcement and final compiler/protected-operation intersection remain in 2.3–2.4; this slice
+does not claim those execution behaviors are complete. Step input/result isolation retains
+its existing owners.
+
+TDD observations (all Rust commands used `--locked`; integration tests used a disposable
+PostgreSQL service via `OCTACITY_POSTGRES_URL`):
+
+| Public seam / filter | Observed Red before implementation | Observed Green |
+| --- | --- | --- |
+| `cargo test -p octacity-server-factory --lib configuration_retains_explicit_project_policy_pins` | A Project object was rejected as an alias string | Exact typed pins round-trip; mixed representations are rejected |
+| HTTP `configuration_publication_requires_existing` | Fabricated pins were accepted with 201; a foreign owner was misreported as `/flow` | Missing/digest/version/owner substitutions identify the policy field; failed requests reserve no publication key |
+| HTTP `configuration_choices_expose_exact` | Choices omitted Project defaults | Exact explicit defaults are returned without creating another selection |
+| HTTP `persisted_configuration_and_admission_context` | The required policy-content context API was missing | Explicit overrides, saved references and original rules survive policy/default replacement and a real server restart |
+| HTTP `readiness_observes_exact` | Project pins were checked as installed aliases; no policy observation existed | Exact retained policies and independently compatible Flow installation are observed |
+| HTTP `configuration_constraints_explain` | Both requested hosts were shown as effective; revoked authority still validated with 200; readiness remained ready after revocation | Only the profile-allowed host remains effective, original requests remain visible, fresh validation rejects revoked authority, and readiness reports the missing permission prerequisite |
+| HTTP `legacy_configuration_publication_requires` | Unmapped aliases were accepted with 201 | Unmapped publication fails explicitly; after authorized exact backfill the same key publishes the mapped Project pins |
+| HTTP/OpenAPI response validation | The Configuration response required a legacy identity; diagnostic source cardinality excluded Project policy | Closed legacy/Project pair variants, policy diagnostic codes/scopes and effective-source bounds match actual responses |
+| `pnpm exec vitest run src/features/factory/ConfigurationEditor.test.tsx` | Exact Project pins appeared as None | Their version is visible and unrelated edits preserve the original exact pins |
+| `pnpm exec vitest run src/features/factory/FactoryPublication.test.tsx -t authoritative` | New policy codes had no presentation mapping | Policy failures have explicit operator explanations and publication remains disabled |
+| `pnpm exec vitest run src/api/client.test.ts` | The client dropped both policy codes and installation/runtime limiting scopes | Closed public facts are retained; unknown/private metadata remains redacted |
+
+HTTP filters above used:
+`cargo test --locked -p octacity-server --test factory_project_policy_http <filter> -- --ignored`.
+The combined suite passed all 14 tests, including the eight prior policy-management cases.
+Existing historical-store verification additionally checks that an unmapped Configuration
+reports its prerequisite, exact backfill supplies the recorded policy contents, and original
+stored Configuration bytes/digests remain unchanged. Type-only fixture adaptations and
+formatting introduce no executable behavior; their checks are compilation/typechecking and
+format validation rather than an invented Red cycle.
+
+Regression/check results:
+
+- `cargo test --locked -p octacity-server-application --lib --all-features factory_`: 711 passed.
+- `cargo test --locked -p octacity-server-api-rest --test v1_handlers --test v1_contract`: 252 and 29 passed. The closed-graph contract assertion now checks both closed policy representations, retaining the required Flow checks and legacy fixture validation.
+- `cargo test --locked -p octacity-server-factory -p octacity-server-store --all-features`: Factory 342 unit tests, 46 integration tests and its doc-test passed; store 112 unit tests and its doc-test passed.
+- `cargo test --locked -p octacity-server-store-postgres --test factory_project_policies --test factory_project_policy_provisioning --test configurations --test migrations -- --ignored`: 9, 8, 2 and 8 passed; `--test factory_flow_management -- --ignored`: 2 passed.
+- `cargo test --locked -p octacity-server --test factory_rest_journey -- --ignored`: passed against disposable PostgreSQL/MinIO. The OpenAPI-only client now publishes ordinary Project policies before Configuration publication, and still completes the nested retained-results journey through the deterministic installed executor. This is not the real-Agent qualification reserved for 4.2.
+- `cargo clippy --locked -p octacity-server-application -p octacity-server-api-rest -p octacity-server-store-postgres -p octacity-server --lib --test factory_project_policy_http --test v1_handlers --test v1_contract --all-features -- -D warnings`: passed.
+- Exported the authoritative OpenAPI example; `OCTACITY_OPENAPI_SCHEMA_FILE=/tmp/octacity-project-policy-openapi.json pnpm api:generate` and `pnpm typecheck`: passed.
+- Focused Console Vitest regression over the HTTP client, Configuration editor, authoring, definitions, publication, draft validation and graph editor: 104 tests across 7 files passed.
+- ESLint over changed Console files, Prettier, and `pnpm build`: passed. Production JS/CSS/static budgets remain unchanged and pass.
+- `cargo fmt --all -- --check`, `git diff --check`, `python3 tools/check_architecture.py` (64 packages / 263 edges), and `openspec validate add-project-factory-policies --strict`: passed.
+
+Rust builds used `CARGO_PROFILE_DEV_DEBUG=0 CARGO_PROFILE_TEST_DEBUG=0 CARGO_INCREMENTAL=0`.
+Only disposable test services and their own volumes were removed after verification; the
+personal stand, retained pipelines and native staging data were not modified. No commits
+were made. Approximately 34 GiB remained available after cleanup.
+
+## Review follow-up — policy diagnostics (2026-11-02)
+
+Removed the three policy diagnostic call sites that destructured a generic application
+error with `unreachable!()` and rewrote `errors[0]`. A shared field-issue constructor now
+accepts the final code and limiting scope directly; unavailable prerequisites retain their
+original unavailable-reference marker. Existing invalid/unavailable helpers reuse that
+constructor. HTTP fields, codes, scopes and redaction remain unchanged.
+
+This is a behavior-preserving refactor, so repository TDD uses existing behavioral tests
+before and after the change rather than an artificial failing test of private structure:
+
+- `cargo test --locked -p octacity-server --test factory_project_policy_http -- --ignored`:
+  14 passed before the refactor and 14 passed after it against disposable PostgreSQL.
+  These cover unmapped legacy prerequisites, unavailable exact references, installation
+  qualification and revoked Runtime authority through real HTTP.
+- `cargo test --locked -p octacity-server-application --lib --all-features factory_configuration`:
+  52 passed after the refactor.
+- `cargo clippy --locked -p octacity-server-application --lib --all-features -- -D warnings`:
+  passed.
+- Formatting, diff checks, architecture validation and strict OpenSpec validation passed.
+
+Rust commands retained debug/incremental storage limits from 2.2. The disposable test
+PostgreSQL container and its own volume were removed; personal stand data was untouched.
+No commits were made. Available disk space remained approximately 34 GiB.

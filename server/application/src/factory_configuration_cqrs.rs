@@ -317,6 +317,19 @@ impl FactoryValidationIssue {
   }
 }
 impl FactoryValidationDiagnostics {
+  /// Constructs a complete field issue without depending on an existing error's layout.
+  pub(crate) fn single_issue(field: impl Into<String>, code: &'static str, ceiling: Option<&'static str>) -> Self {
+    Self {
+      errors: vec![FactoryValidationIssue {
+        field: field.into(),
+        code,
+        ceiling,
+        ..FactoryValidationIssue::default()
+      }],
+      ..Self::default()
+    }
+  }
+
   pub(crate) fn constraint_ceiling_error(error: &octacity_server_factory::FactoryError) -> Option<ApplicationError> {
     use octacity_server_factory::{FactoryError, FlowBudgetCeiling};
     let issue = match error {
@@ -455,19 +468,7 @@ impl FactoryValidationDiagnostics {
     }
   }
   pub(crate) fn invalid(field: impl Into<String>) -> ApplicationError {
-    ApplicationError::FactoryValidation(Box::new(Self {
-      errors: vec![FactoryValidationIssue {
-        resource: None,
-        requested: None,
-        maximum: None,
-        ceiling: None,
-        field: field.into(),
-        code: "invalid_contract",
-        definition: None,
-        node: None,
-      }],
-      ..Self::default()
-    }))
+    ApplicationError::FactoryValidation(Box::new(Self::single_issue(field, "invalid_contract", None)))
   }
   pub(crate) fn invalid_binding(
     definition: octacity_server_factory::FlowDefinitionRef,
@@ -494,20 +495,14 @@ impl FactoryValidationDiagnostics {
     ApplicationError::FactoryValidation(report)
   }
   pub(crate) fn unavailable(field: impl Into<String>) -> ApplicationError {
+    Self::unavailable_with_code(field, "unavailable_reference")
+  }
+  /// Retains an unavailable-reference marker alongside its specific safe prerequisite code.
+  pub(crate) fn unavailable_with_code(field: impl Into<String>, code: &'static str) -> ApplicationError {
     let field = field.into();
     ApplicationError::FactoryValidation(Box::new(Self {
-      errors: vec![FactoryValidationIssue {
-        resource: None,
-        requested: None,
-        maximum: None,
-        ceiling: None,
-        field: field.clone(),
-        code: "unavailable_reference",
-        definition: None,
-        node: None,
-      }],
-      unavailable_references: vec![field],
-      ..Self::default()
+      unavailable_references: vec![field.clone()],
+      ..Self::single_issue(field, code, None)
     }))
   }
   pub(crate) fn from_factory_error(error: octacity_server_factory::FactoryError) -> ApplicationError {
@@ -560,6 +555,7 @@ pub struct FactoryConfigurationCommandOutcome {
 /// Typed Factory Configuration command and query handlers backed by one narrow port.
 pub struct FactoryConfigurationHandlers<S> {
   store: Arc<S>,
+  project_policies: Option<Arc<dyn octacity_server_store::FactoryProjectPolicyStore>>,
   repositories: Option<Arc<dyn octacity_server_store::ConfigurationStore>>,
   policy: Arc<dyn crate::ManagementAuthorizationPolicy>,
   source_actions: Option<Arc<dyn crate::FactoryStageSourceAuthorizer>>,
@@ -572,11 +568,19 @@ impl<S> FactoryConfigurationHandlers<S> {
   pub fn with_policy(store: Arc<S>, policy: Arc<dyn crate::ManagementAuthorizationPolicy>) -> Self {
     Self {
       store,
+      project_policies: None,
       repositories: None,
       policy,
       source_actions: None,
       issue_status_actions: None,
     }
+  }
+
+  /// Resolves exact Project policy pins through their existing durable owner.
+  #[must_use]
+  pub fn with_project_policies(mut self, owner: Arc<dyn octacity_server_store::FactoryProjectPolicyStore>) -> Self {
+    self.project_policies = Some(owner);
+    self
   }
 
   /// Revalidates exact code declarations through the existing Project Repository owner.
@@ -646,7 +650,21 @@ where
     project_id: ProjectId,
     definition_digest: FactoryDigest,
     draft: FactoryConfigurationDraft,
-  ) -> Result<FactoryConfiguration, ApplicationError> {
+  ) -> Result<FactoryConfigurationValidation, ApplicationError> {
+    for (field, owner) in [
+      (
+        "/admission_policy",
+        draft.admission_policy.project_policy().map(|r| r.project_id),
+      ),
+      (
+        "/permission_ceiling",
+        draft.permission_ceiling.project_policy().map(|r| r.project_id),
+      ),
+    ] {
+      if owner.is_some_and(|owner| owner != project_id) {
+        return Err(FactoryValidationDiagnostics::unavailable(field));
+      }
+    }
     let choices = crate::factory_configuration_choices::visible_factory_choices(
       self.store.as_ref(),
       self.policy.as_ref(),
@@ -679,8 +697,16 @@ where
       )
       .await?;
     }
-    FactoryConfiguration::publish(id, version, project_id, definition_digest, draft, &choices)
-      .map_err(FactoryValidationDiagnostics::from_factory_error)
+    let configuration = FactoryConfiguration::publish(id, version, project_id, definition_digest, draft, &choices)
+      .map_err(FactoryValidationDiagnostics::from_factory_error)?;
+    crate::factory_configuration_policies::resolve(
+      self.project_policies.as_deref(),
+      self.policy.as_ref(),
+      context,
+      configuration,
+      &choices,
+    )
+    .await
   }
 }
 
@@ -809,7 +835,23 @@ where
     let next_cursor = has_more
       .then(|| items.last().map(|item| item.identity.clone()))
       .flatten();
+    let project_policy_defaults = match &self.project_policies {
+      Some(owner)
+        if crate::factory_configuration_choices::require_visible_reference(
+          self.policy.as_ref(),
+          _context,
+          ManagementResourceKind::Project,
+          query.project_id(),
+        )
+        .await
+        .is_ok() =>
+      {
+        owner.factory_project_policy_defaults(query.project_id()).await?
+      }
+      _ => None,
+    };
     Ok(FactoryConfigurationChoicePageProjection {
+      project_policy_defaults,
       total,
       items,
       next_cursor,
@@ -858,7 +900,8 @@ where
         command.definition_digest,
         command.draft,
       )
-      .await?;
+      .await?
+      .configuration;
     let outcome = self
       .store
       .create_factory_configuration(audited_mutation(
@@ -929,7 +972,8 @@ where
         command.definition_digest,
         command.draft,
       )
-      .await?;
+      .await?
+      .configuration;
     let outcome = self
       .store
       .replace_factory_configuration(audited_mutation(
@@ -960,7 +1004,7 @@ where
     _grant: &crate::ManagementAuthorizationGrant,
     query: ValidateFactoryConfigurationQuery,
   ) -> Result<FactoryConfigurationValidation, Self::Error> {
-    let configuration = self
+    self
       .resolve(
         context,
         query.id,
@@ -969,12 +1013,7 @@ where
         query.definition_digest,
         query.draft,
       )
-      .await?;
-    let diagnostics = FactoryValidationDiagnostics::for_configuration(&configuration);
-    Ok(FactoryConfigurationValidation {
-      configuration,
-      diagnostics,
-    })
+      .await
   }
 }
 

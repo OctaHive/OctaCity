@@ -461,8 +461,8 @@ fn publish(
     FactoryDigest::from_bytes([1; 32]),
     FactoryConfigurationDraft {
       flow: Some(flow),
-      admission_policy: key("admission"),
-      permission_ceiling: key("permissions"),
+      admission_policy: key("admission").into(),
+      permission_ceiling: key("permissions").into(),
       wip_limits: FactoryWipLimits::new(1, 1).unwrap(),
       hard_budget: budget(),
       enabled: true,

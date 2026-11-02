@@ -147,6 +147,11 @@ pub(crate) async fn context(
     _ => return Err(conflict(EntityKind::FactoryRun)),
   };
   Ok(FactoryAdmissionContext {
+    project_policies: octacity_server_store::resolve_factory_configuration_policies(
+      &crate::PostgresStore::new(pool.clone()),
+      &configuration.configuration,
+    )
+    .await?,
     configuration,
     repository,
   })

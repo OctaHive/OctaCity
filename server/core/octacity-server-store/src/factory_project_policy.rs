@@ -151,6 +151,15 @@ pub struct FactoryProjectPolicyOutcome {
   pub published_at: Timestamp,
 }
 
+/// Historical replay probe before mutable installed-authority qualification; reserves no key.
+#[derive(Clone, Debug)]
+pub struct ReplayFactoryProjectPolicy {
+  /// Exact original immutable contents and precondition.
+  pub intent: FactoryProjectPolicyIntent,
+  /// Original caller/security-scoped identity.
+  pub idempotency_key: IdempotencyKey,
+}
+
 /// Exact Project defaults for new drafts; existing draft and Configuration pins are unchanged.
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
 #[serde(deny_unknown_fields)]
@@ -242,6 +251,17 @@ pub enum FactoryProjectPolicyPublicationError {
 /// the existing accepted management context; adapters retain its actor and scoped identity.
 #[async_trait::async_trait]
 pub trait FactoryProjectPolicyStore: Send + Sync {
+  /// Recovers an authorized original receipt without resolving current installation or heads.
+  async fn replay_factory_project_policy(
+    &self,
+    request: ManagementMutation<ReplayFactoryProjectPolicy>,
+  ) -> Result<Option<FactoryProjectPolicyOutcome>, StoreError>;
+  /// Reviews bounded contents and the current head without reserving a key or publishing.
+  /// Publication repeats this check under the Project transaction lock.
+  async fn validate_factory_project_policy(
+    &self,
+    intent: &FactoryProjectPolicyIntent,
+  ) -> Result<(), FactoryProjectPolicyPublicationError>;
   /// Reads a retained exact compatibility binding; absence is an actionable unmapped reference.
   async fn factory_legacy_policy_mapping(
     &self,

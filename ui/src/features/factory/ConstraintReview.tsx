@@ -35,11 +35,13 @@ export const constraintSourceLabels = {
   configuration_wip: 'factory.limitSource.configurationWip',
   project_policy: 'factory.limitSource.project',
   installed_runtime_policy: 'factory.limitSource.runtime',
+  installation: 'factory.limitSource.installation',
   agent_local: 'factory.limitSource.agent',
   backend_placement: 'factory.limitSource.backend',
 } satisfies Record<
   | S['FactoryBudgetConstraintSource']['source']
   | S['FactoryConcurrencyConstraint']['source']
+  | NonNullable<S['FactoryValidationDiagnostics']['errors'][number]['ceiling']>
   | NonNullable<NodePermissions['profiles']>[number]['sources'][number]
   | NonNullable<
       S['FactoryValidationDiagnostics']['effective_permissions'][number]['unresolved_sources']

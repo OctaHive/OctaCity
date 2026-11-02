@@ -526,6 +526,7 @@ impl FactoryAdmissionStore for InMemoryFactoryConfigurationStore {
       _ => return Err(conflict()),
     };
     Ok(FactoryAdmissionContext {
+      project_policies: Err(crate::FactoryPolicyPrerequisite::LaunchUnmapped),
       configuration,
       repository,
     })

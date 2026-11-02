@@ -59,6 +59,8 @@ mod build_discovery;
 mod definition_discovery;
 #[path = "v1_handlers/factory.rs"]
 mod factory;
+#[path = "v1_handlers/factory_policies.rs"]
+mod factory_policies;
 #[path = "v1_handlers/factory_presets.rs"]
 mod factory_presets;
 #[path = "v1_handlers/factory_roles.rs"]
@@ -1684,6 +1686,7 @@ fn management_contract_requests() -> Vec<Request<Body>> {
   ];
   requests.extend(factory_roles::management_requests());
   requests.extend(factory_runtimes::management_requests());
+  requests.extend(factory_policies::management_requests());
   requests.extend(factory_presets::management_requests());
   requests
 }
@@ -1905,6 +1908,13 @@ async fn every_management_operation_is_allowed_before_application_dispatch() {
       "get_factory_runtime_settings",
       "validate_factory_runtime_settings",
       "publish_factory_runtime_settings",
+      "publish_factory_project_policy",
+      "get_factory_project_policy",
+      "validate_factory_project_policy",
+      "list_factory_project_policies",
+      "get_factory_project_policy_defaults",
+      "select_factory_project_policy_defaults",
+      "resolve_factory_legacy_policy",
       "list_factory_presets",
       "resolve_factory_preset",
       "get_factory_readiness",

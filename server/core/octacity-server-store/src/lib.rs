@@ -950,7 +950,9 @@ mod project_skill_import_testing;
 #[cfg(any(test, feature = "test-support"))]
 mod factory_role_package_testing;
 
+mod factory_configuration_policy;
 mod factory_project_policy;
+pub use factory_configuration_policy::*;
 mod factory_project_provision;
 pub use factory_project_provision::*;
 mod factory_runtime_settings;

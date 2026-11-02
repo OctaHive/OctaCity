@@ -22,10 +22,10 @@ pub(super) async fn assert_input_publication(
   );
   let draft = FactoryConfigurationDraft {
     flow: Some(configuration.flow().clone()),
-    admission_policy: FactoryKey::new("admission").unwrap(),
+    admission_policy: FactoryKey::new("admission").unwrap().into(),
     wip_limits: configuration.wip_limits(),
     hard_budget: configuration.hard_budget(),
-    permission_ceiling: FactoryKey::new("permissions").unwrap(),
+    permission_ceiling: FactoryKey::new("permissions").unwrap().into(),
     enabled: true,
   };
   store

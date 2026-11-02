@@ -185,6 +185,7 @@ pub(super) fn management_application(
   });
   let factory =
     octacity_server_application::FactoryConfigurationHandlers::with_policy(store.clone(), management_policy.clone())
+      .with_project_policies(store.clone())
       .with_repositories(store.clone())
       .with_issue_status_actions(workflow_queries.clone());
   let factory = Arc::new(match &source_queries {
@@ -299,6 +300,14 @@ pub(super) fn management_application(
         authorized_commands(&management_policy, skills.clone()),
         authorized_queries(&management_policy, skills),
       );
+  let policy_handlers = Arc::new(octacity_server_application::FactoryProjectPolicyHandlers::new(
+    store.clone(),
+    management_policy.clone(),
+  ));
+  let policy_management = octacity_server_api_rest::v1::FactoryPolicyManagementApplication::new(
+    authorized_commands(&management_policy, policy_handlers.clone()),
+    authorized_queries(&management_policy, policy_handlers),
+  );
   let issues = Arc::new(octacity_server_application::IssueHandlers::new(
     store.clone(),
     management_policy.clone(),
@@ -327,6 +336,7 @@ pub(super) fn management_application(
     readiness_maximum_age,
   )
   .map_err(|_| ServerRuntimeError::InvalidAgentPolicy)?
+  .with_project_policies(store.clone())
   .with_repositories(configuration_queries.clone())
   .with_artifacts(retained_artifacts.clone())
   .with_placement(octacity_server_application::FactoryReadinessPlacement::new(
@@ -464,6 +474,7 @@ pub(super) fn management_application(
     authorized_queries(&management_policy, presets),
   ))
   .with_factory_roles(role_management)
+  .with_factory_policies(policy_management)
   .with_factory_profile_selection(factory_control)
   .with_factory_actions(
     octacity_server_api_rest::v1::FactoryActionManagementApplication::new(factory_actions.clone())

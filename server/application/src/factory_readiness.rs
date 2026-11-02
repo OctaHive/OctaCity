@@ -105,6 +105,7 @@ pub struct FactoryReadinessReport {
 /// Reuses existing immutable configuration and authorized Repository metadata.
 pub struct FactoryReadinessHandlers<S> {
   store: Arc<S>,
+  project_policies: Option<Arc<dyn octacity_server_store::FactoryProjectPolicyStore>>,
   policy: Arc<dyn ManagementAuthorizationPolicy>,
   clock: Arc<dyn FactoryExecutionClock>,
   maximum_age: Duration,
@@ -127,6 +128,7 @@ impl<S> FactoryReadinessHandlers<S> {
     }
     Ok(Self {
       store,
+      project_policies: None,
       policy,
       clock,
       maximum_age,
@@ -136,6 +138,12 @@ impl<S> FactoryReadinessHandlers<S> {
       sources: None,
       source_actions: None,
     })
+  }
+  /// Observes exact Project policy contents through the same owner as Configuration publication.
+  #[must_use]
+  pub fn with_project_policies(mut self, owner: Arc<dyn octacity_server_store::FactoryProjectPolicyStore>) -> Self {
+    self.project_policies = Some(owner);
+    self
   }
   /// Reuses the existing authorized Source input and current choice queries.
   pub fn with_sources<Q>(mut self, queries: Arc<Q>) -> Self
@@ -247,6 +255,21 @@ impl<S: FactoryConfigurationStore + FactoryRuntimeSettingsStore> ManagementQuery
       project,
     )
     .await;
+    if let Some(owner) = &self.project_policies {
+      let resolved = octacity_server_store::resolve_factory_configuration_policies(owner.as_ref(), &target).await?;
+      let (state, reason) = match resolved {
+        Ok(policies)
+          if installation.as_ref().is_ok_and(|choices| {
+            crate::factory_project_policies::access_fits_choices(&policies.access_profile, choices)
+          }) =>
+        {
+          (Ready, "retained")
+        }
+        Ok(_) => (Blocked, "permissions_unavailable"),
+        Err(prerequisite) => (Blocked, prerequisite.reason()),
+      };
+      checks.push(check("project_policies", state, reason, true, now, end));
+    }
     let installed = installation.as_ref().is_ok_and(|choices| {
       let entries = choices.entries();
       let selected = |kind, reference| {
@@ -255,8 +278,15 @@ impl<S: FactoryConfigurationStore + FactoryRuntimeSettingsStore> ManagementQuery
           .iter()
           .any(|entry| entry.kind == kind && &entry.reference == reference)
       };
-      selected(FactoryChoiceKind::AdmissionPolicy, target.admission_policy())
-        && selected(FactoryChoiceKind::PermissionCeiling, target.permission_ceiling())
+      (self.project_policies.is_some()
+        || (target
+          .admission_policy()
+          .legacy()
+          .is_some_and(|r| selected(FactoryChoiceKind::AdmissionPolicy, r))
+          && target
+            .permission_ceiling()
+            .legacy()
+            .is_some_and(|r| selected(FactoryChoiceKind::PermissionCeiling, r))))
         && crate::factory_configuration_choices::validate_flow_choices(target.flow(), choices, "/flow").is_ok()
     });
     checks.push(check(
@@ -499,6 +529,7 @@ fn remediation(aspect: &str) -> &'static str {
     "configuration" => "review_configuration",
     "repository" => "review_repository",
     "installation" => "restore_runtime",
+    "project_policies" => "review_project_policies",
     "agent" => "enroll_compatible_agent",
     "context" => "retain_context",
     "model_authentication" => "review_model_credentials",

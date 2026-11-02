@@ -88,10 +88,10 @@ pub(super) fn configuration_with_wip(
     octacity_server_factory::testing::with_contract_flow(
       FactoryConfigurationDraft {
         flow,
-        admission_policy: key("admission"),
+        admission_policy: key("admission").into(),
         wip_limits,
         hard_budget: budget(),
-        permission_ceiling: key("permissions"),
+        permission_ceiling: key("permissions").into(),
         enabled: true,
       },
       vec![
