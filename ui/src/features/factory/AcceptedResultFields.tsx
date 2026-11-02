@@ -1,4 +1,6 @@
-import { useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
+import { QueryFailureNotice } from '../../shared/QueryStateNotice';
+import type { FlowAuthoringServices } from './FlowPrimitives';
 import type { components } from '../../../.generated/api/schema';
 import { FACTORY_AUTHORING_SCHEMAS } from '../../../.generated/api/factory-authoring';
 import { usePresentation } from '../../app/presentation/PresentationProvider';
@@ -85,16 +87,33 @@ function connections(
 /** Explicit public result-field bindings reuse the ordinary record selector, without copying a producer's input or Context. */
 export function AcceptedResultFields({
   node,
+  services,
+  onPendingChange,
   root,
   schemas,
   onChange,
 }: {
   node: Node;
+  services?: FlowAuthoringServices | undefined;
+  onPendingChange?: ((pending: boolean) => void) | undefined;
   root: Schema['FactoryFlowRootDraft'];
   schemas: readonly Schema['FactoryFlowDataSchema'][];
-  onChange: (node: Node) => void;
+  onChange: (node: Node, schemas?: Schema['FactoryFlowDataSchema'][]) => void;
 }) {
   const { t } = usePresentation();
+  const latestNodeRef = useRef(node);
+  latestNodeRef.current = node;
+  const [pending, setPending] = useState(false);
+  const [error, setError] = useState<Error | null>(null);
+  const [inputName, setInputName] = useState('');
+  const requestRef = useRef<AbortController | null>(null);
+  useEffect(
+    () => () => {
+      requestRef.current?.abort();
+      onPendingChange?.(false);
+    },
+    [onPendingChange],
+  );
   const [producerKey, setProducerKey] = useState('');
   const [outcomeKey, setOutcomeKey] = useState('');
   const [resultPath, setResultPath] = useState<string | null>(null);
@@ -120,7 +139,11 @@ export function AcceptedResultFields({
         (field) => selectedResult && compatibleFactoryShape(selectedResult.shape, field.shape),
       )
     : [];
-  const selectedInput = inputFields.find((field) => pointer(field.parts) === inputPath);
+  const adding = !!services && (!inputShape || inputShape.type === 'object') && inputPath === null;
+  const selectedInput =
+    adding && inputName && selectedResult
+      ? { parts: [inputName], shape: selectedResult.shape }
+      : inputFields.find((field) => pointer(field.parts) === inputPath);
   const sources = node.input_binding?.sources ?? {};
   const maximum =
     FACTORY_AUTHORING_SCHEMAS.FactoryFlowInputBinding.properties.sources.maxProperties;
@@ -132,8 +155,10 @@ export function AcceptedResultFields({
     selectedInput?.parts.length === 0 &&
     node.input_binding &&
     !(mapping.mapping === 'object' && Object.keys(mapping.fields).length === 0);
+  const nameOccupied =
+    adding && inputShape?.type === 'object' && Object.hasOwn(inputShape.fields, inputName);
   const nextMapping =
-    selectedInput && alias && !wholeInputOccupied
+    selectedInput && alias && !wholeInputOccupied && !nameOccupied
       ? insert(mapping, selectedInput.parts, alias)
       : null;
   const options = (items: Field[]) =>
@@ -141,8 +166,67 @@ export function AcceptedResultFields({
       value: pointer(field.parts),
       label: field.parts.join(' › ') || t('factory.entireTypedValue'),
     }));
+  const connect = async () => {
+    if (!producer || !outcome || !selectedResult || !nextMapping || !alias || pending) return;
+    const controller = new AbortController();
+    requestRef.current = controller;
+    setPending(true);
+    onPendingChange?.(true);
+    setError(null);
+    try {
+      const schema =
+        adding && services
+          ? await services.api.normalizeSchema(
+              {
+                project_id: services.projectId,
+                identity: `input.${crypto.randomUUID()}`,
+                version: '1',
+                shape: {
+                  type: 'object',
+                  fields: {
+                    ...(inputShape?.type === 'object' ? inputShape.fields : {}),
+                    [inputName]: { required: true, value: selectedResult.shape },
+                  },
+                },
+              },
+              controller.signal,
+            )
+          : null;
+      if (controller.signal.aborted) return;
+      onChange(
+        {
+          ...latestNodeRef.current,
+          input_schema: schema?.reference ?? node.input_schema,
+          input_binding: {
+            sources: {
+              ...sources,
+              [alias]: {
+                source: 'record',
+                node: producer.key,
+                outcome: outcome.key,
+                view: 'payload',
+                path: pointer(selectedResult.parts),
+              },
+            },
+            mapping: { value: nextMapping },
+          },
+        },
+        schema ? [schema] : [],
+      );
+      setResultPath(null);
+      setInputPath(null);
+    } catch (failure) {
+      if (!controller.signal.aborted)
+        setError(failure instanceof Error ? failure : new Error('Input validation failed'));
+    } finally {
+      if (!controller.signal.aborted) {
+        setPending(false);
+        onPendingChange?.(false);
+      }
+    }
+  };
   return (
-    <fieldset>
+    <fieldset disabled={pending}>
       <legend>{t('factory.acceptedResults')}</legend>
       <p>{t('factory.acceptedResultsHelp')}</p>
       <ul>
@@ -190,7 +274,7 @@ export function AcceptedResultFields({
         })}
       </ul>
 
-      {!inputShape ? <p>{t('factory.selectInputSchemaFirst')}</p> : null}
+      {!inputShape && !services ? <p>{t('factory.selectInputSchemaFirst')}</p> : null}
       <SelectMenu
         ariaLabel={t('factory.resultFromStep')}
         value={producerKey}
@@ -232,18 +316,44 @@ export function AcceptedResultFields({
         onValueChange={(value) => {
           setResultPath(value === 'unselected' ? null : value);
           setInputPath(null);
+          const field = resultFields.find((field) => pointer(field.parts) === value);
+          setInputName(field?.parts.at(-1) ?? producerKey);
         }}
       />
       <SelectMenu
         ariaLabel={t('factory.stepInputField')}
         value={inputPath ?? 'unselected'}
         options={[
-          { value: 'unselected', label: t('factory.chooseInput') },
+          {
+            value: 'unselected',
+            label: t(
+              services && (!inputShape || inputShape.type === 'object')
+                ? 'factory.newResultInput'
+                : 'factory.chooseInput',
+            ),
+          },
           ...options(inputFields),
         ]}
         onValueChange={(value) => setInputPath(value === 'unselected' ? null : value)}
       />
-      {selectedResult && inputShape && !inputFields.length ? (
+      {adding && selectedResult ? (
+        <label>
+          {t('factory.resultInputName')}
+          <input
+            value={inputName}
+            maxLength={128}
+            onChange={(event) => setInputName(event.target.value)}
+          />
+        </label>
+      ) : null}
+      {error ? (
+        <QueryFailureNotice
+          title={t('factory.acceptedResults')}
+          error={error}
+          onRetry={() => void connect()}
+        />
+      ) : null}
+      {selectedResult && inputShape && !inputFields.length && !adding ? (
         <p role="alert">{t('factory.noCompatibleInputField')}</p>
       ) : null}
       {Object.keys(sources).length >= maximum ? (
@@ -263,27 +373,7 @@ export function AcceptedResultFields({
           !alias ||
           Object.keys(sources).length >= maximum
         }
-        onClick={() => {
-          if (producer && outcome && selectedResult && nextMapping && alias)
-            onChange({
-              ...node,
-              input_binding: {
-                sources: {
-                  ...sources,
-                  [alias]: {
-                    source: 'record',
-                    node: producer.key,
-                    outcome: outcome.key,
-                    view: 'payload',
-                    path: pointer(selectedResult.parts),
-                  },
-                },
-                mapping: { value: nextMapping },
-              },
-            });
-          setResultPath(null);
-          setInputPath(null);
-        }}
+        onClick={() => void connect()}
       >
         {t('factory.useAcceptedField')}
       </button>

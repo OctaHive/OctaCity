@@ -154,3 +154,131 @@ it('disconnects the sole Work task without retaining an invalid empty Context bi
   await userEvent.click(screen.getByRole('checkbox', { name: 'Task from admitted Work' }));
   expect(observed.context_binding).toBeNull();
 });
+
+it('connects only selected result fields without asking for an input schema and keeps an independent target format', async () => {
+  const { factoryApi } = await import('./api');
+  const flow = configurationFixture().configuration.flow;
+  const root = structuredClone(flow.closure.definitions[0]!);
+  const result = {
+    reference: { identity: 'assessment', version: '1', digest: 'a'.repeat(64) },
+    shape: {
+      type: 'object' as const,
+      fields: {
+        summary: {
+          required: true,
+          value: { type: 'string' as const, min_bytes: 0, max_bytes: 200 },
+        },
+        fits: { required: true, value: { type: 'boolean' as const } },
+        private_notes: {
+          required: true,
+          value: { type: 'string' as const, min_bytes: 0, max_bytes: 200 },
+        },
+      },
+    },
+  };
+  const producer = {
+    ...root.nodes[0]!,
+    key: 'assess',
+    outcomes: [{ key: 'assessed', kind: 'success' as const, schema: result.reference }],
+  };
+  const target = {
+    ...root.nodes[0]!,
+    key: 'classify',
+    input_schema: null,
+    input_binding: null,
+    context_binding: null,
+  };
+  root.nodes = [producer, target];
+  let observed = target as (typeof root.nodes)[number];
+  let schemas = [result] as typeof flow.data_schemas;
+  const requests: unknown[] = [];
+  const normalizeSchema: typeof factoryApi.normalizeSchema = async (body) => {
+    requests.push(body);
+    return {
+      reference: {
+        identity: body.identity,
+        version: body.version,
+        digest: String(requests.length).repeat(64),
+      },
+      shape: body.shape,
+    };
+  };
+  function Harness() {
+    const [node, setNode] = useState(observed);
+    const [formats, setFormats] = useState(schemas);
+    return (
+      <FlowBindings
+        node={node}
+        root={root}
+        schemas={formats}
+        authoring={{ projectId: 'project', api: { ...factoryApi, normalizeSchema } }}
+        onChange={(next, added = []) => {
+          observed = next;
+          schemas = [...schemas, ...added];
+          setFormats(schemas);
+          setNode(next);
+        }}
+      />
+    );
+  }
+  render(<Harness />);
+  await userEvent.click(screen.getByRole('combobox', { name: 'Result from step' }));
+  await userEvent.click(screen.getByRole('option', { name: 'assess' }));
+  for (const field of ['summary', 'fits']) {
+    await userEvent.click(screen.getByRole('combobox', { name: 'Result field' }));
+    await userEvent.click(screen.getByRole('option', { name: field }));
+    expect(
+      screen.queryByText('Choose an input schema above before connecting result fields.'),
+    ).toBeNull();
+    const name = screen.getByRole('textbox', { name: 'Input name' });
+    await userEvent.clear(name);
+    await userEvent.type(name, field);
+    await userEvent.click(screen.getByRole('button', { name: 'Use selected field' }));
+  }
+  await userEvent.click(screen.getByRole('button', { name: 'Disconnect input: summary' }));
+  await userEvent.click(screen.getByRole('combobox', { name: 'Result field' }));
+  await userEvent.click(screen.getByRole('option', { name: 'fits' }));
+  await userEvent.clear(screen.getByRole('textbox', { name: 'Input name' }));
+  await userEvent.type(screen.getByRole('textbox', { name: 'Input name' }), 'summary');
+  expect(screen.getByRole('button', { name: 'Use selected field' })).toHaveProperty(
+    'disabled',
+    true,
+  );
+  await userEvent.click(screen.getByRole('combobox', { name: 'Result field' }));
+  await userEvent.click(screen.getByRole('option', { name: 'summary' }));
+  await userEvent.click(screen.getByRole('combobox', { name: 'Step input field' }));
+  await userEvent.click(screen.getByRole('option', { name: 'summary' }));
+  await userEvent.click(screen.getByRole('button', { name: 'Use selected field' }));
+  expect(schemas.at(-1)?.shape).toEqual({
+    type: 'object',
+    fields: {
+      summary: result.shape.fields.summary,
+      fits: result.shape.fields.fits,
+    },
+  });
+  expect(observed.input_binding?.mapping.value).toEqual({
+    mapping: 'object',
+    fields: {
+      summary: { mapping: 'pointer', path: '/accepted_0' },
+      fits: { mapping: 'pointer', path: '/accepted_1' },
+    },
+  });
+  expect(observed.input_binding?.sources).toEqual({
+    accepted_0: {
+      source: 'record',
+      node: 'assess',
+      outcome: 'assessed',
+      view: 'payload',
+      path: '/summary',
+    },
+    accepted_1: {
+      source: 'record',
+      node: 'assess',
+      outcome: 'assessed',
+      view: 'payload',
+      path: '/fits',
+    },
+  });
+  expect(producer.outcomes[0]?.schema).toEqual(result.reference);
+  expect(observed.context_binding).toBeNull();
+});

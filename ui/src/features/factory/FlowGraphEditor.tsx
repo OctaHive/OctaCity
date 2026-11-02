@@ -1,3 +1,4 @@
+import { StepResults, type ResultDraft } from './StepResults';
 import { FlowCodeSources, type CodeResourceServices } from './FlowCodeSources';
 import { StepTask } from './StepTask';
 import { StepCode } from './StepCode';
@@ -77,7 +78,10 @@ export function FlowGraphEditor({
   );
   const nodeKeys = useDraftRowKeys(value.root.nodes);
   const [stepDrafts, setStepDrafts] = useState<Record<string, PrimitiveDraft>>({});
-  const isEditing = nodeKeys.some((key) => !!stepDrafts[key]);
+  const [inputPending, setInputPending] = useState(false);
+  const [resultDrafts, setResultDrafts] = useState<Record<string, ResultDraft>>({});
+  const isEditing =
+    inputPending || nodeKeys.some((key) => !!stepDrafts[key] || !!resultDrafts[key]);
   useEffect(() => {
     onStepEditingChange?.(isEditing);
   }, [isEditing, onStepEditingChange]);
@@ -102,7 +106,7 @@ export function FlowGraphEditor({
     permissionPresets.find((choice) => choice.identity === permissionPreset)?.metadata
       ?.permission_declarations ?? admissionDeclarations;
   const node = value.root.nodes[selected];
-  const outcomeKeys = useDraftRowKeys(node?.outcomes ?? []);
+
   const latestValueRef = useRef(value);
   latestValueRef.current = value;
   const updateNode = (
@@ -337,80 +341,23 @@ export function FlowGraphEditor({
               {copiedExecution}
             </details>
           ) : null}
-          <fieldset>
-            <legend>{t('factory.expectedResult')}</legend>
-            <p>{t('factory.expectedResultHelp')}</p>
-            <button
-              type="button"
-              disabled={value.data_schemas.length === 0}
-              onClick={() => {
-                const schema = value.data_schemas[0];
-                if (schema)
-                  updateNode({
-                    outcomes: [
-                      ...node.outcomes,
-                      { key: '', kind: 'success', schema: schema.reference },
-                    ],
-                  });
-              }}
-            >
-              {t('factory.addOutcome')}
-            </button>
-            {node.outcomes.map((outcome, index) => (
-              <fieldset key={outcomeKeys[index]}>
-                <label>
-                  {t('factory.outcomeName')}
-                  <input
-                    value={outcome.key}
-                    onChange={(event) =>
-                      updateNode({
-                        outcomes: node.outcomes.map((item, position) =>
-                          position === index ? { ...item, key: event.target.value } : item,
-                        ),
-                      })
-                    }
-                  />
-                </label>
-                <SelectMenu
-                  ariaLabel={t('factory.outcomeKind')}
-                  value={outcome.kind}
-                  options={[
-                    { value: 'success', label: t('factory.success') },
-                    { value: 'failure', label: t('factory.failure') },
-                  ]}
-                  onValueChange={(kind) => {
-                    if (kind === 'success' || kind === 'failure')
-                      updateNode({
-                        outcomes: node.outcomes.map((item, position) =>
-                          position === index ? { ...item, kind } : item,
-                        ),
-                      });
-                  }}
-                />
-                <SelectMenu
-                  ariaLabel={t('factory.outcomeSchema')}
-                  value={String(
-                    value.data_schemas.findIndex(
-                      (schema) => schema.reference.digest === outcome.schema.digest,
-                    ),
-                  )}
-                  options={value.data_schemas.map((schema, position) => ({
-                    value: String(position),
-                    label: `${schema.reference.identity} · ${schema.reference.version}`,
-                  }))}
-                  onValueChange={(selected) => {
-                    const schema = value.data_schemas[Number(selected)];
-                    if (schema)
-                      updateNode({
-                        outcomes: node.outcomes.map((item, position) =>
-                          position === index ? { ...item, schema: schema.reference } : item,
-                        ),
-                      });
-                  }}
-                />
-              </fieldset>
-            ))}
-          </fieldset>
+          <StepResults
+            key={nodeKeys[selected]}
+            node={node}
+            schemas={value.data_schemas}
+            services={authoring}
+            draft={resultDrafts[nodeKeys[selected] ?? '']}
+            onDraftChange={(draft) => {
+              const key = nodeKeys[selected]!;
+              setResultDrafts((current) => {
+                const next = { ...current };
+                if (draft) next[key] = draft;
+                else delete next[key];
+                return next;
+              });
+            }}
+            onChange={updateNode}
+          />
           {authoring &&
           (node.kind === 'deterministic_gate' ||
             node.kind === 'human_gate' ||
@@ -433,6 +380,8 @@ export function FlowGraphEditor({
             onChange={updateNode}
           />
           <FlowBindings
+            authoring={authoring}
+            onPendingChange={setInputPending}
             sourceDraft={stepDrafts[nodeKeys[selected] ?? '']?.reporter}
             onSourceDraftChange={(reporter) => changeStepDraft(reporter ? { reporter } : undefined)}
             key={bindingRevision}

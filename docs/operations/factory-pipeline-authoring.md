@@ -55,8 +55,14 @@ remove steps. Drawing position and step names do not determine execution order.
 
 For each reasoning step:
 
-1. In **Expected result**, define a success outcome and a bounded result schema.
-   Then choose the Role and exact Profile in **Executor** and explicitly use the
+1. In **Expected result**, choose **Add result** and **Save result**.
+   A new result defaults to text (up to 4096 UTF-8 bytes); describe its content
+   in **Step task**. Use **Result structure and limits** only when you need
+   fields, alternatives or different bounds. Names/versions of the underlying
+   formats are generated automatically. A unique result key is also supplied;
+   edit it under technical details only when needed. Existing formats and advanced reuse
+   remain available under technical details. Then choose the Role and exact
+   Profile in **Executor** and explicitly use the
    profile. Compatibility and the execution binding come from Server. Inspect
    **View profile** for that selected version; browsing does not assign it.
 2. In **Step task**, write this invocation's assignment. Keep capabilities,
@@ -84,6 +90,15 @@ For example, the following assignments need no specialized agent or stage name:
 A schema validates structure and types, not semantic compliance with prose.
 Configure stronger checks or human review explicitly. Model-written claims of
 verification do not establish reproduction or duplicate evidence.
+
+In **Accepted results**, select the producing step, its result and the field
+to pass. **New input** creates a bounded input format from that selected field;
+you only name the input. Additional selected fields extend an object input
+without copying the producer's other fields or Context. Choose an existing
+compatible input field to reuse it. An occupied name cannot be overwritten.
+Result edits stay in the graph draft until saved or cancelled; incomplete edits
+and pending input validation block Flow publication. Publication still requires
+the existing authoritative validation and confirmation.
 
 ## Connect control and accepted data separately
 

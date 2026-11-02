@@ -49,6 +49,7 @@ export async function limits(page: Page, permissions: components['schemas']['Fac
   const settings = page.getByRole('group', { name: t('factory.flowSettings'), exact: true });
   await choose(page, page, t('factory.permissionPreset'), 'manual-ceiling · v1');
   await choose(page, settings, t('factory.entry'), 'inspect');
+  await settings.getByText(t('factory.advancedContracts'), { exact: true }).press('Enter');
   await choose(page, settings, t('factory.flowInputSchema'), 'manual.input · v1');
   await settings.getByText(t('factory.admissionLimitsDetails'), { exact: true }).press('Enter');
   await settings
@@ -69,9 +70,9 @@ export async function limits(page: Page, permissions: components['schemas']['Fac
     permissions,
   );
   for (const [name, schema] of [
-    ['finished', 'manual.classification'],
-    ['assessment-review', 'manual.summary'],
-    ['routing-review', 'manual.classification'],
+    ['finished', 'route › classified'],
+    ['assessment-review', 'eligibility-check › eligible'],
+    ['routing-review', 'route › classified'],
   ]) {
     await settings
       .getByRole('button', { name: t('factory.addTerminal'), exact: true })
@@ -84,7 +85,7 @@ export async function limits(page: Page, permissions: components['schemas']['Fac
       .getByRole('combobox', { name: t('factory.terminalSchema'), exact: true })
       .last()
       .press('Enter');
-    await page.getByRole('option', { name: `${schema} · v1`, exact: true }).press('Enter');
+    await page.getByRole('option', { name: new RegExp(schema!) }).press('Enter');
   }
   await page.getByRole('button', { name: t('factory.flowSettings'), exact: true }).press('Enter');
   for (const key of ['inspect', 'route', 'eligibility-check', 'route-check']) {

@@ -100,7 +100,7 @@ export function SchemaEditor({
   );
 }
 /** Recursive closed schema controls; depth and field counts are bounded before rendering. */
-function ShapeEditor({
+export function ShapeEditor({
   value,
   onChange,
   depth = 0,

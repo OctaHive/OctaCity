@@ -1,3 +1,4 @@
+import { translate, type MessageKey } from '../../src/app/presentation/messages';
 import { expect, test, type Page } from '@playwright/test';
 import type { components } from '../../.generated/api/schema';
 import { factoryRoleFixture } from '../fixtures/factoryRoles';
@@ -328,3 +329,103 @@ for (const language of ['en', 'ru'] as const)
       await page.evaluate(() => JSON.stringify(localStorage) + JSON.stringify(sessionStorage)),
     ).not.toContain('Private step assignment');
   });
+
+for (const language of ['en', 'ru'] as const) {
+  test(`authors and connects a step result in ${language} without technical schema setup`, async ({
+    page,
+  }, testInfo) => {
+    const { validations } = await openGraph(page, { language });
+    await page.setViewportSize({ width: 390, height: 844 });
+    const t = (key: MessageKey) => translate(language, key);
+    const advanced = page.getByText(t('factory.advancedContracts'), { exact: true }).first();
+    const graph = page.getByRole('region', { name: t('factory.stepGraph'), exact: true });
+    expect((await advanced.boundingBox())!.y).toBeGreaterThan((await graph.boundingBox())!.y);
+    const normalized: components['schemas']['ValidateFactoryFlowDataSchemaRequest'][] = [];
+    await page.route('**/api/v1/flow-data-schemas/validate', async (route) => {
+      const body = route
+        .request()
+        .postDataJSON() as components['schemas']['ValidateFactoryFlowDataSchemaRequest'];
+      normalized.push(body);
+      await route.fulfill({
+        json: {
+          shape: body.shape,
+          reference: {
+            identity: body.identity,
+            version: body.version,
+            digest: String(normalized.length).repeat(64),
+          },
+        },
+      });
+    });
+    const step = page.getByRole('group', { name: t('factory.node'), exact: true });
+    await expect(
+      page.getByRole('textbox', { name: t('factory.schemaName'), exact: true }),
+    ).toHaveCount(0);
+    await step.getByRole('button', { name: t('factory.addResult'), exact: true }).click();
+    await step.getByText(t('factory.resultDetails'), { exact: true }).last().click();
+    const name = step.getByRole('textbox', { name: t('factory.resultName'), exact: true });
+    await name.fill('assessment');
+    expect((await name.boundingBox())!.width).toBeGreaterThanOrEqual(200);
+    await expect(
+      page.getByRole('button', { name: t('factory.validateDraft'), exact: true }),
+    ).toBeDisabled();
+    await step.getByText(t('factory.resultStructure'), { exact: true }).click();
+    await step.getByRole('combobox', { name: t('factory.schemaType'), exact: true }).click();
+    await page.getByRole('option', { name: t('factory.object'), exact: true }).click();
+    for (const field of ['summary', 'private_notes']) {
+      await step.getByRole('button', { name: t('factory.addField'), exact: true }).click();
+      await step
+        .getByRole('textbox', { name: t('factory.fieldName'), exact: true })
+        .last()
+        .fill(field);
+    }
+    await step.getByRole('button', { name: t('factory.saveResult'), exact: true }).click();
+    await expect(step.getByRole('group', { name: 'assessment', exact: true })).toContainText(
+      'summary',
+    );
+    await step
+      .getByRole('group', { name: t('factory.expectedResult'), exact: true })
+      .screenshot({ path: testInfo.outputPath('step-results.png') });
+    await page
+      .getByRole('button', {
+        name: translate(language, 'factory.editGraphStep', { name: 'second' }),
+        exact: true,
+      })
+      .press('Enter');
+    const inputs = step.getByRole('group', { name: t('factory.acceptedResults'), exact: true });
+    await inputs.getByRole('combobox', { name: t('factory.resultFromStep'), exact: true }).click();
+    await page.getByRole('option', { name: 'first', exact: true }).click();
+    await inputs
+      .getByRole('combobox', { name: t('factory.transitionOutcome'), exact: true })
+      .click();
+    await page.getByRole('option', { name: 'assessment', exact: true }).click();
+    await inputs.getByRole('combobox', { name: t('factory.resultField'), exact: true }).click();
+    await page.getByRole('option', { name: 'summary', exact: true }).click();
+    await expect(
+      inputs.getByRole('textbox', { name: t('factory.resultInputName'), exact: true }),
+    ).toHaveValue('summary');
+    await inputs.getByRole('button', { name: t('factory.useAcceptedField'), exact: true }).click();
+    await expect(inputs.getByRole('listitem')).toContainText('summary ← first');
+    await inputs.screenshot({ path: testInfo.outputPath('result-connection.png') });
+    await page.getByRole('button', { name: t('factory.validateDraft'), exact: true }).click();
+    await expect.poll(() => validations.length).toBe(1);
+    const node = validations[0]!.definition.root.nodes.find((item) => item.key === 'second')!;
+    expect(node.input_binding?.sources).toEqual({
+      accepted_0: {
+        source: 'record',
+        node: 'first',
+        outcome: 'assessment',
+        view: 'payload',
+        path: '/summary',
+      },
+    });
+    expect(normalized[1]!.shape).toEqual({
+      type: 'object',
+      fields: { summary: { required: true, value: { type: 'boolean' } } },
+    });
+    expect(node.context_binding ?? null).toBeNull();
+    expect(
+      await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth),
+    ).toBe(true);
+  });
+}

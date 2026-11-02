@@ -33,18 +33,16 @@ export async function gate(
   const node = selectedNode(page);
   await node.getByRole('textbox', { name: t('factory.nodeName'), exact: true }).fill(key);
   await choose(page, node, t('factory.nodeKind'), t('factory.kind.deterministic_gate'));
+  await node.getByText(t('factory.advancedMappings'), { exact: true }).press('Enter');
   await choose(page, node, t('factory.inputSchema'), `${inputSchema} · v1`);
   for (const outcome of [accepted, 'review']) {
-    await node.getByRole('button', { name: t('factory.addOutcome'), exact: true }).press('Enter');
-    await node
-      .getByRole('textbox', { name: t('factory.outcomeName'), exact: true })
-      .last()
-      .fill(outcome);
-    const selector = node
-      .getByRole('combobox', { name: t('factory.outcomeSchema'), exact: true })
-      .last();
-    await selector.press('Enter');
-    await page.getByRole('option', { name: `${outputSchema} · v1`, exact: true }).press('Enter');
+    await node.getByRole('button', { name: t('factory.addResult'), exact: true }).press('Enter');
+    await node.getByText(t('factory.resultDetails'), { exact: true }).last().press('Enter');
+    await node.getByRole('textbox', { name: t('factory.resultName'), exact: true }).fill(outcome);
+    await node.getByRole('button', { name: t('factory.saveResult'), exact: true }).press('Enter');
+    const saved = node.getByRole('group', { name: outcome, exact: true });
+    await saved.getByText(t('factory.resultDetails'), { exact: true }).press('Enter');
+    await choose(page, saved, t('factory.outcomeSchema'), `${outputSchema} · v1`);
   }
   const condition = node.getByRole('group', { name: t('factory.conditionCheck'), exact: true });
   await choose(page, condition, t('factory.conditionFallback'), 'review');

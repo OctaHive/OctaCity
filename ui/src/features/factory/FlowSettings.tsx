@@ -37,30 +37,33 @@ export function FlowSettings({
           options={value.root.nodes.map((node) => ({ value: node.key, label: node.key }))}
           onValueChange={(entry) => onChange({ ...value, root: { ...value.root, entry } })}
         />
-        <SelectMenu
-          ariaLabel={t('factory.flowInputSchema')}
-          value={String(
-            value.data_schemas.findIndex(
-              (schema) => schema.reference.digest === value.root.input_schema?.digest,
-            ),
-          )}
-          options={[
-            { value: '-1', label: t('factory.none') },
-            ...value.data_schemas.map((schema, index) => ({
-              value: String(index),
-              label: `${schema.reference.identity} · ${schema.reference.version}`,
-            })),
-          ]}
-          onValueChange={(index) =>
-            onChange({
-              ...value,
-              root: {
-                ...value.root,
-                input_schema: value.data_schemas[Number(index)]?.reference ?? null,
-              },
-            })
-          }
-        />
+        <details>
+          <summary>{t('factory.advancedContracts')}</summary>
+          <SelectMenu
+            ariaLabel={t('factory.flowInputSchema')}
+            value={String(
+              value.data_schemas.findIndex(
+                (schema) => schema.reference.digest === value.root.input_schema?.digest,
+              ),
+            )}
+            options={[
+              { value: '-1', label: t('factory.none') },
+              ...value.data_schemas.map((schema, index) => ({
+                value: String(index),
+                label: `${schema.reference.identity} · ${schema.reference.version}`,
+              })),
+            ]}
+            onValueChange={(index) =>
+              onChange({
+                ...value,
+                root: {
+                  ...value.root,
+                  input_schema: value.data_schemas[Number(index)]?.reference ?? null,
+                },
+              })
+            }
+          />
+        </details>
         <label>
           {t('factory.activeNodes')}
           <input
@@ -230,7 +233,14 @@ export function FlowSettings({
             )}
             options={value.data_schemas.map((schema, index) => ({
               value: String(index),
-              label: `${schema.reference.identity} · ${schema.reference.version}`,
+              label:
+                value.root.nodes
+                  .flatMap((node) =>
+                    node.outcomes
+                      .filter((outcome) => outcome.schema.digest === schema.reference.digest)
+                      .map((outcome) => `${node.key} › ${outcome.key}`),
+                  )
+                  .join(', ') || `${schema.reference.identity} · ${schema.reference.version}`,
             }))}
             onValueChange={(selected) => {
               const schema = value.data_schemas[Number(selected)];

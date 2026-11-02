@@ -14,8 +14,6 @@ export const ruMessages = {
   'factory.boundResource.output': 'Результат (байты)',
   'factory.boundResource.active': 'Активные шаги',
   'factory.expectedResult': 'Ожидаемый результат',
-  'factory.expectedResultHelp':
-    'Выберите форматы результата и исходы. Маршруты и передачу полей настройте отдельно.',
   'factory.compare.exact_value': 'Совпадает точное значение',
   'factory.compare.repository_path_within': 'Путь внутри выбранного каталога',
   'factory.compare.repository_path_within_any': 'Путь внутри любого выбранного каталога',
@@ -1729,7 +1727,7 @@ export const ruMessages = {
     'Перетащите карточку или используйте Alt + стрелки. Изменяется только положение на графе.',
   'factory.acceptedResults': 'Принятые результаты',
   'factory.acceptedResultsHelp':
-    'Выберите поля результата, которые получит этот шаг. Переход сам по себе не передаёт контекст агента, исследование, историю инструментов или учётные данные.',
+    'Передаются только выбранные поля. Переходы не передают контекст агента, историю инструментов или доступы.',
   'factory.entireTypedValue': 'Всё типизированное значение',
   'factory.selectInputSchemaFirst':
     'Сначала выберите схему входных данных выше, затем подключите поля результата.',
@@ -1763,8 +1761,7 @@ export const ruMessages = {
   'factory.chooseExecutorRuntime': 'Выберите установленную среду',
   'factory.noInstalledExecutor':
     'Нет совместимого установленного исполнителя. Настройте Runtime проекта или выберите другой профиль.',
-  'factory.executorNeedsOutcome':
-    'Прежде чем выбрать профиль, добавьте ниже успешный исход и схему его результата.',
+  'factory.executorNeedsOutcome': 'Добавьте успешный результат шага перед выбором профиля.',
   'factory.useExecutorProfile': 'Использовать профиль',
   'factory.resolvingExecutor': 'Проверяем установленного исполнителя…',
   'factory.executorProfileIncompatible':
@@ -1923,6 +1920,21 @@ export const ruMessages = {
   'factory.removeProjection': 'Удалить проекцию',
   'factory.successor': 'Получатель',
 
+  'factory.advancedContracts': 'Дополнительно: контракты данных',
+  'factory.stepResultHelp':
+    'Содержание результата опишите в задании шага. По умолчанию сохраняется текст; поля нужны для условий и передачи данных.',
+  'factory.addResult': 'Добавить результат',
+  'factory.resultName': 'Ключ результата',
+  'factory.resultKeyHelp':
+    'Допустимы a–z, 0–9, точки, подчёркивания и дефисы. Ключ должен быть уникален в шаге.',
+  'factory.editResult': 'Изменить результат',
+  'factory.saveResult': 'Сохранить результат',
+  'factory.cancelResult': 'Отменить изменение результата',
+  'factory.resultDetails': 'Технические подробности и переиспользование',
+  'factory.resultStructure': 'Структура и ограничения результата',
+  'factory.newResultInput': 'Новый вход',
+  'factory.resultInputName': 'Название входа',
+  'factory.textResult': 'Текстовый результат',
   'factory.schemas': 'Схемы данных',
   'factory.schemaName': 'Имя схемы',
   'factory.schemaVersion': 'Версия схемы',
@@ -1988,8 +2000,6 @@ export const ruMessages = {
   'factory.outputLimit': 'Лимит результата',
   'factory.addNode': 'Добавить шаг',
   'factory.outcomes': 'Типизированные исходы',
-  'factory.addOutcome': 'Добавить исход',
-  'factory.outcomeName': 'Имя исхода',
   'factory.outcomeKind': 'Тип исхода',
   'factory.outcomeSchema': 'Схема исхода',
   'factory.success': 'Успех',

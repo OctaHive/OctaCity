@@ -188,6 +188,7 @@ test('authors the first document-guided pipeline through the packaged Console', 
   );
   await handoff(page, 'inspect', undefined, ['eligible', 'summary', 'duplicate_search']);
   await choose(page, page, t('factory.graphNode'), 'route');
+  await selectedNode(page).getByText(t('factory.advancedMappings'), { exact: true }).press('Enter');
   await choose(page, selectedNode(page), t('factory.inputSchema'), 'manual.summary · v1');
   await handoff(page, 'eligibility-check', 'eligible');
   await gate(
@@ -206,6 +207,7 @@ test('authors the first document-guided pipeline through the packaged Console', 
   ).json();
   await limits(page, capability.definition.permissions);
   await choose(page, page, t('factory.graphNode'), 'inspect');
+  await selectedNode(page).getByText(t('factory.advancedMappings'), { exact: true }).press('Enter');
   await choose(page, selectedNode(page), t('factory.inputSchema'), 'manual.input · v1');
   await selectedNode(page).getByText(t('factory.advancedMappings'), { exact: true }).press('Enter');
   await choose(page, selectedNode(page), t('factory.mappingKind'), t('factory.constant'));

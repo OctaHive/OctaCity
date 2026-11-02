@@ -1,3 +1,5 @@
+import { QueryClientProvider } from '@tanstack/react-query';
+import { createConsoleQueryClient } from '../../app/query';
 // @vitest-environment jsdom
 import { cleanup, render, screen, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
@@ -7,6 +9,7 @@ import type { components } from '../../../.generated/api/schema';
 import { configurationFixture } from '../../../tests/fixtures/factory';
 import { ConfigurationEditor } from './ConfigurationEditor';
 import { FlowGraphEditor } from './FlowGraphEditor';
+import { factoryApi } from './api';
 import { emptyFlowDraft } from './emptyFlowDraft';
 
 afterEach(cleanup);
@@ -261,6 +264,10 @@ it('adds typed outcomes and control transitions without implicitly granting cont
     const [value, setValue] = useState(observed);
     return (
       <FlowGraphEditor
+        authoring={{
+          projectId: 'project',
+          api: { ...factoryApi, normalizeSchema: async () => published.data_schemas[0]! },
+        }}
         value={value}
         choices={[]}
         subflows={[]}
@@ -271,17 +278,20 @@ it('adds typed outcomes and control transitions without implicitly granting cont
       />
     );
   }
-  render(<Harness />);
+  render(
+    <QueryClientProvider client={createConsoleQueryClient()}>
+      <Harness />
+    </QueryClientProvider>,
+  );
   await userEvent.click(screen.getByRole('button', { name: 'Add step' }));
   await userEvent.type(screen.getByRole('textbox', { name: 'Step name' }), 'custom_check');
-  await userEvent.click(screen.getByRole('button', { name: 'Add outcome' }));
-  await userEvent.type(screen.getByRole('textbox', { name: 'Outcome name' }), 'observed');
+  await userEvent.click(screen.getByRole('button', { name: 'Add result' }));
+  await userEvent.click(screen.getAllByText('Technical details and reuse').at(-1)!);
+  await userEvent.clear(screen.getByRole('textbox', { name: 'Result key' }));
+  await userEvent.type(screen.getByRole('textbox', { name: 'Result key' }), 'observed');
+  await userEvent.click(screen.getByRole('button', { name: 'Save result' }));
   const schema = published.data_schemas[0]?.reference;
   if (!schema) throw new Error('Missing schema');
-  await userEvent.click(screen.getByRole('combobox', { name: 'Outcome schema' }));
-  await userEvent.click(
-    screen.getByRole('option', { name: `${schema.identity} · ${schema.version}` }),
-  );
   expect(observed.root.nodes.at(-1)?.outcomes).toEqual([
     { key: 'observed', kind: 'success', schema },
   ]);

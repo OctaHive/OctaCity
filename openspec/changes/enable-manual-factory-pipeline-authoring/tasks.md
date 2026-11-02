@@ -1022,3 +1022,68 @@ The full `pnpm exec playwright test` run against the production preview passes
 178 tests with 5 skipped. Strict OpenSpec validation and `git diff --check` pass.
 Available disk is approximately 38 GiB; build caches and the running stand were
 preserved.
+
+### Follow-up: Step-local result authoring
+
+The ordinary graph journey starts with steps, not a global schema catalog.
+Expected result offers Add/Edit result with a generated result key and format identity/version
+and bounded text by default. Fields and limits are optional; saved field names
+remain visible, while immutable references/reuse are under technical details.
+The advanced catalog is retained after the graph editor. Existing publication,
+schema normalization, result ownership and explicit handoff contracts remain
+the only owners; no endpoint or execution state was added.
+
+Accepted results can create a new named input from each explicitly selected
+field, without authoring a separate input schema. Existing compatible fields
+can be reused; occupied names cannot be overwritten. The new input preserves
+other selected fields and does not inherit the producer's private fields or
+Context. Input schema selection remains available under advanced mappings.
+Incomplete result edits and pending input normalization block publication.
+Cancellation aborts pending result checks and ignores their late responses.
+
+Observed Red/Green from `ui`:
+
+- `pnpm exec vitest run src/features/factory/FactoryAuthoring.test.tsx -t 'authors and confirms'`:
+  failed on the mandatory initial catalog, then passed first-Flow publication
+  with a step-local result, generated metadata and human-readable result labels.
+- `pnpm exec vitest run src/features/factory/FlowBindings.test.tsx -t 'without asking'`:
+  failed without a schema-free input path, then passed explicit two-field
+  handoff. An additional Red exposed replacement of an existing unmapped name;
+  Green requires choosing that compatible field or a different new name.
+- `pnpm exec vitest run src/features/factory/StepResults.test.tsx`:
+  Red/Green covers visible result fields, retaining existing format versions,
+  preserving a private-result declaration, refusing an invalid retry and
+  cancelling a pending check without applying a late response.
+- `pnpm exec playwright test tests/browser/factory-canvas.spec.ts --grep 'without technical'`:
+  English/Russian phone journeys pass result creation, explicit single-field
+  handoff, usable geometry and absence of implicit Context. A further Red showed
+  the advanced catalog above the graph; it was moved after ordinary authoring.
+
+The complete Vitest run passes 991 tests in 118 files. The final result-key
+simplification then passes all 20 affected authoring/result/graph unit tests.
+The full production-browser run passes 180 tests with 5 skipped; the final
+simplification is additionally checked by all 22 Factory/canvas/input browser
+tests. English/Russian phone views were inspected. TypeScript, ESLint, Prettier,
+All 40 script/architecture contracts and `pnpm build` now pass after the
+operator explicitly approved an 8 KiB aggregate-JS adjustment. The bound is
+1,581,056 bytes (was 1,572,864); entry JS, CSS, total static output and asset-count
+ceilings are unchanged. The actual JS output is 1,578,578 bytes. No stand release
+or live execution was attempted. No minifier or
+dependency was added for this follow-up. Documentation-only edits are validated
+with strict OpenSpec validation and `git diff --check`, without executable TDD.
+The running stand, its data and build caches are preserved; no commits created.
+
+The result key has a valid unique default and stays under technical details;
+its optional edits use the published key grammar. Ordinary text-result creation
+requires no identifier entry. This additional Red/Green was observed with
+`pnpm exec vitest run src/features/factory/FactoryAuthoring.test.tsx -t "authors and confirms"`.
+
+Budget-adjustment Red/Green: before changing policy,
+`node --test --test-name-pattern='keeps the current production console' scripts/verify-architecture.test.mjs`
+failed on the measured aggregate JS excess. The updated approved-ceiling test
+also failed against the old policy. After changing only the aggregate JS bound,
+`node --test scripts/verify-architecture.test.mjs scripts/factory-authoring-schemas.test.mjs scripts/issue-workflow-constraints.test.mjs scripts/issue-constraints.test.mjs scripts/issue-source-constraints.test.mjs`
+passes all 40 tests, including the real production bundle and the independent
+near-limit fixtures that reject another KiB. `pnpm build` and changed-file
+Prettier checks pass. Available disk is approximately 37 GiB; no commits or
+stand/cache changes were made.

@@ -1,3 +1,4 @@
+import type { FlowAuthoringServices } from './FlowPrimitives';
 import { FlowWorkTask } from './FlowWorkTask';
 import { useDraftRowKeys } from '../../shared/useDraftRowKeys';
 import type { components } from '../../../.generated/api/schema';
@@ -39,6 +40,8 @@ const CONTEXT = {
 /** Bounded input selectors and explicit Context entries, separate from control dependencies. */
 export function FlowBindings({
   node,
+  authoring,
+  onPendingChange,
   root,
   schemas,
   onChange,
@@ -49,6 +52,8 @@ export function FlowBindings({
   onSourceDraftChange,
 }: {
   node: Node;
+  authoring?: FlowAuthoringServices | undefined;
+  onPendingChange?: ((pending: boolean) => void) | undefined;
   root: Root;
   schemas: readonly Schema[];
   onChange: (node: Node, schemas?: Schema[]) => void;
@@ -102,31 +107,33 @@ export function FlowBindings({
           onChange={onChange}
         />
       ) : null}
-      <SelectMenu
-        ariaLabel={t('factory.inputSchema')}
-        value={String(
-          schemas.findIndex((schema) => schema.reference.digest === node.input_schema?.digest),
-        )}
-        options={[
-          { value: '-1', label: t('factory.none') },
-          ...schemas.map((schema, index) => ({
-            value: String(index),
-            label: `${schema.reference.identity} · ${schema.reference.version}`,
-          })),
-        ]}
-        onValueChange={(index) =>
-          onChange({ ...node, input_schema: schemas[Number(index)]?.reference ?? null })
-        }
-      />
       <AcceptedResultFields
         key={`accepted:${node.key}`}
         node={node}
         root={root}
         schemas={schemas}
+        services={authoring}
+        onPendingChange={onPendingChange}
         onChange={onChange}
       />
       <details>
         <summary>{t('factory.advancedMappings')}</summary>
+        <SelectMenu
+          ariaLabel={t('factory.inputSchema')}
+          value={String(
+            schemas.findIndex((schema) => schema.reference.digest === node.input_schema?.digest),
+          )}
+          options={[
+            { value: '-1', label: t('factory.none') },
+            ...schemas.map((schema, index) => ({
+              value: String(index),
+              label: `${schema.reference.identity} · ${schema.reference.version}`,
+            })),
+          ]}
+          onValueChange={(index) =>
+            onChange({ ...node, input_schema: schemas[Number(index)]?.reference ?? null })
+          }
+        />
         <h4>{t('factory.inputMapping')}</h4>
         <ValueMappingEditor
           value={node.input_binding?.mapping.value ?? { mapping: 'object', fields: {} }}

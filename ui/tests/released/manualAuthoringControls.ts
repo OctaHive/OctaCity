@@ -32,6 +32,9 @@ export async function schema(
   name: string,
   shape: 'boolean' | 'string' | Record<string, 'boolean' | 'string'>,
 ) {
+  const advanced = page.getByText(t('factory.advancedContracts'), { exact: true }).first();
+  const panel = advanced.locator('..');
+  if (!((await panel.getAttribute('open')) !== null)) await advanced.press('Enter');
   const editor = page.getByRole('group', { name: t('factory.schemas'), exact: true });
   await editor.getByRole('textbox', { name: t('factory.schemaName'), exact: true }).fill(name);
   await editor.getByRole('textbox', { name: t('factory.schemaVersion'), exact: true }).fill('v1');
@@ -81,9 +84,13 @@ export async function reasoning(
   const node = selectedNode(page);
   await node.getByRole('textbox', { name: t('factory.nodeName'), exact: true }).fill(key);
   await choose(page, node, t('factory.nodeKind'), t('factory.kind.reasoning'));
-  await node.getByRole('button', { name: t('factory.addOutcome'), exact: true }).press('Enter');
-  await node.getByRole('textbox', { name: t('factory.outcomeName'), exact: true }).fill(outcome);
-  await choose(page, node, t('factory.outcomeSchema'), `${result} · v1`);
+  await node.getByRole('button', { name: t('factory.addResult'), exact: true }).press('Enter');
+  await node.getByText(t('factory.resultDetails'), { exact: true }).last().press('Enter');
+  await node.getByRole('textbox', { name: t('factory.resultName'), exact: true }).fill(outcome);
+  await node.getByRole('button', { name: t('factory.saveResult'), exact: true }).press('Enter');
+  const saved = node.getByRole('group', { name: outcome, exact: true });
+  await saved.getByText(t('factory.resultDetails'), { exact: true }).press('Enter');
+  await choose(page, saved, t('factory.outcomeSchema'), `${result} · v1`);
   await choose(page, node, t('factory.executorRole'), `${agent} · v1`);
   await choose(page, node, t('factory.executorProfile'), `${profile} · v1`);
   await choose(page, node, t('factory.executorRuntime'), `codex-cli · ${runtime}`);

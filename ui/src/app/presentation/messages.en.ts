@@ -11,8 +11,6 @@ export const enMessages = {
   'factory.boundResource.output': 'Output (bytes)',
   'factory.boundResource.active': 'Active steps',
   'factory.expectedResult': 'Expected result',
-  'factory.expectedResultHelp':
-    'Choose result formats and outcomes. Connect routes and shared fields explicitly.',
   'factory.compare.exact_value': 'Same typed value',
   'factory.compare.repository_path_within': 'Path is within selected directory',
   'factory.compare.repository_path_within_any': 'Path is within any selected directory',
@@ -1717,7 +1715,7 @@ export const enMessages = {
     'Drag to move the card. Keyboard: Alt + arrow keys. This changes only its position on the graph.',
   'factory.acceptedResults': 'Accepted results',
   'factory.acceptedResultsHelp':
-    'Choose exactly which result fields this step receives. A route carries no earlier agent context, investigation, tool history or credentials.',
+    'Only selected fields are passed. Routes do not share agent context, tool history or credentials.',
   'factory.entireTypedValue': 'Entire typed value',
   'factory.selectInputSchemaFirst': 'Choose an input schema above before connecting result fields.',
   'factory.resultFromStep': 'Result from step',
@@ -1750,8 +1748,7 @@ export const enMessages = {
   'factory.chooseExecutorRuntime': 'Choose an installed runtime',
   'factory.noInstalledExecutor':
     'No compatible installed executor. Configure the Project runtime or choose another profile.',
-  'factory.executorNeedsOutcome':
-    'Add a success outcome and its result schema below before using this profile.',
+  'factory.executorNeedsOutcome': 'Add a successful result to this step before choosing a profile.',
   'factory.useExecutorProfile': 'Use this profile',
   'factory.resolvingExecutor': 'Checking the installed executor…',
   'factory.executorProfileIncompatible':
@@ -1909,6 +1906,21 @@ export const enMessages = {
   'factory.removeProjection': 'Remove projection',
   'factory.successor': 'Successor',
 
+  'factory.advancedContracts': 'Advanced data contracts',
+  'factory.stepResultHelp':
+    'Describe the result in Step task. Text works by default; add fields only for conditions or handoffs.',
+  'factory.addResult': 'Add result',
+  'factory.resultName': 'Result key',
+  'factory.resultKeyHelp':
+    'Use a–z, 0–9, dots, underscores or hyphens; the key must be unique in this step.',
+  'factory.editResult': 'Edit result',
+  'factory.saveResult': 'Save result',
+  'factory.cancelResult': 'Cancel result edit',
+  'factory.resultDetails': 'Technical details and reuse',
+  'factory.resultStructure': 'Result structure and limits',
+  'factory.newResultInput': 'New input',
+  'factory.resultInputName': 'Input name',
+  'factory.textResult': 'Text result',
   'factory.schemas': 'Data schemas',
   'factory.schemaName': 'Schema name',
   'factory.schemaVersion': 'Schema version',
@@ -1973,8 +1985,6 @@ export const enMessages = {
   'factory.outputLimit': 'Output limit',
   'factory.addNode': 'Add step',
   'factory.outcomes': 'Typed outcomes',
-  'factory.addOutcome': 'Add outcome',
-  'factory.outcomeName': 'Outcome name',
   'factory.outcomeKind': 'Outcome kind',
   'factory.outcomeSchema': 'Outcome schema',
   'factory.success': 'Success',

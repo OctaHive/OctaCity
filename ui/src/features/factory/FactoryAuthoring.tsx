@@ -41,6 +41,7 @@ export function FactoryAuthoring({
   const { t } = usePresentation();
   const configuration = baseline && 'configuration' in baseline ? baseline.configuration : null;
   const [newId] = useState(() => globalThis.crypto.randomUUID());
+  const [advancedContracts, setAdvancedContracts] = useState(false);
   const [processEditing, setProcessEditing] = useState(false);
   const [stepEditing, setStepEditing] = useState(false);
   const projectId =
@@ -83,28 +84,6 @@ export function FactoryAuthoring({
       <button type="button" onClick={onDiscard}>
         {t('factory.discardDraft')}
       </button>
-      {draft ? (
-        <SchemaEditor
-          api={api}
-          projectId={projectId}
-          onAdd={(schema) =>
-            setDraft(
-              (current) =>
-                current && {
-                  ...current,
-                  data_schemas: [
-                    ...current.data_schemas.filter(
-                      (item) =>
-                        item.reference.identity !== schema.reference.identity ||
-                        item.reference.version !== schema.reference.version,
-                    ),
-                    schema,
-                  ],
-                },
-            )
-          }
-        />
-      ) : null}
       <PagedExplorerBranch
         query={choices}
         empty={t('factory.noChoices')}
@@ -170,6 +149,33 @@ export function FactoryAuthoring({
       >
         {() => null}
       </PagedExplorerBranch>
+      {draft ? (
+        <details onToggle={(event) => setAdvancedContracts(event.currentTarget.open)}>
+          <summary>{t('factory.advancedContracts')}</summary>
+          {advancedContracts ? (
+            <SchemaEditor
+              api={api}
+              projectId={projectId}
+              onAdd={(schema) =>
+                setDraft(
+                  (current) =>
+                    current && {
+                      ...current,
+                      data_schemas: [
+                        ...current.data_schemas.filter(
+                          (item) =>
+                            item.reference.identity !== schema.reference.identity ||
+                            item.reference.version !== schema.reference.version,
+                        ),
+                        schema,
+                      ],
+                    },
+                )
+              }
+            />
+          ) : null}
+        </details>
+      ) : null}
     </section>
   );
 }

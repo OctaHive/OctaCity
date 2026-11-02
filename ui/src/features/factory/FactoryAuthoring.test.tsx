@@ -88,7 +88,7 @@ it('authors and confirms a first Flow through guided controls, generating identi
     ...factoryApi,
     listChoices: vi.fn(async () => ({ items: [], total: 0, next_cursor: null })),
     listFlows: vi.fn(async () => ({ items: [], total: 0, next_cursor: null })),
-    normalizeSchema: vi.fn(async () => schema),
+    normalizeSchema: vi.fn<FactoryApi['normalizeSchema']>(async () => schema),
     validateFlow: vi.fn<FactoryApi['validateFlow']>(async (body) => ({
       closure: {
         root: { id: body.id, version: 1, digest: '5'.repeat(64) },
@@ -119,22 +119,24 @@ it('authors and confirms a first Flow through guided controls, generating identi
       <RouterProvider router={router} />
     </QueryClientProvider>,
   );
-  await userEvent.type(
-    screen.getByRole('textbox', { name: 'Schema name' }),
-    schema.reference.identity,
-  );
-  await userEvent.type(
-    screen.getByRole('textbox', { name: 'Schema version' }),
-    schema.reference.version,
-  );
-  await userEvent.click(screen.getByRole('button', { name: 'Add schema' }));
+  expect(screen.queryByRole('group', { name: 'Data schemas' })).toBeNull();
   await userEvent.click(await screen.findByRole('button', { name: 'Add step' }));
   await userEvent.type(screen.getByRole('textbox', { name: 'Step name' }), 'operator_decision');
-  await userEvent.click(screen.getByRole('button', { name: 'Add outcome' }));
-  await userEvent.type(screen.getByRole('textbox', { name: 'Outcome name' }), 'accepted');
+  await userEvent.click(screen.getByRole('button', { name: 'Add result' }));
+  expect(screen.getByRole('button', { name: 'Save result' })).toHaveProperty('disabled', false);
+  expect(screen.queryByRole('textbox', { name: 'Schema name' })).toBeNull();
+  expect(screen.queryByRole('textbox', { name: 'Schema version' })).toBeNull();
+  expect(screen.getByRole('button', { name: 'Validate draft' })).toHaveProperty('disabled', true);
+  await userEvent.click(screen.getByRole('button', { name: 'Save result' }));
+  expect(api.normalizeSchema.mock.calls[0]?.[0]).toMatchObject({
+    project_id: projectId,
+    shape: { type: 'string', min_bytes: 0, max_bytes: 4096 },
+  });
   await userEvent.click(screen.getByRole('button', { name: 'Flow settings' }));
   await userEvent.click(screen.getByRole('button', { name: 'Add terminal' }));
   await userEvent.type(screen.getByRole('textbox', { name: 'Terminal name' }), 'finished');
+  await userEvent.click(screen.getByRole('combobox', { name: 'Terminal schema' }));
+  await userEvent.click(screen.getByRole('option', { name: 'operator_decision › result' }));
   await userEvent.click(screen.getByRole('button', { name: 'Add transition' }));
   await userEvent.click(screen.getByRole('button', { name: 'Validate draft' }));
   expect(await screen.findByText('Authoritative validation passed.')).toBeTruthy();
@@ -194,7 +196,11 @@ it('retains concurrent graph edits after schema normalization', async () => {
     </QueryClientProvider>,
   );
   await screen.findByRole('button', { name: 'Add step' });
-  await userEvent.type(screen.getByRole('textbox', { name: 'Schema name' }), 'concurrent_schema');
+  await userEvent.click(screen.getByText('Advanced data contracts'));
+  await userEvent.type(
+    await screen.findByRole('textbox', { name: 'Schema name' }),
+    'concurrent_schema',
+  );
   await userEvent.type(screen.getByRole('textbox', { name: 'Schema version' }), 'v1');
   await userEvent.click(screen.getByRole('button', { name: 'Add schema' }));
   const name = screen.getByRole('textbox', { name: 'Step name' });
