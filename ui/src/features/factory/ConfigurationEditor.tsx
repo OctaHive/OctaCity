@@ -1,3 +1,5 @@
+import { useState } from 'react';
+import type { ReactNode } from 'react';
 import type { components } from '../../../.generated/api/schema';
 import { flowLabel } from './flowLabels';
 import { usePresentation } from '../../app/presentation/PresentationProvider';
@@ -5,56 +7,30 @@ import { SelectMenu } from '../../shared/SelectMenu';
 import { BudgetEditor } from './ResourceEditors';
 import styles from './Factory.module.css';
 
-type Definition = components['schemas']['FactoryConfigurationDefinition'];
-type Choice = components['schemas']['FactoryConfigurationChoiceResource'];
-/** Aliases are selected from Project-scoped server choices and resolved by publication later. */
+export type ConfigurationSettings = Omit<
+  components['schemas']['FactoryConfigurationDefinition'],
+  'admission_policy' | 'permission_ceiling'
+>;
+
+/** Shared queue, graph and budget fields for new and replacement drafts. */
 export function ConfigurationEditor({
   value,
-  choices,
+  policies,
   flows,
   onChange,
 }: {
-  value: Definition;
-  choices: readonly Choice[];
+  value: ConfigurationSettings;
+  policies: { launch: ReactNode; access: ReactNode };
   flows: readonly components['schemas']['FactoryFlowDefinitionDetails'][];
-  onChange: (value: Definition) => void;
+  onChange: (value: ConfigurationSettings) => void;
 }) {
   const { t } = usePresentation();
-  const policyPicker = (kind: 'admission_policy' | 'permission_ceiling') => (
-    <div className={styles.selectField}>
-      <span>
-        {t(kind === 'admission_policy' ? 'factory.admissionPolicy' : 'factory.permissionCeiling')}
-      </span>
-      <SelectMenu
-        ariaLabel={t(
-          kind === 'admission_policy' ? 'factory.admissionPolicy' : 'factory.permissionCeiling',
-        )}
-        value={typeof value[kind] === 'string' ? value[kind] : JSON.stringify(value[kind])}
-        options={[
-          { value: '', label: t('factory.none') },
-          ...(typeof value[kind] === 'string'
-            ? []
-            : [
-                {
-                  value: JSON.stringify(value[kind]),
-                  label: `${t('factory.version')} ${value[kind].project_policy.version}`,
-                },
-              ]),
-          ...choices
-            .filter((choice) => choice.kind === kind && choice.reference.kind === 'immutable')
-            .map((choice) => ({
-              value: choice.alias,
-              label: `${choice.alias} · ${choice.reference.reference.version}`,
-            })),
-        ]}
-        onValueChange={(alias) => {
-          if (alias !== JSON.stringify(value[kind])) onChange({ ...value, [kind]: alias });
-        }}
-      />
-      {kind === 'admission_policy' ? (
-        <p className={styles.supportingText}>{t('factory.admissionPolicyHelp')}</p>
-      ) : null}
-    </div>
+  const [originalFlow] = useState(value.flow);
+  const options = new Map(
+    [originalFlow, ...flows.map(({ flow }) => flow), value.flow].map((flow) => [
+      flowVersionKey(flow),
+      flow,
+    ]),
   );
   return (
     <fieldset data-factory-field="" tabIndex={-1}>
@@ -70,25 +46,19 @@ export function ConfigurationEditor({
           />
           {t('factory.enabled')}
         </label>
-        {policyPicker('admission_policy')}
+        {policies.launch}
         <div className={styles.selectField}>
           <span>{t('factory.rootFlow')}</span>
           <SelectMenu
             ariaLabel={t('factory.rootFlow')}
-            value={String(
-              flows.findIndex(
-                (flow) =>
-                  flow.flow.closure.root.id === value.flow.closure.root.id &&
-                  flow.flow.closure.root.version === value.flow.closure.root.version,
-              ),
-            )}
-            options={flows.map((flow, index) => ({
-              value: String(index),
-              label: flowLabel(flow.flow, t('factory.immutableFlow')),
+            value={flowVersionKey(value.flow)}
+            options={Array.from(options, ([value, flow]) => ({
+              value,
+              label: flowLabel(flow, t('factory.immutableFlow')),
             }))}
-            onValueChange={(index) => {
-              const flow = flows[Number(index)];
-              if (flow) onChange({ ...value, flow: structuredClone(flow.flow) });
+            onValueChange={(key) => {
+              const flow = options.get(key);
+              if (flow) onChange({ ...value, flow: structuredClone(flow) });
             }}
           />
           <p className={styles.supportingText}>{t('factory.rootFlowHelp')}</p>
@@ -124,8 +94,13 @@ export function ConfigurationEditor({
       <fieldset>
         <legend>{t('factory.pipelineAccess')}</legend>
         <p>{t('factory.configurationAccessHelp')}</p>
-        {policyPicker('permission_ceiling')}
+        {policies.access}
       </fieldset>
     </fieldset>
   );
+}
+
+function flowVersionKey(flow: ConfigurationSettings['flow']) {
+  const { id, version, digest } = flow.closure.root;
+  return `${id}:${version}:${digest}`;
 }

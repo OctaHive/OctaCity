@@ -3,7 +3,7 @@ import { useCursorPage } from '../../shared/PagedExplorerBranch';
 import type { FactoryApi } from './api';
 
 /** Shares the Project-scoped availability and bounded choices with draft editors. */
-export function useFactoryChoices(api: FactoryApi, projectId: string) {
+export function useFactoryChoices(api: Pick<FactoryApi, 'listChoices'>, projectId: string) {
   return useCursorPage(queryKeys.factoryChoices(projectId), async (cursor, signal) => {
     const page = await api.listChoices(projectId, cursor, signal);
     return {

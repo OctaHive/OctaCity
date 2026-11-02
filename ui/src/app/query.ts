@@ -1,6 +1,14 @@
 import { QueryClient } from '@tanstack/react-query';
 
 export const queryKeys = {
+  factoryPolicies: (project: string) => ['factory', 'policies', project] as const,
+  factoryDraftDefaults: (project: string, draft: string) =>
+    ['factory', 'draft-defaults', project, draft] as const,
+  factoryPolicyDefaults: (project: string) => ['factory', 'policy-defaults', project] as const,
+  factoryPolicy: (project: string, reference: object) =>
+    ['factory', 'policy', project, reference] as const,
+  factoryLegacyPolicy: (project: string, reference: object | null) =>
+    ['factory', 'legacy-policy', project, reference] as const,
   factoryAuthoringCapabilities: (projectId: string) =>
     ['factory', 'authoring-capabilities', projectId] as const,
   projectInputDocuments: (projectId: string) => ['project-input-documents', projectId] as const,

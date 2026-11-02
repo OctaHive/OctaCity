@@ -2,7 +2,7 @@ import { expect, test, type Page } from '@playwright/test';
 import { configurationFixture, runFixture } from '../fixtures/factory';
 import { issueFixture } from '../fixtures/issues';
 import { integrationFixture } from '../fixtures/integrations';
-import { FIXTURE_IDS, installOperatorFixture } from './operatorFixture';
+import { FIXTURE_IDS, installOperatorFixture, isLegacyPolicyRead } from './operatorFixture';
 
 test.use({ trace: 'off', screenshot: 'off', video: 'off' });
 async function installSources(
@@ -118,7 +118,12 @@ test('enables read-only execution input independently of task import with separa
   const commands: string[] = [];
   page.on('request', (request) => {
     const path = new URL(request.url()).pathname;
-    if (path.startsWith('/api/v1/') && request.method() !== 'GET') commands.push(path);
+    if (
+      path.startsWith('/api/v1/') &&
+      request.method() !== 'GET' &&
+      !isLegacyPolicyRead(request, project)
+    )
+      commands.push(path);
   });
   await page.setViewportSize({ width: 390, height: 844 });
   await page.goto(`/factory?project_id=${project}`);

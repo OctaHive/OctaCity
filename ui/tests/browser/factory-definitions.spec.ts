@@ -1,12 +1,78 @@
-import { expect, test } from '@playwright/test';
+import { expect, test, type Page } from '@playwright/test';
 import { configurationFixture } from '../fixtures/factory';
-import { installOperatorFixture } from './operatorFixture';
+import { installOperatorFixture, isLegacyPolicyRead } from './operatorFixture';
 import { translate, type MessageKey } from '../../src/app/presentation/messages';
 import { DEFAULT_PREFERENCES, PREFERENCES_KEY } from '../../src/app/presentation/preferences';
 
+import { emptyFactoryPermissions } from '../../src/features/factory/emptyFlowDraft';
+import type { components } from '../../.generated/api/schema';
+
+async function installPolicyChoices(page: Page, project: string) {
+  const reference = (id: string, digest: string, version: number) => ({
+    project_id: project,
+    id,
+    digest: digest.repeat(64),
+    version,
+  });
+  const launch = {
+    kind: 'launch',
+    policy: {
+      reference: reference('e45ef94b-52a8-48f5-ae4f-9a9bb7f3a3ed', 'a', 1),
+      definition: { name: 'Standard launch', allow_manual: true, allow_automatic_source: false },
+    },
+  } as const;
+  const alternate = {
+    kind: 'launch',
+    policy: {
+      reference: { ...launch.policy.reference, version: 2, digest: 'b'.repeat(64) },
+      definition: { name: 'Source only', allow_manual: false, allow_automatic_source: true },
+    },
+  } as const;
+  const access = {
+    kind: 'access',
+    policy: {
+      reference: reference('3e1b09d1-9265-4037-af6f-60558f192390', 'c', 1),
+      definition: { name: 'Standard access', permissions: emptyFactoryPermissions() },
+    },
+  } as const;
+  const defaults = {
+    project_id: project,
+    version: 1,
+    launch_policy: launch.policy.reference,
+    access_profile: access.policy.reference,
+  };
+  const path = `/api/v1/projects/${project}/factory-policies`;
+  await page.route(`**/api/v1/projects/${project}/factory-configuration-choices*`, (route) =>
+    route.fulfill({
+      json: { items: [], next_cursor: null, total: 0, project_policy_defaults: defaults },
+    }),
+  );
+  await page.route(`**${path}**`, (route) => {
+    const url = new URL(route.request().url());
+    if (url.pathname === path)
+      return route.fulfill({
+        json: {
+          items: [alternate, access].map(({ kind, policy }) => ({
+            name: policy.definition.name,
+            reference: { kind, reference: policy.reference },
+          })),
+          next_cursor: null,
+        },
+      });
+    if (url.pathname === `${path}/defaults`) return route.fulfill({ json: { defaults } });
+    const policy = [launch, alternate, access].find(
+      (record) => record.policy.reference.digest === url.searchParams.get('digest'),
+    );
+    return route.fulfill(
+      policy ? { json: { policy } } : { status: 404, json: { code: 'not_found' } },
+    );
+  });
+  return { launch, alternate, access };
+}
+
 for (const language of ['en', 'ru'] as const) {
   for (const width of [390, 1280]) {
-    test(`${language}: visibly labels the configuration policy, flow and access selectors at ${width}px`, async ({
+    test(`${language}: uses exact Configuration policies by keyboard at ${width}px`, async ({
       page,
     }) => {
       await installOperatorFixture(page);
@@ -20,35 +86,92 @@ for (const language of ['en', 'ru'] as const) {
       );
       const t = (key: MessageKey) => translate(language, key);
       const configuration = configurationFixture().configuration;
-      await page.goto(
-        `/factory?project_id=${configuration.reference.project_id}&configuration_id=${configuration.reference.id}&configuration_version=1`,
-      );
-      await page.getByRole('button', { name: t('factory.editConfiguration'), exact: true }).click();
+      const project = configuration.reference.project_id;
+      const { alternate, access } = await installPolicyChoices(page, project);
+      const requests: components['schemas']['CreateFactoryConfigurationRequest'][] = [];
+      await page.route('**/api/v1/factory-configurations/validate', (route) => {
+        const request = route
+          .request()
+          .postDataJSON() as components['schemas']['CreateFactoryConfigurationRequest'];
+        requests.push(request);
+        return route.fulfill({
+          json: { configuration: { ...request.definition, reference: configuration.reference } },
+        });
+      });
+      await page.goto(`/factory?project_id=${project}`);
+      await page
+        .getByRole('button', { name: t('factory.createConfiguration'), exact: true })
+        .press('Enter');
       const draft = page.getByRole('group', { name: t('factory.configurationDraft'), exact: true });
-      for (const key of [
-        'factory.admissionPolicy',
-        'factory.rootFlow',
-        'factory.permissionCeiling',
-      ] as const) {
+      const launch = draft.getByRole('combobox', { name: t('policy.launchLabel'), exact: true });
+      await expect(launch).toHaveText('Standard launch · v1');
+      await expect(
+        draft.getByRole('combobox', { name: t('policy.accessLabel'), exact: true }),
+      ).toHaveText('Standard access · v1');
+      for (const key of ['policy.launchLabel', 'factory.rootFlow', 'policy.accessLabel'] as const) {
         const label = draft.getByText(t(key), { exact: true });
         await expect(label).toBeVisible();
         const picker = draft.getByRole('combobox', { name: t(key), exact: true });
         const labelBox = (await label.boundingBox())!;
         const pickerBox = (await picker.boundingBox())!;
         expect(pickerBox.y).toBeGreaterThanOrEqual(labelBox.y + labelBox.height);
-        expect(pickerBox.x).toBeGreaterThanOrEqual(labelBox.x);
-        await picker.click();
+        await picker.press('ArrowDown');
         await expect(page.getByRole('listbox', { name: t(key), exact: true })).toBeVisible();
         await page.keyboard.press('Escape');
         await expect(picker).toBeFocused();
       }
+      await launch.press('ArrowDown');
+      await page.getByRole('option', { name: 'Source only · v2' }).press('Enter');
+      await expect(launch).toBeFocused();
+      await expect(draft.getByText(t('policy.automaticAllowed'), { exact: true })).toBeVisible();
+      const runs = draft.getByRole('spinbutton', { name: t('factory.activeRuns'), exact: true });
+      await runs.fill('3');
+      const manage = draft.getByRole('button', { name: t('policy.manageLaunch'), exact: true });
+      await manage.press('Enter');
+      const back = page.getByRole('button', { name: t('policy.backToDraft'), exact: true });
+      await expect(back).toBeFocused();
+      const settings = page.getByRole('region', { name: t('policy.settings'), exact: true });
+      await settings.getByRole('button', { name: t('policy.edit'), exact: true }).press('Enter');
+      await expect(settings.getByRole('textbox', { name: t('policy.name') })).toHaveValue(
+        'Source only',
+      );
+      await settings.getByRole('button', { name: t('policy.cancel'), exact: true }).press('Enter');
+      await back.press('Enter');
+      await expect(manage).toBeFocused();
+      await expect(runs).toHaveValue('3');
+      await expect(launch).toHaveText('Source only · v2');
       await expect(
-        draft.getByText(t('factory.admissionPolicyHelp'), { exact: true }),
+        draft.getByRole('group', { name: t('factory.hardBudget'), exact: true }),
       ).toBeVisible();
-      await expect(draft.getByText(t('factory.rootFlowHelp'), { exact: true })).toBeVisible();
+      await expect(
+        draft.getByRole('spinbutton', { name: t('factory.activeCalls'), exact: true }),
+      ).toBeVisible();
+      await draft.getByText(t('policy.bindingDetails'), { exact: true }).first().press('Enter');
+      await expect(
+        draft.getByText(t('policy.exactReference'), { exact: true }).first(),
+      ).toBeVisible();
       expect(await page.evaluate(() => document.documentElement.scrollWidth)).toBeLessThanOrEqual(
         width,
       );
+      await page
+        .getByRole('button', { name: t('factory.validateDraft'), exact: true })
+        .press('Enter');
+      await expect(page.getByText(t('factory.validationPassed'), { exact: true })).toBeVisible();
+      expect(requests).toHaveLength(1);
+      expect(requests[0]!.definition).toMatchObject({
+        wip_limits: { max_active_runs: 3 },
+        admission_policy: { project_policy: alternate.policy.reference },
+        permission_ceiling: { project_policy: access.policy.reference },
+      });
+      await page
+        .getByRole('button', { name: t('factory.reviewPublication'), exact: true })
+        .press('Enter');
+      const dialog = page.getByRole('dialog');
+      await expect(dialog).toBeVisible();
+      await dialog.getByRole('button', { name: t('command.abandon'), exact: true }).press('Enter');
+      await expect(
+        page.getByRole('button', { name: t('factory.reviewPublication'), exact: true }),
+      ).toBeFocused();
     });
 
     test(`${language}: keeps the published flow editor padded and its actions separated at ${width}px`, async ({
@@ -193,7 +316,8 @@ for (const language of ['en', 'ru'] as const) {
       const versions: number[] = [];
       const mutations: string[] = [];
       page.on('request', (request) => {
-        if (request.method() !== 'GET') mutations.push(request.url());
+        if (request.method() !== 'GET' && !isLegacyPolicyRead(request, reference.project_id))
+          mutations.push(request.url());
       });
       await page.route('**/api/v1/projects/*/factory-configurations*', (route) =>
         route.fulfill({

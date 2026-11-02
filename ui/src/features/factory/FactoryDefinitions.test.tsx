@@ -3,7 +3,7 @@ import { QueryClientProvider } from '@tanstack/react-query';
 import { cleanup, render, screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { createMemoryRouter, RouterProvider } from 'react-router-dom';
-import { afterEach, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, expect, it, vi } from 'vitest';
 import { createConsoleQueryClient } from '../../app/query';
 import { FactoryDefinitions } from './FactoryDefinitions';
 import type { FactoryApi } from './api';
@@ -11,7 +11,16 @@ import { factoryApi } from './api';
 import { ManagementApiError } from '../../api/client';
 import { configurationFixture } from '../../../tests/fixtures/factory';
 
-afterEach(cleanup);
+import { factoryPolicyApi } from './policyApi';
+
+beforeEach(() => {
+  vi.spyOn(factoryPolicyApi, 'resolveLegacy').mockResolvedValue({ mapping: null });
+  vi.spyOn(factoryPolicyApi, 'list').mockResolvedValue({ items: [], next_cursor: null });
+});
+afterEach(() => {
+  cleanup();
+  vi.restoreAllMocks();
+});
 
 it('presents a readable configuration summary and retains exact policies and budget values under technical details', async () => {
   const configuration = configurationFixture();
@@ -266,30 +275,7 @@ it('opens memory-only configuration and Flow drafts from visible resources and d
     getConfiguration: vi.fn(async () => configuration),
     listFlows: vi.fn(async () => ({ items: [flow], total: 1, next_cursor: null })),
     getFlow: vi.fn(async () => flow),
-    listChoices: vi.fn(async () => ({
-      items: [
-        {
-          alias: 'Visible admission',
-          identity: configuration.configuration.admission_policy.identity,
-          kind: 'admission_policy' as const,
-          reference: {
-            kind: 'immutable' as const,
-            reference: configuration.configuration.admission_policy,
-          },
-        },
-        {
-          alias: 'Visible ceiling',
-          identity: configuration.configuration.permission_ceiling.identity,
-          kind: 'permission_ceiling' as const,
-          reference: {
-            kind: 'immutable' as const,
-            reference: configuration.configuration.permission_ceiling,
-          },
-        },
-      ],
-      total: 2,
-      next_cursor: null,
-    })),
+    listChoices: vi.fn(async () => ({ items: [], total: 0, next_cursor: null })),
   };
   const router = createMemoryRouter([
     { path: '*', element: <FactoryDefinitions api={api} projectId={projectId} /> },
@@ -303,11 +289,9 @@ it('opens memory-only configuration and Flow drafts from visible resources and d
     await screen.findByRole('button', { name: 'Inspect Factory Configuration · v1' }),
   );
   await userEvent.click(await screen.findByRole('button', { name: 'Edit configuration draft' }));
-  await userEvent.click(await screen.findByRole('combobox', { name: 'Admission policy' }));
-  expect(await screen.findByRole('option', { name: 'Visible admission · v1' })).toBeTruthy();
-  await userEvent.click(screen.getByRole('option', { name: 'Visible admission · v1' }));
+  expect(await screen.findByRole('combobox', { name: 'Launch policy' })).toBeTruthy();
   await userEvent.click(screen.getByRole('button', { name: 'Discard draft' }));
-  expect(screen.queryByRole('combobox', { name: 'Admission policy' })).toBeNull();
+  expect(screen.queryByRole('combobox', { name: 'Launch policy' })).toBeNull();
   await userEvent.click(await screen.findByRole('button', { name: 'implement · v1' }));
   await userEvent.click(await screen.findByRole('button', { name: 'Edit Flow draft' }));
   const name = await screen.findByRole('textbox', { name: 'Step name' });
@@ -470,11 +454,11 @@ it('owns only one authoring draft at a time and discards it when another immutab
     await screen.findByRole('button', { name: 'Inspect Factory Configuration · v1' }),
   );
   await userEvent.click(await screen.findByRole('button', { name: 'Edit configuration draft' }));
-  expect(await screen.findByRole('combobox', { name: 'Admission policy' })).toBeTruthy();
+  expect(await screen.findByRole('combobox', { name: 'Launch policy' })).toBeTruthy();
   await userEvent.click(screen.getByRole('button', { name: 'implement · v1' }));
   await userEvent.click(await screen.findByRole('button', { name: 'Edit Flow draft' }));
   expect(await screen.findByRole('textbox', { name: 'Step name' })).toBeTruthy();
-  expect(screen.queryByRole('combobox', { name: 'Admission policy' })).toBeNull();
+  expect(screen.queryByRole('combobox', { name: 'Launch policy' })).toBeNull();
   expect(screen.getAllByRole('button', { name: 'Discard draft' })).toHaveLength(1);
 });
 

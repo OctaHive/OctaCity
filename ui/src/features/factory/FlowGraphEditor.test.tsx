@@ -917,13 +917,21 @@ it('keeps Configuration queue concurrency separate from the Flow run budget and 
   const config = configurationFixture().configuration;
   const value = {
     enabled: false,
-    admission_policy: 'admission',
-    permission_ceiling: 'ceiling',
     flow: config.flow,
     hard_budget: config.hard_budget,
     wip_limits: config.wip_limits,
   };
-  render(<ConfigurationEditor value={value} choices={[]} flows={[]} onChange={() => {}} />);
+  render(
+    <ConfigurationEditor
+      value={value}
+      policies={{
+        launch: <span>Launch policy control</span>,
+        access: <span>Access profile control</span>,
+      }}
+      flows={[]}
+      onChange={() => {}}
+    />,
+  );
   expect(
     within(screen.getByRole('group', { name: 'Start and queue' })).getByRole('checkbox', {
       name: 'Enabled',
@@ -935,9 +943,9 @@ it('keeps Configuration queue concurrency separate from the Flow run budget and 
     }),
   ).toBeTruthy();
   expect(
-    within(screen.getByRole('group', { name: 'Pipeline access' })).getByRole('combobox', {
-      name: 'Permission ceiling',
-    }),
+    within(screen.getByRole('group', { name: 'Pipeline access' })).getByText(
+      'Access profile control',
+    ),
   ).toBeTruthy();
 });
 

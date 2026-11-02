@@ -1,6 +1,7 @@
 import type { IssueWorkflowsApi } from '../../api/issueWorkflows';
 import { factoryResourceId } from './filters';
 import { useState } from 'react';
+import { ConfigurationPolicyOverview } from './ConfigurationPolicyBinding';
 import { FactoryAuthoring } from './FactoryAuthoring';
 import { FactoryWorkForm, type FactoryWorkSources } from './FactoryWorkForm';
 import { useQuery } from '@tanstack/react-query';
@@ -374,23 +375,45 @@ function ConfigurationDetails({
           ))}
         </dl>
       </section>
+      <ConfigurationPolicyOverview
+        project={configuration.reference.project_id}
+        kind="launch"
+        binding={configuration.admission_policy}
+      />
+      <ConfigurationPolicyOverview
+        project={configuration.reference.project_id}
+        kind="access"
+        binding={configuration.permission_ceiling}
+      />
       <details>
         <summary>{t('factory.definitionDetails')}</summary>
         <dl className={styles.definitionFacts}>
           <div>
             <dt>{t('factory.admissionPolicy')}</dt>
             <dd>
+              <span>
+                {'project_policy' in configuration.admission_policy
+                  ? `${configuration.admission_policy.project_policy.id} · ${configuration.admission_policy.project_policy.version}`
+                  : `${configuration.admission_policy.identity} · ${configuration.admission_policy.version}`}
+              </span>
+              <br />
               {'project_policy' in configuration.admission_policy
-                ? `${configuration.admission_policy.project_policy.id} · ${configuration.admission_policy.project_policy.version}`
-                : `${configuration.admission_policy.identity} · ${configuration.admission_policy.version}`}
+                ? configuration.admission_policy.project_policy.digest
+                : configuration.admission_policy.digest}
             </dd>
           </div>
           <div>
             <dt>{t('factory.permissionCeiling')}</dt>
             <dd>
+              <span>
+                {'project_policy' in configuration.permission_ceiling
+                  ? `${configuration.permission_ceiling.project_policy.id} · ${configuration.permission_ceiling.project_policy.version}`
+                  : `${configuration.permission_ceiling.identity} · ${configuration.permission_ceiling.version}`}
+              </span>
+              <br />
               {'project_policy' in configuration.permission_ceiling
-                ? `${configuration.permission_ceiling.project_policy.id} · ${configuration.permission_ceiling.project_policy.version}`
-                : `${configuration.permission_ceiling.identity} · ${configuration.permission_ceiling.version}`}
+                ? configuration.permission_ceiling.project_policy.digest
+                : configuration.permission_ceiling.digest}
             </dd>
           </div>
           {Object.entries(configuration.hard_budget).map(([key, amount]) => (

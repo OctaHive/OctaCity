@@ -1,4 +1,81 @@
 export const enMessages = {
+  'policy.manageLaunch': 'View / Edit launch policy',
+  'policy.manageAccess': 'View / Edit access profile',
+  'policy.adopt': 'Use {name} · v{version} in this draft',
+  'policy.backToDraft': 'Back to Configuration draft',
+  'policy.referenceUnavailable': 'Policy reference unavailable',
+  'policy.bindingDetails': 'Binding details',
+  'policy.originalReference': 'Original installation reference',
+  'policy.exactReference': 'Exact Project reference',
+  'policy.currentSaved': 'Current saved policy',
+  'policy.proposed': 'Proposed policy',
+  'policy.validatedInstallation': 'Validated installation ceiling',
+  'policy.installationDetailsUnavailable':
+    'The full installation declaration is unavailable with your current access.',
+  'policy.launchLabel': 'Launch policy',
+  'policy.accessLabel': 'Access profile',
+  'policy.accessSummary':
+    'Plugins {plugins} · Executables {executables} · Tools {tools} · Network hosts {hosts}',
+  'policy.selectedVersion': 'Selected version',
+  'policy.selectPolicy': 'Choose a Project policy',
+  'policy.selectPolicyHelp': 'Select a policy or create one in Project Factory settings.',
+  'policy.chooseCeiling': 'Choose an installed ceiling',
+  'policy.installedCeiling': 'Installed access ceiling',
+  'policy.noInstallation':
+    'No qualified installed access declarations. A profile with no execution grants can still be saved; installation setup is required for execution.',
+  'policy.installationHelp':
+    'Installation limits these choices; Project settings can only narrow them. The server checks the effective access before publication.',
+  'policy.supportedAccess': 'Supported access settings',
+  'policy.requestedAccess': 'Requested access',
+  'policy.moreInstallation': 'Load more installation choices',
+
+  'policy.useDefault': 'Use as Project default',
+  'policy.confirmDefault': 'Confirm default',
+  'policy.defaultConsequence':
+    'Use {name} · v{version} for new configuration drafts. Existing drafts, configurations and Runs keep their selections.',
+  'policy.defaultSaved': 'Project default saved. Existing pipeline selections are unchanged.',
+
+  'policy.edit': 'Edit policy',
+  'policy.editingVersion': 'Editing from v{version}; publication creates a new version.',
+  'policy.unavailable': 'Policy is unavailable. Your draft has been kept.',
+
+  'policy.cancel': 'Cancel editing',
+  'policy.newLaunch': 'New launch policy',
+  'policy.newAccess': 'New access profile',
+  'policy.editor': 'Policy editor',
+  'policy.name': 'Policy name',
+  'policy.allowManual': 'Allow manual admission',
+  'policy.allowAutomatic': 'Allow automatic Source admission',
+  'policy.review': 'Review policy',
+  'policy.publish': 'Publish policy',
+  'policy.consequence':
+    'Publish a new immutable version. Defaults, existing configurations and Runs remain unchanged.',
+  'policy.published': 'Policy published. Existing configurations and Runs keep their versions.',
+
+  'policy.settings': 'Factory settings',
+  'policy.help':
+    'Manage Project launch rules and execution access. Changes do not start work or update published pipelines.',
+  'policy.launches': 'Launch policies',
+  'policy.accesses': 'Access profiles',
+  'policy.defaults': 'Project defaults',
+  'policy.defaultVersion': 'Project default · v{version}',
+  'policy.noDefault': 'No Project default selected.',
+  'policy.empty': 'No policies loaded.',
+  'policy.more': 'Load more policies',
+  'policy.view': 'View {name} · v{version}',
+  'policy.details': 'Policy details',
+  'policy.manualAllowed': 'Manual admission allowed',
+  'policy.manualDenied': 'Manual admission denied',
+  'policy.automaticAllowed': 'Automatic Source admission allowed',
+  'policy.automaticDenied': 'Automatic Source admission denied',
+  'policy.sourceHelp':
+    'Automatic admission also requires a separately enabled and authorized Source.',
+  'policy.accessHelp':
+    'A profile limits available authority. It connects no documents, code, tools or credentials by itself.',
+  'policy.noExecution':
+    'No execution grants. An operator must configure access within the installed authority.',
+  'policy.permissions': 'Permission details',
+
   'factory.cancelSetup': 'Cancel',
   'factory.calculation': 'Calculation',
   'factory.entryInputHelp':
@@ -83,7 +160,7 @@ export const enMessages = {
   'factory.configurationBudgetHelp':
     'This ceiling applies to each admitted Run, including all steps, attempts and retries.',
   'factory.configurationAccessHelp':
-    'Select the installed access ceiling. A saved Configuration does not grant a step broader access or enable a Source.',
+    'The Project access profile limits execution for this Configuration. Step permissions, installation and Agent limits also apply.',
   'factory.startAndQueue': 'Start and queue',
   'factory.executionLimits': 'Execution limits',
   'factory.pipelineAccess': 'Pipeline access',
@@ -2011,8 +2088,6 @@ export const enMessages = {
   'factory.configurationDraft': 'Configuration draft',
   'factory.enabled': 'Enabled',
   'factory.admissionPolicy': 'Admission policy',
-  'factory.admissionPolicyHelp':
-    'Choose an installed work admission policy. “None” means no policy has been selected yet.',
   'factory.permissionCeiling': 'Permission ceiling',
   'factory.rootFlow': 'Root Flow',
   'factory.rootFlowHelp':

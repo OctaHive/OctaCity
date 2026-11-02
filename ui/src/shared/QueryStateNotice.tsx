@@ -122,8 +122,9 @@ export function QueryFailureNotice({
   className,
   error,
   onRetry,
+  retryLabel,
   title,
-}: NoticeProps & { error: Error | null; title: string }) {
+}: NoticeProps & { error: Error | null; title: string; retryLabel?: string }) {
   const kind = queryFailureKind(error);
   return (
     <div className={noticeClassName(styles.failure, className)} data-state={kind} role="alert">
@@ -132,7 +133,7 @@ export function QueryFailureNotice({
         <strong>{title}</strong>
         <FailureDetails error={error} />
       </div>
-      <RetryButton error={error} onRetry={onRetry} />
+      <RetryButton error={error} onRetry={onRetry} label={retryLabel} />
     </div>
   );
 }
@@ -182,7 +183,15 @@ function FailureDetails({ error }: { error: Error | null }) {
   );
 }
 
-function RetryButton({ error, onRetry }: { error: Error | null; onRetry: () => unknown }) {
+function RetryButton({
+  error,
+  onRetry,
+  label,
+}: {
+  error: Error | null;
+  onRetry: () => unknown;
+  label?: string | undefined;
+}) {
   const { t } = usePresentation();
   const retryAfter =
     error instanceof ManagementApiError && error.code === 'rate_limited'
@@ -205,7 +214,7 @@ function RetryButton({ error, onRetry }: { error: Error | null; onRetry: () => u
     >
       {waiting && retryAfter !== null
         ? t('query.retryIn', { seconds: Math.ceil(retryAfter / 1_000) })
-        : t('query.retry')}
+        : (label ?? t('query.retry'))}
     </button>
   );
 }

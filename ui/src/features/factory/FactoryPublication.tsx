@@ -55,6 +55,22 @@ const ISSUE_LABELS = {
   concurrency_exceeds_ceiling: 'factory.concurrencyExceeded',
 } satisfies Record<DraftIssue['code'] | ManagementValidationIssue['code'], MessageKey>;
 
+/** An incomplete Configuration has no transport subject yet. */
+export function IncompleteFactoryPublication() {
+  const { t } = usePresentation();
+  return (
+    <section aria-label={t('factory.validation')}>
+      <h3>{t('factory.validation')}</h3>
+      <button type="button" disabled>
+        {t('factory.validateDraft')}
+      </button>
+      <button type="button" disabled>
+        {t('factory.reviewPublication')}
+      </button>
+    </section>
+  );
+}
+
 /** A validation proof belongs to one exact in-memory draft; the shared helper owns confirmed replay. */
 export function FactoryPublication({
   api,

@@ -6,7 +6,7 @@ import { usePresentation } from '../../app/presentation/PresentationProvider';
 import { queryKeys } from '../../app/query';
 import { PagedExplorerBranch, useCursorPage } from '../../shared/PagedExplorerBranch';
 import type { FactoryApi, FactoryConfigurationDetails, FactoryFlowDetails } from './api';
-import { ConfigurationEditor } from './ConfigurationEditor';
+import { NewConfigurationDraft, ExistingConfigurationDraft } from './ConfigurationDraft';
 import { SchemaEditor } from './SchemaEditor';
 import { FlowGraphEditor } from './FlowGraphEditor';
 import { useFactoryChoices } from './useFactoryChoices';
@@ -18,8 +18,7 @@ import styles from './Factory.module.css';
 
 import type { SourceRepositories } from './SourceInputEditor';
 
-type Choice = components['schemas']['FactoryConfigurationChoiceResource'];
-/** Entire editor state is owned here and discarded when its immutable baseline or Project changes. */
+/** Hosts Flow authoring and mounts an independent Configuration draft for the selected baseline. */
 export function FactoryAuthoring({
   api,
   repositories,
@@ -96,21 +95,27 @@ export function FactoryAuthoring({
       </PagedExplorerBranch>
       {choices.data ? (
         configuration ? (
-          <ConfigurationDraft
+          <ExistingConfigurationDraft
             key={configuration.reference.id}
             baseline={configuration}
             publicationVersion={currentVersion ?? configuration.reference.version}
-            choices={choices.data.pages.flatMap((page) => page.items)}
             flows={visibleFlows}
             api={api}
           />
         ) : kind === 'configuration' && visibleFlows[0] ? (
-          <NewConfiguration
+          <NewConfigurationDraft
             api={api}
             projectId={projectId}
             id={newId}
-            flow={visibleFlows[0]}
-            choices={choices.data.pages.flatMap((page) => page.items)}
+            initial={{
+              enabled: false,
+              flow: visibleFlows[0].flow,
+              hard_budget: visibleFlows[0].flow.limits.budget,
+              wip_limits: {
+                max_active_runs: 1,
+                max_active_nodes: visibleFlows[0].flow.limits.max_wip,
+              },
+            }}
             flows={visibleFlows}
           />
         ) : draft ? (
@@ -182,120 +187,6 @@ export function FactoryAuthoring({
     </section>
   );
 }
-function ConfigurationDraft({
-  baseline,
-  publicationVersion,
-  choices,
-  flows,
-  api,
-}: {
-  api: FactoryApi;
-  baseline: FactoryConfigurationDetails['configuration'];
-  publicationVersion: number;
-  choices: readonly Choice[];
-  flows: readonly FactoryFlowDetails[];
-}) {
-  const [draft, setDraft] = useState<components['schemas']['FactoryConfigurationDefinition']>(
-    () => {
-      const common = {
-        enabled: baseline.enabled,
-        hard_budget: structuredClone(baseline.hard_budget),
-        wip_limits: { ...baseline.wip_limits },
-        flow: structuredClone(baseline.flow),
-      };
-      if (
-        'project_policy' in baseline.admission_policy &&
-        'project_policy' in baseline.permission_ceiling
-      ) {
-        return {
-          ...common,
-          admission_policy: structuredClone(baseline.admission_policy),
-          permission_ceiling: structuredClone(baseline.permission_ceiling),
-        };
-      }
-      if ('identity' in baseline.admission_policy && 'identity' in baseline.permission_ceiling) {
-        return {
-          ...common,
-          admission_policy: alias(baseline.admission_policy, 'admission_policy', choices),
-          permission_ceiling: alias(baseline.permission_ceiling, 'permission_ceiling', choices),
-        };
-      }
-      throw new Error('incompatible Configuration policy bindings');
-    },
-  );
-  return (
-    <>
-      <ConfigurationEditor value={draft} onChange={setDraft} choices={choices} flows={flows} />
-      <FactoryPublication
-        api={api}
-        subject={{
-          kind: 'configuration',
-          request: {
-            id: baseline.reference.id,
-            project_id: baseline.reference.project_id,
-            definition: draft,
-          },
-        }}
-        version={publicationVersion}
-      />
-    </>
-  );
-}
-function alias(
-  reference: components['schemas']['FactoryImmutableReferenceResource'],
-  kind: Choice['kind'],
-  choices: readonly Choice[],
-) {
-  return (
-    choices.find(
-      (choice) =>
-        choice.kind === kind &&
-        choice.reference.kind === 'immutable' &&
-        choice.reference.reference.identity === reference.identity &&
-        choice.reference.reference.version === reference.version &&
-        choice.reference.reference.digest === reference.digest,
-    )?.alias ?? ''
-  );
-}
 function labels(label: string, loadMore: string) {
   return { loading: label, failure: label, stale: label, loadingMore: label, loadMore };
-}
-
-function NewConfiguration({
-  api,
-  projectId,
-  id,
-  flow,
-  choices,
-  flows,
-}: {
-  api: FactoryApi;
-  projectId: string;
-  id: string;
-  flow: FactoryFlowDetails;
-  choices: readonly Choice[];
-  flows: readonly FactoryFlowDetails[];
-}) {
-  const [draft, setDraft] = useState<components['schemas']['FactoryConfigurationDefinition']>(
-    () => ({
-      enabled: false,
-      admission_policy: '',
-      permission_ceiling: '',
-      flow: structuredClone(flow.flow),
-      hard_budget: structuredClone(flow.flow.limits.budget),
-      wip_limits: { max_active_runs: 1, max_active_nodes: flow.flow.limits.max_wip },
-    }),
-  );
-  return (
-    <>
-      <ConfigurationEditor value={draft} onChange={setDraft} choices={choices} flows={flows} />
-      <FactoryPublication
-        api={api}
-        subject={{
-          kind: 'configuration',
-          request: { id, project_id: projectId, definition: draft },
-        }}
-      />
-    </>
-  );
 }

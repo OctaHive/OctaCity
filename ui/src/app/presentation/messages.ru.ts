@@ -1,6 +1,85 @@
 import type { MessageCatalog } from './messages.en';
 
 export const ruMessages = {
+  'policy.manageLaunch': 'Просмотреть или изменить политику запуска',
+  'policy.manageAccess': 'Просмотреть или изменить профиль доступа',
+  'policy.adopt': 'Использовать {name} · v{version} в этом черновике',
+  'policy.backToDraft': 'Вернуться к черновику конфигурации',
+  'policy.referenceUnavailable': 'Версия политики недоступна',
+  'policy.bindingDetails': 'Подробности привязки',
+  'policy.originalReference': 'Исходная ссылка установки',
+  'policy.exactReference': 'Точная ссылка Project',
+  'policy.currentSaved': 'Текущая сохранённая политика',
+  'policy.proposed': 'Предлагаемая политика',
+  'policy.validatedInstallation': 'Проверенный предел установки',
+  'policy.installationDetailsUnavailable':
+    'Ваши права позволяют увидеть источник, но полная декларация установки недоступна.',
+  'policy.launchLabel': 'Политика запуска',
+  'policy.accessLabel': 'Профиль доступа',
+  'policy.accessSummary':
+    'Плагины {plugins} · Исполняемые файлы {executables} · Инструменты {tools} · Сетевые хосты {hosts}',
+  'policy.selectedVersion': 'Выбранная версия',
+  'policy.selectPolicy': 'Выберите политику проекта',
+  'policy.selectPolicyHelp': 'Выберите политику или создайте её в настройках Factory проекта.',
+  'policy.chooseCeiling': 'Выберите установленный предел',
+  'policy.installedCeiling': 'Установленный предел доступа',
+  'policy.noInstallation':
+    'Нет подтверждённых деклараций доступа установки. Можно сохранить профиль без прав выполнения; для выполнения требуется настройка установки.',
+  'policy.installationHelp':
+    'Установка ограничивает доступные значения; настройки Project могут только сузить их. Сервер проверит итоговый доступ перед публикацией.',
+  'policy.supportedAccess': 'Поддерживаемые настройки доступа',
+  'policy.requestedAccess': 'Запрошенные доступы',
+  'policy.moreInstallation': 'Загрузить ещё варианты установки',
+
+  'policy.useDefault': 'Сделать по умолчанию для Project',
+  'policy.confirmDefault': 'Подтвердить выбор',
+  'policy.defaultConsequence':
+    'Использовать {name} · v{version} для новых черновиков конфигураций. Существующие черновики, конфигурации и Run сохранят выбор.',
+  'policy.defaultSaved':
+    'Выбор по умолчанию сохранён. Настройки существующих pipeline не изменены.',
+
+  'policy.edit': 'Редактировать политику',
+  'policy.editingVersion': 'Редактируется v{version}; публикация создаст новую версию.',
+  'policy.unavailable': 'Политика недоступна. Ваш черновик сохранён.',
+
+  'policy.cancel': 'Отменить редактирование',
+  'policy.newLaunch': 'Новая политика запуска',
+  'policy.newAccess': 'Новый профиль доступа',
+  'policy.editor': 'Редактор политики',
+  'policy.name': 'Название политики',
+  'policy.allowManual': 'Разрешить ручной приём',
+  'policy.allowAutomatic': 'Разрешить автоматический приём Source',
+  'policy.review': 'Проверить политику',
+  'policy.publish': 'Опубликовать политику',
+  'policy.consequence':
+    'Будет опубликована новая неизменяемая версия. Defaults, существующие конфигурации и Run не меняются.',
+  'policy.published':
+    'Политика опубликована. Существующие конфигурации и Run сохраняют свои версии.',
+
+  'policy.settings': 'Настройки Factory',
+  'policy.help':
+    'Правила запуска и доступы Project. Изменения не запускают работу и не обновляют опубликованные pipeline.',
+  'policy.launches': 'Политики запуска',
+  'policy.accesses': 'Профили доступа',
+  'policy.defaults': 'Настройки по умолчанию',
+  'policy.defaultVersion': 'По умолчанию для Project · v{version}',
+  'policy.noDefault': 'Настройка по умолчанию не выбрана.',
+  'policy.empty': 'Политики пока не загружены.',
+  'policy.more': 'Загрузить ещё политики',
+  'policy.view': 'Просмотреть {name} · v{version}',
+  'policy.details': 'Просмотр политики',
+  'policy.manualAllowed': 'Ручной приём разрешён',
+  'policy.manualDenied': 'Ручной приём запрещён',
+  'policy.automaticAllowed': 'Автоматический приём Source разрешён',
+  'policy.automaticDenied': 'Автоматический приём Source запрещён',
+  'policy.sourceHelp':
+    'Для автоматического приёма отдельно нужен включённый Source с необходимыми правами.',
+  'policy.accessHelp':
+    'Профиль ограничивает полномочия. Сам по себе он не подключает документы, код, инструменты или credentials.',
+  'policy.noExecution':
+    'Нет прав выполнения. Настройте доступы в пределах установленных полномочий.',
+  'policy.permissions': 'Подробности доступов',
+
   'factory.cancelSetup': 'Отмена',
   'factory.calculation': 'Расчёт',
   'factory.entryInputHelp':
@@ -86,7 +165,7 @@ export const ruMessages = {
   'factory.configurationBudgetHelp':
     'Этот предел действует на каждый допущенный Run, включая все шаги, попытки и повторы.',
   'factory.configurationAccessHelp':
-    'Выберите установленный предел доступа. Сохранённая конфигурация не расширяет доступы шага и не включает Source.',
+    'Профиль Project ограничивает доступы при выполнении этой конфигурации. Также действуют ограничения шага, установки и агента.',
   'factory.startAndQueue': 'Запуск и очередь',
   'factory.executionLimits': 'Лимиты выполнения',
   'factory.pipelineAccess': 'Доступы pipeline',
@@ -2026,8 +2105,6 @@ export const ruMessages = {
   'factory.configurationDraft': 'Черновик конфигурации',
   'factory.enabled': 'Включено',
   'factory.admissionPolicy': 'Политика допуска',
-  'factory.admissionPolicyHelp':
-    'Выберите установленную политику приёма работы. «Нет» означает, что политика пока не выбрана.',
   'factory.permissionCeiling': 'Предел разрешений',
   'factory.rootFlow': 'Корневой Flow',
   'factory.rootFlowHelp':

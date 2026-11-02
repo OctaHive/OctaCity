@@ -117,15 +117,12 @@ pub(super) async fn validate(
     .inputs
     .validate_factory_project_policy(&project, draft)
     .map_err(|e| invalid_input(e, &id))?;
-  let policy = endpoints(&app, &id)?
+  let validation = endpoints(&app, &id)?
     .validate
     .handle_authorized_query(&context, query)
     .await
     .map_err(|e| authorized_handler_error(e, &id))?;
-  Ok((
-    [("cache-control", "no-store")],
-    Json(json!({"policy": encode(policy, &id)?})),
-  ))
+  Ok(([("cache-control", "no-store")], Json(encode(validation, &id)?)))
 }
 
 /// Catalog continuation is the serialized typed reference from the previous page.

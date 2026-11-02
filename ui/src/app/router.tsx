@@ -39,6 +39,11 @@ import { AppShell } from './shell/AppShell';
 import { NotFoundView, RouteErrorBoundary } from './shell/RouteErrorBoundary';
 import styles from './shell/RouteView.module.css';
 
+const FactoryPolicies = lazy(async () => ({
+  default: (await import('../features/factory/FactoryPolicies')).FactoryPolicies,
+}));
+const renderFactorySettings = (project: string) => <FactoryPolicies project={project} />;
+
 const AiSettings = lazy(async () => ({
   default: (await import('../features/factory/AiSettings')).AiSettings,
 }));
@@ -316,7 +321,9 @@ export function createConsoleRoutes(
         },
         {
           path: childPath(CONSOLE_PATHS.project),
-          element: defer(<ProjectView api={dependencies.projectsApi} />),
+          element: defer(
+            <ProjectView api={dependencies.projectsApi} factorySettings={renderFactorySettings} />,
+          ),
         },
         {
           path: childPath(CONSOLE_PATHS.builds),

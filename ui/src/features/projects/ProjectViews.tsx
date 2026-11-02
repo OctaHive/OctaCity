@@ -1,3 +1,4 @@
+import type { ReactNode } from 'react';
 import { useQuery } from '@tanstack/react-query';
 import { ChevronRight, RefreshCw } from 'lucide-react';
 import { Link, useParams } from 'react-router-dom';
@@ -15,11 +16,13 @@ import { WorkspaceWelcome } from '../../shared/WorkspaceWelcome';
 import type { ProjectDetails, ProjectsApi } from './api';
 import { ProjectBuilds } from './ProjectBuilds';
 import { ProjectDefinitions } from './ProjectDefinitions';
+import { ProjectFactorySettings } from './ProjectFactorySettings';
 import { ProjectDocuments } from './ProjectDocuments';
 import styles from './Projects.module.css';
 
 interface ProjectsViewProps {
   api: ProjectsApi;
+  factorySettings?: ((projectId: string) => ReactNode) | undefined;
 }
 
 export function ProjectsLandingView() {
@@ -35,15 +38,19 @@ export function ProjectsLandingView() {
   );
 }
 
-export function ProjectView({ api }: ProjectsViewProps) {
+export function ProjectView({ api, factorySettings }: ProjectsViewProps) {
   const { projectId } = useParams<'projectId'>();
   if (projectId === undefined) {
     return <ProjectNotFound />;
   }
-  return <SelectedProject api={api} projectId={projectId} />;
+  return <SelectedProject api={api} projectId={projectId} factorySettings={factorySettings} />;
 }
 
-function SelectedProject({ api, projectId }: ProjectsViewProps & { projectId: string }) {
+function SelectedProject({
+  api,
+  projectId,
+  factorySettings,
+}: ProjectsViewProps & { projectId: string }) {
   const { t } = usePresentation();
   const project = useQuery({
     queryFn: ({ signal }) => api.getProject(projectId, signal),
@@ -100,6 +107,13 @@ function SelectedProject({ api, projectId }: ProjectsViewProps & { projectId: st
           {t('issues.tasks')}
         </Link>
       </nav>
+      {factorySettings ? (
+        <ProjectFactorySettings
+          key={`factory-settings:${projectId}`}
+          projectId={projectId}
+          renderSettings={factorySettings}
+        />
+      ) : null}
       <ProjectDocuments key={`documents:${projectId}`} projectId={projectId} />
       <ProjectDefinitions key={projectId} api={api} projectId={projectId} />
       <ProjectBuilds key={`builds:${projectId}`} api={api} projectId={projectId} />

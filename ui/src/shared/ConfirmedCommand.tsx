@@ -24,6 +24,7 @@ interface ConfirmedCommandProps<Request, Result> {
     renderPending: (result: Result) => React.ReactNode;
     resumeLabel: string;
   };
+  renderReview?: React.ReactNode;
   confirmLabel: string;
   deadline?: number;
   ready?: boolean;
@@ -50,6 +51,7 @@ type CommandPhase<Result> =
 /** Runs one explicitly confirmed command and retains its identity only for safe transport replay. */
 export function ConfirmedCommand<Request, Result>({
   continuation,
+  renderReview,
   confirmLabel,
   deadline,
   ready = true,
@@ -196,6 +198,7 @@ export function ConfirmedCommand<Request, Result>({
       >
         <h2 id="confirmed-command-title">{title}</h2>
         <p>{consequence}</p>
+        {renderReview}
         {phase.kind === 'succeeded' ? (
           <div aria-live="polite" className={styles.success} role="status">
             {renderSuccess(phase.result)}

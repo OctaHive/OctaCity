@@ -3,7 +3,7 @@ import { issueSourceReview } from '../fixtures/issueSources';
 import { issueFixture } from '../fixtures/issues';
 import { workflowFixture } from '../fixtures/issueWorkflows';
 import { integrationFixture } from '../fixtures/integrations';
-import type { Page, Route } from '@playwright/test';
+import type { Page, Request, Route } from '@playwright/test';
 
 export const FIXTURE_IDS = {
   factoryRun: '44444444-4444-4444-8444-444444444444',
@@ -13,6 +13,16 @@ export const FIXTURE_IDS = {
   pool: 'pool-accessible',
   project: 'project-accessible',
 } as const;
+
+/** Legacy lookup carries a typed reference in a POST body and performs a read. */
+export function isLegacyPolicyRead(request: Request, project: string) {
+  return (
+    request.method() === 'POST' &&
+    new URL(request.url()).pathname ===
+      `/api/v1/projects/${project}/factory-policies/legacy/resolve` &&
+    !request.headers()['idempotency-key']
+  );
+}
 
 /** Installs one deterministic, secret-free management fixture for cross-route browser checks. */
 export async function installOperatorFixture(page: Page) {
@@ -151,6 +161,10 @@ export async function installOperatorFixture(page: Page) {
     const configuration = configurationFixture();
     const run = runFixture();
     const owner = configuration.configuration.reference.project_id;
+    if (isLegacyPolicyRead(route.request(), owner)) {
+      await fulfill(route, { mapping: null });
+      return;
+    }
     if (url.pathname === '/api/v1/factory-actions') {
       await fulfill(route, {
         total: 0,

@@ -15,6 +15,12 @@ export default defineConfig(({ command }) => ({
         assetFileNames: 'assets/[hash][extname]',
         codeSplitting: {
           groups: [
+            // Keep shared Factory authoring controls and their stylesheet in one lazy chunk.
+            {
+              name: 'factory-authoring-controls',
+              test: /src\/features\/factory\/(?:(?:ResourceEditors|ConstraintReview|fieldFocus|useFactoryChoices|emptyFlowDraft)\.tsx?|Factory\.module\.css)$/u,
+              includeDependenciesRecursively: false,
+            },
             // Reduce shared-control chunk overhead while preserving Factory's composed CSS order.
             {
               name: 'console-shared',

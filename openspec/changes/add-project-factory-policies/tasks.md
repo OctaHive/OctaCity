@@ -15,8 +15,8 @@ Every executable slice below uses repository TDD: run its behavioral test to obs
 
 ## 3. Project settings and Configuration UI
 
-- [ ] 3.1 Add separate Launch policies and Access profiles catalogs/editors under Project settings → Factory using existing confirmed commands and typed permission controls; verify create/view/replace/default selection, permission errors, conflict-preserved drafts and no execution side effects in component tests.
-- [ ] 3.2 Connect visibly labeled Configuration selectors to exact Project defaults, rule/access summaries and View/Edit navigation; verify deliberate overrides, legacy provenance, explicit adoption after return, preserved mounted drafts and reachability of all existing advanced settings in component tests and English/Russian keyboard browser tests at 390 and 1280 pixels.
+- [x] 3.1 Add separate Launch policies and Access profiles catalogs/editors under Project settings → Factory using existing confirmed commands and typed permission controls; verify create/view/replace/default selection, permission errors, conflict-preserved drafts and no execution side effects in component tests.
+- [x] 3.2 Connect visibly labeled Configuration selectors to exact Project defaults, rule/access summaries and View/Edit navigation; verify deliberate overrides, legacy provenance, explicit adoption after return, preserved mounted drafts and reachability of all existing advanced settings in component tests and English/Russian keyboard browser tests at 390 and 1280 pixels.
 
 ## 4. Stand compatibility and operator verification
 
@@ -451,3 +451,120 @@ Final `cargo fmt --all -- --check`, `git diff --check`, architecture validation 
 263 edges), and `openspec validate add-project-factory-policies --strict` passed. The two
 disposable access-policy test containers and their anonymous volumes were removed; all four
 personal stand volumes remain present. Available disk space: approximately 32 GiB.
+
+## Verification — 3.1 (2026-11-03)
+
+Project settings now open separate, lazy-loaded launch-policy and access-profile
+catalogs. Exact records and defaults use the typed management API. Publication
+and default selection require independent confirmation. Access settings reuse the
+typed permission editor with one installed declaration at a time. The server
+validates the requested ceiling before review and identifies the limiting scope
+when it rejects a request. Conflicts during validation or publication keep the
+draft and require an explicit refresh and new review.
+
+From `ui`, the focused TDD commands used
+`./node_modules/.bin/vitest run <path> -t '<scenario>'`:
+
+| Test file | Observed Red | Observed Green |
+| --- | --- | --- |
+| `FactoryPolicies.test.tsx` | Missing catalogs, create/edit actions and explicit default selection | Exact read, deny-both creation, replacement and exact default adoption with independent confirmation |
+| `FactoryPolicies.test.tsx` | Missing typed access controls and limiting-scope field feedback | Narrowed access preserves other grants and rejected validation focuses the access field |
+| `FactoryPolicies.test.tsx` | An empty enforcement list disabled installed grants. After fixing that, native validation rejected legal zero resource values | Selecting an installed host and reviewing the profile with zero resource limits succeeds |
+| `FactoryPolicies.test.tsx` | A stale validation response offered no refresh action | Both validation and publication conflicts preserve edits and require renewed review |
+| `policyApi.test.ts` | Missing typed management transport and missing digest on exact GET | Validated publication, idempotency headers, exact digest and independent default selection |
+| `ProjectFactorySettings.test.tsx` | Missing Factory settings entry | Open lazily and retain the draft across collapse and reopen |
+
+The component regressions also cover forbidden publication and read-only
+inspection. `./node_modules/.bin/playwright test tests/browser/project-documents.spec.ts tests/browser/factory-canvas.spec.ts tests/browser/factory-inputs.spec.ts`
+passed 24 tests. Six Linux Playwright snapshots passed against the production
+bundle after updating the two Project views for the new settings button.
+
+`./node_modules/.bin/tsc --noEmit`, scoped ESLint/Prettier, and
+`node --test scripts/*.test.mjs` (41 tests) passed. Production `vite build` and
+`node scripts/verify-architecture.mjs --dist dist` passed with the checked-in
+budgets after grouping shared Factory authoring controls and their stylesheet in
+one lazy chunk. The installed package binaries were used directly from `ui/node_modules`.
+
+The final `./node_modules/.bin/vitest run` passed all 1,040 tests across 125 files.
+`openspec validate add-project-factory-policies --strict` and `git diff --check`
+passed. Available disk space was approximately 32 GiB.
+
+## Verification — 3.2 (2026-11-03)
+
+New Configuration drafts initialize from exact Project defaults in the authorized
+choices response. Catalog selection, a change to Project defaults and policy
+publication are separate operations. The Configuration editor stays mounted
+during the Project settings handoff. The operator can adopt a published version
+explicitly on return, and focus returns to the initiating control. The same
+editor handles replacements with the original queue, budget and Flow settings.
+
+Published Configuration views and replacement drafts resolve historical bindings
+through the exact legacy lookup. Original references are inspectable under
+Details. Missing or inaccessible bindings require explicit Project choices before
+validation. The Configuration request contains both exact Project references.
+
+Red and Green were verified from `ui` using
+`./node_modules/.bin/vitest run <file> -t '<scenario>'`.
+
+| File and filter | Observed Red | Observed Green |
+| --- | --- | --- |
+| `ConfigurationPolicies.test.tsx` / `historical version` | Launch selector was absent. The selected access profile later lacked a readable permission summary | Both exact defaults are named, the access counts reflect the selected profile, and validation sends the deliberate launch override alongside the exact access pin |
+| `ConfigurationPolicies.test.tsx` / `mounted draft` | No View / Edit action | Editing and publishing a policy preserves queue changes and the old pin. Explicit adoption changes the pin and focus returns on closing settings |
+| `policyApi.test.ts` / `retained legacy` | Legacy lookup was missing from Console transport | The read-only resolver receives the full original immutable reference without mutation headers |
+| `ConfigurationPolicies.test.tsx` / `mapped legacy rules` | Published Configuration showed no mapped rules | Exact mapped rules are visible. An unmapped access binding blocks validation until the operator chooses a replacement |
+| `ConfigurationPolicies.test.tsx` / `cannot be read` | A forbidden legacy read blocked opening the editor | Draft opens with actionable policy choices and retained settings |
+| `ConfigurationEditor.test.tsx` / `retained root Flow` | Selector appeared to select the newer catalog version while the historical Flow was pinned | The exact retained root is shown until a replacement is selected |
+
+Regression results from `ui`:
+
+- `./node_modules/.bin/vitest run`: 1,045 tests across 126 files passed. The
+  expanded handoff test also passed a focused rerun with an explicit default
+  change during the handoff.
+- `./node_modules/.bin/playwright test tests/browser/factory{,-definitions,-canvas,-inputs,-triage,-triage-results}.spec.ts`:
+  42 passed, including the English/Russian keyboard matrix at 390 and 1280 px.
+  The shared fixture distinguishes the exact legacy read endpoint from commands.
+- Six Linux Playwright snapshots passed against the production bundle.
+- Type checking, scoped ESLint/Prettier, production Vite build,
+  `node scripts/verify-architecture.mjs --dist dist` and
+  `node --test scripts/*.test.mjs` (41 tests) passed under the existing budgets.
+- `openspec validate add-project-factory-policies --strict` and
+  `git diff --check` passed. Available disk space was approximately 32 GiB.
+
+## Review follow-up — 3.1–3.2 (2026-11-03)
+
+A fresh Project-defaults request initializes each new Configuration draft. The
+draft then owns its original policy pins and root Flow and keeps them available
+for reselection. An incomplete selection has no publication payload. A policy
+replacement conflict retains the proposed edits and requires a review against
+the newly read current policy.
+
+The existing read-only policy validation returns the exact qualifying installed
+ceiling for a nonempty access profile. Installed editor options guide selection.
+The server checks resource limits and decides which complete ceiling qualifies.
+The qualifying declaration is shown only when its dependencies are visible to
+the operator, using the same visibility rule as the choices catalog.
+
+The UI Red → Green checks used `./node_modules/.bin/vitest run <file> -t '<filter>'`
+from `ui`. The already-open workbench pinned an obsolete default, the old policy
+and Flow options disappeared after switching, the re-review lacked the current
+rules, an incomplete draft produced invalid errors for a selected policy, and
+native bounds blocked validation of a retained resource grant. Each behavior
+passed after its correction. Existing catalog tests cover the shared replacement
+draft initialization.
+
+The HTTP Red → Green check used
+`cargo test --locked -p octacity-server --test factory_project_policy_http access_policy_http_qualification_never_unions -- --include-ignored`
+with disposable PostgreSQL. The original response omitted the qualifying
+ceiling. The first preview exposed a nonselectable dependency and failed the
+visibility assertion. The final projection covers both a visible declaration
+and a declaration with hidden dependencies while keeping qualification exact.
+
+The Console regression run passed 1,047 Vitest tests, 42 Factory Playwright
+tests and six Linux visual checks. The production bundle met the existing
+budgets and all 41 script tests passed.
+
+All 15 HTTP regressions passed with the final visibility projection using
+`cargo test --locked -p octacity-server --test factory_project_policy_http -- --include-ignored --test-threads=4`.
+OpenAPI generation, Console type checking, scoped lint and formatting, strict
+OpenSpec validation, and `git diff --check` passed. The disposable database
+was stopped. Available disk space was approximately 32 GiB.

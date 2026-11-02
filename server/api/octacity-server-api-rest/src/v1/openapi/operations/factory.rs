@@ -80,7 +80,7 @@ pub(super) const OPERATIONS: &[ManagementOperation] = &[
     "Factory",
     "Review Project policy contents and preconditions without mutation",
     Some("FactoryProjectPolicyDraft"),
-    "FactoryProjectPolicyDetails",
+    "FactoryProjectPolicyValidation",
     "200",
     false,
     false

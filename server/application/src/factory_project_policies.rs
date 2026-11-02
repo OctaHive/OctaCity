@@ -8,6 +8,28 @@ pub use octacity_server_store::{
   FactoryProjectPolicyRef,
 };
 
+/// Read-only review of a policy and the installation envelope that qualified it.
+#[derive(Debug, serde::Serialize)]
+pub struct FactoryProjectPolicyValidation {
+  /// Exact proposed publication.
+  pub policy: FactoryProjectPolicyRecord,
+  /// A verified installed ceiling for nonempty access profiles.
+  #[serde(skip_serializing_if = "Option::is_none")]
+  pub installed_ceiling: Option<FactoryPolicyInstalledCeiling>,
+}
+
+/// The complete installed declaration that covered the requested profile.
+#[derive(Debug, serde::Serialize)]
+pub struct FactoryPolicyInstalledCeiling {
+  /// Operator-facing installed choice name.
+  pub alias: FactoryKey,
+  /// Exact installed version.
+  pub reference: ImmutableReference,
+  /// Declared upper bound when all its dependencies are visible.
+  #[serde(skip_serializing_if = "Option::is_none")]
+  pub permissions: Option<FactoryPermissionSet>,
+}
+
 /// Editable contents; the server computes publication versions and content digests.
 #[derive(Clone, Debug, serde::Deserialize, serde::Serialize)]
 #[serde(tag = "kind", rename_all = "snake_case", deny_unknown_fields)]
@@ -106,7 +128,7 @@ pub struct ValidateFactoryProjectPolicyQuery {
   pub intent: FactoryProjectPolicyIntent,
 }
 impl Query for ValidateFactoryProjectPolicyQuery {
-  type Outcome = FactoryProjectPolicyRecord;
+  type Outcome = FactoryProjectPolicyValidation;
 }
 impl ManagementAuthorizationTarget for ValidateFactoryProjectPolicyQuery {
   const AUTHORIZATION: ManagementAuthorizationMapping = PublishFactoryProjectPolicyCommand::AUTHORIZATION;
@@ -202,11 +224,14 @@ impl<S: FactoryProjectPolicyStore + FactoryConfigurationStore> ManagementQueryUs
     context: &ManagementRequestContext,
     grant: &ManagementAuthorizationGrant,
     query: ValidateFactoryProjectPolicyQuery,
-  ) -> Result<FactoryProjectPolicyRecord, ApplicationError> {
+  ) -> Result<FactoryProjectPolicyValidation, ApplicationError> {
     crate::factory_role_profiles::require_project_visibility(grant, query.intent.policy.reference().project_id())?;
     self.store.validate_factory_project_policy(&query.intent).await?;
-    self.qualify(context, &query.intent).await?;
-    Ok(query.intent.policy)
+    let installed_ceiling = self.qualify(context, &query.intent).await?;
+    Ok(FactoryProjectPolicyValidation {
+      policy: query.intent.policy,
+      installed_ceiling,
+    })
   }
 }
 #[async_trait::async_trait]
@@ -364,12 +389,12 @@ impl<S: FactoryConfigurationStore> FactoryProjectPolicyHandlers<S> {
     &self,
     context: &ManagementRequestContext,
     intent: &FactoryProjectPolicyIntent,
-  ) -> Result<(), ApplicationError> {
+  ) -> Result<Option<FactoryPolicyInstalledCeiling>, ApplicationError> {
     let FactoryProjectPolicyRecord::Access(profile) = &intent.policy else {
-      return Ok(());
+      return Ok(None);
     };
     if profile.definition().permissions == FactoryPermissionSet::deny_all() {
-      return Ok(());
+      return Ok(None);
     }
     let choices = match crate::factory_configuration_choices::visible_installed_factory_choices(
       self.store.as_ref(),
@@ -383,29 +408,47 @@ impl<S: FactoryConfigurationStore> FactoryProjectPolicyHandlers<S> {
       Err(ApplicationError::CapabilityUnavailable) => return Err(access_limit()),
       Err(error) => return Err(error),
     };
-    if access_fits_choices(profile, &choices) {
-      Ok(())
-    } else {
-      Err(access_limit())
-    }
+    qualifying_access_ceiling(profile, &choices)
+      .map(Some)
+      .ok_or_else(access_limit)
   }
 }
-// Reuse one qualification rule for profile publication and Configuration/readiness checks.
+
+// Configuration readiness uses the same qualification as profile publication.
 pub(super) fn access_fits_choices(profile: &FactoryAccessProfile, choices: &FactoryConfigurationChoices) -> bool {
-  if profile.definition().permissions == FactoryPermissionSet::deny_all() {
-    return true;
-  }
-  let entries = choices.entries();
-  crate::factory_configuration_choices::permissions_selectable(&profile.definition().permissions, &entries.references)
-    && entries
-      .references
-      .iter()
-      .filter(|entry| entry.kind == FactoryChoiceKind::PermissionCeiling)
-      .any(|entry| {
-        octacity_server_store::factory_policy_access_declaration(choices, &entry.reference)
-          .is_ok_and(|ceiling| profile.definition().validate_within(&ceiling).is_ok())
-      })
+  profile.definition().permissions == FactoryPermissionSet::deny_all()
+    || qualifying_access_ceiling(profile, choices).is_some()
 }
+
+fn qualifying_access_ceiling(
+  profile: &FactoryAccessProfile,
+  choices: &FactoryConfigurationChoices,
+) -> Option<FactoryPolicyInstalledCeiling> {
+  let entries = choices.entries();
+  if !crate::factory_configuration_choices::permissions_selectable(
+    &profile.definition().permissions,
+    &entries.references,
+  ) {
+    return None;
+  }
+  entries
+    .references
+    .iter()
+    .filter(|entry| entry.kind == FactoryChoiceKind::PermissionCeiling)
+    .find_map(|entry| {
+      let permissions = octacity_server_store::factory_policy_access_declaration(choices, &entry.reference).ok()?;
+      profile.definition().validate_within(&permissions).ok()?;
+      // Apply the catalog's visibility rule to the complete declaration.
+      let permissions = crate::factory_configuration_choices::permissions_selectable(&permissions, &entries.references)
+        .then_some(permissions);
+      Some(FactoryPolicyInstalledCeiling {
+        alias: entry.alias.clone(),
+        reference: entry.reference.clone(),
+        permissions,
+      })
+    })
+}
+
 fn access_limit() -> ApplicationError {
   ApplicationError::FactoryValidation(Box::new(FactoryValidationDiagnostics::single_issue(
     "/definition/permissions",

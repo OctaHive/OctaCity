@@ -99,11 +99,13 @@ export function PermissionEditor({
   ceiling,
   fieldPath,
   enforcement,
+  limitNumbers = true,
 }: {
   value: Permissions;
   ceiling?: Permissions;
   fieldPath?: string;
   enforcement?: readonly PermissionCategory[];
+  limitNumbers?: boolean;
   choices: PermissionChoices;
   onChange: (value: Permissions) => void;
   label: string;
@@ -111,6 +113,10 @@ export function PermissionEditor({
   const { t } = usePresentation();
   const supported = (...categories: PermissionCategory[]) =>
     !enforcement || categories.every((category) => enforcement.includes(category));
+  const numericMaximum = (category: PermissionCategory, maximum: number | undefined) => {
+    if (!limitNumbers) return Number.MAX_SAFE_INTEGER;
+    return supported(category) ? (maximum ?? Number.MAX_SAFE_INTEGER) : 0;
+  };
   const unavailable = (allowed: boolean) =>
     allowed ? null : <p>{t('factory.permissionUnsupported')}</p>;
   const toggle = (
@@ -425,11 +431,7 @@ export function PermissionEditor({
           <input
             type="number"
             min={0}
-            max={
-              supported('descendant_processes')
-                ? (ceiling?.max_descendants ?? Number.MAX_SAFE_INTEGER)
-                : 0
-            }
+            max={numericMaximum('descendant_processes', ceiling?.max_descendants)}
             value={value.max_descendants}
             onChange={(event) =>
               onChange({ ...value, max_descendants: Number(event.target.value) })
@@ -444,12 +446,8 @@ export function PermissionEditor({
             {t('factory.resource')} · {key}
             <input
               type="number"
-              min={supported(RESOURCE_CATEGORY[key]) ? 1 : 0}
-              max={
-                supported(RESOURCE_CATEGORY[key])
-                  ? (ceiling?.resources[key] ?? Number.MAX_SAFE_INTEGER)
-                  : 0
-              }
+              min={0}
+              max={numericMaximum(RESOURCE_CATEGORY[key], ceiling?.resources[key])}
               value={value.resources[key]}
               onChange={(event) =>
                 onChange({
@@ -468,13 +466,7 @@ export function PermissionEditor({
             <input
               type="number"
               min={0}
-              max={
-                supported('outputs')
-                  ? ceiling
-                    ? Number(ceiling.outputs[key])
-                    : Number.MAX_SAFE_INTEGER
-                  : 0
-              }
+              max={numericMaximum('outputs', ceiling ? Number(ceiling.outputs[key]) : undefined)}
               value={Number(value.outputs[key])}
               onChange={(event) =>
                 onChange({

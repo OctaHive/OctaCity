@@ -186,7 +186,7 @@ impl octacity_server_store_postgres::FactoryCapabilitySource for PolicyAuthority
             permission_declarations: Some(
               FactoryPermissionSet::try_new(FactoryPermissionDraft {
                 network_hosts: vec![NetworkHost::new(host).unwrap()],
-                plugins: vec![unavailable_plugin()],
+                plugins: (alias == "first").then(unavailable_plugin).into_iter().collect(),
                 ..Default::default()
               })
               .unwrap(),
@@ -266,6 +266,18 @@ async fn access_policy_http_qualification_never_unions_ceilings_and_replay_survi
     "name":"Read service","permissions":permissions(&["allowed.example"])
   }});
   let checked = f.post("/validate", "unused", &body, StatusCode::OK).await;
+  assert_eq!(checked["installed_ceiling"]["alias"], "first");
+  assert_eq!(checked["installed_ceiling"]["reference"]["version"], "v1");
+  assert!(checked["installed_ceiling"].get("permissions").is_none());
+  assert!(!checked.to_string().contains("missing-plugin"));
+  let mut visible = body.clone();
+  visible["definition"]["permissions"] = permissions(&["other.example"]);
+  let visible = f.post("/validate", "unused", &visible, StatusCode::OK).await;
+  assert_eq!(visible["installed_ceiling"]["alias"], "second");
+  assert_eq!(
+    visible["installed_ceiling"]["permissions"]["network_hosts"],
+    json!(["other.example"])
+  );
   let saved = f.post("", "access", &body, StatusCode::OK).await;
   assert_eq!(saved["policy"], checked["policy"]);
   let r = &saved["policy"]["policy"]["reference"];

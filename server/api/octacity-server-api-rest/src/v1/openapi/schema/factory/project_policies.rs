@@ -83,6 +83,27 @@ pub(super) fn insert(schemas: &mut Map<String, Value>) {
     object([("policy", schema_ref("FactoryProjectPolicyRecord"))], &["policy"]),
   );
   schemas.insert(
+    "FactoryPolicyInstalledCeiling".into(),
+    object(
+      [
+        ("alias", json!({"type":"string"})),
+        ("reference", schema_ref("FactoryImmutableReferenceResource")),
+        ("permissions", schema_ref("FactoryPermissions")),
+      ],
+      &["alias", "reference"],
+    ),
+  );
+  schemas.insert(
+    "FactoryProjectPolicyValidation".into(),
+    object(
+      [
+        ("policy", schema_ref("FactoryProjectPolicyRecord")),
+        ("installed_ceiling", schema_ref("FactoryPolicyInstalledCeiling")),
+      ],
+      &["policy"],
+    ),
+  );
+  schemas.insert(
     "FactoryProjectPolicyPublication".into(),
     object(
       [
