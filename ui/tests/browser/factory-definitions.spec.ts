@@ -2,9 +2,55 @@ import { expect, test } from '@playwright/test';
 import { configurationFixture } from '../fixtures/factory';
 import { installOperatorFixture } from './operatorFixture';
 import { translate, type MessageKey } from '../../src/app/presentation/messages';
+import { DEFAULT_PREFERENCES, PREFERENCES_KEY } from '../../src/app/presentation/preferences';
 
 for (const language of ['en', 'ru'] as const) {
   for (const width of [390, 1280]) {
+    test(`${language}: visibly labels the configuration policy, flow and access selectors at ${width}px`, async ({
+      page,
+    }) => {
+      await installOperatorFixture(page);
+      await page.setViewportSize({ width, height: 900 });
+      await page.addInitScript(
+        ({ key, preferences }) => localStorage.setItem(key, JSON.stringify(preferences)),
+        {
+          key: PREFERENCES_KEY,
+          preferences: { ...DEFAULT_PREFERENCES, language, explorerOpen: false },
+        },
+      );
+      const t = (key: MessageKey) => translate(language, key);
+      const configuration = configurationFixture().configuration;
+      await page.goto(
+        `/factory?project_id=${configuration.reference.project_id}&configuration_id=${configuration.reference.id}&configuration_version=1`,
+      );
+      await page.getByRole('button', { name: t('factory.editConfiguration'), exact: true }).click();
+      const draft = page.getByRole('group', { name: t('factory.configurationDraft'), exact: true });
+      for (const key of [
+        'factory.admissionPolicy',
+        'factory.rootFlow',
+        'factory.permissionCeiling',
+      ] as const) {
+        const label = draft.getByText(t(key), { exact: true });
+        await expect(label).toBeVisible();
+        const picker = draft.getByRole('combobox', { name: t(key), exact: true });
+        const labelBox = (await label.boundingBox())!;
+        const pickerBox = (await picker.boundingBox())!;
+        expect(pickerBox.y).toBeGreaterThanOrEqual(labelBox.y + labelBox.height);
+        expect(pickerBox.x).toBeGreaterThanOrEqual(labelBox.x);
+        await picker.click();
+        await expect(page.getByRole('listbox', { name: t(key), exact: true })).toBeVisible();
+        await page.keyboard.press('Escape');
+        await expect(picker).toBeFocused();
+      }
+      await expect(
+        draft.getByText(t('factory.admissionPolicyHelp'), { exact: true }),
+      ).toBeVisible();
+      await expect(draft.getByText(t('factory.rootFlowHelp'), { exact: true })).toBeVisible();
+      expect(await page.evaluate(() => document.documentElement.scrollWidth)).toBeLessThanOrEqual(
+        width,
+      );
+    });
+
     test(`${language}: keeps the published flow editor padded and its actions separated at ${width}px`, async ({
       page,
     }, info) => {

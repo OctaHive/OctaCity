@@ -2003,8 +2003,12 @@ export const enMessages = {
   'factory.configurationDraft': 'Configuration draft',
   'factory.enabled': 'Enabled',
   'factory.admissionPolicy': 'Admission policy',
+  'factory.admissionPolicyHelp':
+    'Choose an installed work admission policy. “None” means no policy has been selected yet.',
   'factory.permissionCeiling': 'Permission ceiling',
   'factory.rootFlow': 'Root Flow',
+  'factory.rootFlowHelp':
+    'This published graph defines the steps and transitions used when the pipeline runs.',
   'factory.hardBudget': 'Configuration run budget',
   'factory.activeRuns': 'Maximum active Runs',
   'factory.activeCalls': 'Maximum active calls',

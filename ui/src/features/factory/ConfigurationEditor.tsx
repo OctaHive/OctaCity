@@ -3,6 +3,7 @@ import { flowLabel } from './flowLabels';
 import { usePresentation } from '../../app/presentation/PresentationProvider';
 import { SelectMenu } from '../../shared/SelectMenu';
 import { BudgetEditor } from './ResourceEditors';
+import styles from './Factory.module.css';
 
 type Definition = components['schemas']['FactoryConfigurationDefinition'];
 type Choice = components['schemas']['FactoryConfigurationChoiceResource'];
@@ -20,22 +21,30 @@ export function ConfigurationEditor({
 }) {
   const { t } = usePresentation();
   const policyPicker = (kind: 'admission_policy' | 'permission_ceiling') => (
-    <SelectMenu
-      ariaLabel={t(
-        kind === 'admission_policy' ? 'factory.admissionPolicy' : 'factory.permissionCeiling',
-      )}
-      value={value[kind]}
-      options={[
-        { value: '', label: t('factory.none') },
-        ...choices
-          .filter((choice) => choice.kind === kind && choice.reference.kind === 'immutable')
-          .map((choice) => ({
-            value: choice.alias,
-            label: `${choice.alias} · ${choice.reference.reference.version}`,
-          })),
-      ]}
-      onValueChange={(alias) => onChange({ ...value, [kind]: alias })}
-    />
+    <div className={styles.selectField}>
+      <span>
+        {t(kind === 'admission_policy' ? 'factory.admissionPolicy' : 'factory.permissionCeiling')}
+      </span>
+      <SelectMenu
+        ariaLabel={t(
+          kind === 'admission_policy' ? 'factory.admissionPolicy' : 'factory.permissionCeiling',
+        )}
+        value={value[kind]}
+        options={[
+          { value: '', label: t('factory.none') },
+          ...choices
+            .filter((choice) => choice.kind === kind && choice.reference.kind === 'immutable')
+            .map((choice) => ({
+              value: choice.alias,
+              label: `${choice.alias} · ${choice.reference.reference.version}`,
+            })),
+        ]}
+        onValueChange={(alias) => onChange({ ...value, [kind]: alias })}
+      />
+      {kind === 'admission_policy' ? (
+        <p className={styles.supportingText}>{t('factory.admissionPolicyHelp')}</p>
+      ) : null}
+    </div>
   );
   return (
     <fieldset data-factory-field="" tabIndex={-1}>
@@ -52,24 +61,28 @@ export function ConfigurationEditor({
           {t('factory.enabled')}
         </label>
         {policyPicker('admission_policy')}
-        <SelectMenu
-          ariaLabel={t('factory.rootFlow')}
-          value={String(
-            flows.findIndex(
-              (flow) =>
-                flow.flow.closure.root.id === value.flow.closure.root.id &&
-                flow.flow.closure.root.version === value.flow.closure.root.version,
-            ),
-          )}
-          options={flows.map((flow, index) => ({
-            value: String(index),
-            label: flowLabel(flow.flow, t('factory.immutableFlow')),
-          }))}
-          onValueChange={(index) => {
-            const flow = flows[Number(index)];
-            if (flow) onChange({ ...value, flow: structuredClone(flow.flow) });
-          }}
-        />
+        <div className={styles.selectField}>
+          <span>{t('factory.rootFlow')}</span>
+          <SelectMenu
+            ariaLabel={t('factory.rootFlow')}
+            value={String(
+              flows.findIndex(
+                (flow) =>
+                  flow.flow.closure.root.id === value.flow.closure.root.id &&
+                  flow.flow.closure.root.version === value.flow.closure.root.version,
+              ),
+            )}
+            options={flows.map((flow, index) => ({
+              value: String(index),
+              label: flowLabel(flow.flow, t('factory.immutableFlow')),
+            }))}
+            onValueChange={(index) => {
+              const flow = flows[Number(index)];
+              if (flow) onChange({ ...value, flow: structuredClone(flow.flow) });
+            }}
+          />
+          <p className={styles.supportingText}>{t('factory.rootFlowHelp')}</p>
+        </div>
         {(['max_active_runs', 'max_active_nodes'] as const).map((key) => (
           <label key={key}>
             {t(key === 'max_active_runs' ? 'factory.activeRuns' : 'factory.activeCalls')}

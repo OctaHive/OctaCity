@@ -117,6 +117,14 @@
   width: min(100%, 14rem);
   font-size: 0.85rem;
 }
+.selectField {
+  display: grid;
+  gap: var(--space-xs);
+  margin: var(--space-sm) 0;
+}
+.selectField > span {
+  font-size: 0.82rem;
+}
 .definitionActions {
   justify-content: flex-start;
 }

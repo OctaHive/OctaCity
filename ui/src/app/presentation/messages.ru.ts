@@ -2017,8 +2017,12 @@ export const ruMessages = {
   'factory.configurationDraft': 'Черновик конфигурации',
   'factory.enabled': 'Включено',
   'factory.admissionPolicy': 'Политика допуска',
+  'factory.admissionPolicyHelp':
+    'Выберите установленную политику приёма работы. «Нет» означает, что политика пока не выбрана.',
   'factory.permissionCeiling': 'Предел разрешений',
   'factory.rootFlow': 'Корневой Flow',
+  'factory.rootFlowHelp':
+    'Этот опубликованный граф определяет шаги и переходы при запуске pipeline.',
   'factory.hardBudget': 'Бюджет Run конфигурации',
   'factory.activeRuns': 'Максимум активных Runs',
   'factory.activeCalls': 'Максимум активных вызовов',
