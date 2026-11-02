@@ -1,4 +1,5 @@
 import type { components } from '../../../.generated/api/schema';
+import { flowLabel } from './flowLabels';
 import { usePresentation } from '../../app/presentation/PresentationProvider';
 import { SelectMenu } from '../../shared/SelectMenu';
 import { BudgetEditor } from './ResourceEditors';
@@ -62,7 +63,7 @@ export function ConfigurationEditor({
           )}
           options={flows.map((flow, index) => ({
             value: String(index),
-            label: `${flow.flow.closure.definitions.find((definition) => definition.reference.id === flow.flow.closure.root.id)?.entry ?? t('factory.immutableFlow')} · v${flow.flow.closure.root.version}`,
+            label: flowLabel(flow.flow, t('factory.immutableFlow')),
           }))}
           onValueChange={(index) => {
             const flow = flows[Number(index)];

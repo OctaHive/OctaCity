@@ -5,6 +5,7 @@ import { ProjectDocumentPublication } from '../../shared/ProjectDocumentPublicat
 import type { FlowDocumentServices } from './FlowDocuments';
 import { readExactProjectDocument } from '../../api/projectDocuments';
 import { QueryFailureNotice, QueryLoadingNotice } from '../../shared/QueryStateNotice';
+import styles from './Factory.module.css';
 
 type Draft = components['schemas']['FactoryFlowDefinitionDraft'];
 type Kind = 'goals' | 'criteria';
@@ -101,7 +102,7 @@ export function FlowProcess({
                   )}
                 </button>
                 {preview?.digest === document.artifact.content_digest ? (
-                  <pre>{preview.content}</pre>
+                  <pre className={styles.processPreview}>{preview.content}</pre>
                 ) : null}
                 <details>
                   <summary>{t('factory.documentInputDetails')}</summary>

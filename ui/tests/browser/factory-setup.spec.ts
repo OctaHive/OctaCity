@@ -127,6 +127,10 @@ for (const [language, width] of [
       await page.keyboard.press('Escape');
     }
     await page.getByRole('button', { name: t('factory.addPipeline'), exact: true }).click();
+    const pipelineName = language === 'ru' ? 'Триаж входящих задач' : 'Incoming ticket triage';
+    await page
+      .getByRole('textbox', { name: t('factory.pipelineName'), exact: true })
+      .fill(pipelineName);
     await page.getByRole('button', { name: t('factory.addNode'), exact: true }).click();
     await page
       .getByRole('textbox', { name: t('factory.nodeName'), exact: true })
@@ -135,6 +139,22 @@ for (const [language, width] of [
     await page.getByRole('option', { name: t('factory.kind.reasoning'), exact: true }).click();
     await page.getByRole('button', { name: t('factory.addResult'), exact: true }).click();
     await page.getByRole('button', { name: t('factory.saveResult'), exact: true }).click();
+    const results = page.getByRole('group', { name: t('factory.expectedResult'), exact: true });
+    const reuse = results.getByText(t('factory.reuseResultFormat'), { exact: true });
+    await reuse.click();
+    const resultFormat = results.getByRole('combobox', {
+      name: t('factory.outcomeSchema'),
+      exact: true,
+    });
+    await expect(resultFormat).toContainText('project_check.result');
+    await resultFormat.click();
+    await expect(page.getByRole('option')).toHaveText(['project_check.result']);
+    await page.keyboard.press('Escape');
+    const identifiers = results.getByText(t('factory.formatIdentifiers'), { exact: true });
+    await identifiers.click();
+    await expect(results.getByText(/^result\./)).toBeVisible();
+    await identifiers.click();
+    await reuse.click();
     const executor = page.getByRole('group', { name: t('factory.executor'), exact: true });
     await executor.getByRole('combobox', { name: t('factory.executorRole') }).click();
     await page.getByRole('option', { name: `${role.definition.name} · v1`, exact: true }).click();
@@ -175,10 +195,29 @@ for (const [language, width] of [
       .getByRole('textbox', { name: t('factory.terminalName'), exact: true })
       .fill('finished');
     await page.getByRole('combobox', { name: t('factory.terminalSchema'), exact: true }).click();
-    await page.getByRole('option', { name: 'project_check › result', exact: true }).click();
+    await expect(page.getByRole('option')).toHaveText(['project_check.result']);
+    await page.screenshot({ path: info.outputPath('completion-result-choice.png') });
+    await page.getByRole('option', { name: 'project_check.result', exact: true }).click();
+    const formats = page.getByText(t('factory.completionFormatDetails'), { exact: true });
+    const advancedFormat = page.getByRole('combobox', {
+      name: t('factory.anyCompletionFormat'),
+      exact: true,
+    });
+    await expect(advancedFormat).toBeHidden();
+    await formats.click();
+    await advancedFormat.click();
+    await expect(
+      page.getByRole('option', {
+        name: translate(language, 'factory.stepInputFormat', { name: 'project_check' }),
+        exact: true,
+      }),
+    ).toHaveCount(1);
+    await page.keyboard.press('Escape');
+    await formats.click();
     await page.getByRole('button', { name: t('factory.addTransition'), exact: true }).click();
     await page.getByRole('button', { name: t('factory.validateDraft'), exact: true }).click();
     await expect(page.getByText(t('factory.validationPassed'), { exact: true })).toBeVisible();
+    expect(submitted?.definition.root.name).toBe(pipelineName);
     expect(submitted?.definition.root.nodes[0]?.budget).toEqual({
       max_attempts: 1,
       max_elapsed_millis: 300000,

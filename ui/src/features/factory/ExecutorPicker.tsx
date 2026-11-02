@@ -214,7 +214,7 @@ export function ExecutorPicker({
           />
         )}
       </PagedExplorerBranch>
-      {roleId ? (
+      {role ? (
         <PagedExplorerBranch
           query={profiles}
           empty={t('factory.noProfiles')}
@@ -245,7 +245,7 @@ export function ExecutorPicker({
           }
         </PagedExplorerBranch>
       ) : null}
-      {profileId ? (
+      {profile ? (
         <PagedExplorerBranch
           query={capabilities}
           empty={t('factory.noInstalledExecutor')}
@@ -275,7 +275,7 @@ export function ExecutorPicker({
           )}
         </PagedExplorerBranch>
       ) : null}
-      {outcomes.length > 1 ? (
+      {profile && capability && outcomes.length > 1 ? (
         <SelectMenu
           ariaLabel={t('factory.executorResultOutcome')}
           value={outcome?.key ?? ''}

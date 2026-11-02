@@ -59,8 +59,12 @@ it('authors exact source effects on an ordinary intermediate action without chan
       </MemoryRouter>
     </QueryClientProvider>,
   );
-  await userEvent.click(await screen.findByRole('combobox', { name: 'Source connection' }));
+  const connectionSelect = await screen.findByRole('combobox', { name: 'Source connection' });
+  expect(screen.queryByRole('combobox', { name: 'Original task source' })).toBeNull();
+  expect(screen.queryByRole('combobox', { name: 'Reporter mapping' })).toBeNull();
+  await userEvent.click(connectionSelect);
   await userEvent.click(await screen.findByRole('option', { name: connection.definition.name }));
+  expect(screen.queryByRole('combobox', { name: 'Reporter mapping' })).toBeNull();
   await userEvent.click(await screen.findByRole('combobox', { name: 'Original task source' }));
   await userEvent.click(
     await screen.findByRole('option', {
@@ -118,6 +122,16 @@ it('authors exact source effects on an ordinary intermediate action without chan
   expect(
     JSON.stringify({ local: { ...localStorage }, session: { ...sessionStorage } }),
   ).not.toContain('investigate-next');
+  const saved = structuredClone(observed);
+  await userEvent.click(screen.getByRole('combobox', { name: 'Original task source' }));
+  await userEvent.click(screen.getByRole('option', { name: 'Choose an option' }));
+  expect(screen.queryByRole('combobox', { name: 'Reporter mapping' })).toBeNull();
+  expect(screen.queryByRole('combobox', { name: 'Logical status' })).toBeNull();
+  expect(apply).toHaveProperty('disabled', true);
+  await userEvent.click(screen.getByRole('combobox', { name: 'Source connection' }));
+  await userEvent.click(screen.getByRole('option', { name: 'Choose an option' }));
+  expect(screen.queryByRole('combobox', { name: 'Original task source' })).toBeNull();
+  expect(observed).toEqual(saved);
 });
 
 it('keeps arbitrary installed action parameters usable without assuming a deferred source profile', () => {

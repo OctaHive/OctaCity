@@ -1,4 +1,5 @@
 import { StepResults, type ResultDraft } from './StepResults';
+import { FACTORY_AUTHORING_SCHEMAS } from '../../../.generated/api/factory-authoring';
 import { FlowCodeSources, type CodeResourceServices } from './FlowCodeSources';
 import { StepTask } from './StepTask';
 import { StepCode } from './StepCode';
@@ -202,6 +203,23 @@ export function FlowGraphEditor({
   return (
     <section className={styles.editor} data-factory-field="/root" tabIndex={-1}>
       <h3>{t('factory.graphEditor')}</h3>
+      <label>
+        {t('factory.pipelineName')}
+        <input
+          value={value.root.name ?? ''}
+          maxLength={
+            FACTORY_AUTHORING_SCHEMAS.FactoryFlowRootDraft.properties.name.anyOf[0].maxLength
+          }
+          onChange={(event) =>
+            onChange({ ...value, root: { ...value.root, name: event.target.value || null } })
+          }
+          onBlur={(event) => {
+            const name = event.target.value.trim() || null;
+            if (name !== (value.root.name ?? null))
+              onChange({ ...value, root: { ...value.root, name } });
+          }}
+        />
+      </label>
       <AccessRequirements value={value} onChange={onChange} />
       {documents ? (
         <FlowProcess
@@ -284,69 +302,6 @@ export function FlowGraphEditor({
               </button>
             </>
           ) : null}
-          <details>
-            <summary>{t('factory.advancedStepSettings')}</summary>
-            <label>
-              <input
-                type="checkbox"
-                checked={node.required}
-                onChange={(event) => updateNode({ required: event.target.checked })}
-              />
-              {t('factory.requiredBranch')}
-            </label>
-            <label>
-              {t('factory.executionRetries')}
-              <input
-                type="number"
-                min={0}
-                max={value.root.execution.budget.max_attempts}
-                value={node.max_execution_retries ?? 0}
-                onChange={(event) =>
-                  updateNode({ max_execution_retries: Number(event.target.value) })
-                }
-              />
-            </label>
-            <SelectMenu
-              ariaLabel={t('factory.namedPool')}
-              value={node.phase_pool ?? ''}
-              options={[
-                { value: '', label: t('factory.none') },
-                ...Object.keys(value.pools ?? {}).map((name) => ({ value: name, label: name })),
-              ]}
-              onValueChange={(phase_pool) => updateNode({ phase_pool: phase_pool || null })}
-            />
-          </details>
-          <button
-            type="button"
-            onClick={() => {
-              const key = node.key;
-              onChange({
-                ...value,
-                root: {
-                  ...value.root,
-                  ...(value.root.process
-                    ? { process: updateProcessRecipients(value.root.process, key, null) }
-                    : {}),
-                  entry: value.root.entry === key ? '' : value.root.entry,
-                  nodes: value.root.nodes.filter((_, index) => index !== selected),
-                  transitions: value.root.transitions.filter(
-                    (edge) =>
-                      edge.predecessor !== key &&
-                      !(edge.target.kind === 'node' && edge.target.key === key),
-                  ),
-                  context_projections: value.root.context_projections.filter(
-                    (edge) => edge.predecessor !== key && edge.successor !== key,
-                  ),
-                  data_projections: value.root.data_projections.filter(
-                    (edge) => edge.predecessor !== key && edge.successor !== key,
-                  ),
-                },
-              });
-              setSelected(Math.max(0, selected - 1));
-            }}
-          >
-            {t('factory.removeNode')}
-          </button>
           <label>
             {t('factory.nodeName')}
             <input
@@ -389,6 +344,7 @@ export function FlowGraphEditor({
           <StepResults
             key={nodeKeys[selected]}
             node={node}
+            nodes={value.root.nodes}
             schemas={value.data_schemas}
             services={authoring}
             draft={resultDrafts[nodeKeys[selected] ?? '']}
@@ -488,6 +444,70 @@ export function FlowGraphEditor({
               onChange={(permissions) => updateNode({ permissions })}
             />
           </details>
+          <details>
+            <summary>{t('factory.advancedStepSettings')}</summary>
+            <label>
+              <input
+                type="checkbox"
+                checked={node.required}
+                onChange={(event) => updateNode({ required: event.target.checked })}
+              />
+              {t('factory.requiredBranch')}
+            </label>
+            <label>
+              {t('factory.executionRetries')}
+              <input
+                type="number"
+                min={0}
+                max={value.root.execution.budget.max_attempts}
+                value={node.max_execution_retries ?? 0}
+                onChange={(event) =>
+                  updateNode({ max_execution_retries: Number(event.target.value) })
+                }
+              />
+            </label>
+            <SelectMenu
+              ariaLabel={t('factory.namedPool')}
+              value={node.phase_pool ?? ''}
+              options={[
+                { value: '', label: t('factory.none') },
+                ...Object.keys(value.pools ?? {}).map((name) => ({ value: name, label: name })),
+              ]}
+              onValueChange={(phase_pool) => updateNode({ phase_pool: phase_pool || null })}
+            />
+          </details>
+          <button
+            type="button"
+            className={styles.removeStep}
+            onClick={() => {
+              const key = node.key;
+              onChange({
+                ...value,
+                root: {
+                  ...value.root,
+                  ...(value.root.process
+                    ? { process: updateProcessRecipients(value.root.process, key, null) }
+                    : {}),
+                  entry: value.root.entry === key ? '' : value.root.entry,
+                  nodes: value.root.nodes.filter((_, index) => index !== selected),
+                  transitions: value.root.transitions.filter(
+                    (edge) =>
+                      edge.predecessor !== key &&
+                      !(edge.target.kind === 'node' && edge.target.key === key),
+                  ),
+                  context_projections: value.root.context_projections.filter(
+                    (edge) => edge.predecessor !== key && edge.successor !== key,
+                  ),
+                  data_projections: value.root.data_projections.filter(
+                    (edge) => edge.predecessor !== key && edge.successor !== key,
+                  ),
+                },
+              });
+              setSelected(Math.max(0, selected - 1));
+            }}
+          >
+            {t('factory.removeNode')}
+          </button>
         </fieldset>
       )}
       <FlowProjections value={value.root} onChange={(root) => onChange({ ...value, root })} />

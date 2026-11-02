@@ -14,6 +14,36 @@ import { emptyFlowDraft } from './emptyFlowDraft';
 
 afterEach(cleanup);
 
+it('edits and clears the pipeline name without renaming its steps or changing their settings', async () => {
+  const flow = configurationFixture().configuration.flow;
+  const { reference: _reference, ...root } = structuredClone(flow.closure.definitions[0]!);
+  void _reference;
+  let observed = { root, limits: flow.limits, data_schemas: flow.data_schemas };
+  const original = structuredClone(observed);
+  function Harness() {
+    const [value, setValue] = useState(observed);
+    return (
+      <FlowGraphEditor
+        value={value}
+        choices={[]}
+        subflows={[]}
+        onChange={(next) => {
+          observed = next;
+          setValue(next);
+        }}
+      />
+    );
+  }
+  render(<Harness />);
+  const name = screen.getByRole('textbox', { name: 'Pipeline name' });
+  await userEvent.type(name, 'Триаж входящих задач');
+  expect(observed.root).toMatchObject({ name: 'Триаж входящих задач' });
+  expect(observed.root.nodes).toEqual(original.root.nodes);
+  expect(observed.root.transitions).toEqual(original.root.transitions);
+  await userEvent.clear(name);
+  expect(observed.root).toMatchObject({ name: null });
+});
+
 it('calculates branch bounds immediately across different outcomes of the same step', async () => {
   const flow = configurationFixture().configuration.flow;
   const schema = flow.data_schemas[0]!.reference;
@@ -84,6 +114,18 @@ it('keeps manual step and access settings available inside collapsed advanced se
     />,
   );
   const options = screen.getByText('Advanced step settings');
+  const step = within(screen.getByRole('group', { name: 'Step' }));
+  expect(
+    step.getByRole('textbox', { name: 'Step name' }).compareDocumentPosition(options) &
+      Node.DOCUMENT_POSITION_FOLLOWING,
+  ).toBeTruthy();
+  expect(
+    step.getByRole('group', { name: 'Expected result' }).compareDocumentPosition(options) &
+      Node.DOCUMENT_POSITION_FOLLOWING,
+  ).toBeTruthy();
+  expect(step.getAllByRole('button').at(-1)).toBe(
+    step.getByRole('button', { name: 'Remove step' }),
+  );
   expect(options.closest('details')).toHaveProperty('open', false);
   await userEvent.click(options);
   expect(screen.getByRole('checkbox', { name: 'Required branch' })).toBeTruthy();

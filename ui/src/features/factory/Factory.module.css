@@ -62,6 +62,12 @@
   opacity: 0.6;
   cursor: default;
 }
+.workspace .removeStep {
+  margin-top: var(--space-md);
+  color: var(--color-danger-ink);
+  background: var(--color-danger-soft);
+  border-color: var(--color-danger-ink);
+}
 .workspace button[aria-pressed='true'] {
   border-color: var(--color-brand-action);
   background: var(--color-brand-soft);
@@ -80,6 +86,66 @@
 .workspace .definitionList {
   list-style: none;
   padding: 0;
+}
+.definitionItem {
+  display: grid;
+  justify-items: start;
+  gap: var(--space-md);
+}
+.definitionDetails {
+  box-sizing: border-box;
+  display: grid;
+  gap: var(--space-lg);
+  width: 100%;
+  min-width: 0;
+  padding: var(--space-lg);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-small);
+  background: var(--color-surface);
+}
+.definitionDetails:has(.editor) {
+  padding: 0;
+  border: 0;
+}
+.definitionToolbar,
+.definitionActions {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-md);
+}
+.versionPicker {
+  display: grid;
+  gap: var(--space-xs);
+  width: min(100%, 14rem);
+  font-size: 0.85rem;
+}
+.definitionActions {
+  justify-content: flex-start;
+}
+.pipelineInputs {
+  display: grid;
+  gap: var(--space-md);
+}
+.definitionDetails > section {
+  padding-top: var(--space-lg);
+  border-top: 1px solid var(--color-border);
+}
+.definitionFacts {
+  composes: runFacts from '../../shared/FactoryRead.module.css';
+}
+.workspace .definitionFacts dd {
+  margin: 0;
+}
+.definitionFacts > div {
+  min-width: 0;
+}
+.definitionDetails h4 {
+  margin: 0 0 var(--space-sm);
+}
+.definitionDetails details > dl {
+  margin-bottom: 0;
 }
 .editor {
   display: grid;
@@ -290,6 +356,11 @@
   max-height: 24rem;
   max-width: 100%;
   overflow: auto;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+
+.processPreview {
   white-space: pre-wrap;
   overflow-wrap: anywhere;
 }

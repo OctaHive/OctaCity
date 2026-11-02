@@ -135,8 +135,8 @@ it('authors and confirms a first Flow through guided controls, generating identi
   await userEvent.click(screen.getByRole('button', { name: 'Flow settings' }));
   await userEvent.click(screen.getByRole('button', { name: 'Add terminal' }));
   await userEvent.type(screen.getByRole('textbox', { name: 'Terminal name' }), 'finished');
-  await userEvent.click(screen.getByRole('combobox', { name: 'Terminal schema' }));
-  await userEvent.click(screen.getByRole('option', { name: 'operator_decision › result' }));
+  await userEvent.click(screen.getByRole('combobox', { name: 'Completion result' }));
+  await userEvent.click(screen.getByRole('option', { name: 'operator_decision.result' }));
   await userEvent.click(screen.getByRole('button', { name: 'Add transition' }));
   await userEvent.click(screen.getByRole('button', { name: 'Validate draft' }));
   expect(await screen.findByText('Authoritative validation passed.')).toBeTruthy();

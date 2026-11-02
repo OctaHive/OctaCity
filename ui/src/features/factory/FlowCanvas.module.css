@@ -7,11 +7,33 @@
   display: flex;
   gap: var(--space-sm);
   flex-wrap: wrap;
-  align-items: end;
+  align-items: center;
+}
+.toolbar output {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 4rem;
+  min-height: 2.35rem;
+  box-sizing: border-box;
+  padding: var(--space-xs) var(--space-sm);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-small);
+  background: var(--color-surface);
+  font-variant-numeric: tabular-nums;
 }
 .selected {
   outline: 2px solid var(--color-brand-action);
   outline-offset: 2px;
+}
+.graph .stepNode > button {
+  flex: 1 1 0;
+  min-width: 0;
+  min-height: 0;
+  padding: var(--space-xs) var(--space-sm);
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
 }
 .terminal {
   border-style: dashed;

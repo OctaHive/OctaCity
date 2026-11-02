@@ -50,9 +50,7 @@ for (const language of ['en', 'ru'] as const) {
         exact: true,
       }),
     ).toHaveCount(0);
-    await page
-      .getByRole('button', { name: t('factory.inspectFlow', { version: 1 }), exact: true })
-      .press('Enter');
+    await page.getByRole('button', { name: 'implement · v1', exact: true }).press('Enter');
     await page.getByRole('button', { name: t('factory.editFlow'), exact: true }).press('Enter');
     await expect(
       page.getByRole('region', { name: t('factory.stepGraph'), exact: true }),

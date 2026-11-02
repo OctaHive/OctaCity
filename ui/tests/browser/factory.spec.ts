@@ -30,7 +30,7 @@ test('copied Factory Run filters survive search, collapse and resize, and the vi
   await expect(
     page.getByRole('main').getByRole('heading', { level: 1, name: 'Factory' }),
   ).toBeVisible();
-  await page.getByRole('button', { name: 'Inspect Flow Definition · v1' }).click();
+  await page.getByRole('button', { name: 'implement · v1' }).click();
   await page.getByRole('button', { name: 'Edit Flow draft' }).click();
   await expect(page.getByRole('textbox', { name: 'Step name' })).toHaveValue('implement');
   await page.getByRole('heading', { name: 'Flow graph editor' }).scrollIntoViewIfNeeded();

@@ -118,6 +118,35 @@ the existing authoritative validation and confirmation.
 
 ## Connect control and accepted data separately
 
+Set **Pipeline name** at the top of the graph editor. The name is saved with each
+immutable Flow version and appears in discovery, root Flow and subflow choices.
+Renaming publishes a new version; existing Runs retain their original definition.
+Historical unnamed Flows display their entry step until a name is assigned.
+
+Choose immutable versions from the **Version** dropdown. Histories larger than
+100 versions expose a search by number inside the menu, keeping rendered choices
+bounded while retaining access to every version. Configuration summaries separate
+execution state, human-readable resource limits and intake actions; **Technical
+details** retains exact policy references and original budget units.
+
+Dependent selectors appear after their prerequisite is selected: producing step,
+outcome (when needed), result field, then destination input. Each selector is
+labelled. Clearing a prerequisite hides its dependent choices without removing
+saved connections. The same sequence applies to executor role/profile/runtime
+selection, Reporter connection/source/mapping, and automatic intake
+connection/container/input mapping. Independent settings, such as the code
+repository, remain available.
+
+Format selectors display current `step.result` aliases, or the owning step's input
+name. Unassigned formats retain a numbered label. **Exact format identifiers**
+opens the complete identity/version/digest catalog; selecting and renaming aliases
+never rewrites an immutable reference.
+
+The **Completion result** list offers step result formats. **Technical completion
+formats** retains every declared data contract for manual/custom completions;
+an existing custom selection is preserved. The incoming control transition
+determines the producing step; choosing a format does not create or change a route.
+
 Connect each declared outcome to its next step or typed terminal. Gates require
 an explicit predicate, result-data mapping and routes. To pass an unchanged
 bounded result, enable **Choose result data** and select the root path; for a

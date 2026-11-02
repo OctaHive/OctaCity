@@ -176,12 +176,15 @@ function SourceUpdateForm({
     options: { value: string; label: string }[],
     change: (value: string) => void,
   ) => (
-    <SelectMenu
-      ariaLabel={label}
-      value={value}
-      options={[{ value: '', label: t('factory.chooseInput') }, ...options]}
-      onValueChange={change}
-    />
+    <label>
+      {label}
+      <SelectMenu
+        ariaLabel={label}
+        value={value}
+        options={[{ value: '', label: t('factory.chooseInput') }, ...options]}
+        onValueChange={change}
+      />
+    </label>
   );
   return (
     <section aria-label={t('factory.stageSourceUpdate')}>
@@ -222,47 +225,51 @@ function SourceUpdateForm({
           {t('integrations.moreConnections')}
         </button>
       ) : null}
-      {select(
-        t('factory.originalTaskSource'),
-        sourceKey,
-        choices.data?.items.flatMap((item) =>
-          item.purpose === 'task_read'
-            ? [
-                {
-                  value: sourceBindingKey(item.binding),
-                  label: `${item.locator} · ${item.binding.configuration.identity}`,
-                },
-              ]
-            : [],
-        ) ?? [],
-        (value) => {
-          edit({ sourceKey: value, writerKey: '', writerPin: null, effects: null });
-        },
-      )}
-      {select(
-        t('factory.reporterMapping'),
-        writerKey,
-        writers.map((item) => ({
-          value: sourceBindingKey(item.binding),
-          label: item.binding.configuration.identity,
-        })),
-        (value) => {
-          const chosen = writers.find((item) => sourceBindingKey(item.binding) === value);
-          edit({
-            writerKey: value,
-            writerPin:
-              chosen && choices.data
-                ? JSON.stringify([
-                    choices.data.access_version,
-                    chosen.connection_configuration,
-                    chosen.reporting,
-                  ])
-                : null,
-            preset: '0',
-            effects: null,
-          });
-        },
-      )}
+      {connection
+        ? select(
+            t('factory.originalTaskSource'),
+            sourceKey,
+            choices.data?.items.flatMap((item) =>
+              item.purpose === 'task_read'
+                ? [
+                    {
+                      value: sourceBindingKey(item.binding),
+                      label: `${item.locator} · ${item.binding.configuration.identity}`,
+                    },
+                  ]
+                : [],
+            ) ?? [],
+            (value) => {
+              edit({ sourceKey: value, writerKey: '', writerPin: null, effects: null });
+            },
+          )
+        : null}
+      {connection && source
+        ? select(
+            t('factory.reporterMapping'),
+            writerKey,
+            writers.map((item) => ({
+              value: sourceBindingKey(item.binding),
+              label: item.binding.configuration.identity,
+            })),
+            (value) => {
+              const chosen = writers.find((item) => sourceBindingKey(item.binding) === value);
+              edit({
+                writerKey: value,
+                writerPin:
+                  chosen && choices.data
+                    ? JSON.stringify([
+                        choices.data.access_version,
+                        chosen.connection_configuration,
+                        chosen.reporting,
+                      ])
+                    : null,
+                preset: '0',
+                effects: null,
+              });
+            },
+          )
+        : null}
       {writerKey !== '' && writer?.reporting ? (
         <>
           <SelectMenu

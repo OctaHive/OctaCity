@@ -1,6 +1,7 @@
 import type { components } from '../../../.generated/api/schema';
 import { usePresentation } from '../../app/presentation/PresentationProvider';
 import { SelectMenu } from '../../shared/SelectMenu';
+import { flowLabel } from './flowLabels';
 
 type Draft = components['schemas']['FactoryFlowDefinitionDraft'];
 type Node = components['schemas']['FactoryFlowNodeDefinition'];
@@ -59,7 +60,7 @@ export function ExecutionProfiles({
             { value: '-1', label: t('factory.none') },
             ...flows.map((flow, index) => ({
               value: String(index),
-              label: `${flow.flow.closure.definitions.find((definition) => definition.reference.id === flow.flow.closure.root.id)?.entry ?? t('factory.immutableFlow')} · v${flow.flow.closure.root.version}`,
+              label: flowLabel(flow.flow, t('factory.immutableFlow')),
             })),
           ]}
           onValueChange={(index) => {
@@ -94,7 +95,7 @@ export function ExecutionProfiles({
               { value: '-1', label: t('factory.none') },
               ...profiles.map((profile, index) => ({
                 value: String(index),
-                label: `${profile.definition.entry} · ${profile.node.key} · v${profile.definition.reference.version}`,
+                label: `${profile.definition.name ?? profile.definition.entry} · ${profile.node.key} · v${profile.definition.reference.version}`,
               })),
             ]}
             onValueChange={(index) => {

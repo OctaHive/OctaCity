@@ -6,6 +6,7 @@ import { SelectMenu } from '../../shared/SelectMenu';
 import { PermissionEditor } from './ResourceEditors';
 import { BudgetSettings } from './BudgetSettings';
 import { flowBudget } from './flowRequirements';
+import { FlowSchemaSelect, flowSchemaChoices } from './FlowSchemaSelect';
 type Draft = components['schemas']['FactoryFlowDefinitionDraft'];
 const LIMITS = {
   max_depth: 'factory.depth',
@@ -35,6 +36,22 @@ export function FlowSettings({
 }) {
   const { t } = usePresentation();
   const terminalKeys = useDraftRowKeys(value.root.terminals);
+  const resultChoices = flowSchemaChoices(value.data_schemas, value.root.nodes, t).filter(
+    (choice) => choice.kind === 'result',
+  );
+  const updateTerminalSchema = (index: number, selected: string) => {
+    const schema = value.data_schemas[Number(selected)];
+    if (schema)
+      onChange({
+        ...value,
+        root: {
+          ...value.root,
+          terminals: value.root.terminals.map((item, position) =>
+            position === index ? { ...item, schema: schema.reference } : item,
+          ),
+        },
+      });
+  };
   return (
     <fieldset data-factory-field="/limits" tabIndex={-1}>
       <legend>{t('factory.flowSettings')}</legend>
@@ -49,20 +66,16 @@ export function FlowSettings({
         />
         <details>
           <summary>{t('factory.advancedContracts')}</summary>
-          <SelectMenu
+          <FlowSchemaSelect
+            schemas={value.data_schemas}
+            nodes={value.root.nodes}
+            allowNone
             ariaLabel={t('factory.flowInputSchema')}
             value={String(
               value.data_schemas.findIndex(
                 (schema) => schema.reference.digest === value.root.input_schema?.digest,
               ),
             )}
-            options={[
-              { value: '-1', label: t('factory.none') },
-              ...value.data_schemas.map((schema, index) => ({
-                value: String(index),
-                label: `${schema.reference.identity} · ${schema.reference.version}`,
-              })),
-            ]}
             onValueChange={(index) =>
               onChange({
                 ...value,
@@ -213,11 +226,12 @@ export function FlowSettings({
         </details>
       </fieldset>
       <h4>{t('factory.terminals')}</h4>
+      <p>{t('factory.completionResultHelp')}</p>
       <button
         type="button"
         disabled={value.data_schemas.length === 0}
         onClick={() => {
-          const schema = value.data_schemas[0];
+          const schema = value.data_schemas[Number(resultChoices[0]?.value ?? 0)];
           if (schema)
             onChange({
               ...value,
@@ -230,70 +244,73 @@ export function FlowSettings({
       >
         {t('factory.addTerminal')}
       </button>
-      {value.root.terminals.map((terminal, index) => (
-        <fieldset key={terminalKeys[index]}>
-          <label>
-            {t('factory.terminalName')}
-            <input
-              maxLength={128}
-              value={terminal.key}
-              onChange={(event) => {
-                const key = event.target.value;
-                onChange({
-                  ...value,
-                  root: {
-                    ...value.root,
-                    terminals: value.root.terminals.map((item, position) =>
-                      position === index ? { ...item, key } : item,
-                    ),
-                    transitions: value.root.transitions.map((edge) => ({
-                      ...edge,
-                      target:
-                        edge.target.kind === 'terminal' && edge.target.key === terminal.key
-                          ? { kind: 'terminal', key }
-                          : edge.target,
-                      exhausted_terminal:
-                        edge.exhausted_terminal === terminal.key ? key : edge.exhausted_terminal,
-                    })),
-                  },
-                });
-              }}
+      {value.root.terminals.map((terminal, index) => {
+        const selected = String(
+          value.data_schemas.findIndex(
+            (schema) => schema.reference.digest === terminal.schema.digest,
+          ),
+        );
+        const ordinary = resultChoices.some((choice) => choice.value === selected);
+        return (
+          <fieldset key={terminalKeys[index]}>
+            <label>
+              {t('factory.terminalName')}
+              <input
+                maxLength={128}
+                value={terminal.key}
+                onChange={(event) => {
+                  const key = event.target.value;
+                  onChange({
+                    ...value,
+                    root: {
+                      ...value.root,
+                      terminals: value.root.terminals.map((item, position) =>
+                        position === index ? { ...item, key } : item,
+                      ),
+                      transitions: value.root.transitions.map((edge) => ({
+                        ...edge,
+                        target:
+                          edge.target.kind === 'terminal' && edge.target.key === terminal.key
+                            ? { kind: 'terminal', key }
+                            : edge.target,
+                        exhausted_terminal:
+                          edge.exhausted_terminal === terminal.key ? key : edge.exhausted_terminal,
+                      })),
+                    },
+                  });
+                }}
+              />
+            </label>
+            <p>{t('factory.terminalSchema')}</p>
+            <SelectMenu
+              ariaLabel={t('factory.terminalSchema')}
+              value={selected}
+              options={[
+                ...resultChoices,
+                ...(ordinary
+                  ? []
+                  : [
+                      {
+                        value: selected,
+                        label: t('factory.customCompletionFormat'),
+                      },
+                    ]),
+              ]}
+              onValueChange={(selected) => updateTerminalSchema(index, selected)}
             />
-          </label>
-          <SelectMenu
-            ariaLabel={t('factory.terminalSchema')}
-            value={String(
-              value.data_schemas.findIndex(
-                (schema) => schema.reference.digest === terminal.schema.digest,
-              ),
-            )}
-            options={value.data_schemas.map((schema, index) => ({
-              value: String(index),
-              label:
-                value.root.nodes
-                  .flatMap((node) =>
-                    node.outcomes
-                      .filter((outcome) => outcome.schema.digest === schema.reference.digest)
-                      .map((outcome) => `${node.key} › ${outcome.key}`),
-                  )
-                  .join(', ') || `${schema.reference.identity} · ${schema.reference.version}`,
-            }))}
-            onValueChange={(selected) => {
-              const schema = value.data_schemas[Number(selected)];
-              if (schema)
-                onChange({
-                  ...value,
-                  root: {
-                    ...value.root,
-                    terminals: value.root.terminals.map((item, position) =>
-                      position === index ? { ...item, schema: schema.reference } : item,
-                    ),
-                  },
-                });
-            }}
-          />
-        </fieldset>
-      ))}
+            <details>
+              <summary>{t('factory.completionFormatDetails')}</summary>
+              <FlowSchemaSelect
+                schemas={value.data_schemas}
+                nodes={value.root.nodes}
+                ariaLabel={t('factory.anyCompletionFormat')}
+                value={selected}
+                onValueChange={(selected) => updateTerminalSchema(index, selected)}
+              />
+            </details>
+          </fieldset>
+        );
+      })}
     </fieldset>
   );
 }

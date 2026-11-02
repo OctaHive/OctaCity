@@ -17,6 +17,9 @@ import { ManagementApiError } from '../../api/client';
 import { useFactoryChoices } from './useFactoryChoices';
 import styles from './Factory.module.css';
 import { aiSettingsPath } from '../../app/routes';
+import { flowLabel } from './flowLabels';
+import { BUDGET_LABELS } from './ResourceEditors';
+import { formatBytes } from '../../shared/display';
 
 /** Published identities are selected from visible bounded pages; edits use separate drafts. */
 export function FactoryDefinitions({
@@ -175,7 +178,7 @@ export function FactoryDefinitions({
         {(items) => (
           <ul className={styles.definitionList}>
             {items.map((item) => (
-              <li key={item.id}>
+              <li key={item.id} className={styles.definitionItem}>
                 <button
                   type="button"
                   onClick={() => select('configuration', item.id, item.version)}
@@ -235,12 +238,12 @@ export function FactoryDefinitions({
         {(items) => (
           <ul className={styles.definitionList}>
             {items.map((item) => (
-              <li key={item.id}>
+              <li key={item.id} className={styles.definitionItem}>
                 <button
                   type="button"
                   onClick={() => select('flow', item.id, item.flow.closure.root.version)}
                 >
-                  {t('factory.inspectFlow', { version: item.flow.closure.root.version })}
+                  {flowLabel(item.flow, t('factory.immutableFlow'))}
                 </button>
                 {selectedFlow === item.id ? (
                   <FlowDetails
@@ -308,7 +311,7 @@ function ConfigurationDetails({
   onDiscard: () => void;
   canAuthor: boolean;
 }) {
-  const { t } = usePresentation();
+  const { t, locale } = usePresentation();
   const query = useQuery({
     queryKey: queryKeys.factoryConfiguration(summary.id, version),
     queryFn: ({ signal }) => api.getConfiguration(summary.id, version, signal),
@@ -324,22 +327,77 @@ function ConfigurationDetails({
     );
   const configuration = query.data.configuration;
   return (
-    <section>
-      <VersionPicker current={summary.version} selected={version} onChange={changeVersion} />
-      <p>
-        {configuration.admission_policy.identity} · {configuration.admission_policy.version}
-      </p>
-      <p>
-        {configuration.permission_ceiling.identity} · {configuration.permission_ceiling.version}
-      </p>
-      <dl>
-        {Object.entries(configuration.hard_budget).map(([key, value]) => (
-          <div key={key}>
-            <dt>{key}</dt>
-            <dd>{value}</dd>
-          </div>
-        ))}
+    <section
+      className={styles.definitionDetails}
+      aria-label={t('factory.configurationVersion', { version })}
+    >
+      <header className={styles.definitionToolbar}>
+        <h3>{t('factory.configurationVersion', { version })}</h3>
+        <VersionPicker current={summary.version} selected={version} onChange={changeVersion} />
+      </header>
+      <dl className={styles.definitionFacts}>
+        <div>
+          <dt>{t('factory.rootFlow')}</dt>
+          <dd>{flowLabel(configuration.flow, t('factory.immutableFlow'))}</dd>
+        </div>
+        <div>
+          <dt>{t('factory.executionIntake')}</dt>
+          <dd>
+            {t(configuration.enabled ? 'factory.executionEnabled' : 'factory.executionDisabled')}
+          </dd>
+        </div>
       </dl>
+      <section>
+        <h4>{t('factory.hardBudget')}</h4>
+        <dl className={styles.definitionFacts}>
+          {(Object.keys(BUDGET_LABELS) as (keyof typeof configuration.hard_budget)[]).map((key) => (
+            <div key={key}>
+              <dt>
+                {t(
+                  key === 'max_elapsed_millis'
+                    ? 'factory.executionTime'
+                    : key === 'max_output_bytes'
+                      ? 'factory.resultSizeLimit'
+                      : BUDGET_LABELS[key],
+                )}
+              </dt>
+              <dd>
+                {key === 'max_output_bytes'
+                  ? formatBytes(configuration.hard_budget[key], locale)
+                  : key === 'max_elapsed_millis'
+                    ? t('factory.elapsedSeconds', {
+                        value: (configuration.hard_budget[key] / 1000).toLocaleString(locale),
+                      })
+                    : configuration.hard_budget[key].toLocaleString(locale)}
+              </dd>
+            </div>
+          ))}
+        </dl>
+      </section>
+      <details>
+        <summary>{t('factory.definitionDetails')}</summary>
+        <dl className={styles.definitionFacts}>
+          <div>
+            <dt>{t('factory.admissionPolicy')}</dt>
+            <dd>
+              {configuration.admission_policy.identity} · {configuration.admission_policy.version}
+            </dd>
+          </div>
+          <div>
+            <dt>{t('factory.permissionCeiling')}</dt>
+            <dd>
+              {configuration.permission_ceiling.identity} ·{' '}
+              {configuration.permission_ceiling.version}
+            </dd>
+          </div>
+          {Object.entries(configuration.hard_budget).map(([key, amount]) => (
+            <div key={key}>
+              <dt>{key}</dt>
+              <dd>{amount}</dd>
+            </div>
+          ))}
+        </dl>
+      </details>
       {editing ? (
         <FactoryAuthoring
           repositories={repositories}
@@ -350,9 +408,11 @@ function ConfigurationDetails({
           onDiscard={onDiscard}
         />
       ) : (
-        <button type="button" disabled={!canAuthor} onClick={onEdit}>
-          {t('factory.editConfiguration')}
-        </button>
+        <div className={styles.definitionActions}>
+          <button type="button" disabled={!canAuthor} onClick={onEdit}>
+            {t('factory.editConfiguration')}
+          </button>
+        </div>
       )}
       <FactoryPipelineInputs
         configuration={query.data}
@@ -398,13 +458,21 @@ function FlowDetails({
       <QueryFailureNotice title={t('factory.flows')} error={query.error} onRetry={query.refetch} />
     );
   return (
-    <section>
-      <h3>{t('factory.immutableFlow')}</h3>
-      <VersionPicker
-        current={summary.flow.closure.root.version}
-        selected={version}
-        onChange={changeVersion}
-      />
+    <section className={styles.definitionDetails}>
+      <header className={styles.definitionToolbar}>
+        <h3>
+          {query.data.flow.closure.definitions.find(
+            (definition) =>
+              definition.reference.id === query.data.flow.closure.root.id &&
+              definition.reference.version === query.data.flow.closure.root.version,
+          )?.name ?? t('factory.immutableFlow')}
+        </h3>
+        <VersionPicker
+          current={summary.flow.closure.root.version}
+          selected={version}
+          onChange={changeVersion}
+        />
+      </header>
       {editing ? (
         <FactoryAuthoring
           repositories={repositories}
@@ -445,26 +513,24 @@ function VersionPicker({
   onChange: (version: number) => void;
 }) {
   const { t } = usePresentation();
-  const [windowEnd, setWindowEnd] = useState(current);
-  const values = Array.from({ length: Math.min(windowEnd, 100) }, (_, index) => windowEnd - index);
+  const [search, setSearch] = useState('');
+  const requested = Number(search);
+  const head = !search.trim()
+    ? current
+    : Number.isSafeInteger(requested) && requested > 0 && requested <= current
+      ? requested
+      : 0;
+  const values = Array.from({ length: Math.min(head, 100) }, (_, index) => head - index);
   if (!values.includes(selected)) values.push(selected);
   return (
-    <>
-      <button
-        type="button"
-        disabled={windowEnd <= 100}
-        onClick={() => setWindowEnd(Math.max(1, windowEnd - 100))}
-      >
-        {t('factory.earlierVersions')}
-      </button>
-      <button
-        type="button"
-        disabled={windowEnd >= current}
-        onClick={() => setWindowEnd(Math.min(current, windowEnd + 100))}
-      >
-        {t('factory.laterVersions')}
-      </button>
+    <div className={styles.versionPicker}>
+      <span>{t('factory.version')}</span>
       <SelectMenu
+        search={
+          current > 100
+            ? { label: t('factory.findVersion'), value: search, onChange: setSearch }
+            : undefined
+        }
         ariaLabel={t('factory.version')}
         value={String(selected)}
         onValueChange={(value) => onChange(Number(value))}
@@ -473,7 +539,7 @@ function VersionPicker({
           label: t('factory.versionLabel', { version: value }),
         }))}
       />
-    </>
+    </div>
   );
 }
 

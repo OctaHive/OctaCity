@@ -8,6 +8,46 @@ import { factoryApi, type FactoryApi } from './api';
 import { StepResults, type ResultDraft } from './StepResults';
 
 afterEach(cleanup);
+it('names reusable formats after their producing steps and keeps exact references in optional details', async () => {
+  const sample = configurationFixture().configuration.flow.closure.definitions[0]!.nodes[0]!;
+  const schemas = ['a', 'b'].map((digest) => ({
+    reference: { identity: `result.generated-${digest}`, version: '1', digest: digest.repeat(64) },
+    shape: { type: 'boolean' as const },
+  }));
+  const node = {
+    ...sample,
+    key: 'project_check',
+    outcomes: [{ key: 'result', kind: 'success' as const, schema: schemas[0]!.reference }],
+  };
+  const producer = {
+    ...sample,
+    key: 'systems_analysis',
+    outcomes: [{ key: 'analysis', kind: 'success' as const, schema: schemas[1]!.reference }],
+  };
+  const onChange = vi.fn();
+  const props = { node, nodes: [node, producer], schemas, onChange, onDraftChange: vi.fn() };
+  const view = render(<StepResults {...props} />);
+  await userEvent.click(screen.getByText('Reuse result format', { exact: true }));
+  const selector = screen.getByRole('combobox', { name: 'Outcome schema' });
+  expect(selector.textContent).toContain('project_check.result');
+  expect(screen.queryByText(/result\.generated-/)).toBeNull();
+  await userEvent.click(selector);
+  await userEvent.click(screen.getByRole('option', { name: 'systems_analysis.analysis' }));
+  expect(onChange).toHaveBeenCalledWith({
+    outcomes: [{ ...node.outcomes[0], schema: schemas[1]!.reference }],
+  });
+  view.rerender(<StepResults {...props} nodes={[node, { ...producer, key: 'renamed_analyst' }]} />);
+  await userEvent.click(selector);
+  expect(screen.getByRole('option', { name: 'renamed_analyst.analysis' })).toBeTruthy();
+  await userEvent.keyboard('{Escape}');
+  expect(onChange).toHaveBeenCalledTimes(1);
+  await userEvent.click(screen.getByText('Exact format identifiers', { exact: true }));
+  for (const schema of schemas) {
+    expect(await screen.findByText(schema.reference.identity, { exact: false })).toBeTruthy();
+    expect(screen.getByText(schema.reference.digest, { exact: false })).toBeTruthy();
+  }
+});
+
 it('shows the step result fields and edits their format without replacing an existing format or requiring schema metadata', async () => {
   const flow = configurationFixture().configuration.flow;
   const original = {

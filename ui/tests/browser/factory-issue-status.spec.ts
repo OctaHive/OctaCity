@@ -81,7 +81,7 @@ for (const language of ['en', 'ru'] as const) {
     const text =
       language === 'en'
         ? {
-            inspect: 'Inspect Flow Definition · v1',
+            inspect: `${root.entry} · v1`,
             edit: 'Edit Flow draft',
             heading: 'Local Issue status action',
             workflow: 'Issue workflow',
@@ -89,7 +89,7 @@ for (const language of ['en', 'ru'] as const) {
             apply: 'Use reviewed Issue action',
           }
         : {
-            inspect: 'Просмотреть поток · v1',
+            inspect: `${root.entry} · v1`,
             edit: 'Редактировать черновик Flow',
             heading: 'Локальное действие со статусом задачи',
             workflow: 'Процесс задачи',

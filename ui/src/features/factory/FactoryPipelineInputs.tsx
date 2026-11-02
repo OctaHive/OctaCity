@@ -5,6 +5,7 @@ import { AutomaticInputs } from './AutomaticInputs';
 import { usePresentation } from '../../app/presentation/PresentationProvider';
 import type { FactoryConfigurationDetails } from './api';
 import { factorySourcesApi, type FactorySourcesApi } from './sourceApi';
+import styles from './Factory.module.css';
 
 /** Manual Artifact intake remains independent of installed automatic-source capabilities. */
 export function FactoryPipelineInputs({
@@ -25,17 +26,22 @@ export function FactoryPipelineInputs({
   // Consumption survives closing the automatic-input section; published inputs reopen from its catalog.
   const [publishedInitial, setPublishedInitial] = useState<string | null>(null);
   return (
-    <section aria-labelledby={`pipeline-inputs-${configuration.configuration.reference.id}`}>
+    <section
+      className={styles.pipelineInputs}
+      aria-labelledby={`pipeline-inputs-${configuration.configuration.reference.id}`}
+    >
       <h3 id={`pipeline-inputs-${configuration.configuration.reference.id}`}>
         {t('factory.inputs')}
       </h3>
-      <p>{t('factory.inputsHelp')}</p>
-      <button type="button" disabled={!onManual} onClick={onManual}>
-        {t('factory.admitManual')}
-      </button>
-      <button type="button" aria-expanded={automatic} onClick={() => setAutomatic(!automatic)}>
-        {t('factory.configureAutomatic')}
-      </button>
+      <p className={styles.supportingText}>{t('factory.inputsHelp')}</p>
+      <div className={styles.definitionActions}>
+        <button type="button" disabled={!onManual} onClick={onManual}>
+          {t('factory.admitManual')}
+        </button>
+        <button type="button" aria-expanded={automatic} onClick={() => setAutomatic(!automatic)}>
+          {t('factory.configureAutomatic')}
+        </button>
+      </div>
       {automatic ? (
         <AutomaticInputs
           configuration={configuration}

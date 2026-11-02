@@ -139,6 +139,31 @@ async function openInput() {
   await userEvent.click(await screen.findByRole('button', { name: 'Add automatic input' }));
 }
 
+it('reveals dependent intake choices in order while keeping the independent code repository available', async () => {
+  const { connection, read, validate, publish, api } = fixture();
+  await openInput();
+  expect(screen.queryByRole('combobox', { name: 'Task container' })).toBeNull();
+  expect(screen.queryByRole('combobox', { name: 'Selector and input mapping' })).toBeNull();
+  expect(screen.queryByRole('combobox', { name: 'Reporter mapping' })).toBeNull();
+  expect(screen.getByRole('combobox', { name: 'Code Repository' })).toBeTruthy();
+  await choose('Source connection', connection.definition.name);
+  expect(await screen.findByRole('combobox', { name: 'Task container' })).toBeTruthy();
+  expect(screen.queryByRole('combobox', { name: 'Selector and input mapping' })).toBeNull();
+  await choose('Task container', read.locator);
+  expect(screen.queryByRole('combobox', { name: 'Reporter mapping' })).toBeNull();
+  await choose('Selector and input mapping', `${read.binding.configuration.identity} · v1`);
+  expect(screen.getByRole('combobox', { name: 'Reporter mapping' })).toBeTruthy();
+  await choose('Task container', 'Choose an option');
+  expect(screen.queryByRole('combobox', { name: 'Selector and input mapping' })).toBeNull();
+  expect(screen.queryByRole('combobox', { name: 'Reporter mapping' })).toBeNull();
+  await choose('Source connection', 'Choose an option');
+  expect(screen.queryByRole('combobox', { name: 'Task container' })).toBeNull();
+  expect(screen.getByRole('combobox', { name: 'Code Repository' })).toBeTruthy();
+  expect(validate).not.toHaveBeenCalled();
+  expect(publish).not.toHaveBeenCalled();
+  expect(api.preview).not.toHaveBeenCalled();
+});
+
 it('distinguishes installed preparation profile versions and revalidates the exact selection without enabling intake', async () => {
   const choices = integrationFixture('WorkSourceInputChoices');
   const original = choices.items[0]!;

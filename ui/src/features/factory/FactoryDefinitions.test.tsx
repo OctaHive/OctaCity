@@ -1,6 +1,6 @@
 // @vitest-environment jsdom
 import { QueryClientProvider } from '@tanstack/react-query';
-import { cleanup, render, screen, waitFor } from '@testing-library/react';
+import { cleanup, render, screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { createMemoryRouter, RouterProvider } from 'react-router-dom';
 import { afterEach, expect, it, vi } from 'vitest';
@@ -12,6 +12,95 @@ import { ManagementApiError } from '../../api/client';
 import { configurationFixture } from '../../../tests/fixtures/factory';
 
 afterEach(cleanup);
+
+it('presents a readable configuration summary and retains exact policies and budget values under technical details', async () => {
+  const configuration = configurationFixture();
+  configuration.configuration.hard_budget = {
+    max_attempts: 8,
+    max_elapsed_millis: 600000,
+    max_tokens: 300000,
+    max_cost_micro_units: 2000000,
+    max_output_bytes: 134217728,
+  };
+  const reference = configuration.configuration.reference;
+  const api: FactoryApi = {
+    ...factoryApi,
+    listConfigurations: vi.fn(async () => ({
+      items: [{ ...reference, enabled: true, created_at_unix_ms: 1, published_at_unix_ms: 1 }],
+      total: 1,
+      next_cursor: null,
+    })),
+    getConfiguration: vi.fn(async () => configuration),
+    listFlows: vi.fn(async () => ({ items: [], total: 0, next_cursor: null })),
+    listChoices: vi.fn(async () => ({ items: [], total: 0, next_cursor: null })),
+  };
+  render(
+    <QueryClientProvider client={createConsoleQueryClient()}>
+      <RouterProvider
+        router={createMemoryRouter([
+          { path: '*', element: <FactoryDefinitions api={api} projectId={reference.project_id} /> },
+        ])}
+      />
+    </QueryClientProvider>,
+  );
+  await userEvent.click(
+    await screen.findByRole('button', { name: 'Inspect Factory Configuration · v1' }),
+  );
+  const summary = await screen.findByRole('region', { name: 'Factory Configuration · v1' });
+  const content = within(summary);
+  expect(content.getByText('600 s')).toBeTruthy();
+  expect(content.getByText('128.0 MiB')).toBeTruthy();
+  expect(content.getByText('Maximum attempts').tagName).toBe('DT');
+  const details = content.getByText('Technical details', { exact: true });
+  expect(details.closest('details')).toHaveProperty('open', false);
+  expect(content.getByText('max_elapsed_millis').closest('details')).toHaveProperty('open', false);
+  await userEvent.click(details);
+  expect(content.getByText('manual.medium · v1')).toBeTruthy();
+  expect(content.getByText('max_elapsed_millis').tagName).toBe('DT');
+  expect(content.getByText('600000')).toBeTruthy();
+  expect(content.getByRole('button', { name: 'Edit configuration draft' })).toBeTruthy();
+  expect(content.getByRole('button', { name: 'Configure automatic intake' })).toBeTruthy();
+});
+
+it('distinguishes two pipelines with the same version by their saved names and opens the selected identity', async () => {
+  const configuration = configurationFixture().configuration;
+  const projectId = configuration.reference.project_id;
+  const flows = ['Триаж задач', 'Проверка документации'].map((name, index) => {
+    const flow = structuredClone(configuration.flow);
+    const root = flow.closure.definitions.find(
+      (item) => item.reference.id === flow.closure.root.id,
+    )!;
+    const id = index ? '20000000-0000-4000-8000-000000000002' : flow.closure.root.id;
+    flow.closure.root.id = id;
+    root.reference.id = id;
+    root.name = name;
+    return { flow, project_id: projectId, published_at_unix_ms: 1 };
+  });
+  const api: FactoryApi = {
+    ...factoryApi,
+    listConfigurations: vi.fn(async () => ({ items: [], total: 0, next_cursor: null })),
+    listFlows: vi.fn(async () => ({ items: flows, total: 2, next_cursor: null })),
+    listChoices: vi.fn(async () => ({ items: [], total: 0, next_cursor: null })),
+    getFlow: vi.fn(async (id) => flows.find((item) => item.flow.closure.root.id === id)!),
+  };
+  render(
+    <QueryClientProvider client={createConsoleQueryClient()}>
+      <RouterProvider
+        router={createMemoryRouter([
+          { path: '*', element: <FactoryDefinitions api={api} projectId={projectId} /> },
+        ])}
+      />
+    </QueryClientProvider>,
+  );
+  expect(await screen.findByRole('button', { name: 'Триаж задач · v1' })).toBeTruthy();
+  await userEvent.click(screen.getByRole('button', { name: 'Проверка документации · v1' }));
+  expect(await screen.findByRole('heading', { name: 'Проверка документации' })).toBeTruthy();
+  expect(api.getFlow).toHaveBeenCalledWith(
+    '20000000-0000-4000-8000-000000000002',
+    1,
+    expect.any(AbortSignal),
+  );
+});
 
 it('opens Add pipeline as an empty graph without a template, prior Flow or publication', async () => {
   const api: FactoryApi = {
@@ -95,7 +184,7 @@ it('blocks draft creation when the server has no Factory capabilities while keep
   expect(screen.queryByRole('button', { name: 'Enroll agent' })).toBeNull();
   await userEvent.click(screen.getByRole('button', { name: 'Create configuration draft' }));
   expect(screen.queryByRole('button', { name: 'Discard draft' })).toBeNull();
-  await userEvent.click(screen.getByRole('button', { name: 'Inspect Flow Definition · v1' }));
+  await userEvent.click(screen.getByRole('button', { name: 'implement · v1' }));
   expect(await screen.findByRole('heading', { name: 'Immutable Flow Definition' })).toBeTruthy();
   expect(screen.getByRole('button', { name: 'Edit Flow draft' })).toHaveProperty('disabled', true);
 });
@@ -146,9 +235,7 @@ it('discovers visible configurations and Flows, then reads exact immutable versi
   expect(router.state.location.search).toContain(
     'configuration_id=' + configuration.configuration.reference.id,
   );
-  await userEvent.click(
-    await screen.findByRole('button', { name: 'Inspect Flow Definition · v1' }),
-  );
+  await userEvent.click(await screen.findByRole('button', { name: 'implement · v1' }));
   expect(await screen.findByRole('heading', { name: 'Immutable Flow Definition' })).toBeTruthy();
   expect(api.getFlow).toHaveBeenCalledWith(flow.flow.closure.root.id, 1, expect.any(AbortSignal));
   expect(screen.queryByRole('textbox', { name: 'Resource identifier' })).toBeNull();
@@ -221,9 +308,7 @@ it('opens memory-only configuration and Flow drafts from visible resources and d
   await userEvent.click(screen.getByRole('option', { name: 'Visible admission · v1' }));
   await userEvent.click(screen.getByRole('button', { name: 'Discard draft' }));
   expect(screen.queryByRole('combobox', { name: 'Admission policy' })).toBeNull();
-  await userEvent.click(
-    await screen.findByRole('button', { name: 'Inspect Flow Definition · v1' }),
-  );
+  await userEvent.click(await screen.findByRole('button', { name: 'implement · v1' }));
   await userEvent.click(await screen.findByRole('button', { name: 'Edit Flow draft' }));
   const name = await screen.findByRole('textbox', { name: 'Step name' });
   await userEvent.clear(name);
@@ -238,7 +323,7 @@ it('opens memory-only configuration and Flow drafts from visible resources and d
   );
 });
 
-it('keeps the graph editable without installed capabilities and loads older immutable versions in bounded windows', async () => {
+it('keeps the graph editable and chooses any historical version inside one bounded searchable dropdown', async () => {
   const configuration = configurationFixture();
   const projectId = configuration.configuration.reference.project_id;
   const flow = {
@@ -283,16 +368,28 @@ it('keeps the graph editable without installed capabilities and loads older immu
   await userEvent.click(
     await screen.findByRole('button', { name: 'Inspect Factory Configuration · v205' }),
   );
-  await userEvent.click(await screen.findByRole('button', { name: 'Earlier versions' }));
-  await userEvent.click(screen.getByRole('button', { name: 'Earlier versions' }));
-  await userEvent.click(screen.getByRole('combobox', { name: 'Version' }));
+  const version = await screen.findByRole('combobox', { name: 'Version' });
+  expect(screen.queryByRole('button', { name: 'Earlier versions' })).toBeNull();
+  expect(screen.queryByRole('button', { name: 'Later versions' })).toBeNull();
+  expect(screen.queryByRole('searchbox', { name: 'Find version by number' })).toBeNull();
+  await userEvent.click(version);
+  expect(screen.getAllByRole('option').length).toBeLessThanOrEqual(101);
+  await userEvent.type(screen.getByRole('searchbox', { name: 'Find version by number' }), '1');
   await userEvent.click(screen.getByRole('option', { name: 'Version 1' }));
   expect(api.getConfiguration).toHaveBeenLastCalledWith(
     configuration.configuration.reference.id,
     1,
     expect.any(AbortSignal),
   );
-  await userEvent.click(screen.getByRole('button', { name: 'Inspect Flow Definition · v1' }));
+  await userEvent.click(await screen.findByRole('combobox', { name: 'Version' }));
+  await userEvent.type(screen.getByRole('searchbox', { name: 'Find version by number' }), '205');
+  await userEvent.click(screen.getByRole('option', { name: 'Version 205' }));
+  expect(api.getConfiguration).toHaveBeenLastCalledWith(
+    configuration.configuration.reference.id,
+    205,
+    expect.any(AbortSignal),
+  );
+  await userEvent.click(screen.getByRole('button', { name: 'implement · v1' }));
   await userEvent.click(await screen.findByRole('button', { name: 'Edit Flow draft' }));
   expect(await screen.findByRole('textbox', { name: 'Step name' })).toBeTruthy();
   expect(screen.getByText('No resource choices are visible.')).toBeTruthy();
@@ -374,7 +471,7 @@ it('owns only one authoring draft at a time and discards it when another immutab
   );
   await userEvent.click(await screen.findByRole('button', { name: 'Edit configuration draft' }));
   expect(await screen.findByRole('combobox', { name: 'Admission policy' })).toBeTruthy();
-  await userEvent.click(screen.getByRole('button', { name: 'Inspect Flow Definition · v1' }));
+  await userEvent.click(screen.getByRole('button', { name: 'implement · v1' }));
   await userEvent.click(await screen.findByRole('button', { name: 'Edit Flow draft' }));
   expect(await screen.findByRole('textbox', { name: 'Step name' })).toBeTruthy();
   expect(screen.queryByRole('combobox', { name: 'Admission policy' })).toBeNull();
@@ -404,9 +501,7 @@ it('links a field error to its existing control without copying draft values int
       <RouterProvider router={router} />
     </QueryClientProvider>,
   );
-  await userEvent.click(
-    await screen.findByRole('button', { name: 'Inspect Flow Definition · v1' }),
-  );
+  await userEvent.click(await screen.findByRole('button', { name: 'implement · v1' }));
   await userEvent.click(await screen.findByRole('button', { name: 'Edit Flow draft' }));
   const input = await screen.findByRole('textbox', { name: 'Step name' });
   await userEvent.clear(input);
@@ -432,6 +527,10 @@ it('replaces from a historical draft using the discovered current version rather
       closure: {
         ...historical.flow.closure,
         root: { ...historical.flow.closure.root, version: 7 },
+        definitions: historical.flow.closure.definitions.map((definition) => ({
+          ...definition,
+          reference: { ...definition.reference, version: 7 },
+        })),
       },
     },
   };
@@ -456,9 +555,7 @@ it('replaces from a historical draft using the discovered current version rather
       <RouterProvider router={router} />
     </QueryClientProvider>,
   );
-  await userEvent.click(
-    await screen.findByRole('button', { name: 'Inspect Flow Definition · v7' }),
-  );
+  await userEvent.click(await screen.findByRole('button', { name: 'implement · v7' }));
   await userEvent.click(await screen.findByRole('combobox', { name: 'Version' }));
   await userEvent.click(screen.getByRole('option', { name: 'Version 1' }));
   await userEvent.click(await screen.findByRole('button', { name: 'Edit Flow draft' }));

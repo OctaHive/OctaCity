@@ -259,7 +259,7 @@ export function FlowCanvas({
               <article
                 key={keys[index]}
                 data-graph-node
-                className={`${canvasStyles.node} ${selected === index ? styles.selected : ''}`}
+                className={`${canvasStyles.node} ${styles.stepNode} ${selected === index ? styles.selected : ''}`}
                 style={{ left: point.x, top: point.y, width: NODE_WIDTH, height: NODE_HEIGHT }}
               >
                 <button
@@ -270,7 +270,7 @@ export function FlowCanvas({
                   onPointerDown={(event) =>
                     placement.begin(event, keys[index]!, graph.nodes.get(keys[index]!)!)
                   }
-                  title={t('factory.moveGraphStepHint')}
+                  title={`${node.key || t('factory.unnamedNode')}\n${t('factory.moveGraphStepHint')}`}
                   onKeyDown={(event) => {
                     if (!event.altKey || event.ctrlKey || event.metaKey) return;
                     const offsets = {
@@ -299,6 +299,9 @@ export function FlowCanvas({
                 </button>
                 <button
                   type="button"
+                  title={t('factory.connectGraphStep', {
+                    name: node.key || t('factory.unnamedNode'),
+                  })}
                   disabled={
                     !node.key ||
                     !node.outcomes.length ||

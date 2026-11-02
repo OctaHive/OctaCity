@@ -86,6 +86,34 @@
   list-style: none;
 }
 
+.listbox .options {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+.searchOptions {
+  max-height: min(20rem, 50vh);
+  overflow-y: auto;
+}
+.search {
+  display: grid;
+  gap: var(--space-xs);
+  margin: 0;
+  padding: var(--space-sm);
+  font-size: 0.85rem;
+}
+.search input {
+  box-sizing: border-box;
+  width: 100%;
+  min-width: 0;
+  padding: var(--space-sm);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-small);
+  background: var(--color-surface);
+  color: var(--color-text-primary);
+  font: inherit;
+}
+
 .option {
   display: grid;
   grid-template-columns: minmax(0, 1fr) auto;

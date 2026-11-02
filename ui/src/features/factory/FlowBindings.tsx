@@ -14,6 +14,7 @@ import {
   type SourceUpdateDraft,
 } from './FlowSourceUpdate';
 import { documentSelections } from './flowDocumentBindings';
+import { FlowSchemaSelect } from './FlowSchemaSelect';
 
 type Node = components['schemas']['FactoryFlowNodeDefinition'];
 type Root = components['schemas']['FactoryFlowRootDraft'];
@@ -118,18 +119,14 @@ export function FlowBindings({
       />
       <details>
         <summary>{t('factory.advancedMappings')}</summary>
-        <SelectMenu
+        <FlowSchemaSelect
+          schemas={schemas}
+          nodes={root.nodes}
+          allowNone
           ariaLabel={t('factory.inputSchema')}
           value={String(
             schemas.findIndex((schema) => schema.reference.digest === node.input_schema?.digest),
           )}
-          options={[
-            { value: '-1', label: t('factory.none') },
-            ...schemas.map((schema, index) => ({
-              value: String(index),
-              label: `${schema.reference.identity} · ${schema.reference.version}`,
-            })),
-          ]}
           onValueChange={(index) =>
             onChange({ ...node, input_schema: schemas[Number(index)]?.reference ?? null })
           }
@@ -205,15 +202,13 @@ export function FlowBindings({
               />
             </label>
             {source.source === 'incoming' ? (
-              <SelectMenu
+              <FlowSchemaSelect
+                schemas={schemas}
+                nodes={root.nodes}
                 ariaLabel={t('factory.sourceSchema')}
                 value={String(
                   schemas.findIndex((schema) => schema.reference.digest === source.schema.digest),
                 )}
-                options={schemas.map((schema, index) => ({
-                  value: String(index),
-                  label: `${schema.reference.identity} · ${schema.reference.version}`,
-                }))}
                 onValueChange={(index) => {
                   const schema = schemas[Number(index)];
                   if (schema)

@@ -314,32 +314,39 @@ export function SourceInputEditor({
       {connection && choices.isSuccess && !reads.length ? (
         <p>{t('factory.noSourceAccess')}</p>
       ) : null}
-      {select(
-        t('factory.taskContainer'),
-        resource,
-        containers.map((item) => ({ value: item.binding.resource.identity, label: item.locator })),
-        (value) => {
-          setResource(value);
-          setReporterProfile('');
-          setReportingDraft(null);
-          setProfile('');
-          if (labelPresence !== 'none') setCustom(false);
-        },
-      )}
-      {select(
-        t('factory.inputProfile'),
-        profile,
-        reads
-          .filter((item) => item.binding.resource.identity === resource)
-          .map((item) => ({
-            value: bindingKey(item.binding),
-            label: `${item.binding.configuration.identity} · ${item.binding.configuration.version}`,
-          })),
-        (value) => {
-          setProfile(value);
-          if (labelPresence !== 'none') setCustom(false);
-        },
-      )}
+      {connection
+        ? select(
+            t('factory.taskContainer'),
+            resource,
+            containers.map((item) => ({
+              value: item.binding.resource.identity,
+              label: item.locator,
+            })),
+            (value) => {
+              setResource(value);
+              setReporterProfile('');
+              setReportingDraft(null);
+              setProfile('');
+              if (labelPresence !== 'none') setCustom(false);
+            },
+          )
+        : null}
+      {connection && containers.some((item) => item.binding.resource.identity === resource)
+        ? select(
+            t('factory.inputProfile'),
+            profile,
+            reads
+              .filter((item) => item.binding.resource.identity === resource)
+              .map((item) => ({
+                value: bindingKey(item.binding),
+                label: `${item.binding.configuration.identity} · ${item.binding.configuration.version}`,
+              })),
+            (value) => {
+              setProfile(value);
+              if (labelPresence !== 'none') setCustom(false);
+            },
+          )
+        : null}
       {selected ? (
         <>
           <p>{t('factory.preparationHelp')}</p>
@@ -436,17 +443,19 @@ export function SourceInputEditor({
       {repository.data && !repository.data.definition_digest ? (
         <p role="alert">{t('factory.repositoryDigestMissing')}</p>
       ) : null}
-      {select(
-        t('factory.reporterMapping'),
-        reporterProfile,
-        reporterOptions,
-        (value) => {
-          setReporterProfile(value);
-          setReportingDraft(null);
-        },
-        t('factory.noReporter'),
-      )}
-      {!writers.length ? <p>{t('factory.noReporterAccess')}</p> : null}
+      {selected
+        ? select(
+            t('factory.reporterMapping'),
+            reporterProfile,
+            reporterOptions,
+            (value) => {
+              setReporterProfile(value);
+              setReportingDraft(null);
+            },
+            t('factory.noReporter'),
+          )
+        : null}
+      {selected && !writers.length ? <p>{t('factory.noReporterAccess')}</p> : null}
       {reporter ? (
         <SourceReporting
           mapping={reporting}

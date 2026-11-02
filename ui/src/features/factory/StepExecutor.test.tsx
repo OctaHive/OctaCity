@@ -460,13 +460,25 @@ it('uses readable profile names in selection policies instead of technical candi
 });
 
 it('requires an explicit result outcome when a step has several successful outcomes', async () => {
-  const { api, draft } = setup({ multipleOutcomes: true });
+  const { api, draft, profile } = setup({ multipleOutcomes: true, competingRuntimes: true });
   const executor = within(await screen.findByRole('group', { name: 'Executor' }));
+  expect(executor.queryByRole('combobox', { name: 'Profile' })).toBeNull();
+  expect(executor.queryByRole('combobox', { name: 'Execution runtime' })).toBeNull();
+  expect(executor.queryByRole('combobox', { name: 'Result outcome' })).toBeNull();
   await userEvent.click(await executor.findByRole('combobox', { name: 'Role' }));
   await userEvent.click(await screen.findByRole('option', { name: 'Project · v1' }));
+  expect(executor.queryByRole('combobox', { name: 'Execution runtime' })).toBeNull();
+  expect(executor.queryByRole('combobox', { name: 'Result outcome' })).toBeNull();
   await userEvent.click(await executor.findByRole('combobox', { name: 'Profile' }));
   await userEvent.click(await screen.findByRole('option', { name: 'default · v1' }));
-  await executor.findByRole('combobox', { name: 'Execution runtime' });
+  const runtime = await executor.findByRole('combobox', { name: 'Execution runtime' });
+  expect(executor.queryByRole('combobox', { name: 'Result outcome' })).toBeNull();
+  await userEvent.click(runtime);
+  await userEvent.click(
+    screen.getByRole('option', {
+      name: `${profile.definition.toolchain.executable.identity} · installed-runtime`,
+    }),
+  );
   expect(executor.getByRole('button', { name: 'Use this profile' })).toHaveProperty(
     'disabled',
     true,
@@ -480,6 +492,11 @@ it('requires an explicit result outcome when a step has several successful outco
     expect.objectContaining({ result_outcome: 'reviewed' }),
     expect.any(AbortSignal),
   );
+  await userEvent.click(executor.getByRole('combobox', { name: 'Role' }));
+  await userEvent.click(screen.getByRole('option', { name: 'Choose a role' }));
+  expect(executor.queryByRole('combobox', { name: 'Profile' })).toBeNull();
+  expect(executor.queryByRole('combobox', { name: 'Execution runtime' })).toBeNull();
+  expect(executor.queryByRole('combobox', { name: 'Result outcome' })).toBeNull();
 });
 
 it('does not repin an explicitly chosen profile when its catalogue row advances to another version', async () => {

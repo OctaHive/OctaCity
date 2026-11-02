@@ -275,67 +275,83 @@ export function AcceptedResultFields({
       </ul>
 
       {!inputShape && !services ? <p>{t('factory.selectInputSchemaFirst')}</p> : null}
-      <SelectMenu
-        ariaLabel={t('factory.resultFromStep')}
-        value={producerKey}
-        options={[
-          { value: '', label: t('factory.chooseInput') },
-          ...root.nodes
-            .filter((item) => item !== node && !!item.key)
-            .map((item) => ({ value: item.key, label: item.key })),
-        ]}
-        onValueChange={(value) => {
-          setProducerKey(value);
-          setOutcomeKey('');
-          setResultPath(null);
-          setInputPath(null);
-        }}
-      />
-      {producer && producer.outcomes.length > 1 ? (
+      <label>
+        {t('factory.resultFromStep')}
         <SelectMenu
-          ariaLabel={t('factory.transitionOutcome')}
-          value={outcome?.key ?? ''}
+          ariaLabel={t('factory.resultFromStep')}
+          value={producerKey}
           options={[
             { value: '', label: t('factory.chooseInput') },
-            ...producer.outcomes.map((item) => ({ value: item.key, label: item.key })),
+            ...root.nodes
+              .filter((item) => item !== node && !!item.key)
+              .map((item) => ({ value: item.key, label: item.key })),
           ]}
           onValueChange={(value) => {
-            setOutcomeKey(value);
+            setProducerKey(value);
+            setOutcomeKey('');
             setResultPath(null);
             setInputPath(null);
           }}
         />
+      </label>
+      {producer && producer.outcomes.length > 1 ? (
+        <label>
+          {t('factory.transitionOutcome')}
+          <SelectMenu
+            ariaLabel={t('factory.transitionOutcome')}
+            value={outcome?.key ?? ''}
+            options={[
+              { value: '', label: t('factory.chooseInput') },
+              ...producer.outcomes.map((item) => ({ value: item.key, label: item.key })),
+            ]}
+            onValueChange={(value) => {
+              setOutcomeKey(value);
+              setResultPath(null);
+              setInputPath(null);
+            }}
+          />
+        </label>
       ) : null}
-      <SelectMenu
-        ariaLabel={t('factory.resultField')}
-        value={resultPath ?? 'unselected'}
-        options={[
-          { value: 'unselected', label: t('factory.chooseInput') },
-          ...options(resultFields),
-        ]}
-        onValueChange={(value) => {
-          setResultPath(value === 'unselected' ? null : value);
-          setInputPath(null);
-          const field = resultFields.find((field) => pointer(field.parts) === value);
-          setInputName(field?.parts.at(-1) ?? producerKey);
-        }}
-      />
-      <SelectMenu
-        ariaLabel={t('factory.stepInputField')}
-        value={inputPath ?? 'unselected'}
-        options={[
-          {
-            value: 'unselected',
-            label: t(
-              services && (!inputShape || inputShape.type === 'object')
-                ? 'factory.newResultInput'
-                : 'factory.chooseInput',
-            ),
-          },
-          ...options(inputFields),
-        ]}
-        onValueChange={(value) => setInputPath(value === 'unselected' ? null : value)}
-      />
+      {outcome ? (
+        <label>
+          {t('factory.resultField')}
+          <SelectMenu
+            ariaLabel={t('factory.resultField')}
+            value={resultPath ?? 'unselected'}
+            options={[
+              { value: 'unselected', label: t('factory.chooseInput') },
+              ...options(resultFields),
+            ]}
+            onValueChange={(value) => {
+              setResultPath(value === 'unselected' ? null : value);
+              setInputPath(null);
+              const field = resultFields.find((field) => pointer(field.parts) === value);
+              setInputName(field?.parts.at(-1) ?? producerKey);
+            }}
+          />
+        </label>
+      ) : null}
+      {selectedResult ? (
+        <label>
+          {t('factory.stepInputField')}
+          <SelectMenu
+            ariaLabel={t('factory.stepInputField')}
+            value={inputPath ?? 'unselected'}
+            options={[
+              {
+                value: 'unselected',
+                label: t(
+                  services && (!inputShape || inputShape.type === 'object')
+                    ? 'factory.newResultInput'
+                    : 'factory.chooseInput',
+                ),
+              },
+              ...options(inputFields),
+            ]}
+            onValueChange={(value) => setInputPath(value === 'unselected' ? null : value)}
+          />
+        </label>
+      ) : null}
       {adding && selectedResult ? (
         <label>
           {t('factory.resultInputName')}

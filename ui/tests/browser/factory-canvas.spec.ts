@@ -159,7 +159,7 @@ async function openGraph(page: Page, options: { language?: 'en' | 'ru'; executor
   }
   await page
     .getByRole('button', {
-      name: options.language === 'ru' ? 'Просмотреть поток · v1' : 'Inspect Flow Definition · v1',
+      name: 'first · v1',
     })
     .click();
   await page
@@ -171,6 +171,62 @@ async function openGraph(page: Page, options: { language?: 'en' | 'ru'; executor
     page.getByRole('region', { name: options.language === 'ru' ? 'Граф шагов' : 'Step graph' }),
   ).toBeVisible();
   return { validations, mutations };
+}
+
+for (const language of ['en', 'ru'] as const) {
+  for (const width of [390, 1280]) {
+    test(`${language}: keeps both step actions inside their card at ${width}px with long names`, async ({
+      page,
+    }, info) => {
+      await page.setViewportSize({ width, height: 900 });
+      const { mutations } = await openGraph(page, { language });
+      const t = (key: MessageKey) => translate(language, key);
+      await page
+        .getByRole('textbox', { name: t('factory.nodeName'), exact: true })
+        .fill('project_check');
+      const graph = page.getByRole('region', { name: t('factory.stepGraph'), exact: true });
+      await graph.getByRole('button', { name: t('workflow.fitGraph'), exact: true }).click();
+      await graph
+        .getByRole('button', {
+          name: translate(language, 'factory.editGraphStep', { name: 'second' }),
+          exact: true,
+        })
+        .click();
+      await page
+        .getByRole('textbox', { name: t('factory.nodeName'), exact: true })
+        .fill('systems_analysis_with_a_long_explicit_step_name');
+      for (const card of await graph.getByRole('article').all()) {
+        const owner = (await card.boundingBox())!;
+        const buttons = await card.getByRole('button').all();
+        expect(buttons).toHaveLength(2);
+        for (const button of buttons) {
+          const box = (await button.boundingBox())!;
+          expect(box.x).toBeGreaterThan(owner.x);
+          expect(box.y).toBeGreaterThan(owner.y);
+          expect(box.x + box.width).toBeLessThan(owner.x + owner.width);
+          expect(box.y + box.height).toBeLessThan(owner.y + owner.height);
+        }
+      }
+      const scale = (await graph
+        .getByLabel(t('workflow.zoomLevel'), { exact: true })
+        .boundingBox())!;
+      expect(scale.height).toBeGreaterThanOrEqual(32);
+      if (width === 1280) {
+        const zoom = (await graph
+          .getByRole('button', { name: t('workflow.zoomOut'), exact: true })
+          .boundingBox())!;
+        expect(Math.abs(scale.y + scale.height / 2 - zoom.y - zoom.height / 2)).toBeLessThanOrEqual(
+          1,
+        );
+      }
+      await graph.getByRole('button', { name: t('workflow.fitGraph'), exact: true }).click();
+      expect(
+        await page.evaluate(() => document.documentElement.scrollWidth - innerWidth),
+      ).toBeLessThanOrEqual(1);
+      expect(mutations).toEqual([]);
+      await graph.screenshot({ path: info.outputPath('contained-step-actions.png') });
+    });
+  }
 }
 
 test('moves a step with pointer and keyboard while preserving the exact validated Flow and browser storage', async ({
@@ -269,6 +325,15 @@ for (const language of ['en', 'ru'] as const)
     const ru = language === 'ru';
     const step = page.getByRole('group', { name: ru ? 'Шаг' : 'Step', exact: true });
     await expect(step).toBeVisible();
+    const remove = step.getByRole('button', {
+      name: ru ? 'Удалить шаг' : 'Remove step',
+      exact: true,
+    });
+    const color = await remove.evaluate((element) =>
+      getComputedStyle(element).color.match(/\d+/g)!.slice(0, 3).map(Number),
+    );
+    expect(color[0]!).toBeGreaterThan(color[1]!);
+    expect(color[0]!).toBeGreaterThan(color[2]!);
     const task = step.getByRole('group', { name: ru ? 'Задание шага' : 'Step task', exact: true });
     await task
       .getByRole('button', { name: ru ? 'Добавить: инструкции задания' : 'Add task instructions' })
@@ -325,6 +390,8 @@ for (const language of ['en', 'ru'] as const)
     ).toBeLessThanOrEqual(1);
     await task.scrollIntoViewIfNeeded();
     await page.screenshot({ path: `/tmp/octacity-section4-step-${language}.png` });
+    await remove.scrollIntoViewIfNeeded();
+    await page.screenshot({ path: `/tmp/octacity-step-actions-${language}.png` });
     expect(mutations).toEqual([]);
     expect(
       await page.evaluate(() => JSON.stringify(localStorage) + JSON.stringify(sessionStorage)),
@@ -394,13 +461,43 @@ for (const language of ['en', 'ru'] as const) {
       })
       .press('Enter');
     const inputs = step.getByRole('group', { name: t('factory.acceptedResults'), exact: true });
+    const resultField = inputs.getByRole('combobox', {
+      name: t('factory.resultField'),
+      exact: true,
+    });
+    const inputField = inputs.getByRole('combobox', {
+      name: t('factory.stepInputField'),
+      exact: true,
+    });
+    await expect(inputs.getByRole('combobox')).toHaveCount(1);
     await inputs.getByRole('combobox', { name: t('factory.resultFromStep'), exact: true }).click();
     await page.getByRole('option', { name: 'first', exact: true }).click();
+    await expect(resultField).toHaveCount(0);
+    await expect(inputField).toHaveCount(0);
     await inputs
       .getByRole('combobox', { name: t('factory.transitionOutcome'), exact: true })
       .click();
     await page.getByRole('option', { name: 'assessment', exact: true }).click();
+    await expect(resultField).toBeVisible();
+    await expect(inputField).toHaveCount(0);
     await inputs.getByRole('combobox', { name: t('factory.resultField'), exact: true }).click();
+    await page.getByRole('option', { name: 'summary', exact: true }).click();
+    await expect(inputField).toBeVisible();
+    await inputs.screenshot({ path: testInfo.outputPath('progressive-result-fields.png') });
+    await inputs
+      .getByRole('combobox', { name: t('factory.transitionOutcome'), exact: true })
+      .click();
+    await page.getByRole('option', { name: t('factory.chooseInput'), exact: true }).click();
+    await expect(resultField).toHaveCount(0);
+    await expect(inputField).toHaveCount(0);
+    await expect(
+      inputs.getByRole('textbox', { name: t('factory.resultInputName'), exact: true }),
+    ).toHaveCount(0);
+    await inputs
+      .getByRole('combobox', { name: t('factory.transitionOutcome'), exact: true })
+      .click();
+    await page.getByRole('option', { name: 'assessment', exact: true }).click();
+    await resultField.click();
     await page.getByRole('option', { name: 'summary', exact: true }).click();
     await expect(
       inputs.getByRole('textbox', { name: t('factory.resultInputName'), exact: true }),

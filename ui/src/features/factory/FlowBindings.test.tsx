@@ -6,6 +6,54 @@ import { afterEach, it, expect } from 'vitest';
 import { configurationFixture } from '../../../tests/fixtures/factory';
 import { FlowBindings } from './FlowBindings';
 afterEach(cleanup);
+it('shows step names for input formats and preserves exact references when selecting an incoming result format', async () => {
+  const root = configurationFixture().configuration.flow.closure.definitions[0]!;
+  const input = {
+    reference: { identity: 'input.generated', version: '1', digest: 'a'.repeat(64) },
+    shape: { type: 'object' as const, fields: {} },
+  };
+  const result = {
+    reference: { identity: 'result.generated', version: '1', digest: 'b'.repeat(64) },
+    shape: { type: 'boolean' as const },
+  };
+  const node: (typeof root.nodes)[number] = {
+    ...root.nodes[0]!,
+    key: 'systems_analysis',
+    input_schema: input.reference,
+    outcomes: [{ key: 'result', kind: 'success', schema: result.reference }],
+    input_binding: {
+      sources: { selected: { source: 'incoming', path: '', schema: input.reference } },
+      mapping: { value: { mapping: 'object', fields: {} } },
+    },
+  };
+  root.nodes = [node];
+  let observed = node;
+  render(
+    <FlowBindings
+      node={node}
+      root={root}
+      schemas={[input, result]}
+      onChange={(next) => {
+        observed = next;
+      }}
+    />,
+  );
+  await userEvent.click(screen.getByText('Advanced input and Context mappings'));
+  expect(screen.getByRole('combobox', { name: 'Input schema' }).textContent).toContain(
+    'Step input · systems_analysis',
+  );
+  const source = screen.getByRole('combobox', { name: 'Source schema' });
+  expect(source.textContent).toContain('Step input · systems_analysis');
+  await userEvent.click(source);
+  await userEvent.click(screen.getByRole('option', { name: 'systems_analysis.result' }));
+  expect(observed.input_schema).toEqual(input.reference);
+  expect(observed.input_binding?.sources.selected).toEqual({
+    source: 'incoming',
+    path: '',
+    schema: result.reference,
+  });
+});
+
 it('declares a bounded summary and Work input source through typed controls without copying a transcript', async () => {
   const flow = configurationFixture().configuration.flow;
   const root = flow.closure.definitions.find((item) => item.reference.id === flow.closure.root.id);
@@ -222,8 +270,12 @@ it('connects only selected result fields without asking for an input schema and 
     );
   }
   render(<Harness />);
+  expect(screen.queryByRole('combobox', { name: 'Result field' })).toBeNull();
+  expect(screen.queryByRole('combobox', { name: 'Step input field' })).toBeNull();
   await userEvent.click(screen.getByRole('combobox', { name: 'Result from step' }));
   await userEvent.click(screen.getByRole('option', { name: 'assess' }));
+  expect(screen.getByRole('combobox', { name: 'Result field' })).toBeTruthy();
+  expect(screen.queryByRole('combobox', { name: 'Step input field' })).toBeNull();
   for (const field of ['summary', 'fits']) {
     await userEvent.click(screen.getByRole('combobox', { name: 'Result field' }));
     await userEvent.click(screen.getByRole('option', { name: field }));
@@ -281,4 +333,11 @@ it('connects only selected result fields without asking for an input schema and 
   });
   expect(producer.outcomes[0]?.schema).toEqual(result.reference);
   expect(observed.context_binding).toBeNull();
+  const connected = structuredClone(observed);
+  await userEvent.click(screen.getByRole('combobox', { name: 'Result from step' }));
+  await userEvent.click(screen.getByRole('option', { name: 'Choose an option' }));
+  expect(screen.queryByRole('combobox', { name: 'Result field' })).toBeNull();
+  expect(screen.queryByRole('combobox', { name: 'Step input field' })).toBeNull();
+  expect(screen.queryByRole('textbox', { name: 'Input name' })).toBeNull();
+  expect(observed).toEqual(connected);
 });

@@ -7,6 +7,7 @@ import { useDraftRowKeys } from '../../shared/useDraftRowKeys';
 import { SelectMenu } from '../../shared/SelectMenu';
 import { ShapeEditor } from './SchemaEditor';
 import type { FlowAuthoringServices } from './FlowPrimitives';
+import { FlowSchemaSelect } from './FlowSchemaSelect';
 
 type Schema = components['schemas'];
 type Node = Schema['FactoryFlowNodeDefinition'];
@@ -20,6 +21,7 @@ export type ResultDraft = {
 /** Step-local result editing compiles to the existing server-normalized immutable schema. */
 export function StepResults({
   node,
+  nodes = [node],
   schemas,
   services,
   draft,
@@ -27,6 +29,7 @@ export function StepResults({
   onChange,
 }: {
   node: Node;
+  nodes?: readonly Node[];
   schemas: readonly Schema['FactoryFlowDataSchema'][];
   services?: FlowAuthoringServices | undefined;
   draft?: ResultDraft | undefined;
@@ -129,19 +132,14 @@ export function StepResults({
               {t('factory.editResult')}
             </button>
             <details>
-              <summary>{t('factory.resultDetails')}</summary>
-              <p>
-                {outcome.schema.identity} · {outcome.schema.version}
-              </p>
-              <SelectMenu
+              <summary>{t('factory.reuseResultFormat')}</summary>
+              <FlowSchemaSelect
+                schemas={schemas}
+                nodes={nodes}
                 ariaLabel={t('factory.outcomeSchema')}
                 value={String(
                   schemas.findIndex((item) => item.reference.digest === outcome.schema.digest),
                 )}
-                options={schemas.map((schema, position) => ({
-                  value: String(position),
-                  label: `${schema.reference.identity} · ${schema.reference.version}`,
-                }))}
                 onValueChange={(selected) => {
                   const schema = schemas[Number(selected)];
                   if (schema)
