@@ -64,6 +64,30 @@ impl FactoryRuntimeResources {
       Arc::new(FactoryFlowActionAdapter::new(Arc::new(action))),
     )
   }
+  /// Installs the local planning action under the host's current Issue and Project policy.
+  pub fn issue_classification_executor(
+    &self,
+    identity: octacity_server_factory::ImmutableReference,
+    context: octacity_server_application::ManagementRequestContext,
+    policy: Arc<dyn octacity_server_application::ManagementAuthorizationPolicy>,
+    clock: Arc<dyn octacity_server_application::FactoryExecutionClock>,
+  ) -> FactoryNodeExecutorBinding {
+    use octacity_server_application::{FactoryFlowActionAdapter, FactoryIssueClassificationAction};
+    let action = FactoryIssueClassificationAction::new(
+      identity.clone(),
+      self.runs.clone(),
+      self.runs.clone(),
+      self.runs.clone(),
+      context,
+      policy,
+      clock,
+    );
+    (
+      octacity_server_factory::FlowNodeKind::TrustedAction,
+      octacity_server_factory::NodeExecutionIdentity::External(identity),
+      Arc::new(FactoryFlowActionAdapter::new(Arc::new(action))),
+    )
+  }
   /// Supplies ordinary outputs and private Source/Project inputs to every native compiler.
   pub fn retained_artifact_reader(
     &self,

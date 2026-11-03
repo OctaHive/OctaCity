@@ -113,6 +113,9 @@ pub struct FactoryCommandAuthoringContract {
 pub struct FactoryAuthoringCapabilities {
   /// Commands explicitly declared by visible installed compilers; an empty list grants nothing.
   pub commands: Vec<FactoryCommandAuthoringContract>,
+  /// Present when the Project has an installed local writer and active mapped labels.
+  #[serde(skip_serializing_if = "Option::is_none")]
+  pub issue_classification: Option<FactoryIssueClassificationChoices>,
   /// Common deterministic interpreter, requiring no installed external policy adapter.
   pub deterministic_gate: FactoryDeterministicGateContract,
   /// Common durable human responses, requiring no external executor.
@@ -123,6 +126,34 @@ pub struct FactoryAuthoringCapabilities {
   /// Unsupported protocol prerequisite, if any. Selected Build and Agent support
   /// are still checked independently during validation and placement.
   pub source_free_incompatibility: Option<&'static str>,
+}
+
+/// Current, visible Project classification settings for authoring and review.
+#[derive(Clone, Debug, serde::Serialize)]
+pub struct FactoryIssueClassificationChoices {
+  /// Exact installed local Issue action.
+  pub plugin: ImmutableReference,
+  /// Stable policy shared by the Project's Flows.
+  pub policy: FactoryKey,
+  /// Inclusive maximum accepted numeric priority. The minimum is zero.
+  pub priority_maximum: u8,
+  /// Canonical result schema for newly configured local writes.
+  pub receipt_schema: FlowDataSchema,
+  /// Serialized size of the canonical result, including its schema reference.
+  pub receipt_output_bytes: u64,
+  /// Active labels and their corresponding assessment size keys.
+  pub size_labels: Vec<FactoryIssueClassificationSizeLabel>,
+}
+
+/// One installed mapping row resolved through the Issue catalog.
+#[derive(Clone, Debug, serde::Serialize)]
+pub struct FactoryIssueClassificationSizeLabel {
+  /// Accepted size key.
+  pub size: FactoryKey,
+  /// Stable Project label identity.
+  pub label: FactoryKey,
+  /// Current display name of the label.
+  pub name: String,
 }
 #[async_trait::async_trait]
 impl<S: FactoryConfigurationStore> ManagementQueryUseCase<GetFactoryAuthoringCapabilitiesQuery>
@@ -180,20 +211,32 @@ impl<S: FactoryConfigurationStore> ManagementQueryUseCase<GetFactoryAuthoringCap
         resource_modes: vec!["none"],
       });
     }
-    let commands = match crate::factory_configuration_choices::visible_installed_factory_choices(
-      self.store.as_ref(),
-      self.policy.as_ref(),
-      context,
-      query.project_id,
-    )
-    .await
-    {
-      Ok(choices) => command_contracts(&choices),
-      Err(ApplicationError::CapabilityUnavailable) => vec![],
-      Err(error) => return Err(error),
-    };
+    let (commands, issue_classification) =
+      match crate::factory_configuration_choices::visible_installed_factory_choices(
+        self.store.as_ref(),
+        self.policy.as_ref(),
+        context,
+        query.project_id,
+      )
+      .await
+      {
+        Ok(choices) => (
+          command_contracts(&choices),
+          crate::factory_issue_classification_authoring::current_choices(
+            &choices,
+            self.issue_properties.as_deref(),
+            self.policy.as_ref(),
+            context,
+            query.project_id,
+          )
+          .await?,
+        ),
+        Err(ApplicationError::CapabilityUnavailable) => (vec![], None),
+        Err(error) => return Err(error),
+      };
     Ok(FactoryAuthoringCapabilities {
       commands,
+      issue_classification,
       deterministic_gate: FactoryDeterministicGateContract {
         policy: gate.policy().clone(),
         parameter_contract: "declarative_gate_v1",

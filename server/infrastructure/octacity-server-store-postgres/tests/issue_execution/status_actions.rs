@@ -868,3 +868,226 @@ async fn pipeline_status_history_retains_the_supported_full_record_reference_inv
   assert_eq!(history.items[1].pipeline.as_ref().unwrap().evidence.len(), 256);
   db.cleanup().await;
 }
+
+#[tokio::test]
+#[ignore = "requires an explicitly configured disposable PostgreSQL service"]
+async fn pipeline_classification_applies_one_local_revision_and_replays_the_original_receipt() {
+  let database = TestDatabase::migrated().await;
+  let store = PostgresStore::new(database.pool.clone());
+  let (original, association) = linked(&store, &database.pool).await;
+  let choice = |id: &str| IssuePropertyChoice {
+    id: id.into(),
+    name: id.into(),
+    retired: false,
+  };
+  store
+    .publish_issue_properties(management_mutation(PublishIssueProperties {
+      intent: PublishIssuePropertiesIntent {
+        project_id: original.project_id,
+        expected_version: 0,
+        definition: IssuePropertyDefinitionSet {
+          labels: vec![
+            choice("team"),
+            choice("size_small"),
+            choice("size_large"),
+            choice("size_reviewed"),
+          ],
+          properties: vec![],
+        },
+      },
+      idempotency_key: key("classification-catalog"),
+      published_at: at(10),
+    }))
+    .await
+    .unwrap();
+  let edited = store
+    .edit_issue_planning(management_mutation(EditIssuePlanning {
+      intent: EditIssuePlanningIntent {
+        project_id: original.project_id,
+        id: original.id,
+        expected_version: original.version,
+        planning: IssuePlanning {
+          definition_version: 1,
+          labels: ["team".to_owned(), "size_reviewed".to_owned()].into(),
+          ..Default::default()
+        },
+      },
+      assignees: Default::default(),
+      idempotency_key: key("classification-unrelated-label"),
+      edited_at: at(12),
+    }))
+    .await
+    .unwrap()
+    .issue;
+  let work = store.factory_run_snapshot(association.run_id).await.unwrap().work;
+  let request = ApplyIssueClassification {
+    association: association.clone(),
+    policy: FactoryKey::new("triage-size").unwrap(),
+    record: FactoryDigest::from_bytes([81; 32]),
+    accepted_at: at(15),
+    operation_id: FactoryDigest::from_bytes([82; 32]),
+    priority: Some(80),
+    size_label: Some("size_small".into()),
+    managed_labels: ["size_small".to_owned(), "size_large".to_owned()].into(),
+    applied_at: at(20),
+    authority: None,
+  };
+  let applied = store
+    .apply_issue_classification(management_mutation(request.clone()))
+    .await
+    .unwrap();
+  assert_eq!(applied.disposition, MutationDisposition::Applied);
+  assert_eq!(applied.issue.version, edited.version.next().unwrap());
+  assert_eq!(applied.issue.applicability_version, edited.applicability_version);
+  assert_eq!(applied.issue.content.priority, Some(80));
+  assert_eq!(
+    applied.issue.planning.labels,
+    ["size_small".to_owned(), "size_reviewed".to_owned(), "team".to_owned()].into()
+  );
+  let restarted = PostgresStore::new(database.pool.clone());
+  let replay = restarted
+    .apply_issue_classification(management_mutation(request.clone()))
+    .await
+    .unwrap();
+  assert_eq!(replay.disposition, MutationDisposition::Replayed);
+  assert_eq!(replay.issue, applied.issue);
+  assert_eq!(
+    restarted.issue(original.project_id, original.id, None).await.unwrap(),
+    applied.issue
+  );
+  assert_eq!(
+    restarted.factory_run_snapshot(association.run_id).await.unwrap().work,
+    work
+  );
+  let replacement = ApplyIssueClassification {
+    record: FactoryDigest::from_bytes([83; 32]),
+    operation_id: FactoryDigest::from_bytes([84; 32]),
+    accepted_at: at(21),
+    applied_at: at(22),
+    priority: None,
+    size_label: Some("size_large".into()),
+    ..request.clone()
+  };
+  let classified = restarted
+    .apply_issue_classification(management_mutation(replacement.clone()))
+    .await
+    .unwrap();
+  assert_eq!(classified.issue.content.priority, Some(80));
+  assert_eq!(
+    classified.issue.planning.labels,
+    ["size_large".to_owned(), "size_reviewed".to_owned(), "team".to_owned()].into()
+  );
+
+  // A delayed action must also lose when the current values happen to match its intended effect.
+  let late = ApplyIssueClassification {
+    operation_id: FactoryDigest::from_bytes([85; 32]),
+    accepted_at: at(16),
+    applied_at: at(23),
+    ..replacement
+  };
+  assert!(matches!(
+    restarted.apply_issue_classification(management_mutation(late)).await,
+    Err(StoreError::Conflict {
+      entity: EntityKind::Issue
+    })
+  ));
+  assert_eq!(
+    restarted.issue(original.project_id, original.id, None).await.unwrap(),
+    classified.issue
+  );
+  let retired = ApplyIssueClassification {
+    record: FactoryDigest::from_bytes([86; 32]),
+    operation_id: FactoryDigest::from_bytes([87; 32]),
+    accepted_at: at(24),
+    applied_at: at(26),
+    priority: Some(40),
+    ..request.clone()
+  };
+  let mut catalog = restarted.issue_properties(original.project_id, None).await.unwrap();
+  catalog
+    .definition
+    .labels
+    .iter_mut()
+    .find(|label| label.id == "size_small")
+    .unwrap()
+    .retired = true;
+  restarted
+    .publish_issue_properties(management_mutation(PublishIssueProperties {
+      intent: PublishIssuePropertiesIntent {
+        project_id: original.project_id,
+        expected_version: catalog.version,
+        definition: catalog.definition,
+      },
+      idempotency_key: key("retired-size-label"),
+      published_at: at(25),
+    }))
+    .await
+    .unwrap();
+  assert!(matches!(
+    restarted
+      .apply_issue_classification(management_mutation(retired.clone()))
+      .await,
+    Err(StoreError::Conflict {
+      entity: EntityKind::Issue
+    })
+  ));
+  assert_eq!(
+    restarted.issue(original.project_id, original.id, None).await.unwrap(),
+    classified.issue
+  );
+  let changed_replay = ApplyIssueClassification {
+    size_label: None,
+    applied_at: at(27),
+    ..retired
+  };
+  assert!(
+    restarted
+      .apply_issue_classification(management_mutation(changed_replay))
+      .await
+      .is_err(),
+    "a rejected accepted operation cannot be retargeted on replay"
+  );
+
+  let mut manually_edited = classified.issue;
+  for (i, priority) in [90, 80].into_iter().enumerate() {
+    manually_edited = restarted
+      .edit_issue(management_mutation(EditIssue {
+        intent: EditIssueIntent {
+          project_id: original.project_id,
+          id: original.id,
+          expected_version: manually_edited.version,
+          content: IssueContent {
+            priority: Some(priority),
+            ..manually_edited.content
+          },
+        },
+        idempotency_key: key(&format!("operator-priority-{i}")),
+        edited_at: at(30 + i as i64),
+      }))
+      .await
+      .unwrap()
+      .issue;
+  }
+  let after_operator = ApplyIssueClassification {
+    record: FactoryDigest::from_bytes([88; 32]),
+    operation_id: FactoryDigest::from_bytes([89; 32]),
+    accepted_at: at(32),
+    applied_at: at(33),
+    priority: Some(40),
+    size_label: None,
+    ..request
+  };
+  assert!(matches!(
+    restarted
+      .apply_issue_classification(management_mutation(after_operator))
+      .await,
+    Err(StoreError::Conflict {
+      entity: EntityKind::Issue
+    })
+  ));
+  assert_eq!(
+    restarted.issue(original.project_id, original.id, None).await.unwrap(),
+    manually_edited
+  );
+  database.cleanup().await;
+}

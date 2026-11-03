@@ -1,8 +1,8 @@
 //! Read-only Issue cards. The transport never serializes accepted payloads or hidden references.
 use super::*;
 use octacity_server_application::{
-  ApplicationError, AuthorizedManagementQueryHandler, GetIssueOutcomesQuery, IssueOutcomeCard, IssueOutcomeContent,
-  IssueOutcomeLink, IssueOutcomeLinkTarget,
+  ApplicationError, AuthorizedManagementQueryHandler, GetIssueOutcomesQuery, IssueOutcomeCard,
+  IssueOutcomeClassification, IssueOutcomeContent, IssueOutcomeLink, IssueOutcomeLinkTarget,
 };
 
 impl ManagementApplication {
@@ -75,6 +75,7 @@ enum Presentation {
     recommended_size: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     component: Option<String>,
+    classification: IssueOutcomeClassification,
   },
   Specifications,
   Review {
@@ -93,12 +94,14 @@ impl From<IssueOutcomeContent> for Presentation {
         priority,
         size,
         component,
+        classification,
       } => Self::Triage {
         decision: decision.to_string(),
         duplicate_coverage: duplicate_coverage.map(|key| key.to_string()),
         recommended_priority: priority,
         recommended_size: size.map(|key| key.to_string()),
         component: component.map(|key| key.to_string()),
+        classification,
       },
       IssueOutcomeContent::Specifications => Self::Specifications,
       IssueOutcomeContent::Review { verdict } => Self::Review {

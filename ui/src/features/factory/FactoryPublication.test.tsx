@@ -945,3 +945,72 @@ it('reviews the normalized Issue card slots and only the fields that will be sho
   expect(custom.getByText('conclusion', { exact: true })).toBeTruthy();
   expect(dialog.queryByText('private_notes', { exact: false })).toBeNull();
 });
+
+it('reviews active Project label names for the exact classification before publication', async () => {
+  const { config, request } = setup();
+  const node = request.definition.root.nodes.find((node) => node.action)!;
+  const plugin = node.action!.plugin;
+  for (const permissions of [
+    node.permissions,
+    request.definition.root.execution.permissions,
+    request.definition.limits.permissions,
+  ]) {
+    if (!permissions.plugins.some(({ digest }) => digest === plugin.digest))
+      permissions.plugins.push(plugin);
+  }
+  node.action = {
+    ...node.action!,
+    action: 'apply_issue_classification',
+    parameters: {
+      source_node: 'triage',
+      source_outcome: 'accepted',
+      outcome: node.outcomes[0]!.key,
+      policy: 'team-triage',
+      size_labels: { small: 'team-small' },
+    },
+  };
+  config.flow.closure.definitions[0]!.nodes = request.definition.root.nodes;
+  const api = {
+    ...factoryApi,
+    validateFlow: vi.fn(async () => config.flow),
+    getAuthoringCapabilities: vi.fn(async () => ({
+      commands: [],
+      human_gates: [],
+      build_resource_modes: ['none' as const],
+      source_free_incompatibility: null,
+      deterministic_gate: {
+        policy: plugin,
+        parameter_contract: 'declarative_gate_v1' as const,
+        max_parameter_bytes: 65536,
+        resource_modes: ['none' as const],
+      },
+      issue_classification: {
+        plugin,
+        receipt_schema: config.flow.data_schemas[0]!,
+        receipt_output_bytes: 317,
+        policy: 'team-triage',
+        priority_maximum: 100,
+        size_labels: [{ size: 'small', label: 'team-small', name: 'Small work' }],
+      },
+    })),
+    createFlow: vi.fn<FactoryApi['createFlow']>(),
+  };
+  render(
+    <QueryClientProvider client={createConsoleQueryClient()}>
+      <RouterProvider
+        router={createMemoryRouter([
+          {
+            path: '*',
+            element: <FactoryPublication api={api} subject={{ kind: 'flow', request }} />,
+          },
+        ])}
+      />
+    </QueryClientProvider>,
+  );
+  await userEvent.click(screen.getByRole('button', { name: 'Validate draft' }));
+  await userEvent.click(await screen.findByRole('button', { name: 'Review publication' }));
+  const dialog = within(await screen.findByRole('dialog'));
+  expect(await dialog.findByText('Small work')).toBeTruthy();
+  expect(dialog.getByText('Priority · 0–100')).toBeTruthy();
+  expect(api.createFlow).not.toHaveBeenCalled();
+});

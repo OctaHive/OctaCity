@@ -75,6 +75,10 @@ impl FlowDataMapping {
     }
     Ok(mapping)
   }
+  pub(super) const fn value(&self) -> &FlowValueMapping {
+    &self.value
+  }
+
   /// Projects only configured fields and validates the complete target contract.
   ///
   /// Missing data fails closed. Projection grants no acceptance or execution authority.

@@ -410,7 +410,7 @@ fn invalid(operation: StoreOperation) -> StoreError {
     source: StoreInputError::InvalidIssue,
   }
 }
-async fn read(
+pub(super) async fn read(
   connection: &mut PgConnection,
   project_id: ProjectId,
   id: IssueId,
@@ -462,6 +462,22 @@ pub(super) async fn lock(
     })?;
   read(connection, project_id, id, None).await
 }
+pub(super) async fn persist_revision(
+  connection: &mut PgConnection,
+  issue: &IssueRevision,
+  history: Option<&IssueStatusHistoryEntry>,
+) -> Result<(), StoreError> {
+  insert_revision(connection, issue, history).await?;
+  sqlx::query("UPDATE issues SET current_version=$3 WHERE project_id=$1 AND id=$2")
+    .bind(issue.project_id.as_uuid())
+    .bind(issue.id.as_uuid())
+    .bind(number(issue.version.get(), StoreOperation::EditIssue)?)
+    .execute(connection)
+    .await
+    .map_err(unavailable)?;
+  Ok(())
+}
+
 pub(super) async fn publish<T: serde::Serialize>(
   mut tx: sqlx::Transaction<'_, sqlx::Postgres>,
   identity: &MutationIdentity,
@@ -471,14 +487,7 @@ pub(super) async fn publish<T: serde::Serialize>(
   outcome: &T,
   push_intent: Option<IssuePushIntent>,
 ) -> Result<(), StoreError> {
-  insert_revision(&mut tx, issue, history).await?;
-  sqlx::query("UPDATE issues SET current_version=$3 WHERE project_id=$1 AND id=$2")
-    .bind(issue.project_id.as_uuid())
-    .bind(issue.id.as_uuid())
-    .bind(number(issue.version.get(), StoreOperation::EditIssue)?)
-    .execute(&mut *tx)
-    .await
-    .map_err(unavailable)?;
+  persist_revision(&mut tx, issue, history).await?;
   let metadata = json!({"project_id": issue.project_id, "issue_id":issue.id, "version":issue.version});
   let mut payload = metadata.clone();
   if let Some(mut intent) = push_intent {

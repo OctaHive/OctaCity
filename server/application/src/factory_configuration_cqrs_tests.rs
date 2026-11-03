@@ -656,6 +656,7 @@ fn configuration_choices_apply_reference_visibility_before_filter_count_and_curs
         key("criteria"),
         octacity_server_factory::FactoryChoiceMetadata {
           permission_declarations: None,
+          issue_classification: None,
           profile_selection: Some(octacity_server_factory::FactoryProfileSelectorMetadata {
             provider: exact("private-provider", "v1", 42),
             adapter: exact("private-adapter", "v1", 43),

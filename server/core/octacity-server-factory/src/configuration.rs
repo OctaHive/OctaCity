@@ -205,7 +205,23 @@ pub struct FactoryChoiceMetadata {
   /// Read-only facts projected from an installed profile selector, never provider input or credentials.
   #[serde(default, skip_serializing_if = "Option::is_none")]
   pub profile_selection: Option<FactoryProfileSelectorMetadata>,
+  /// Reviewed Project size-to-label mapping for an installed local Issue writer.
+  #[serde(default, skip_serializing_if = "Option::is_none")]
+  pub issue_classification: Option<FactoryIssueClassificationMapping>,
 }
+
+/// A stable policy and exact label identities reused by this Project's Flows.
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(deny_unknown_fields)]
+pub struct FactoryIssueClassificationMapping {
+  /// Stable ownership key across Flow and mapping versions.
+  pub policy: FactoryKey,
+  /// Accepted size keys and active Project label identities.
+  pub size_labels: BTreeMap<FactoryKey, FactoryKey>,
+}
+
+/// Bounds one reusable mapping and its published action parameters.
+pub const MAX_FACTORY_CLASSIFICATION_SIZE_LABELS: usize = 64;
 
 /// Safe installation facts for Console profile-selection authoring.
 /// The complete private plan remains in its existing installed owner.
@@ -331,6 +347,15 @@ impl FactoryConfigurationChoices {
         .compatible_choices
         .iter()
         .any(|choice| !installed(choice.kind, &choice.alias))
+      || metadata.issue_classification.as_ref().is_some_and(|mapping| {
+        kind != FactoryChoiceKind::NodeCapability
+          || mapping.size_labels.is_empty()
+          || mapping.size_labels.len() > MAX_FACTORY_CLASSIFICATION_SIZE_LABELS
+          || self
+            .metadata
+            .iter()
+            .any(|(key, value)| key != &(kind, alias.clone()) && value.issue_classification.is_some())
+      })
     {
       return Err(FactoryError::InvalidConfiguration {
         field: "choice metadata alias",
@@ -626,6 +651,13 @@ impl FactoryConfigurationChoices {
   #[must_use]
   pub fn choice_metadata(&self, kind: FactoryChoiceKind, alias: &FactoryKey) -> Option<&FactoryChoiceMetadata> {
     self.metadata.get(&(kind, alias.clone()))
+  }
+  /// Returns the Project's installed classification mapping with its exact writer.
+  pub fn issue_classification(&self) -> Option<(&ImmutableReference, &FactoryIssueClassificationMapping)> {
+    self
+      .metadata
+      .iter()
+      .find_map(|(key, metadata)| Some((self.references.get(key)?, metadata.issue_classification.as_ref()?)))
   }
 
   /// Borrows declared selector facts only for the same exact installed policy.

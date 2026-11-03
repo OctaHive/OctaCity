@@ -594,6 +594,7 @@ pub struct FactoryConfigurationHandlers<S> {
   policy: Arc<dyn crate::ManagementAuthorizationPolicy>,
   source_actions: Option<Arc<dyn crate::FactoryStageSourceAuthorizer>>,
   issue_status_actions: Option<Arc<dyn crate::FactoryIssueStatusAuthorizer>>,
+  issue_properties: Option<Arc<dyn octacity_server_store::IssuePropertyStore>>,
 }
 
 impl<S> FactoryConfigurationHandlers<S> {
@@ -607,6 +608,7 @@ impl<S> FactoryConfigurationHandlers<S> {
       policy,
       source_actions: None,
       issue_status_actions: None,
+      issue_properties: None,
     }
   }
 
@@ -670,6 +672,12 @@ where
     self.source_actions = Some(authorizer);
     self
   }
+  /// Reviews installed classification mappings against the existing Project catalog.
+  #[must_use]
+  pub fn with_issue_properties(mut self, properties: Arc<dyn octacity_server_store::IssuePropertyStore>) -> Self {
+    self.issue_properties = Some(properties);
+    self
+  }
   /// Enables local status actions using exact visible Project workflow versions.
   #[must_use]
   pub fn with_issue_status_actions(mut self, authorizer: Arc<dyn crate::FactoryIssueStatusAuthorizer>) -> Self {
@@ -726,6 +734,15 @@ where
       crate::factory_issue_status_authoring::validate_flow_issue_status_actions(
         flow,
         self.issue_status_actions.as_deref(),
+        context,
+        project_id,
+      )
+      .await?;
+      crate::factory_issue_classification_authoring::validate_publication(
+        flow,
+        &choices,
+        self.issue_properties.as_deref(),
+        self.policy.as_ref(),
         context,
         project_id,
       )
@@ -822,6 +839,8 @@ where
       .collect::<Vec<_>>();
     for item in &mut items {
       if let Some(metadata) = &mut item.metadata {
+        // Resolve planning choices only through the authorized current Issue catalog.
+        metadata.issue_classification = None;
         if metadata.permission_declarations.as_ref().is_some_and(|permissions| {
           !crate::factory_configuration_choices::permissions_selectable(permissions, &visible_references)
         }) {

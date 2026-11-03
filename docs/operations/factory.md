@@ -172,6 +172,54 @@ does not create authority: the installed compiler, profile, local Agent policy
 and backend must all agree. Delivery and promotion credentials must not enter
 implementation, protected-test authoring or ordinary source reads.
 
+### Explicit local Issue classification actions
+
+The private Factory catalogue accepts an optional `issue_classification_actions`
+array. Each entry uses the same exact `identity` and verified `principal` fields
+as a local status action. A Flow selects the installed capability and declares
+`apply_issue_classification` as a trusted action. Its parameters identify the
+accepted `source_node` and `source_outcome`, the receipt `outcome`, a stable
+`policy` key, and `size_labels` mapping assessment keys to active Project label
+IDs. Project the selected `priority` and `size` fields from that accepted outcome
+into the action input. Publication checks that the projection preserves those
+fields from the accepted payload and that the output accepts the operation
+digest. Console uses the canonical receipt schema and byte allowance returned by
+the server.
+
+For Console authoring, add `issue_classification` to the metadata of the
+writer's `node_capability` reference in the Project entry of the same catalogue.
+Set `policy` to the stable ownership key and `size_labels` to the map of accepted
+size keys to active Issue label IDs, for example `{"small":"size_small"}`.
+One Project mapping can be reused by multiple Flows. Create the labels in the
+Project's Issue properties before enabling the action.
+
+Connect the accepted assessment outcome to a trusted action step. In that step,
+enable **Apply classification to Issue** and review **Use Project classification**.
+Connect the resulting **applied** outcome to its next step or terminal. Use
+**Review required access** to review the plugin request. The publication review
+shows the priority range and the current names of the mapped Project labels.
+Display-only Issue cards can be configured directly on the producing outcome.
+Turning the switch off removes the dedicated write step from the draft and
+reconnects a single continuation. If another step consumes the receipt or the
+route is ambiguous, resolve those dependencies in the graph first.
+
+The file-based writer principal must match the verified management principal
+configured in `[integration_management]`. The server uses that management
+policy to check write access to the Project and Issue. The Factory catalogue
+declares the writer identity and mapping. The writer holds the current Run
+claim through the transaction and checks its deadline before committing.
+The exact Work association and the original reviewed Issue revision constrain
+the effect. A successful action applies the selected fields in one Issue
+revision. Unknown or omitted values leave their fields alone. A subsequent
+action can replace a size label that the same policy added, provided the label
+was retained continuously. Local classification leaves Work scheduling and
+provider delivery independent.
+
+The Issue Overview matches the recorded local result to the exact accepted
+triage outcome. A confirmed assignment shows the applied priority or size
+label and indicates if either value has since changed. A conflicting action
+leaves the accepted assessment visible as a recommendation.
+
 ### Project AI-agent compatibility declarations
 
 An optional `role_profiles` map inside each `factory_profiles_file` Project entry

@@ -52,6 +52,7 @@ pub(crate) fn retained_action_request<'a>(
     deadline: attempt.deadline(),
     started_at: attempt.started_at(),
     authority_expires_at: attempt.claim().expires_at(),
+    claim_fence: attempt.claim().fence(),
     observed_at,
   }
 }

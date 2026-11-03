@@ -28,6 +28,13 @@ function catalog(code, name) {
   }
   return entries;
 }
+
+// A packed list avoids repeated string delimiters. Keep the array whenever
+// the separator is part of a message so decoding is lossless.
+const separator = '|';
+const pack = (values) =>
+  values.some((value) => value.includes(separator)) ? values : values.join(separator);
+
 /** @returns {import('vite').Plugin} */
 export function compactMessageCatalogs() {
   return {
@@ -44,8 +51,13 @@ export function compactMessageCatalogs() {
           if (groups.at(-1)?.[0] !== prefix) groups.push([prefix, []]);
           groups.at(-1)[1].push([key.slice(boundary), value]);
         }
+        const packed = groups.map(([prefix, items]) => [
+          prefix,
+          pack(items.map(([key]) => key)),
+          pack(items.map(([, value]) => value)),
+        ]);
         return {
-          code: `const groups=${JSON.stringify(groups)};export const enMessages=Object.fromEntries(groups.flatMap(([prefix,items])=>items.map(([key,value])=>[prefix+key,value])));`,
+          code: `const groups=${JSON.stringify(packed)};export const unpackMessages=values=>typeof values==='string'?values.split(${JSON.stringify(separator)}):values;export const enMessages=Object.fromEntries(groups.flatMap(([prefix,keys,text])=>{const values=unpackMessages(text);return unpackMessages(keys).map((key,index)=>[prefix+key,values[index]])}));`,
           map: null,
         };
       }
@@ -57,7 +69,7 @@ export function compactMessageCatalogs() {
       if (english.size !== russian.size || [...english.keys()].some((key) => !russian.has(key)))
         throw new Error('Translation catalog keys differ');
       return {
-        code: `import {enMessages} from './messages.en';const translations=${JSON.stringify([...english.keys()].map((key) => russian.get(key)))};export const ruMessages=Object.fromEntries(Object.keys(enMessages).map((key,index)=>[key,translations[index]]));`,
+        code: `import {enMessages,unpackMessages} from './messages.en';const translations=unpackMessages(${JSON.stringify(pack([...english.keys()].map((key) => russian.get(key))))});export const ruMessages=Object.fromEntries(Object.keys(enMessages).map((key,index)=>[key,translations[index]]));`,
         map: null,
       };
     },

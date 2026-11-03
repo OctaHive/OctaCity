@@ -45,6 +45,21 @@ pub(crate) use recovery::recover_restored_ownership;
 pub(crate) use snapshot::{read_snapshot, read_snapshot_in_transaction};
 pub(crate) use transition::commit_transition;
 
+pub(crate) async fn verify_issue_classification_claim(
+  transaction: &mut Transaction<'_, Postgres>,
+  run: FactoryRunId,
+  expected_claim: FactoryDigest,
+) -> Result<(), StoreError> {
+  let locked = lock_run(transaction, run).await?;
+  if locked.claim_id != Some(expected_claim)
+    || locked.lifecycle.cancellation_requested
+    || locked.run.state().is_terminal()
+  {
+    return Err(conflict());
+  }
+  Ok(())
+}
+
 pub(crate) async fn verify_cancellation_owner(
   transaction: &mut Transaction<'_, Postgres>,
   run: FactoryRunId,

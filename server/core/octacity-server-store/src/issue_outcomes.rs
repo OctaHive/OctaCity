@@ -25,6 +25,8 @@ pub enum IssueOutcomeContent {
     size: Option<FactoryKey>,
     /// Recommended component.
     component: Option<FactoryKey>,
+    /// Local planning effect of this exact accepted result.
+    classification: IssueOutcomeClassification,
   },
   /// Accepted specifications.
   Specifications,
@@ -38,6 +40,43 @@ pub enum IssueOutcomeContent {
     /// Frozen title from the Flow definition.
     title: FactoryText,
   },
+}
+
+/// Receipt facts safe to display next to an accepted recommendation.
+#[derive(Clone, Debug, Eq, PartialEq, serde::Serialize)]
+#[serde(tag = "status", rename_all = "snake_case")]
+pub enum IssueOutcomeClassification {
+  /// No recorded local assignment or conflict for this result.
+  Recommended,
+  /// Local planning was confirmed by the Issue owner.
+  Applied {
+    /// Priority confirmed by the receipt.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    priority: Option<IssueOutcomeAssignedPriority>,
+    /// Project size label confirmed by the receipt.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    size_label: Option<IssueOutcomeAssignedLabel>,
+  },
+  /// The Issue owner rejected the action because the write conflicted.
+  Conflict,
+}
+
+/// One priority assignment and its relation to current Issue planning.
+#[derive(Clone, Debug, Eq, PartialEq, serde::Serialize)]
+pub struct IssueOutcomeAssignedPriority {
+  /// Confirmed priority value.
+  pub value: u8,
+  /// Whether this value matches the current Issue revision.
+  pub current: bool,
+}
+
+/// One size label assignment and its relation to current Issue planning.
+#[derive(Clone, Debug, Eq, PartialEq, serde::Serialize)]
+pub struct IssueOutcomeAssignedLabel {
+  /// Project label display name.
+  pub name: String,
+  /// Whether the label is present on the current Issue revision.
+  pub current: bool,
 }
 
 /// One current slot and the exact accepted occurrence that supplies it.
@@ -99,6 +138,8 @@ pub struct IssueOutcomeRecord {
   pub value: serde_json::Value,
   /// Original input inventory used by the Issue artifact reader.
   pub inputs: WorkArtifacts,
+  /// Safe local assignment facts for the accepted result.
+  pub classification: IssueOutcomeClassification,
 }
 
 impl IssueOutcomeReference {
@@ -163,6 +204,7 @@ impl IssueOutcomeContent {
   pub fn project(
     presentation: FlowIssuePresentation,
     result: &serde_json::Value,
+    classification: IssueOutcomeClassification,
   ) -> Result<(String, Self), StoreError> {
     let conclusion_field = match &presentation {
       FlowIssuePresentation::CustomV1 { conclusion_field, .. } => conclusion_field.as_str(),
@@ -191,6 +233,7 @@ impl IssueOutcomeContent {
         priority: result["priority"].as_u64().and_then(|value| u8::try_from(value).ok()),
         size: field("size")?,
         component: field("component")?,
+        classification,
       },
       FlowIssuePresentation::SpecificationsV1 { .. } => Self::Specifications,
       FlowIssuePresentation::ReviewV1 { .. } => Self::Review {

@@ -60,6 +60,7 @@ mod internal_trigger;
 mod internal_trigger_definition;
 mod issue;
 mod issue_activity;
+mod issue_classification;
 mod issue_code_review;
 mod issue_discussion;
 mod issue_execution;

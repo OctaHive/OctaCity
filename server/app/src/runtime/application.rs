@@ -187,7 +187,8 @@ pub(super) fn management_application(
     octacity_server_application::FactoryConfigurationHandlers::with_policy(store.clone(), management_policy.clone())
       .with_project_policies(store.clone())
       .with_repositories(store.clone())
-      .with_issue_status_actions(workflow_queries.clone());
+      .with_issue_status_actions(workflow_queries.clone())
+      .with_issue_properties(store.clone());
   let factory = Arc::new(match &source_queries {
     Some(sources) => factory.with_source_actions(sources.clone()),
     None => factory,
@@ -235,7 +236,8 @@ pub(super) fn management_application(
   let flow_handlers =
     octacity_server_application::FactoryFlowDefinitionHandlers::new(store.clone(), management_policy.clone())
       .with_repositories(store.clone())
-      .with_issue_status_actions(workflow_queries.clone());
+      .with_issue_status_actions(workflow_queries.clone())
+      .with_issue_properties(store.clone());
   let flow_handlers = Arc::new(match &source_queries {
     Some(sources) => flow_handlers.with_source_actions(sources.clone()),
     None => flow_handlers,
@@ -281,10 +283,10 @@ pub(super) fn management_application(
       .with_issue_associations(store.clone()),
     ),
   );
-  let roles = Arc::new(octacity_server_application::FactoryRoleProfileHandlers::with_policy(
-    store.clone(),
-    management_policy.clone(),
-  ));
+  let roles = Arc::new(
+    octacity_server_application::FactoryRoleProfileHandlers::with_policy(store.clone(), management_policy.clone())
+      .with_issue_properties(store.clone()),
+  );
   let skills = Arc::new(octacity_server_application::ProjectSkillImport::new(
     store.clone(),
     object_storage.clone(),

@@ -69,6 +69,59 @@ async fn file_issue_status_action_installs_only_its_explicit_identity_and_author
 }
 
 #[tokio::test]
+async fn file_issue_classification_installs_an_explicit_local_writer() {
+  let identity = super::factory_tests::managed::reference("reviewed-classification", "v1");
+  let project = octacity_server_domain::ProjectId::generate();
+  let mut document = serde_json::json!({
+    "version":1,"projects":[{"project_id":project,"references":[],"build_configurations":[]}],"codex":[],
+    "issue_classification_actions":[{"identity":identity,"principal":"reviewed-operator"}]
+  });
+  let parse = |document: &serde_json::Value| {
+    super::factory_profile_file::FileProfileInstaller::parse_json(&serde_json::to_vec(document).unwrap(), &[])
+  };
+  assert!(
+    parse(&document)
+      .unwrap()
+      .install(super::factory_tests::resources())
+      .await
+      .is_err(),
+    "a writer principal in the Factory catalog cannot grant itself management access"
+  );
+  let installed = parse(&document)
+    .unwrap()
+    .with_management_principal(Some("reviewed-operator"))
+    .install(super::factory_tests::resources())
+    .await
+    .unwrap();
+  assert_eq!(installed.executors.len(), 1);
+  assert_eq!(installed.executors[0].0, FlowNodeKind::TrustedAction);
+  assert_eq!(
+    installed.executors[0].1,
+    NodeExecutionIdentity::External(identity.clone())
+  );
+  document["projects"][0]["references"] = serde_json::json!([{
+    "kind":"node_capability","alias":"local-classification","reference":identity,
+    "metadata":{
+      "node_kinds":["trusted_action"],"signal_purposes":[],"enforcement":[],"compatible_choices":[],
+      "issue_classification":{"policy":"triage","size_labels":{"small":"size_small"}}
+    }
+  }]);
+  assert!(parse(&document).is_ok());
+  let writer = document["issue_classification_actions"].take();
+  document.as_object_mut().unwrap().remove("issue_classification_actions");
+  assert!(
+    parse(&document).is_err(),
+    "a Project mapping must refer to an installed local classification writer"
+  );
+  document["issue_classification_actions"] = writer;
+  document["issue_status_actions"] = document["issue_classification_actions"].clone();
+  assert!(
+    parse(&document).is_err(),
+    "one exact executor identity cannot name two writers"
+  );
+}
+
+#[tokio::test]
 async fn file_review_planning_profile_installs_its_exact_native_executor_without_io() {
   let project = octacity_server_domain::ProjectId::generate();
   let profile = super::factory_tests::review_planning_profile(project);

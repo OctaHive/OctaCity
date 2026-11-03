@@ -557,7 +557,8 @@ pub(super) async fn configured_factory_installer(
       Some(Arc::new(
         super::factory_profile_file::FileProfileInstaller::load(path, &providers)
           .await
-          .map_err(|_| ServerRuntimeError::InvalidFactoryInstallation)?,
+          .map_err(|_| ServerRuntimeError::InvalidFactoryInstallation)?
+          .with_management_principal(config.integration_management().map(|local| local.principal.as_str())),
       ) as Arc<dyn super::FactoryRuntimeInstaller>)
     }
     None => None,

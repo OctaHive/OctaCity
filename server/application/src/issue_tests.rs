@@ -1537,3 +1537,73 @@ fn issue_workflow_adoption_requires_separate_authority_and_current_visibility() 
 
 #[path = "issue_activity_tests.rs"]
 mod activity;
+
+#[test]
+fn issue_classification_requires_current_project_and_issue_write_grants() {
+  use octacity_server_factory::{FactoryDigest, FactoryKey, FactoryRunId, WorkEnvelopeId};
+  use octacity_server_store::{
+    ApplyIssueClassification, IssueClassificationStore, IssueMutationOutcome, IssueWorkAssociation, ManagementMutation,
+    StoreError,
+  };
+
+  struct NoWrites;
+  #[async_trait::async_trait]
+  impl IssueClassificationStore for NoWrites {
+    async fn apply_issue_classification(
+      &self,
+      _: ManagementMutation<ApplyIssueClassification>,
+    ) -> Result<IssueMutationOutcome, StoreError> {
+      panic!("a denied classification must not reach the Issue writer");
+    }
+  }
+
+  struct WritePolicy(ManagementResourceKind);
+  #[async_trait::async_trait]
+  impl ManagementAuthorizationPolicy for WritePolicy {
+    async fn authorize(
+      &self,
+      _: &ManagementRequestContext,
+      action: ManagementAction,
+      resource: &ManagementResource,
+    ) -> Result<ManagementAuthorizationGrant, ManagementAuthorizationDenial> {
+      if action == ManagementAction::Update && resource.kind() == self.0 {
+        Ok(ManagementAuthorizationGrant::new(ManagementVisibility::all()))
+      } else {
+        Err(ManagementAuthorizationDenial::forbidden())
+      }
+    }
+  }
+
+  run_ready(async {
+    for allowed in [ManagementResourceKind::Project, ManagementResourceKind::Issue] {
+      let policy = Arc::new(WritePolicy(allowed));
+      let handler =
+        AuthorizedCommandHandler::new(policy.clone(), Arc::new(IssueHandlers::new(Arc::new(NoWrites), policy)));
+      let result = handler
+        .handle_command(
+          &context(),
+          ApplyIssueClassificationCommand(ApplyIssueClassification {
+            association: IssueWorkAssociation {
+              project_id: ProjectId::generate(),
+              issue_id: IssueId::generate(),
+              request_id: None,
+              requirements_version: None,
+              work_id: WorkEnvelopeId::generate(),
+              run_id: FactoryRunId::generate(),
+            },
+            policy: FactoryKey::new("triage").unwrap(),
+            record: FactoryDigest::from_bytes([1; 32]),
+            accepted_at: at(35),
+            operation_id: FactoryDigest::from_bytes([2; 32]),
+            priority: Some(40),
+            size_label: None,
+            managed_labels: Default::default(),
+            applied_at: at(40),
+            authority: None,
+          }),
+        )
+        .await;
+      assert!(result.is_err());
+    }
+  });
+}

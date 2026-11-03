@@ -5,8 +5,9 @@ use octacity_server_factory::{
   FactoryDigest, FactoryRunId, FlowDefinitionId, FlowIssuePresentation, NodeAttemptId, WorkArtifacts, WorkEnvelopeId,
 };
 use octacity_server_store::{
-  FactoryRunListVisibility, FactoryRunPagePosition, IssueOutcomeCandidate, IssueOutcomePosition, IssueOutcomeRecord,
-  IssueOutcomeStore, IssueRevision, MAX_ISSUE_OUTCOME_CARDS, ReadVisibilityView, StoreError,
+  FactoryRunListVisibility, FactoryRunPagePosition, IssueOutcomeAssignedLabel, IssueOutcomeAssignedPriority,
+  IssueOutcomeCandidate, IssueOutcomeClassification, IssueOutcomePosition, IssueOutcomeRecord, IssueOutcomeStore,
+  IssuePropertyStore, IssueRevision, MAX_ISSUE_OUTCOME_CARDS, ReadVisibilityView, StoreError,
 };
 use sqlx::types::Json;
 use uuid::Uuid;
@@ -22,6 +23,14 @@ struct OutcomeRow {
   node_key: String,
   outcome: String,
   presentation: Json<FlowIssuePresentation>,
+}
+
+#[derive(sqlx::FromRow)]
+struct RecordRow {
+  value: Json<serde_json::Value>,
+  artifacts: Json<WorkArtifacts>,
+  classification: Option<Json<crate::issue_classification::ClassificationReceipt>>,
+  rejected: Option<bool>,
 }
 
 #[async_trait::async_trait]
@@ -67,25 +76,49 @@ impl IssueOutcomeStore for PostgresStore {
     issue: &IssueRevision,
     candidate: &IssueOutcomeCandidate,
   ) -> Result<Option<IssueOutcomeRecord>, StoreError> {
-    let row: Option<(Json<serde_json::Value>, Json<WorkArtifacts>)> = sqlx::query_as(
-      "SELECT convert_from(record.document, 'UTF8')::jsonb #> '{payload,value}', work.envelope->'artifacts' \
-       FROM issue_work_associations a JOIN factory_runs run ON run.id=a.run_id AND run.project_id=a.project_id \
-       JOIN factory_work_envelopes work ON work.id=run.work_envelope_id AND work.id=a.work_id \
-       JOIN factory_flow_records record ON record.run_id=run.id \
-       JOIN issues issue ON issue.project_id=a.project_id AND issue.id=a.issue_id \
-       WHERE issue.project_id=$1 AND issue.id=$2 AND issue.current_version=$3 AND run.visible \
-         AND run.id=$4 AND work.id=$5 AND record.node_attempt_id=$6",
-    )
-    .bind(issue.project_id.as_uuid())
-    .bind(issue.id.as_uuid())
-    .bind(i64::try_from(issue.version.get()).map_err(|_| StoreError::Unavailable)?)
-    .bind(candidate.position.run.run_id.as_uuid())
-    .bind(candidate.work_id.as_uuid())
-    .bind(candidate.position.attempt.as_uuid())
-    .fetch_optional(self.pool())
-    .await
-    .map_err(unavailable)?;
-    Ok(row.map(|(Json(value), Json(inputs))| IssueOutcomeRecord { value, inputs }))
+    let row = sqlx::query_as::<_, RecordRow>(include_str!("issue_outcome_record.sql"))
+      .bind(issue.project_id.as_uuid())
+      .bind(issue.id.as_uuid())
+      .bind(i64::try_from(issue.version.get()).map_err(|_| StoreError::Unavailable)?)
+      .bind(candidate.position.run.run_id.as_uuid())
+      .bind(candidate.work_id.as_uuid())
+      .bind(candidate.position.attempt.as_uuid())
+      .bind(matches!(candidate.presentation, FlowIssuePresentation::TriageV1 { .. }))
+      .fetch_optional(self.pool())
+      .await
+      .map_err(unavailable)?;
+    let Some(row) = row else { return Ok(None) };
+    let classification = match row.classification {
+      Some(Json(applied)) => {
+        let size_label = if let Some(label) = applied.size_label {
+          let catalog = self.issue_properties(issue.project_id, None).await?;
+          let current = issue.planning.labels.contains(&label);
+          let name = catalog
+            .definition
+            .labels
+            .into_iter()
+            .find(|choice| choice.id == label)
+            .map_or(label, |choice| choice.name);
+          Some(IssueOutcomeAssignedLabel { name, current })
+        } else {
+          None
+        };
+        IssueOutcomeClassification::Applied {
+          priority: applied.priority.map(|value| IssueOutcomeAssignedPriority {
+            value,
+            current: issue.content.priority == Some(value),
+          }),
+          size_label,
+        }
+      }
+      None if row.rejected == Some(true) => IssueOutcomeClassification::Conflict,
+      None => IssueOutcomeClassification::Recommended,
+    };
+    Ok(Some(IssueOutcomeRecord {
+      value: row.value.0,
+      inputs: row.artifacts.0,
+      classification,
+    }))
   }
 }
 

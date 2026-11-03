@@ -91,6 +91,7 @@ fn candidate_publication_control_binds_the_selected_resource_without_a_work_repo
           deadline: time(100),
           started_at: time(30),
           authority_expires_at: time(100),
+          claim_fence: FactoryClaimFence::new(digest(156)),
           observed_at: time(33),
         },
         time(33),

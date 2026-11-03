@@ -80,6 +80,36 @@ pub(super) fn insert(schemas: &mut Map<String, Value>) {
     ),
   );
   schemas.insert(
+    "FactoryIssueClassificationChoices".into(),
+    object(
+      [
+        ("plugin", reference()),
+        ("policy", key()),
+        ("priority_maximum", positive_integer()),
+        ("receipt_schema", schema_ref("FactoryFlowDataSchema")),
+        ("receipt_output_bytes", positive_integer()),
+        (
+          "size_labels",
+          bounded_array(
+            object(
+              [("size", key()), ("label", key()), ("name", non_empty_string())],
+              &["size", "label", "name"],
+            ),
+            octacity_server_application::MAX_ISSUE_PROPERTY_CHOICES,
+          ),
+        ),
+      ],
+      &[
+        "plugin",
+        "policy",
+        "priority_maximum",
+        "receipt_schema",
+        "receipt_output_bytes",
+        "size_labels",
+      ],
+    ),
+  );
+  schemas.insert(
     "FactoryAuthoringCapabilities".into(),
     object(
       [
@@ -87,6 +117,7 @@ pub(super) fn insert(schemas: &mut Map<String, Value>) {
           "commands",
           bounded_array(schema_ref("FactoryCommandAuthoringContract"), b.choice_entries),
         ),
+        ("issue_classification", schema_ref("FactoryIssueClassificationChoices")),
         (
           "deterministic_gate",
           object(

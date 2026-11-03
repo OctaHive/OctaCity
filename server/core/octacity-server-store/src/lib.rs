@@ -12,6 +12,8 @@ mod issue_code_review;
 pub use issue_code_review::*;
 mod issue_planning;
 pub use issue_planning::*;
+mod issue_classification;
+pub use issue_classification::*;
 mod issue;
 mod issue_activity;
 pub use issue_activity::*;

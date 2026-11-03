@@ -34,6 +34,8 @@ pub struct FactoryFlowActionRequest<'a> {
   pub started_at: Timestamp,
   /// Current fenced observer window, independent of the original hard deadline.
   pub authority_expires_at: Timestamp,
+  /// Exact claim fence accepted by the generic adapter.
+  pub claim_fence: FactoryClaimFence,
   /// Trusted observation time used to enforce input validity before effects.
   pub observed_at: Timestamp,
 }
@@ -144,6 +146,7 @@ impl FactoryFlowActionAdapter {
       deadline: request.attempt.deadline(),
       started_at: request.attempt.started_at(),
       authority_expires_at: request.ownership.claim().expires_at(),
+      claim_fence: request.ownership.claim().fence(),
       observed_at: request.observed_at,
     })
   }

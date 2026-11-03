@@ -1,5 +1,6 @@
 import type { components } from '../../../.generated/api/schema';
 import { FACTORY_AUTHORING_SCHEMAS } from '../../../.generated/api/factory-authoring';
+import { classificationAction } from './issueClassification';
 type S = components['schemas'];
 type Node = S['FactoryFlowNodeDefinition'];
 type Budget = S['FactoryBudget'];
@@ -170,9 +171,14 @@ export function mergePermissions(left: Permissions, right: Permissions): Permiss
   };
 }
 export function requiredPermissions(node: Node): Permissions {
+  const action = node.action;
+  const base =
+    action?.action === classificationAction
+      ? mergePermissions(node.permissions, { ...node.permissions, plugins: [action.plugin] })
+      : node.permissions;
   return Object.values(node.profile_selection?.candidates ?? {}).reduce(
     (permissions, { profile }) => mergePermissions(permissions, profile.definition.permissions),
-    node.permissions,
+    base,
   );
 }
 

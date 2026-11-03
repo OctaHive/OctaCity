@@ -157,8 +157,9 @@ pub use configuration::{
   BuildConfigurationRef, DecisionSignalProfile, DecisionSignalProfileDefinition, EvaluationPolicy,
   FactoryChoiceCompatibility, FactoryChoiceIdentity, FactoryChoiceMetadata, FactoryConfiguration,
   FactoryConfigurationChoiceEntries, FactoryConfigurationChoices, FactoryConfigurationDraft,
-  FactoryProfileSelectorMetadata, FactoryReferenceChoice, FactoryWipLimits, ImmutableReference,
-  MAX_CONFIGURATION_CHOICES_PER_KIND, MAX_FACTORY_ACTIVE_NODES, MAX_FACTORY_ACTIVE_RUNS,
+  FactoryIssueClassificationMapping, FactoryProfileSelectorMetadata, FactoryReferenceChoice, FactoryWipLimits,
+  ImmutableReference, MAX_CONFIGURATION_CHOICES_PER_KIND, MAX_FACTORY_ACTIVE_NODES, MAX_FACTORY_ACTIVE_RUNS,
+  MAX_FACTORY_CLASSIFICATION_SIZE_LABELS,
 };
 pub use configuration_policy::{FactoryPolicyBinding, FactoryPolicySelection};
 pub use credential::{

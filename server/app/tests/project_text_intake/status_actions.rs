@@ -101,10 +101,19 @@ async fn status_setup(store: &PostgresStore) -> (IssueRevision, ProjectTextSubmi
 pub(super) async fn configure_status(
   store: &PostgresStore,
   issue: &IssueRevision,
+  submission: ProjectTextSubmission,
+) -> ProjectTextSubmission {
+  configure_issue_flow(store, issue, submission, flow(issue)).await
+}
+
+async fn configure_issue_flow(
+  store: &PostgresStore,
+  issue: &IssueRevision,
   mut submission: ProjectTextSubmission,
+  flow: FactoryFlowConfiguration,
 ) -> ProjectTextSubmission {
   let mut f = postgres::factory_configuration::fixture(issue.project_id);
-  f.draft.flow = Some(flow(issue));
+  f.draft.flow = Some(flow);
   let selected = store.factory_admission_context(submission.intent.target).await.unwrap();
   let mut policies = selected.project_policies.unwrap();
   policies.access_profile = octacity_server_store::testing::factory_project_policies_with_access(
@@ -610,4 +619,521 @@ pub(super) async fn qualify_status(store: Arc<PostgresStore>, run: FactoryRunId,
     2
   );
   assert_eq!(store.issue(issue.project_id, issue.id, None).await.unwrap(), moved);
+}
+
+fn classification_flow(issue: &IssueRevision) -> FactoryFlowConfiguration {
+  let base = flow(issue);
+  let key = |value: &str| FactoryKey::new(value).unwrap();
+  let root = base.closure.definition(base.closure.root()).unwrap();
+  let initial = root.input_schema().unwrap().clone();
+  let receipt = root.node(root.entry()).unwrap().outcomes()[0].clone();
+  let permission = root.execution().permissions().clone();
+  let assessment = FlowDataSchema::new(
+    key("assessment"),
+    key("v1"),
+    FlowValueSchema::Object {
+      fields: [
+        (
+          key("priority"),
+          FlowFieldSchema::required(FlowValueSchema::Integer {
+            minimum: 0,
+            maximum: 100,
+          }),
+        ),
+        (
+          key("size"),
+          FlowFieldSchema::required(FlowValueSchema::Enum {
+            values: vec![serde_json::json!("small")],
+          }),
+        ),
+      ]
+      .into(),
+    },
+  )
+  .unwrap();
+  let observed = serde_json::json!({"priority":80,"size":"small"});
+  let outcome = key("classified");
+  let gate = FlowNodeDefinition::new(FlowNodeDefinitionInput {
+    key: key("triage"),
+    kind: FlowNodeKind::DeterministicGate,
+    input_schema: Some(initial.clone()),
+    outcomes: vec![FlowOutcomeDefinition::new(
+      outcome.clone(),
+      FlowOutcomeKind::Success,
+      assessment.reference().clone(),
+    )],
+    budget: BudgetLimit::new(1, 100, 0, 0, 1000).unwrap(),
+    permissions: FactoryPermissionSet::deny_all(),
+    required: true,
+    subflow: None,
+  })
+  .unwrap()
+  .with_gate(
+    FlowGateProgram::new(vec![], outcome.clone())
+      .unwrap()
+      .with_default_output_mapping(FlowDataMapping::new(FlowValueMapping::Constant { value: observed }).unwrap())
+      .unwrap()
+      .binding()
+      .unwrap(),
+  )
+  .unwrap()
+  .with_input_binding(
+    FlowInputBinding::new(
+      Default::default(),
+      FlowDataMapping::new(FlowValueMapping::Constant {
+        value: serde_json::json!({}),
+      })
+      .unwrap(),
+    )
+    .unwrap(),
+  )
+  .unwrap();
+  let apply = FlowNodeDefinition::new(FlowNodeDefinitionInput {
+    key: key("apply"),
+    kind: FlowNodeKind::TrustedAction,
+    input_schema: Some(assessment.reference().clone()),
+    outcomes: vec![receipt.clone()],
+    budget: BudgetLimit::new(1, 100, 0, 0, 1000).unwrap(),
+    permissions: permission,
+    required: true,
+    subflow: None,
+  })
+  .unwrap()
+  .with_action(
+    FlowActionBinding::new(
+      plugin_identity(),
+      key("apply_issue_classification"),
+      serde_json::json!({
+        "policy":"triage", "source_node":"triage","source_outcome":"classified","outcome":"published",
+        "size_labels":{"small":"size_small"}
+      }),
+    )
+    .unwrap(),
+  )
+  .unwrap()
+  .with_input_binding(
+    FlowInputBinding::new(
+      [(
+        key("assessment"),
+        FlowInputSource::Record {
+          node: gate.key().clone(),
+          outcome: outcome.clone(),
+          view: FlowRecordView::Payload,
+          path: String::new(),
+        },
+      )]
+      .into(),
+      FlowDataMapping::new(FlowValueMapping::Pointer {
+        path: "/assessment".into(),
+      })
+      .unwrap(),
+    )
+    .unwrap(),
+  )
+  .unwrap();
+  let definition = FlowDefinition::new(FlowDefinitionInput {
+    id: FlowDefinitionId::generate(),
+    version: FlowDefinitionVersion::INITIAL,
+    input_schema: Some(initial),
+    entry: gate.key().clone(),
+    transitions: vec![
+      FlowTransition::new(
+        gate.key().clone(),
+        outcome,
+        FlowTransitionTarget::Node(apply.key().clone()),
+      ),
+      FlowTransition::new(
+        apply.key().clone(),
+        receipt.key().clone(),
+        FlowTransitionTarget::Terminal(receipt.key().clone()),
+      ),
+    ],
+    nodes: vec![gate, apply],
+    terminals: vec![FlowTerminalDefinition::new(
+      receipt.key().clone(),
+      receipt.schema().clone(),
+    )],
+    context_projections: vec![],
+    data_projections: vec![],
+    execution: root.execution().clone(),
+  })
+  .unwrap();
+  let mut schemas = base.data_schemas;
+  schemas.push(assessment);
+  FactoryFlowConfiguration::new(
+    PinnedFlowDefinitionClosure::new(definition.reference(), vec![definition]).unwrap(),
+    base.limits,
+    schemas,
+    Default::default(),
+  )
+  .unwrap()
+}
+
+#[tokio::test]
+#[ignore = "requires an explicitly configured disposable PostgreSQL service"]
+async fn local_classification_consumes_the_accepted_triage_result_through_the_native_owner() {
+  run_local_classification(false).await;
+}
+
+#[tokio::test]
+#[ignore = "requires an explicitly configured disposable PostgreSQL service"]
+async fn local_classification_does_not_write_after_waiting_past_its_deadline() {
+  run_local_classification(true).await;
+}
+
+async fn run_local_classification(lock_issue: bool) {
+  let db = postgres::TestDatabase::migrated().await;
+  let store = Arc::new(PostgresStore::new(db.pool.clone()));
+  let (issue, submission) = setup(&store).await;
+  store
+    .publish_issue_properties(management_mutation(PublishIssueProperties {
+      intent: PublishIssuePropertiesIntent {
+        project_id: issue.project_id,
+        expected_version: 0,
+        definition: IssuePropertyDefinitionSet {
+          labels: vec![IssuePropertyChoice {
+            id: "size_small".into(),
+            name: "Small".into(),
+            retired: false,
+          }],
+          properties: vec![],
+        },
+      },
+      idempotency_key: key("local-classification-label"),
+      published_at: at(3),
+    }))
+    .await
+    .unwrap();
+  let submission = configure_issue_flow(&store, &issue, submission, classification_flow(&issue)).await;
+  let clock = Arc::new(Clock(AtomicI64::new(11)));
+  let request = reviewed_request(&store, &issue, &submission).await;
+  let linked = publisher(
+    store.clone(),
+    Arc::new(Bytes::new()),
+    Arc::new(Resolver(AtomicUsize::new(0))),
+    clock.clone(),
+  )
+  .handle_command(
+    &context(),
+    PublishIssueExecutionCommand {
+      project_id: issue.project_id,
+      issue_id: issue.id,
+      request_id: request.id,
+      classification: submission.intent.classification,
+    },
+  )
+  .await
+  .unwrap();
+  let run = linked.association.unwrap().run_id;
+  let before = store.factory_run_snapshot(run).await.unwrap();
+  let owner: FactoryKey = "local-owner".parse().unwrap();
+  let claim = FactoryRunClaimRecord::new(
+    run,
+    owner,
+    FactoryClaim::new(
+      FactoryClaimFence::new(FactoryDigest::from_bytes([39; 32])),
+      at(20),
+      at(100),
+    )
+    .unwrap(),
+  );
+  store
+    .claim_factory_run(ClaimFactoryRun {
+      run_id: run,
+      expected_version: before.run.version(),
+      record: claim.clone(),
+      audit: FactoryAuditFact::new(
+        run,
+        AuditActorKind::Worker,
+        None,
+        "factory.claimed".parse().unwrap(),
+        FactoryDigest::from_bytes([40; 32]),
+        "accepted".parse().unwrap(),
+        at(20),
+      ),
+    })
+    .await
+    .unwrap();
+  let binding = resources(store.clone(), db.pool.clone()).issue_classification_executor(
+    plugin_identity(),
+    context(),
+    Arc::new(TrustedNetworkManagementPolicy),
+    clock.clone(),
+  );
+  let runner = FactoryNodeRunner::new(
+    store.clone(),
+    Arc::new(FactoryNodeExecutorRegistry::new(vec![binding]).unwrap()),
+    clock.clone(),
+  );
+  let root = before.admitted_flow.root_run();
+  let cycle = before.admitted_flow.initial_cycle();
+  let definition = before.admitted_flow.closure().definition(root.definition()).unwrap();
+  for (offset, node) in ["triage", "apply"].into_iter().enumerate() {
+    let time = 21 + offset as i64 * 2;
+    let snapshot = store.factory_run_snapshot(run).await.unwrap();
+    let node: FactoryKey = node.parse().unwrap();
+    let schema = snapshot
+      .admitted_flow
+      .data_schema(definition.node(&node).unwrap().input_schema().unwrap())
+      .unwrap();
+    let input = FlowNodeInput::prepare(FlowInputPreparation {
+      work: &snapshot.work,
+      admitted: &snapshot.admitted_flow,
+      flow: root,
+      cycle,
+      node: node.clone(),
+      schema,
+      history: snapshot.flow.runtime(),
+      records: &snapshot.flow.data.records,
+      inputs: &snapshot.flow.data.inputs,
+      incoming: None,
+    })
+    .unwrap();
+    let target = FactoryNodeTarget {
+      flow_run_id: root.id(),
+      cycle_id: cycle.id(),
+      node,
+    };
+    clock.0.store(time, Ordering::SeqCst);
+    assert_eq!(
+      runner
+        .run_once(run, claim.id, target.clone(), Some(input), at(time))
+        .await
+        .unwrap(),
+      FactoryNodeStep::Advanced
+    );
+    clock.0.store(time + 1, Ordering::SeqCst);
+    if lock_issue && offset == 1 {
+      let mut lock = db.pool.begin().await.unwrap();
+      sqlx::query("SELECT id FROM issues WHERE id=$1 FOR UPDATE")
+        .bind(issue.id.as_uuid())
+        .execute(&mut *lock)
+        .await
+        .unwrap();
+      let observe = runner.run_once(run, claim.id, target, None, at(time + 1));
+      let release = async {
+        use std::time::Duration;
+        tokio::time::timeout(Duration::from_secs(5), async {
+          loop {
+            let waiting: bool = sqlx::query_scalar(
+              "SELECT EXISTS(SELECT 1 FROM pg_stat_activity WHERE datname=current_database() \
+               AND wait_event_type='Lock' AND query LIKE 'SELECT id FROM issues%FOR NO KEY UPDATE')",
+            )
+            .fetch_one(&db.pool)
+            .await
+            .unwrap();
+            if waiting {
+              break;
+            }
+            tokio::time::sleep(Duration::from_millis(5)).await;
+          }
+        })
+        .await
+        .expect("classification must be waiting for the Issue lock");
+        tokio::time::sleep(Duration::from_millis(100)).await;
+        clock.0.store(101, Ordering::SeqCst);
+        lock.commit().await.unwrap();
+      };
+      let (observed, ()) = tokio::join!(observe, release);
+      assert!(observed.is_err());
+      assert_eq!(store.issue(issue.project_id, issue.id, None).await.unwrap(), issue);
+      db.cleanup().await;
+      return;
+    }
+    assert!(matches!(
+      runner
+        .run_once(run, claim.id, target, None, at(time + 1))
+        .await
+        .unwrap(),
+      FactoryNodeStep::Completed(_)
+    ));
+  }
+  let current = store.issue(issue.project_id, issue.id, None).await.unwrap();
+  assert_eq!(current.content.priority, Some(80));
+  assert_eq!(current.planning.labels, ["size_small".to_owned()].into());
+  assert_eq!(current.version, issue.version.next().unwrap());
+  assert_eq!(current.status_id, issue.status_id);
+  let snapshot = store.factory_run_snapshot(run).await.unwrap();
+  assert_eq!(snapshot.work, before.work);
+  assert_eq!(snapshot.outbox, before.outbox);
+  assert!(
+    store
+      .issue_push_projections(
+        issue.project_id,
+        issue.id,
+        &ManagementSecurityScope::trusted_network(),
+        None,
+        20,
+      )
+      .await
+      .unwrap()
+      .is_empty()
+  );
+  db.cleanup().await;
+}
+
+#[tokio::test]
+#[ignore = "requires an explicitly configured disposable PostgreSQL service"]
+async fn classification_publication_reuses_project_mapping_and_rejects_substitution() {
+  use octacity_server_store_postgres::FactoryCapabilitySource;
+  struct Installed(FactoryConfigurationChoices);
+  #[async_trait::async_trait]
+  impl FactoryCapabilitySource for Installed {
+    async fn availability(&self, _: ProjectId) -> Result<FactoryConfigurationAvailability, StoreError> {
+      Ok(FactoryConfigurationAvailability::Available(self.0.clone()))
+    }
+  }
+  let db = postgres::TestDatabase::migrated().await;
+  let plain = PostgresStore::new(db.pool.clone());
+  let (issue, _) = setup(&plain).await;
+  let publish_catalog = |expected_version, retired| PublishIssueProperties {
+    intent: PublishIssuePropertiesIntent {
+      project_id: issue.project_id,
+      expected_version,
+      definition: IssuePropertyDefinitionSet {
+        labels: [("size_small", "Small work", retired), ("unrelated", "Unrelated", false)]
+          .into_iter()
+          .map(|(id, name, retired)| IssuePropertyChoice {
+            id: id.into(),
+            name: name.into(),
+            retired,
+          })
+          .collect(),
+        properties: vec![],
+      },
+    },
+    idempotency_key: key(&format!("classification-catalog-{expected_version}")),
+    published_at: at(3 + expected_version as i64),
+  };
+  plain
+    .publish_issue_properties(management_mutation(publish_catalog(0, false)))
+    .await
+    .unwrap();
+  let mut entries = postgres::factory_configuration::fixture(issue.project_id)
+    .choices
+    .entries();
+  let alias: FactoryKey = "local-issue-classification".parse().unwrap();
+  entries.references.push(FactoryReferenceChoice {
+    kind: FactoryChoiceKind::NodeCapability,
+    alias: alias.clone(),
+    reference: plugin_identity(),
+  });
+  let choices = FactoryConfigurationChoices::try_new(entries)
+    .unwrap()
+    .with_choice_metadata(
+      FactoryChoiceKind::NodeCapability,
+      alias,
+      serde_json::from_value(serde_json::json!({
+        "node_kinds":["trusted_action"],"signal_purposes":[],"enforcement":[],"compatible_choices":[],
+        "issue_classification":{"policy":"triage","size_labels":{"small":"size_small"}}
+      }))
+      .unwrap(),
+    )
+    .unwrap();
+  let store = Arc::new(PostgresStore::with_factory_capabilities(
+    db.pool.clone(),
+    Arc::new(Installed(choices)),
+  ));
+  let policy: Arc<dyn ManagementAuthorizationPolicy> = Arc::new(TrustedNetworkManagementPolicy);
+  let roles = AuthorizedQueryHandler::new(
+    policy.clone(),
+    Arc::new(
+      FactoryRoleProfileHandlers::with_policy(store.clone(), policy.clone()).with_issue_properties(store.clone()),
+    ),
+  );
+  let flow_queries = AuthorizedQueryHandler::new(
+    policy.clone(),
+    Arc::new(FactoryFlowDefinitionHandlers::new(store.clone(), policy).with_issue_properties(store.clone())),
+  );
+  let capabilities = GetFactoryAuthoringCapabilitiesQuery {
+    project_id: issue.project_id,
+  };
+  let generic_choices = AuthorizedQueryHandler::new(
+    Arc::new(TrustedNetworkManagementPolicy),
+    Arc::new(FactoryConfigurationHandlers::new(store.clone())),
+  )
+  .handle_query(
+    &context(),
+    ListFactoryConfigurationChoicesQuery::try_new(issue.project_id, Some(FactoryChoiceKind::NodeCapability), None, 100)
+      .unwrap(),
+  )
+  .await
+  .unwrap();
+  let writer = generic_choices
+    .items
+    .iter()
+    .find(|item| item.identity.alias.as_str() == "local-issue-classification")
+    .unwrap();
+  assert!(
+    writer.metadata.as_ref().unwrap().issue_classification.is_none(),
+    "the generic inventory cannot bypass the current Issue catalog read"
+  );
+  let offered = roles.handle_query(&context(), capabilities.clone()).await.unwrap();
+  assert_eq!(
+    serde_json::to_value(offered).unwrap()["issue_classification"]["size_labels"],
+    serde_json::json!([{"size":"small","label":"size_small","name":"Small work"}])
+  );
+  let flow = classification_flow(&issue);
+  let mut root = serde_json::to_value(&flow.closure.definitions()[0]).unwrap();
+  root.as_object_mut().unwrap().remove("reference");
+  let validate = |root: serde_json::Value| ValidateFactoryFlowDefinitionQuery {
+    id: FlowDefinitionId::generate(),
+    project_id: issue.project_id,
+    draft: serde_json::from_value(
+      serde_json::json!({"root":root,"limits":flow.limits,"data_schemas":flow.data_schemas}),
+    )
+    .unwrap(),
+  };
+  for _ in 0..2 {
+    flow_queries
+      .handle_query(&context(), validate(root.clone()))
+      .await
+      .unwrap();
+  }
+  let mut incompatible = root.clone();
+  let nodes = incompatible["nodes"].as_array_mut().unwrap();
+  let assessment = nodes.iter().find(|node| node["key"] == "triage").unwrap()["outcomes"][0]["schema"].clone();
+  nodes.iter_mut().find(|node| node["key"] == "apply").unwrap()["outcomes"][0]["schema"] = assessment.clone();
+  incompatible["terminals"][0]["schema"] = assessment;
+  assert!(
+    flow_queries
+      .handle_query(&context(), validate(incompatible))
+      .await
+      .is_err(),
+    "publication must reject a successful output that cannot carry the action receipt"
+  );
+  let mut fabricated = root.clone();
+  let apply = fabricated["nodes"]
+    .as_array_mut()
+    .unwrap()
+    .iter_mut()
+    .find(|node| node["key"] == "apply")
+    .unwrap();
+  apply["input_binding"]["mapping"]["value"] =
+    serde_json::json!({"mapping":"constant","value":{"priority":1,"size":"small"}});
+  assert!(
+    flow_queries
+      .handle_query(&context(), validate(fabricated))
+      .await
+      .is_err(),
+    "a record binding does not authorize substituting a classification value"
+  );
+  let mut altered = root.clone();
+  let action = altered["nodes"]
+    .as_array_mut()
+    .unwrap()
+    .iter_mut()
+    .find(|node| node["key"] == "apply")
+    .unwrap();
+  action["action"]["parameters"]["size_labels"]["small"] = serde_json::json!("unrelated");
+  assert!(flow_queries.handle_query(&context(), validate(altered)).await.is_err());
+  plain
+    .publish_issue_properties(management_mutation(publish_catalog(1, true)))
+    .await
+    .unwrap();
+  assert!(
+    serde_json::to_value(roles.handle_query(&context(), capabilities).await.unwrap()).unwrap()["issue_classification"]
+      .is_null()
+  );
+  assert!(flow_queries.handle_query(&context(), validate(root)).await.is_err());
 }

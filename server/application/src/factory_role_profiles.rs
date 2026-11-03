@@ -108,11 +108,21 @@ impl ManagementAuthorizationTarget for GetFactoryRoleProfileQuery {
 pub struct FactoryRoleProfileHandlers<S> {
   pub(super) store: Arc<S>,
   pub(super) policy: Arc<dyn ManagementAuthorizationPolicy>,
+  pub(super) issue_properties: Option<Arc<dyn octacity_server_store::IssuePropertyStore>>,
 }
 impl<S> FactoryRoleProfileHandlers<S> {
   /// Shares the accepted policy with dependency discovery and validation.
   pub fn with_policy(store: Arc<S>, policy: Arc<dyn ManagementAuthorizationPolicy>) -> Self {
-    Self { store, policy }
+    Self {
+      store,
+      policy,
+      issue_properties: None,
+    }
+  }
+  /// Reads active Issue labels for installed classification mappings.
+  pub fn with_issue_properties(mut self, properties: Arc<dyn octacity_server_store::IssuePropertyStore>) -> Self {
+    self.issue_properties = Some(properties);
+    self
   }
   /// Composes trusted-network handlers; scoped deployments use `with_policy`
   /// so dependency discovery applies the same accepted management policy.

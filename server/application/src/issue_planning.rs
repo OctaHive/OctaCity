@@ -363,3 +363,46 @@ impl<S: IssuePropertyStore> ManagementQueryUseCase<ListIssueChildrenQuery> for I
     )
   }
 }
+
+/// Internal accepted Factory effect, guarded by the same permission as an Issue planning edit.
+#[derive(Clone, Debug)]
+pub struct ApplyIssueClassificationCommand(pub octacity_server_store::ApplyIssueClassification);
+impl Command for ApplyIssueClassificationCommand {
+  type Outcome = IssueMutationOutcome;
+}
+impl ManagementAuthorizationTarget for ApplyIssueClassificationCommand {
+  const AUTHORIZATION: ManagementAuthorizationMapping = EditIssuePlanningCommand::AUTHORIZATION;
+  fn management_resource(&self) -> ManagementResourceResult {
+    crate::management_security::instance_resource(ManagementResourceKind::Issue, self.0.association.issue_id)
+  }
+}
+#[async_trait::async_trait]
+impl<S: octacity_server_store::IssueClassificationStore> ManagementCommandUseCase<ApplyIssueClassificationCommand>
+  for IssueHandlers<S>
+{
+  type Error = ApplicationError;
+  async fn execute_management_command(
+    &self,
+    context: &ManagementRequestContext,
+    grant: &ManagementAuthorizationGrant,
+    command: ApplyIssueClassificationCommand,
+  ) -> Result<IssueMutationOutcome, ApplicationError> {
+    let association = &command.0.association;
+    visible_issue(grant, association.issue_id)?;
+    let project =
+      crate::management_security::instance_resource(ManagementResourceKind::Project, association.project_id)
+        .map_err(|_| ApplicationError::invalid())?;
+    let project_grant = self
+      .policy
+      .authorize(context, ManagementAction::Update, &project)
+      .await
+      .map_err(|_| ApplicationError::capability_unavailable())?;
+    visible_project(&project_grant, association.project_id)?;
+    Ok(
+      self
+        .store
+        .apply_issue_classification(crate::management_security::audited_mutation(context, command.0)?)
+        .await?,
+    )
+  }
+}

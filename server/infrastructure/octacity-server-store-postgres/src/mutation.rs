@@ -48,6 +48,7 @@ pub(crate) struct MutationIdentity {
   pub(crate) occurred_at: Timestamp,
   pub(crate) conflict_entity: EntityKind,
   pub(crate) request_identity: String,
+  pub(crate) deadline: Option<std::time::Instant>,
 }
 
 impl MutationIdentity {
@@ -89,6 +90,7 @@ impl MutationIdentity {
       occurred_at,
       conflict_entity,
       request_identity,
+      deadline: None,
     })
   }
 
@@ -180,6 +182,7 @@ impl MutationIdentity {
       occurred_at,
       conflict_entity,
       request_identity,
+      deadline: None,
     }
   }
 
@@ -323,6 +326,7 @@ pub(crate) enum MutationKind {
   AdoptIssueWorkflow,
   EditIssue,
   EditIssuePlanning,
+  ApplyIssueClassification,
   TransitionIssue,
   PublishIssueWorkflow,
   PublishIssueProperties,
@@ -455,6 +459,12 @@ impl MutationKind {
         "publish-issue-properties",
         "project",
         "issue-properties.published"
+      ),
+      Self::ApplyIssueClassification => metadata!(
+        b"octacity.apply-issue-classification.v1\0",
+        "apply-issue-classification",
+        "issue",
+        "issue.classification-applied"
       ),
       Self::EditIssuePlanning => metadata!(
         b"octacity.edit-issue-planning.v1\0",
@@ -1148,6 +1158,12 @@ pub(crate) async fn complete_record(
   .await
   .map_err(unavailable)?;
   if updated.rows_affected() != 1 {
+    return Err(StoreError::Unavailable);
+  }
+  if identity
+    .deadline
+    .is_some_and(|deadline| std::time::Instant::now() >= deadline)
+  {
     return Err(StoreError::Unavailable);
   }
   transaction.commit().await.map_err(unavailable)

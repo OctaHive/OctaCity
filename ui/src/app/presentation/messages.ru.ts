@@ -151,6 +151,27 @@ export const ruMessages = {
   'factory.issueCardVerdict': 'Вердикт',
   'factory.issueCardFormatHelp':
     'Чтобы показать карточку, добавьте в результат обязательное текстовое поле длиной от 1 до {max} байт.',
+  'factory.localClassification': 'Локальная классификация',
+  'factory.applyIssueClassification': 'Применять классификацию к задаче',
+  'factory.classificationHelp': 'Применяет принятый приоритет и метку размера к задаче в OctaCity.',
+  'factory.classificationSetupNeeded':
+    'Перед включением настройте соответствие размеров активным меткам проекта.',
+  'factory.classificationNeedsSource': 'Соедините успешный результат оценки с этим шагом.',
+  'factory.classificationSource': 'Принятая оценка',
+  'factory.classificationDisable':
+    'При отключении шаг записи удалится. Если у него есть продолжение, маршрут будет восстановлен.',
+  'factory.classificationDisableDependencies':
+    'Перед отключением классификации перенастройте зависимые шаги и уберите их ссылки на этот результат.',
+  'factory.classificationDraftChanged':
+    'Настройки классификации изменились. Проверьте их и примените маппинг ещё раз.',
+  'factory.classificationNeedsEmptyStep':
+    'Выберите шаг без привязки входа и конфликтующего результата.',
+  'factory.useProjectClassification': 'Использовать классификацию проекта',
+  'factory.classificationMappingChanged':
+    'Соответствие меток проекта изменилось или отсутствует. Проверьте его в шаге перед публикацией.',
+  'factory.classificationAccessHelp':
+    'Проверьте и примените доступ, необходимый для локальной классификации.',
+  'factory.classificationPriority': 'Приоритет · 0–{max}',
   'factory.expectedResult': 'Ожидаемый результат',
   'factory.compare.exact_value': 'Совпадает точное значение',
   'factory.compare.repository_path_within': 'Путь внутри выбранного каталога',
@@ -1231,6 +1252,12 @@ export const ruMessages = {
   'issueOutcomes.title': 'Результаты работы',
   'issueOutcomes.searchNotVerified': 'Поиск не подтверждён',
   'issueOutcomes.recommendedPriority': 'Рекомендуемый приоритет',
+  'issueOutcomes.classificationApplied': 'Применено к задаче',
+  'issueOutcomes.appliedPriority': 'Применённый приоритет',
+  'issueOutcomes.appliedSizeLabel': 'Применённая метка размера',
+  'issueOutcomes.priorityChanged': 'Приоритет задачи с тех пор изменился.',
+  'issueOutcomes.sizeLabelRemoved': 'Метка размера с тех пор была снята.',
+  'issueOutcomes.classificationConflict': 'Не удалось применить классификацию из-за конфликта',
   'issueOutcomes.recommendedSize': 'Рекомендуемый размер',
   'issueOutcomes.coverageComplete': 'Полный поиск',
   'issueOutcomes.coveragePartial': 'Частичный поиск',

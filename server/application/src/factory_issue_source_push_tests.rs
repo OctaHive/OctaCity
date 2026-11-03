@@ -389,3 +389,66 @@ pub(crate) async fn install_push_mapping(
     .unwrap()
     .mapping
 }
+
+#[test]
+fn issue_classification_refuses_a_configured_action_without_an_accepted_source() {
+  crate::factory_admission_tests::run_ready(async {
+    let h = harness(
+      binding(
+        "classification",
+        "apply_issue_classification",
+        serde_json::json!({
+          "source_node":"triage", "source_outcome":"classified", "outcome":"done",
+          "policy":"triage", "size_labels":{"small":"size_small"}
+        }),
+      ),
+      permissions("classification"),
+    );
+    let action = FactoryIssueClassificationAction::new(
+      reference("classification"),
+      Arc::new(ClassificationWritesForbidden),
+      Arc::new(store_testing::InMemoryProjectStore::new()),
+      h.store.clone(),
+      ManagementRequestContext::trusted_network(ManagementRequestId::new(uuid::Uuid::new_v4()).unwrap()),
+      Arc::new(TrustedNetworkManagementPolicy),
+      crate::factory_node_test_support::clock(),
+    );
+    let runner = FactoryNodeRunner::new(
+      h.store.clone(),
+      Arc::new(FactoryFlowActionAdapter::new(Arc::new(action))),
+      crate::factory_node_test_support::clock(),
+    );
+    assert_eq!(
+      runner
+        .run_once(h.run, h.claim, h.target.clone(), Some(h.input), at(11))
+        .await
+        .unwrap(),
+      FactoryNodeStep::Advanced
+    );
+    assert!(matches!(
+      runner.run_once(h.run, h.claim, h.target, None, at(12)).await,
+      Err(ApplicationError::InvalidInput)
+    ));
+    assert!(
+      h.store
+        .factory_run_snapshot(h.run)
+        .await
+        .unwrap()
+        .flow
+        .data
+        .records
+        .is_empty()
+    );
+  });
+}
+
+struct ClassificationWritesForbidden;
+#[async_trait]
+impl IssueClassificationStore for ClassificationWritesForbidden {
+  async fn apply_issue_classification(
+    &self,
+    _: ManagementMutation<ApplyIssueClassification>,
+  ) -> Result<IssueMutationOutcome, StoreError> {
+    panic!("an unqualified source must not reach Issue planning")
+  }
+}

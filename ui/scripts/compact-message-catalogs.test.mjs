@@ -12,13 +12,20 @@ test('compacts both catalogs while preserving message keys, escapes and Unicode'
   try {
     const directory = path.join(root, 'src/app/presentation');
     await mkdir(directory, { recursive: true });
+    const english = Object.fromEntries(
+      Array.from({ length: 200 }, (_, index) => [`example.item${index}`, `Message ${index}`]),
+    );
+    const russian = Object.fromEntries(
+      Array.from({ length: 200 }, (_, index) => [`example.item${index}`, `Текст ${index}`]),
+    );
+    const entries = (messages) => JSON.stringify(messages).slice(1, -1);
     await writeFile(
       path.join(directory, 'messages.en.ts'),
-      `export const enMessages = {'factory.first.long.key': 'First', 'factory.second.long.key': 'Second', 'factory.2': 'Two', 'factory.1': 'One', 'factory.__proto__': 'Prototype'};`,
+      `export const enMessages = {'factory.first.long.key': 'First', 'factory.second.long.key': 'Second', 'factory.2': 'Two', 'factory.1': 'One', 'factory.__proto__': 'Prototype | legacy',${entries(english)}};`,
     );
     await writeFile(
       path.join(directory, 'messages.ru.ts'),
-      `export const ruMessages = {'factory.second.long.key': 'Строка\\nдва', 'factory.first.long.key': 'Первый «текст»', 'factory.1': 'Один', 'factory.__proto__': 'Прототип', 'factory.2': 'Два'};`,
+      `export const ruMessages = {'factory.second.long.key': 'Строка\\nдва', 'factory.first.long.key': 'Первый «текст»', 'factory.1': 'Один', 'factory.__proto__': 'Прототип', 'factory.2': 'Два',${entries(russian)}};`,
     );
     await writeFile(
       path.join(directory, 'entry.ts'),
@@ -41,6 +48,8 @@ test('compacts both catalogs while preserving message keys, escapes and Unicode'
     assert(!Array.isArray(result) && 'output' in result);
     const code = result.output.find((item) => item.type === 'chunk' && item.isEntry)?.code;
     assert(code);
+    const bytes = Buffer.byteLength(code);
+    assert(bytes < 8500, `packed catalog exceeds 8500 bytes: ${bytes}`);
     const { enMessages, ruMessages } = await import(
       `data:text/javascript;base64,${Buffer.from(code).toString('base64')}`
     );
@@ -49,7 +58,8 @@ test('compacts both catalogs while preserving message keys, escapes and Unicode'
       'factory.second.long.key': 'Second',
       'factory.2': 'Two',
       'factory.1': 'One',
-      'factory.__proto__': 'Prototype',
+      'factory.__proto__': 'Prototype | legacy',
+      ...english,
     });
     assert.deepEqual(ruMessages, {
       'factory.first.long.key': 'Первый «текст»',
@@ -57,8 +67,9 @@ test('compacts both catalogs while preserving message keys, escapes and Unicode'
       'factory.2': 'Два',
       'factory.1': 'Один',
       'factory.__proto__': 'Прототип',
+      ...russian,
     });
-    assert.deepEqual(Object.keys(enMessages).slice(2), [
+    assert.deepEqual(Object.keys(enMessages).slice(2, 5), [
       'factory.2',
       'factory.1',
       'factory.__proto__',

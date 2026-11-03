@@ -2,7 +2,7 @@ import { validationFieldLabel, LimitFailure } from './ValidationIssue';
 import { ConstraintReview } from './ConstraintReview';
 import { focusFactoryField } from './fieldFocus';
 import { useRef, useState } from 'react';
-import { useQueryClient } from '@tanstack/react-query';
+import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { Link } from 'react-router-dom';
 import type { components } from '../../../.generated/api/schema';
 import { ManagementApiError, type ManagementValidationIssue } from '../../api/client';
@@ -18,6 +18,8 @@ import { QueryFailureNotice } from '../../shared/QueryStateNotice';
 import { validateFlowDraft, validateConfigurationDraft, type DraftIssue } from './validateDraft';
 import type { FactoryApi } from './api';
 import { OutcomeIssuePresentationReview } from './OutcomeIssuePresentation';
+import { ClassificationEffects } from './FlowIssueClassification';
+import { classificationAction, matchesClassification } from './issueClassification';
 
 type Subject =
   | { kind: 'flow'; request: components['schemas']['CreateFactoryFlowDefinitionRequest'] }
@@ -37,6 +39,7 @@ export type FactoryPublicationProps = {
 const ISSUE_LABELS = {
   missing_input: 'factory.missingInputHelp',
   profile_permissions: 'factory.profilePermissionsHelp',
+  action_permissions: 'factory.classificationAccessHelp',
   profile_budget: 'factory.profileBudgetHelp',
   profile_context: 'factory.profileContextHelp',
   missing_terminal: 'factory.missingTerminalHelp',
@@ -92,6 +95,33 @@ export function FactoryPublication({
     flow: components['schemas']['FactoryFlowConfiguration'];
     returnFocus: HTMLElement;
   } | null>(null);
+  const localWrites =
+    review?.flow.closure.definitions.flatMap((definition) =>
+      definition.nodes.flatMap((node) =>
+        node.action?.action === classificationAction
+          ? [
+              {
+                key: `${definition.reference.id}:${definition.reference.version}:${node.key}`,
+                node: node.key,
+                action: node.action,
+              },
+            ]
+          : [],
+      ),
+    ) ?? [];
+  const project = subject.request.project_id;
+  const classification = useQuery({
+    queryKey: queryKeys.factoryAuthoringCapabilities(project),
+    queryFn: ({ signal }) => api.getAuthoringCapabilities(project, signal),
+    enabled: localWrites.length > 0,
+    staleTime: 0,
+  });
+  const currentClassification = classification.data?.issue_classification;
+  const classificationReviewed =
+    !!currentClassification &&
+    !classification.isFetching &&
+    !classification.isError &&
+    localWrites.every(({ action }) => matchesClassification(action, currentClassification));
   const latestSignatureRef = useRef('');
   const signature = JSON.stringify(subject);
   const error = failure?.signature === signature ? failure.error : null;
@@ -194,12 +224,18 @@ export function FactoryPublication({
                 {validationFieldLabel(issue.field, t)}
               </button>{' '}
               ·{' '}
-              {t(ISSUE_LABELS[issue.code], {
-                name:
-                  ('issue_slot' in issue ? issue.issue_slot : undefined) ??
-                  issue.field.split('/').at(-1)?.replaceAll('~1', '/').replaceAll('~0', '~') ??
-                  '',
-              })}
+              {t(
+                issue.field.endsWith('/action/parameters/size_labels') &&
+                  issue.code === 'unavailable_reference'
+                  ? 'factory.classificationSetupNeeded'
+                  : ISSUE_LABELS[issue.code],
+                {
+                  name:
+                    ('issue_slot' in issue ? issue.issue_slot : undefined) ??
+                    issue.field.split('/').at(-1)?.replaceAll('~1', '/').replaceAll('~0', '~') ??
+                    '',
+                },
+              )}
               <LimitFailure issue={issue} />
               <details>
                 <summary>{t('factory.routeDetails')}</summary>
@@ -254,10 +290,37 @@ export function FactoryPublication({
             t('factory.publishConsequence'),
             ...actionEffectsSummary(review.flow.closure.definitions, t),
           ].join('\n')}
-          renderReview={<OutcomeIssuePresentationReview flow={review.flow} />}
+          renderReview={
+            <>
+              <OutcomeIssuePresentationReview flow={review.flow} />
+              {localWrites.length ? (
+                <section aria-label={t('factory.localClassification')}>
+                  <h3>{t('factory.applyIssueClassification')}</h3>
+                  <ul>
+                    {localWrites.map(({ key, node }) => (
+                      <li key={key}>{node}</li>
+                    ))}
+                  </ul>
+                  {classificationReviewed && currentClassification ? (
+                    <ClassificationEffects choices={currentClassification} />
+                  ) : classification.isFetching ? (
+                    <p role="status">{t('factory.loadingStepCapabilities')}</p>
+                  ) : classification.error ? (
+                    <QueryFailureNotice
+                      title={t('factory.localClassification')}
+                      error={classification.error}
+                      onRetry={() => void classification.refetch()}
+                    />
+                  ) : (
+                    <p role="alert">{t('factory.classificationMappingChanged')}</p>
+                  )}
+                </section>
+              ) : null}
+            </>
+          }
           confirmLabel={t('factory.confirmPublish')}
           request={review.subject}
-          ready={ready}
+          ready={ready && (!localWrites.length || classificationReviewed)}
           execute={execute}
           queryClient={queryClient}
           invalidations={[

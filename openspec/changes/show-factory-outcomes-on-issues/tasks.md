@@ -17,9 +17,9 @@
 
 ## 4. Apply local triage classification when enabled
 
-- [ ] 4.1 Add a guarded local classification action over the Issue planning authority. Verify atomic priority and size-label updates, preservation of unrelated labels, unknown values, retired labels, absent write grants, operator edits, late actions, exact replay and unchanged Work scheduling.
-- [ ] 4.2 Add the optional classification switch to authoring and show its current Project choices in publication review. Verify that the switch defaults to off, a Project mapping can be reused, and an enabled write with a missing mapping reports the setup needed.
-- [ ] 4.3 Project the action receipt into the summary and distinguish recommendation, application and conflict. Verify through REST and the Overview that the Issue's current fields reflect only committed local changes.
+- [x] 4.1 Add a guarded local classification action over the Issue planning authority. Verify atomic priority and size-label updates, preservation of unrelated labels, unknown values, retired labels, absent write grants, operator edits, late actions, exact replay and unchanged Work scheduling.
+- [x] 4.2 Add the optional classification switch to authoring and show its current Project choices in publication review. Verify that the switch defaults to off, a Project mapping can be reused, and an enabled write with a missing mapping reports the setup needed.
+- [x] 4.3 Project the action receipt into the summary and distinguish recommendation, application and conflict. Verify through REST and the Overview that the Issue's current fields reflect only committed local changes.
 
 ## 5. Verify the complete local workflow
 

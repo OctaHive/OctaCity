@@ -136,14 +136,8 @@ export const queryKeys = {
   issueImportChoices: (project: string, connection: string, version: number) =>
     ['issue-import', project, 'choices', connection, version] as const,
   issueList: (project: string, after: string | null) => ['issues', project, 'list', after] as const,
-  issueOutcomes: (project: string, id: string, applicability?: number) =>
-    [
-      'issues',
-      project,
-      id,
-      'outcomes',
-      ...(applicability === undefined ? [] : [applicability]),
-    ] as const,
+  issueOutcomes: (project: string, id: string, version?: number) =>
+    ['issues', project, id, 'outcomes', ...(version === undefined ? [] : [version])] as const,
   issueOutcomeResource: (project: string, issue: string, kind: string, id: string) =>
     ['issues', project, issue, 'outcome-resource', kind, id] as const,
   issue: (project: string, id: string) => ['issues', project, id, 'current'] as const,

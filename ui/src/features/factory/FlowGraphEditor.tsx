@@ -29,6 +29,7 @@ import { BudgetSettings } from './BudgetSettings';
 import { profileBudget, flowBudget, flatGraphLimits } from './flowRequirements';
 import { FlowDocuments, type FlowDocumentServices } from './FlowDocuments';
 import { FlowProcess } from './FlowProcess';
+import { classificationAction } from './issueClassification';
 
 type Draft = components['schemas']['FactoryFlowDefinitionDraft'];
 interface Props {
@@ -382,6 +383,18 @@ export function FlowGraphEditor({
             onChange={updateNode}
           />
           <FlowBindings
+            onRemoveClassification={(root) => {
+              onChange({
+                ...value,
+                root: {
+                  ...root,
+                  ...(root.process
+                    ? { process: updateProcessRecipients(root.process, node.key, null) }
+                    : {}),
+                },
+              });
+              setSelected(Math.max(0, selected - 1));
+            }}
             authoring={authoring}
             onPendingChange={setInputPending}
             sourceDraft={stepDrafts[nodeKeys[selected] ?? '']?.reporter}
@@ -559,6 +572,16 @@ function renameNode(value: Draft, index: number, name: string): Draft {
       target.code = { ...target.code, revision: { ...target.code.revision, node: name } };
     for (const source of Object.values(target.input_binding?.sources ?? {}))
       if (source.source === 'record' && source.node === old) source.node = name;
+    const action = target.action;
+    const parameters = action?.parameters;
+    if (
+      action?.action === classificationAction &&
+      parameters &&
+      typeof parameters === 'object' &&
+      'source_node' in parameters &&
+      parameters.source_node === old
+    )
+      target.action = { ...action, parameters: { ...parameters, source_node: name } };
   }
   return next;
 }

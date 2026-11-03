@@ -3,7 +3,7 @@ use super::*;
 use octacity_server_store::{IssueCodeReviewStore, IssueOutcomeStore};
 use std::{collections::BTreeSet, sync::Arc};
 
-pub use octacity_server_store::{IssueOutcomeContent, MAX_ISSUE_OUTCOME_CARDS};
+pub use octacity_server_store::{IssueOutcomeClassification, IssueOutcomeContent, MAX_ISSUE_OUTCOME_CARDS};
 
 /// Safe result facts and independently visible resource links.
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -117,7 +117,8 @@ impl<S: IssueCodeReviewStore + IssueOutcomeStore> ManagementQueryUseCase<GetIssu
         };
         let references =
           octacity_server_store::IssueOutcomeReference::from_accepted(&candidate.presentation, &record.value);
-        let (conclusion, content) = IssueOutcomeContent::project(candidate.presentation, &record.value)?;
+        let (conclusion, content) =
+          IssueOutcomeContent::project(candidate.presentation, &record.value, record.classification)?;
         let links = self
           .links
           .resolve(

@@ -15,6 +15,7 @@ const triage: components['schemas']['IssueOutcomeCard'] = {
   conclusion: 'The checkout change fits the project. The duplicate search could not run.',
   presentation: {
     kind: 'triage',
+    classification: { status: 'recommended' },
     decision: 'eligible',
     duplicate_coverage: 'unknown',
     recommended_priority: 2,
@@ -65,6 +66,7 @@ for (const language of ['en', 'ru'] as const) {
       conclusion: 'Updated triage conclusion',
       presentation: {
         kind: 'triage',
+        classification: { status: 'recommended' },
         decision: 'needs_input',
         duplicate_coverage: 'not_checked',
         component: 'duplicate',
@@ -268,4 +270,44 @@ test('leaves the ordinary Overview usable when no result is eligible', async ({ 
   expect(await (await loaded).json()).toEqual({ items: [] });
   await expect(page.getByRole('heading', { name: /Investigate checkout/ })).toBeVisible();
   await expect(page.getByRole('region', { name: 'Outcomes' })).toHaveCount(0);
+});
+
+test('separates committed triage assignments from recommendations and conflicts', async ({
+  page,
+}) => {
+  await installOperatorFixture(page);
+  const applied = {
+    status: 'applied',
+    priority: { value: 2, current: false },
+    size_label: { name: 'Size small', current: true },
+  };
+  let classification: object = applied;
+  await page.route(`**/api/v1${issueUrl}/outcomes`, (route) =>
+    route.fulfill({
+      json: {
+        items: [
+          {
+            ...triage,
+            presentation: { ...triage.presentation, classification },
+          },
+        ],
+      },
+    }),
+  );
+  await page.goto(issueUrl);
+  const card = page.getByRole('article', { name: 'Triage' });
+  await expect(card.getByText('Applied to task', { exact: true })).toBeVisible();
+  await expect(card.getByText('Applied priority', { exact: true })).toBeVisible();
+  await expect(card.getByText('Size small', { exact: true })).toBeVisible();
+  await expect(
+    card.getByText('The task priority has since changed.', { exact: true }),
+  ).toBeVisible();
+  classification = { status: 'conflict' };
+  await page.getByRole('button', { name: 'Refresh task' }).click();
+  await expect(
+    card.getByText('Classification could not be applied', { exact: true }),
+  ).toBeVisible();
+  await expect(card.getByText('Recommended priority', { exact: true })).toBeVisible();
+  await expect(card.getByText('Applied priority', { exact: true })).toHaveCount(0);
+  await expect(card.getByText('Size small', { exact: true })).toHaveCount(0);
 });

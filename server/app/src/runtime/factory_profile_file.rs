@@ -10,7 +10,7 @@ use octacity_server_application::{
 use octacity_server_domain::{PipelineNodeId, ProjectId};
 use octacity_server_factory::*;
 use serde::Deserialize;
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 
 const MAX_PROFILE_BYTES: usize = 4 * 1024 * 1024;
 
@@ -18,9 +18,11 @@ pub(super) struct FileProfileInstaller {
   catalog: FactoryRuntimeProfileCatalog,
   providers: Vec<FactoryRuntimeSignalConnector>,
   bindings: FileBindings,
+  management_principal: Option<String>,
 }
 struct FileBindings {
-  issue_status_actions: Vec<IssueStatusActionEntry>,
+  issue_status_actions: Vec<IssueActionEntry>,
+  issue_classification_actions: Vec<IssueActionEntry>,
   model_discovery: Vec<(ProjectId, FactoryKey, ModelDiscoveryDeclaration)>,
   protected_validation: Vec<ValidationCommandBinding>,
   promotions: Vec<PromotionCommandBinding>,
@@ -44,6 +46,12 @@ enum PromotionCommandBinding {
   },
 }
 impl FileProfileInstaller {
+  /// Uses the host's existing verified management authority for local classification.
+  pub(super) fn with_management_principal(mut self, principal: Option<&str>) -> Self {
+    self.management_principal = principal.map(str::to_owned);
+    self
+  }
+
   pub(super) async fn load(
     path: &std::path::Path,
     providers: &[FactoryRuntimeSignalConnector],
@@ -66,6 +74,7 @@ impl FileProfileInstaller {
       catalog,
       providers: providers.to_vec(),
       bindings,
+      management_principal: None,
     })
   }
 }
@@ -133,6 +142,19 @@ impl super::FactoryRuntimeInstaller for FileProfileInstaller {
         action.identity.clone(),
         super::integration_management::request_context(&action.principal),
         super::integration_management::management_policy(Some(&action.principal)),
+        std::sync::Arc::new(octacity_server_application::SystemFactoryExecutionClock),
+      ));
+    }
+    for action in &self.bindings.issue_classification_actions {
+      let principal = self
+        .management_principal
+        .as_deref()
+        .filter(|principal| *principal == action.principal)
+        .ok_or(FactoryRuntimeInstallationError::Invalid)?;
+      catalog.executors.push(resources.issue_classification_executor(
+        action.identity.clone(),
+        super::integration_management::request_context(principal),
+        super::integration_management::management_policy(self.management_principal.as_deref()),
         std::sync::Arc::new(octacity_server_application::SystemFactoryExecutionClock),
       ));
     }
@@ -249,7 +271,9 @@ impl FileProfileInstaller {
 struct CatalogFile {
   version: u16,
   #[serde(default)]
-  issue_status_actions: Vec<IssueStatusActionEntry>,
+  issue_status_actions: Vec<IssueActionEntry>,
+  #[serde(default)]
+  issue_classification_actions: Vec<IssueActionEntry>,
   #[serde(default)]
   commands: Vec<CommandProfile>,
   #[serde(default)]
@@ -279,7 +303,7 @@ struct CatalogFile {
 /// Operator-owned attribution for a local action, never selected by Flow or model input.
 #[derive(Deserialize)]
 #[serde(deny_unknown_fields)]
-struct IssueStatusActionEntry {
+struct IssueActionEntry {
   identity: ImmutableReference,
   principal: String,
 }
@@ -810,6 +834,7 @@ impl FactoryRuntimeProfileCatalog {
       || !bindings.delivery.is_empty()
       || !bindings.model_discovery.is_empty()
       || !bindings.issue_status_actions.is_empty()
+      || !bindings.issue_classification_actions.is_empty()
     {
       return Err(FactoryRuntimeInstallationError::Invalid);
     }
@@ -835,7 +860,7 @@ impl FactoryRuntimeProfileCatalog {
       return Err(Invalid);
     }
     if file.signals.len() > MAX_FACTORY_EXECUTOR_BINDINGS
-      || file.issue_status_actions.len() > MAX_FACTORY_EXECUTOR_BINDINGS
+      || file.issue_status_actions.len() + file.issue_classification_actions.len() > MAX_FACTORY_EXECUTOR_BINDINGS
       || file.profile_selectors.len() > MAX_FACTORY_EXECUTOR_BINDINGS
       || file.tool_risk.len() > MAX_FACTORY_EXECUTOR_BINDINGS
       || file.review_planning.len() > MAX_FACTORY_EXECUTOR_BINDINGS
@@ -849,12 +874,14 @@ impl FactoryRuntimeProfileCatalog {
     {
       return Err(Invalid);
     }
-    for (index, action) in file.issue_status_actions.iter().enumerate() {
+    let mut issue_action_identities = BTreeSet::new();
+    for action in file
+      .issue_status_actions
+      .iter()
+      .chain(&file.issue_classification_actions)
+    {
       octacity_server_application::ManagementActor::authenticated(&action.principal).map_err(|_| Invalid)?;
-      if file.issue_status_actions[..index]
-        .iter()
-        .any(|previous| previous.identity == action.identity)
-      {
+      if !issue_action_identities.insert(&action.identity) {
         return Err(Invalid);
       }
     }
@@ -894,6 +921,14 @@ impl FactoryRuntimeProfileCatalog {
           choices = choices
             .with_choice_metadata(kind, alias, metadata)
             .map_err(|_| Invalid)?;
+        }
+        if choices.issue_classification().is_some_and(|(plugin, _)| {
+          !file
+            .issue_classification_actions
+            .iter()
+            .any(|writer| &writer.identity == plugin)
+        }) {
+          return Err(Invalid);
         }
         for (alias, declaration) in project.role_profiles {
           if declaration.ceiling.build_configuration.project_id() != project.project_id
@@ -1237,6 +1272,7 @@ impl FactoryRuntimeProfileCatalog {
       catalog,
       FileBindings {
         issue_status_actions: file.issue_status_actions,
+        issue_classification_actions: file.issue_classification_actions,
         model_discovery,
         protected_validation,
         promotions,

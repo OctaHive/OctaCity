@@ -1,18 +1,301 @@
 import { QueryClientProvider } from '@tanstack/react-query';
 import { createConsoleQueryClient } from '../../app/query';
 // @vitest-environment jsdom
-import { cleanup, render, screen, within } from '@testing-library/react';
+import { cleanup, render, screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { useState } from 'react';
-import { afterEach, expect, it } from 'vitest';
+import { afterEach, expect, it, vi } from 'vitest';
 import type { components } from '../../../.generated/api/schema';
 import { configurationFixture } from '../../../tests/fixtures/factory';
 import { ConfigurationEditor } from './ConfigurationEditor';
 import { FlowGraphEditor } from './FlowGraphEditor';
-import { factoryApi } from './api';
+import { factoryApi, type FactoryApi } from './api';
 import { emptyFlowDraft } from './emptyFlowDraft';
 
 afterEach(cleanup);
+
+it.each([
+  'available',
+  'missing',
+  'edited',
+  'disabled',
+  'reordered',
+  'routed',
+  'dependent',
+] as const)(
+  'opts into local classification only with a usable Project mapping (%s)',
+  async (scenario) => {
+    const available = scenario !== 'missing';
+    const draft = emptyFlowDraft();
+    const sample = configurationFixture().configuration.flow.closure.definitions[0]!.nodes[0]!;
+    const plugin = { identity: 'local-classification', version: 'v1', digest: 'f'.repeat(64) };
+    const assessment = {
+      reference: { identity: 'assessment', version: '1', digest: 'a'.repeat(64) },
+      shape: {
+        type: 'object',
+        fields: {
+          priority: { required: true, value: { type: 'integer', minimum: 0, maximum: 100 } },
+          size: { required: false, value: { type: 'enum', values: ['small'] } },
+          internal_notes: {
+            required: true,
+            value: { type: 'string', min_bytes: 1, max_bytes: 1024 },
+          },
+        },
+      },
+    } satisfies components['schemas']['FactoryFlowDataSchema'];
+    draft.data_schemas = [assessment];
+    draft.root.entry = 'triage';
+    draft.root.nodes = [
+      {
+        key: 'apply',
+        kind: 'trusted_action',
+        required: true,
+        input_schema: null,
+        subflow: null,
+        outcomes: [],
+        budget: draft.root.execution.budget,
+        permissions: draft.root.execution.permissions,
+      },
+      {
+        ...sample,
+        key: 'triage',
+        outcomes: [{ key: 'assessed', kind: 'success', schema: assessment.reference }],
+      },
+    ];
+    draft.root.transitions = [
+      {
+        predecessor: 'triage',
+        outcome: 'assessed',
+        target: { kind: 'node', key: 'apply' },
+        max_repeats: 0,
+        exhausted_terminal: null,
+      },
+    ];
+    const receipt = {
+      reference: { identity: 'local-classification-receipt', version: '1', digest: 'b'.repeat(64) },
+      shape: {
+        type: 'object',
+        fields: {
+          receipt: { required: true, value: { type: 'string', min_bytes: 64, max_bytes: 64 } },
+        },
+      },
+    } satisfies components['schemas']['FactoryFlowDataSchema'];
+    if (scenario === 'reordered') {
+      draft.data_schemas.push({
+        ...receipt,
+        shape: { fields: receipt.shape.fields, type: 'object' },
+      });
+      draft.root.nodes[0]!.outcomes = [
+        { key: 'applied', kind: 'success', schema: receipt.reference },
+      ];
+    }
+    if (scenario === 'routed' || scenario === 'dependent') {
+      draft.data_schemas.push(receipt);
+      draft.root.nodes[0]!.outcomes = [
+        { key: 'applied', kind: 'success', schema: receipt.reference },
+      ];
+      draft.root.terminals = [{ key: 'finished', schema: receipt.reference }];
+      draft.root.transitions.push({
+        predecessor: 'apply',
+        outcome: 'applied',
+        target: { kind: 'terminal', key: 'finished' },
+        max_repeats: 0,
+        exhausted_terminal: null,
+      });
+    }
+    if (scenario === 'dependent') {
+      draft.root.nodes.push({
+        ...sample,
+        key: 'consumer',
+        input_binding: {
+          sources: { selected: { source: 'predecessor', view: 'payload', path: '' } },
+          mapping: { value: { mapping: 'pointer', path: '/selected' } },
+        },
+      });
+      draft.root.transitions[1]!.target = { kind: 'node', key: 'consumer' };
+    }
+    const choices = {
+      plugin,
+      policy: 'project-triage',
+      priority_maximum: 100,
+      receipt_schema: receipt,
+      receipt_output_bytes: 317,
+      size_labels: [{ size: 'small', label: 'team-small', name: 'Small work' }],
+    };
+    let finishNormalization: () => void = () => {};
+    const normalization = new Promise<void>((resolve) => {
+      finishNormalization = resolve;
+    });
+    const api = {
+      ...factoryApi,
+      getAuthoringCapabilities: vi.fn(async () => ({
+        commands: [],
+        human_gates: [],
+        build_resource_modes: ['none' as const],
+        source_free_incompatibility: null,
+        deterministic_gate: {
+          policy: plugin,
+          parameter_contract: 'declarative_gate_v1' as const,
+          max_parameter_bytes: 65536,
+          resource_modes: ['none' as const],
+        },
+        ...(available ? { issue_classification: choices } : {}),
+      })),
+      normalizeSchema: vi.fn<FactoryApi['normalizeSchema']>(async (body) => {
+        if (scenario === 'edited' && body.identity.startsWith('issue-classification.'))
+          await normalization;
+        return {
+          reference: {
+            identity: body.identity,
+            version: body.version,
+            digest: (body.shape.type === 'object' && 'receipt' in body.shape.fields
+              ? 'b'
+              : 'c'
+            ).repeat(64),
+          },
+          shape: body.shape,
+        };
+      }),
+    };
+    let observed = draft;
+    function Harness() {
+      const [value, setValue] = useState(draft);
+      return (
+        <FlowGraphEditor
+          value={value}
+          choices={[]}
+          subflows={[]}
+          authoring={{ api, projectId: 'delivery' }}
+          onChange={(next) => {
+            observed = next;
+            setValue(next);
+          }}
+        />
+      );
+    }
+    render(
+      <QueryClientProvider client={createConsoleQueryClient()}>
+        <Harness />
+      </QueryClientProvider>,
+    );
+    await userEvent.click(screen.getByRole('button', { name: 'Edit step: apply' }));
+    const toggle = await screen.findByRole('checkbox', { name: 'Apply classification to Issue' });
+    expect(toggle).toHaveProperty('checked', false);
+    expect(observed.root.nodes[0]?.action).toBeFalsy();
+    expect(api.getAuthoringCapabilities).not.toHaveBeenCalled();
+    await userEvent.click(toggle);
+    if (!available) {
+      expect(await screen.findByText(/Configure an installed classification mapping/)).toBeTruthy();
+      expect(screen.getByRole('button', { name: 'Use Project classification' })).toHaveProperty(
+        'disabled',
+        true,
+      );
+      expect(observed.root.nodes[0]?.action).toBeFalsy();
+      expect(api.normalizeSchema).not.toHaveBeenCalled();
+      return;
+    }
+    expect(await screen.findByText('Small work')).toBeTruthy();
+    await userEvent.click(screen.getByRole('button', { name: 'Use Project classification' }));
+    if (scenario === 'edited') {
+      await userEvent.click(screen.getByRole('button', { name: 'Add result' }));
+      await userEvent.click(screen.getAllByText('Technical details and reuse').at(-1)!);
+      await userEvent.clear(screen.getByRole('textbox', { name: 'Result key' }));
+      await userEvent.type(screen.getByRole('textbox', { name: 'Result key' }), 'manual');
+      await userEvent.click(screen.getByRole('button', { name: 'Save result' }));
+      expect(observed.root.nodes[0]?.outcomes.map(({ key }) => key)).toContain('manual');
+      finishNormalization();
+      await waitFor(() => expect(observed.root.nodes[0]?.action).toBeTruthy());
+      expect(observed.root.nodes[0]?.outcomes.map(({ key }) => key)).toEqual(['manual', 'applied']);
+      return;
+    }
+    expect(observed.root.nodes[0]?.action).toMatchObject({
+      plugin,
+      action: 'apply_issue_classification',
+      parameters: {
+        policy: 'project-triage',
+        source_node: 'triage',
+        source_outcome: 'assessed',
+        size_labels: { small: 'team-small' },
+      },
+    });
+    expect(observed.root.nodes[0]?.outcomes).toContainEqual({
+      key: 'applied',
+      kind: 'success',
+      schema: receipt.reference,
+    });
+    expect(api.normalizeSchema).toHaveBeenCalledTimes(1);
+    expect(observed.root.nodes[0]?.budget.max_output_bytes).toBe(317);
+    if (scenario === 'reordered') return;
+    if (scenario === 'dependent') {
+      expect(toggle).toHaveProperty('disabled', true);
+      expect(observed.root.transitions[1]?.target).toEqual({ kind: 'node', key: 'consumer' });
+      return;
+    }
+    if (scenario === 'routed') {
+      await userEvent.click(toggle);
+      expect(observed.root.nodes.map(({ key }) => key)).toEqual(['triage']);
+      expect(observed.root.transitions).toMatchObject([
+        {
+          predecessor: 'triage',
+          outcome: 'assessed',
+          target: { kind: 'terminal', key: 'finished' },
+        },
+      ]);
+      expect(observed.root.terminals[0]?.schema).toEqual(assessment.reference);
+      return;
+    }
+    if (scenario === 'disabled') {
+      await userEvent.click(toggle);
+      expect(observed.root.nodes.map(({ key }) => key)).toEqual(['triage']);
+      expect(observed.root.transitions).toEqual([]);
+      expect(observed.root.entry).toBe('triage');
+      return;
+    }
+    expect(observed.root.nodes[0]?.permissions.plugins).toEqual([]);
+    expect(
+      observed.data_schemas.find(
+        ({ reference }) => reference.digest === observed.root.nodes[0]?.input_schema?.digest,
+      )?.shape,
+    ).toEqual({
+      type: 'object',
+      fields: {
+        priority: { required: true, value: { type: 'integer', minimum: 0, maximum: 100 } },
+        size: { required: false, value: { type: 'enum', values: ['small'] } },
+      },
+    });
+    expect(observed.root.nodes[0]?.input_binding?.mapping.value).toEqual({
+      mapping: 'if_present',
+      path: '/assessment/size',
+      then: {
+        mapping: 'object',
+        fields: {
+          priority: { mapping: 'pointer', path: '/assessment/priority' },
+          size: { mapping: 'pointer', path: '/assessment/size' },
+        },
+      },
+      otherwise: {
+        mapping: 'object',
+        fields: {
+          priority: { mapping: 'pointer', path: '/assessment/priority' },
+        },
+      },
+    });
+    const review = screen.getByRole('button', { name: 'Review required access' });
+    expect(review).toHaveProperty('disabled', false);
+    await userEvent.click(review);
+    await userEvent.click(
+      within(screen.getByRole('dialog', { name: 'Required access' })).getByRole('button', {
+        name: 'Apply to draft',
+      }),
+    );
+    expect(observed.root.nodes[0]?.permissions.plugins).toEqual([plugin]);
+    await userEvent.click(screen.getByRole('button', { name: 'Edit step: triage' }));
+    const stepName = screen.getByRole('textbox', { name: 'Step name' });
+    await userEvent.clear(stepName);
+    await userEvent.type(stepName, 'assess');
+    expect(observed.root.nodes[0]?.action?.parameters).toMatchObject({ source_node: 'assess' });
+  },
+);
 
 it('edits and clears the pipeline name without renaming its steps or changing their settings', async () => {
   const flow = configurationFixture().configuration.flow;

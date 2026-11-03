@@ -66,7 +66,7 @@ export function IssueOutcomes({
   const { t } = usePresentation();
   const title = t('issueOutcomes.title');
   const query = useQuery({
-    queryKey: queryKeys.issueOutcomes(issue.project_id, issue.id, issue.applicability_version),
+    queryKey: queryKeys.issueOutcomes(issue.project_id, issue.id, issue.version),
     gcTime: 0,
     queryFn: ({ signal }) => api.outcomes(issue.project_id, issue.id, signal),
   });
@@ -118,6 +118,8 @@ function OutcomeCard({
 
 function TriageFacts({ value }: { value: Triage }) {
   const { t } = usePresentation();
+  const classification = value.classification;
+  const applied = classification?.status === 'applied' ? classification : undefined;
   function vocabularyLabel(value: string, labels: Partial<Record<string, MessageKey>>) {
     return Object.hasOwn(labels, value) ? t(labels[value]!) : value;
   }
@@ -129,7 +131,8 @@ function TriageFacts({ value }: { value: Triage }) {
     ],
     [
       'issueOutcomes.recommendedPriority',
-      value.recommended_priority === undefined
+      value.recommended_priority === undefined ||
+      value.recommended_priority === applied?.priority?.value
         ? undefined
         : formatIssuePriority(value.recommended_priority, t),
     ],
@@ -142,7 +145,35 @@ function TriageFacts({ value }: { value: Triage }) {
       value.component ? vocabularyLabel(value.component, componentLabels) : undefined,
     ],
   ];
-  return <OutcomeFacts facts={facts} />;
+  return (
+    <>
+      <OutcomeFacts facts={facts} />
+      {applied ? (
+        <>
+          <p>
+            <strong>{t('issueOutcomes.classificationApplied')}</strong>
+          </p>
+          <OutcomeFacts
+            facts={[
+              [
+                'issueOutcomes.appliedPriority',
+                applied.priority ? formatIssuePriority(applied.priority.value, t) : undefined,
+              ],
+              ['issueOutcomes.appliedSizeLabel', applied.size_label?.name],
+            ]}
+          />
+          {applied.priority?.current === false ? <p>{t('issueOutcomes.priorityChanged')}</p> : null}
+          {applied.size_label?.current === false ? (
+            <p>{t('issueOutcomes.sizeLabelRemoved')}</p>
+          ) : null}
+        </>
+      ) : classification?.status === 'conflict' ? (
+        <p>
+          <strong>{t('issueOutcomes.classificationConflict')}</strong>
+        </p>
+      ) : null}
+    </>
+  );
 }
 
 function OutcomeFacts({ facts }: { facts: readonly [MessageKey, string | undefined][] }) {

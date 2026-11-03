@@ -8,6 +8,8 @@ import { AcceptedResultFields } from './AcceptedResultFields';
 import { ValueMappingEditor } from './ValueMappingEditor';
 import { SelectMenu } from '../../shared/SelectMenu';
 import { FlowIssueStatus, type FlowIssueServices } from './FlowIssueStatus';
+import { FlowIssueClassification } from './FlowIssueClassification';
+import { classificationAction } from './issueClassification';
 import {
   FlowSourceUpdate,
   type FlowSourceServices,
@@ -51,6 +53,7 @@ export function FlowBindings({
   documentsManaged = false,
   sourceDraft,
   onSourceDraftChange,
+  onRemoveClassification,
 }: {
   node: Node;
   authoring?: FlowAuthoringServices | undefined;
@@ -62,6 +65,7 @@ export function FlowBindings({
   issueStatus?: FlowIssueServices | undefined;
   documentsManaged?: boolean;
   sourceDraft?: SourceUpdateDraft | undefined;
+  onRemoveClassification?: ((root: Root) => void) | undefined;
   onSourceDraftChange?: ((draft: SourceUpdateDraft | undefined) => void) | undefined;
 }) {
   const { t } = usePresentation();
@@ -87,6 +91,20 @@ export function FlowBindings({
   return (
     <section>
       <FlowWorkTask key={node.key} node={node} onChange={onChange} />
+      {authoring &&
+      node.kind === 'trusted_action' &&
+      (!node.action || node.action.action === classificationAction) ? (
+        <FlowIssueClassification
+          onRemove={onRemoveClassification}
+          key={node.key}
+          node={node}
+          root={root}
+          schemas={schemas}
+          services={authoring}
+          onChange={onChange}
+          onPendingChange={onPendingChange}
+        />
+      ) : null}
       {issueStatus && node.action?.action === 'transition_issue' ? (
         <FlowIssueStatus
           key={`issue:${node.key}`}

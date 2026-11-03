@@ -196,6 +196,7 @@ pub struct FactoryFlowDefinitionHandlers<S> {
   source_actions: Option<Arc<dyn crate::FactoryStageSourceAuthorizer>>,
   repositories: Option<Arc<dyn octacity_server_store::ConfigurationStore>>,
   issue_status_actions: Option<Arc<dyn crate::FactoryIssueStatusAuthorizer>>,
+  issue_properties: Option<Arc<dyn octacity_server_store::IssuePropertyStore>>,
 }
 impl<S> FactoryFlowDefinitionHandlers<S> {
   /// Binds the same authorization policy used by the management decorators.
@@ -207,6 +208,7 @@ impl<S> FactoryFlowDefinitionHandlers<S> {
       source_actions: None,
       repositories: None,
       issue_status_actions: None,
+      issue_properties: None,
     }
   }
   /// Reads exact source definitions from the existing Project Repository owner.
@@ -221,6 +223,12 @@ impl<S> FactoryFlowDefinitionHandlers<S> {
   #[must_use]
   pub fn with_source_actions(mut self, authorizer: Arc<dyn crate::FactoryStageSourceAuthorizer>) -> Self {
     self.source_actions = Some(authorizer);
+    self
+  }
+  /// Reviews installed classification mappings against the existing Project catalog.
+  #[must_use]
+  pub fn with_issue_properties(mut self, properties: Arc<dyn octacity_server_store::IssuePropertyStore>) -> Self {
+    self.issue_properties = Some(properties);
     self
   }
   /// Enables local status actions using exact visible Project workflow versions.
@@ -321,6 +329,15 @@ impl<S: FactoryFlowDefinitionStore + octacity_server_store::FactoryConfiguration
     crate::factory_issue_status_authoring::validate_flow_issue_status_actions(
       &flow,
       self.issue_status_actions.as_deref(),
+      context,
+      project,
+    )
+    .await?;
+    crate::factory_issue_classification_authoring::validate_publication(
+      &flow,
+      &choices,
+      self.issue_properties.as_deref(),
+      self.policy.as_ref(),
       context,
       project,
     )

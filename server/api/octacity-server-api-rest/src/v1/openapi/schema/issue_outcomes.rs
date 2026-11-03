@@ -1,4 +1,4 @@
-//! Bounded display-only cards and the available and expired reference variants.
+//! Bounded Issue cards, local classification receipts and resource references.
 use super::super::*;
 use octacity_server_application::{
   ISSUE_OUTCOME_DUPLICATE_COVERAGE, ISSUE_OUTCOME_REVIEW_VERDICTS, ISSUE_OUTCOME_TRIAGE_DECISIONS,
@@ -10,6 +10,20 @@ pub(super) fn insert(schemas: &mut Map<String, Value>) {
   let id = || json!({"type":"string","format":"uuid"});
   let bounded_text = |max| json!({"type":"string","minLength":1,"maxLength":max,"x-max-utf8-bytes":max});
   let kind = |value: &str| json!({"type":"string","const":value});
+  let priority = || json!({"type":"integer","minimum":u8::MIN,"maximum":MAX_WORK_PRIORITY});
+  let current = || json!({"type":"boolean"});
+  schemas.insert(
+    "IssueOutcomeClassification".into(),
+    json!({"oneOf":[
+      object([("status", kind("recommended"))], &["status"]),
+      object([
+        ("status", kind("applied")),
+        ("priority", object([("value", priority()), ("current", current())], &["value","current"])),
+        ("size_label", object([("name", non_empty_string()), ("current", current())], &["name","current"])),
+      ], &["status"]),
+      object([("status", kind("conflict"))], &["status"]),
+    ]}),
+  );
   schemas.insert(
     "IssueOutcomePresentation".into(),
     json!({"oneOf":[
@@ -17,10 +31,11 @@ pub(super) fn insert(schemas: &mut Map<String, Value>) {
         ("kind", kind("triage")),
         ("decision", string_enum(ISSUE_OUTCOME_TRIAGE_DECISIONS)),
         ("duplicate_coverage", string_enum(ISSUE_OUTCOME_DUPLICATE_COVERAGE)),
-        ("recommended_priority", json!({"type":"integer","minimum":u8::MIN,"maximum":MAX_WORK_PRIORITY})),
+        ("recommended_priority", priority()),
         ("recommended_size", non_empty_string()),
         ("component", non_empty_string()),
-      ], &["kind","decision"]),
+        ("classification", schema_ref("IssueOutcomeClassification")),
+      ], &["kind","decision","classification"]),
       object([("kind", kind("specifications"))], &["kind"]),
       object([("kind", kind("review")), ("verdict", string_enum(ISSUE_OUTCOME_REVIEW_VERDICTS))], &["kind","verdict"]),
       object([("kind", kind("custom")), ("title", bounded_text(MAX_ISSUE_OUTCOME_TITLE_BYTES))], &["kind","title"]),

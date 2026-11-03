@@ -146,6 +146,27 @@ export const enMessages = {
   'factory.issueCardVerdict': 'Verdict',
   'factory.issueCardFormatHelp':
     'To show a card, add a required text field of 1 to {max} bytes to the result.',
+  'factory.localClassification': 'Local classification',
+  'factory.applyIssueClassification': 'Apply classification to Issue',
+  'factory.classificationHelp':
+    'Apply the accepted priority and mapped size label to the OctaCity Issue.',
+  'factory.classificationSetupNeeded':
+    'Configure an installed classification mapping with active Project labels before enabling this action.',
+  'factory.classificationNeedsSource': 'Connect a successful assessment result to this step.',
+  'factory.classificationSource': 'Accepted assessment',
+  'factory.classificationDisable':
+    'Turning this off removes the classification step and reconnects its route when possible.',
+  'factory.classificationDisableDependencies':
+    'Reconnect the dependent steps and remove their references to this result before turning off classification.',
+  'factory.classificationDraftChanged':
+    'The classification settings changed. Review them and apply the mapping again.',
+  'factory.classificationNeedsEmptyStep': 'Use a step with no input mapping or conflicting result.',
+  'factory.useProjectClassification': 'Use Project classification',
+  'factory.classificationMappingChanged':
+    'The Project mapping is missing or has changed. Review it again in the step before publishing.',
+  'factory.classificationAccessHelp':
+    'Review and apply the access required by the local classification action.',
+  'factory.classificationPriority': 'Priority · 0–{max}',
   'factory.expectedResult': 'Expected result',
   'factory.compare.exact_value': 'Same typed value',
   'factory.compare.repository_path_within': 'Path is within selected directory',
@@ -1217,6 +1238,12 @@ export const enMessages = {
   'issueOutcomes.title': 'Outcomes',
   'issueOutcomes.searchNotVerified': 'Search not verified',
   'issueOutcomes.recommendedPriority': 'Recommended priority',
+  'issueOutcomes.classificationApplied': 'Applied to task',
+  'issueOutcomes.appliedPriority': 'Applied priority',
+  'issueOutcomes.appliedSizeLabel': 'Applied size label',
+  'issueOutcomes.priorityChanged': 'The task priority has since changed.',
+  'issueOutcomes.sizeLabelRemoved': 'The size label has since been removed.',
+  'issueOutcomes.classificationConflict': 'Classification could not be applied',
   'issueOutcomes.recommendedSize': 'Recommended size',
   'issueOutcomes.coverageComplete': 'Complete search',
   'issueOutcomes.coveragePartial': 'Partial search',

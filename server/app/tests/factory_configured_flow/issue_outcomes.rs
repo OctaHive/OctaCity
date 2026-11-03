@@ -226,7 +226,7 @@ async fn assert_http_outcomes(
   assert_eq!(items[1]["slot"], "triage");
   assert_eq!(
     items[1]["presentation"],
-    json!({"kind":"triage","decision":"eligible","recommended_priority":25})
+    json!({"kind":"triage","decision":"eligible","recommended_priority":25,"recommended_size":"small","classification":{"status":"recommended"}})
   );
   assert_eq!(items[1]["links"], json!([]));
   let response = get(other.project_id, other.id).send().await.unwrap();
@@ -295,6 +295,7 @@ fn summary_flow(document: Option<&FactoryArtifactReference>) -> FlowDefinitionTe
       "conclusion":{"required":true,"value":{"type":"string","min_bytes":1,"max_bytes":1024}},
       "decision":{"required":true,"value":{"type":"enum","values":["eligible"]}},
       "priority":{"required":true,"value":{"type":"integer","minimum":0,"maximum":100}},
+      "size":{"required":true,"value":{"type":"enum","values":["small"]}},
       "custom":{"required":true,"value":{"type":"reference","schema":"custom"}},
       "review":{"required":false,"value":{"type":"reference","schema":"review"}},
       "specifications":{"required":false,"value":{"type":"reference","schema":"specifications"}}
@@ -344,6 +345,7 @@ fn summary_flow(document: Option<&FactoryArtifactReference>) -> FlowDefinitionTe
             "conclusion":"The project context is ready.",
             "decision":"eligible",
             "priority":25,
+            "size":"small",
             "custom":custom
           }),
         })
@@ -627,8 +629,9 @@ fn assert_cards(cards: &[octacity_server_application::IssueOutcomeCard], admissi
       decision: key("eligible"),
       duplicate_coverage: None,
       priority: Some(25),
-      size: None,
+      size: Some(key("small")),
       component: None,
+      classification: octacity_server_application::IssueOutcomeClassification::Recommended,
     },
   );
   for card in cards {
@@ -746,4 +749,182 @@ impl IssueCodeReviewObservations for DocumentOnlyReaders {
   ) -> Result<IssueCodeReviewObservation, ApplicationError> {
     panic!("outcome links must not read providers")
   }
+}
+
+#[tokio::test]
+#[ignore = "requires an explicitly configured disposable PostgreSQL service"]
+async fn issue_outcomes_http_distinguishes_advice_committed_classification_and_conflict() {
+  use octacity_server_store::{
+    ApplyIssueClassification, EditIssuePlanning, EditIssuePlanningIntent, IssueClassificationStore,
+    IssueExecutionStore as _, IssuePropertyChoice, IssuePropertyDefinitionSet, IssuePropertyStore,
+    PublishIssueProperties, PublishIssuePropertiesIntent,
+  };
+
+  let database = postgres_support::TestDatabase::migrated().await;
+  let fixture = factory_node_test_support::fixtures::work();
+  let project = fixture.subject().project_id();
+  let request = IssueExecutionRequestId::generate();
+  let content = requirements();
+  let (first, execution) =
+    flow_contract::configured_fixture_with_work(summary_flow(None), work_for(&fixture, request, &content));
+  let store = admit(&database.pool, &first).await;
+  store
+    .publish_issue_properties(management_mutation(PublishIssueProperties {
+      intent: PublishIssuePropertiesIntent {
+        project_id: project,
+        expected_version: 0,
+        definition: IssuePropertyDefinitionSet {
+          labels: vec![IssuePropertyChoice {
+            id: "size_small".into(),
+            name: "Small work".into(),
+            retired: false,
+          }],
+          properties: vec![],
+        },
+      },
+      idempotency_key: "outcome-label-catalog".parse().unwrap(),
+      published_at: at(2),
+    }))
+    .await
+    .unwrap();
+  let issue = create_issue(&store, project, IssueId::generate(), content).await;
+  associate(&store, &issue, Some(request), &first).await;
+  finish(&store, &execution, &first, 30).await;
+
+  let mut url = url::Url::parse(&std::env::var("OCTACITY_POSTGRES_URL").unwrap()).unwrap();
+  url.set_path(&database.name);
+  let root = tempfile::tempdir().unwrap();
+  let server = octacity_server::ServerRuntime::start(runtime_fixture::runtime_config(
+    root.path(),
+    url.as_str(),
+    "http://127.0.0.1:9",
+  ))
+  .await
+  .unwrap();
+  let client = reqwest::Client::new();
+  let url = format!(
+    "http://{}/api/v1/projects/{project}/issues/{}",
+    server.management_addr(),
+    issue.id
+  );
+  let read = || async {
+    let body: serde_json::Value = client
+      .get(format!("{url}/outcomes"))
+      .send()
+      .await
+      .unwrap()
+      .error_for_status()
+      .unwrap()
+      .json()
+      .await
+      .unwrap();
+    body["items"]
+      .as_array()
+      .unwrap()
+      .iter()
+      .find(|item| item["slot"] == "triage")
+      .unwrap()
+      .clone()
+  };
+  let apply = |admission: &PublishedFactoryAdmission, now| {
+    let store = store.clone();
+    let work = admission.work.id();
+    let run = admission.run.id();
+    async move {
+      let snapshot = store.factory_run_snapshot(run).await.unwrap();
+      let record = snapshot
+        .flow
+        .data
+        .records
+        .iter()
+        .filter(|record| record.payload().value()["decision"] == "eligible")
+        .max_by_key(|record| record.observed_at())
+        .unwrap();
+      let record_digest = record.digest().unwrap();
+      let association = store.issue_work_association(project, work).await.unwrap().unwrap();
+      store
+        .apply_issue_classification(management_mutation(ApplyIssueClassification {
+          association,
+          policy: key("triage"),
+          record: record_digest,
+          accepted_at: record.observed_at(),
+          operation_id: FactoryDigest::content_sha256(record_digest.as_bytes().as_slice()),
+          priority: Some(25),
+          size_label: Some("size_small".into()),
+          managed_labels: ["size_small".into()].into(),
+          applied_at: at(now),
+          authority: None,
+        }))
+        .await
+    }
+  };
+
+  let card = read().await;
+  assert_eq!(card["presentation"]["classification"], json!({"status":"recommended"}));
+  assert_eq!(card["presentation"]["recommended_priority"], 25);
+  let applied = apply(&first, 70).await.unwrap().issue;
+  assert_eq!(applied.content.priority, Some(25));
+  assert_eq!(
+    read().await["presentation"]["classification"],
+    json!({"status":"applied","priority":{"value":25,"current":true},
+      "size_label":{"name":"Small work","current":true}})
+  );
+
+  let next = admit_next(&store, &first, &applied, 80, true).await;
+  let current = edit_issue(
+    &store,
+    &applied,
+    IssueContent {
+      priority: Some(77),
+      ..applied.content.clone()
+    },
+    90,
+  )
+  .await;
+  let mut planning = current.planning.clone();
+  planning.labels.clear();
+  let current = store
+    .edit_issue_planning(management_mutation(EditIssuePlanning {
+      assignees: Default::default(),
+      intent: EditIssuePlanningIntent {
+        project_id: project,
+        id: issue.id,
+        expected_version: current.version,
+        planning,
+      },
+      idempotency_key: "outcome-remove-size-label".parse().unwrap(),
+      edited_at: at(95),
+    }))
+    .await
+    .unwrap()
+    .issue;
+  assert_eq!(
+    read().await["presentation"]["classification"],
+    json!({"status":"applied","priority":{"value":25,"current":false},
+      "size_label":{"name":"Small work","current":false}})
+  );
+  finish(&store, &execution, &next, 100).await;
+  assert_eq!(
+    read().await["presentation"]["classification"],
+    json!({"status":"recommended"})
+  );
+  assert!(matches!(apply(&next, 160).await, Err(StoreError::Conflict { .. })));
+  let card = read().await;
+  assert_eq!(card["run_id"], next.run.id().to_string());
+  assert_eq!(card["presentation"]["classification"], json!({"status":"conflict"}));
+  let issue_body: serde_json::Value = client
+    .get(&url)
+    .send()
+    .await
+    .unwrap()
+    .error_for_status()
+    .unwrap()
+    .json()
+    .await
+    .unwrap();
+  assert_eq!(issue_body["content"]["priority"], 77);
+  assert_eq!(issue_body["planning"]["labels"], json!([]));
+  assert_eq!(store.issue(project, issue.id, None).await.unwrap(), current);
+  server.shutdown().await.unwrap();
+  database.cleanup().await;
 }

@@ -99,6 +99,26 @@ pub(super) struct ProjectedInput {
   pub caller_input_digest: Option<crate::FactoryDigest>,
 }
 impl FlowInputBinding {
+  /// Returns the mapping over a single exact accepted output payload.
+  pub fn record_payload_mapping(
+    &self,
+    node: &FactoryKey,
+    outcome: &FactoryKey,
+  ) -> Option<(&FactoryKey, &crate::FlowValueMapping)> {
+    let (alias, source) = self.sources.iter().next()?;
+    match source {
+      FlowInputSource::Record {
+        node: selected,
+        outcome: selected_outcome,
+        view: FlowRecordView::Payload,
+        path,
+      } if self.sources.len() == 1 && selected == node && selected_outcome == outcome && path.is_empty() => {
+        Some((alias, self.mapping.value()))
+      }
+      _ => None,
+    }
+  }
+
   pub(crate) fn selects_record(&self, node: &FactoryKey) -> bool {
     self
       .sources
