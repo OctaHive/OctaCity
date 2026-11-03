@@ -202,7 +202,12 @@ for (const language of ['en', 'ru'] as const) {
     await expect(codeReview.getByRole('link', { name: 'Checkout review' })).toBeFocused();
     expect(requests).toEqual(['document', 'review']);
     expect(writes).toEqual([]);
-    expect(await page.evaluate(() => document.documentElement.scrollWidth)).toBe(390);
+    // The scrollbar gutter can reduce the available width below the viewport width.
+    expect(
+      await page.evaluate(
+        () => document.documentElement.scrollWidth - document.documentElement.clientWidth,
+      ),
+    ).toBeLessThanOrEqual(0);
   });
 }
 
