@@ -615,7 +615,7 @@ ordinary Agent qualification remains in 4.2.
 
 - With the packaged macOS ARM64 Server and Agent, Microsandbox, the pinned guest
   image, and disposable PostgreSQL and MinIO, follow the
-  [native policy qualification procedure](../../../docs/operations/factory.md#qualify-project-policies-with-the-native-agent).
+  [native policy qualification procedure](../../../../docs/operations/factory.md#qualify-project-policies-with-the-native-agent).
   The fixture uses local GitHub and model peers. The first policy run reached the
   Source denial and rejected the fixture's duplicate task and acceptance
   artifact before manual policy validation. The corrected fixture uses
@@ -636,9 +636,9 @@ ordinary Agent qualification remains in 4.2.
 
 ## Verification — 4.3 (2026-11-03)
 
-Updated [Factory operations](../../../docs/operations/factory.md#project-launch-policies-and-access-profiles),
-[pipeline authoring](../../../docs/operations/factory-pipeline-authoring.md#review-purpose-limits-and-publication),
-and the [retained stand upgrade procedure](../../../docs/operations/local-stand.md#upgrade-a-retained-factory-stand).
+Updated [Factory operations](../../../../docs/operations/factory.md#project-launch-policies-and-access-profiles),
+[pipeline authoring](../../../../docs/operations/factory-pipeline-authoring.md#review-purpose-limits-and-publication),
+and the [retained stand upgrade procedure](../../../../docs/operations/local-stand.md#upgrade-a-retained-factory-stand).
 This slice changes documentation only, so no executable behavior required a
 new Red/Green cycle.
 
@@ -685,7 +685,7 @@ Available disk space was 6.1 GiB.
   ceiling.
 - `test_factory_triage_setup_rest.FactoryTriageSetupRestTests` passed with
   disposable PostgreSQL and MinIO. The revised
-  [qualification instructions](../../../docs/operations/factory.md#qualify-project-policies-with-the-native-agent)
+  [qualification instructions](../../../../docs/operations/factory.md#qualify-project-policies-with-the-native-agent)
   list the required packages, service endpoints and environment variables.
   The documentation-only corrections did not require a separate Red/Green
   cycle.
