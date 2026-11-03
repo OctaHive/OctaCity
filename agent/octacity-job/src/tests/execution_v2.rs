@@ -1028,10 +1028,13 @@ impl SourceMaterializer for ScopedSource {
     Ok(result)
   }
 }
+// The selected-source view relies on rooted reads, which are qualified on Unix.
+#[cfg(unix)]
 struct ScopedBackend {
   inner: Arc<dyn ExecutionBackend>,
   writable: bool,
 }
+#[cfg(unix)]
 #[async_trait]
 impl ExecutionBackend for ScopedBackend {
   async fn start(
@@ -1064,7 +1067,6 @@ impl ExecutionBackend for ScopedBackend {
       );
     }
     assert!(layout.source_read_only);
-    #[cfg(unix)]
     {
       use std::os::unix::fs::PermissionsExt;
       let script = visible.join("docs/public/check.sh");
@@ -1127,6 +1129,7 @@ async fn selected_source_fixture() -> CredentialJobFixture {
   fixture
 }
 
+#[cfg(unix)]
 #[tokio::test]
 async fn selected_source_paths_and_lines_reach_only_the_scoped_backend_view() {
   let mut fixture = selected_source_fixture().await;
@@ -1164,6 +1167,7 @@ async fn selected_source_paths_and_lines_reach_only_the_scoped_backend_view() {
   fixture.server.abort();
 }
 
+#[cfg(unix)]
 #[tokio::test]
 async fn selected_writable_source_updates_only_its_declared_directory() {
   let mut fixture = selected_source_fixture().await;
