@@ -3,6 +3,8 @@
 ### Requirement: Project preset resolution returns ordinary reviewed drafts
 The management API SHALL expose one bounded Project-visible preset discovery/resolution contract shared by supported Factory presets. The triage preset SHALL advertise its version, typed parameter choices and required installed capabilities and SHALL resolve exact authorized Role/Profile, repository, context, input and effect selections into ordinary Flow/Configuration drafts. Resolution SHALL be read-only and SHALL NOT publish a role, input, credential, grant, managed document or Run. Unavailable dependencies SHALL produce actionable safe reasons without exposing hidden references or private installation paths. Ordinary validation and publication SHALL recheck current authority and exact parents with existing mutation preconditions and idempotency.
 
+The generated API contract SHALL mark preset discovery and resolution as deprecated compatibility operations and direct new authoring to the common Flow and Configuration contracts. Existing preset clients SHALL retain their original schemas, authorization and read-only behavior.
+
 Selected MCP connections SHALL use existing Runtime/Profile settings and safe credential-reference metadata, with separate access scopes and no secret values. Resolution SHALL NOT call an MCP server or inspect secret values. Model-driven duplicate investigation SHALL use MCP tools; this preset SHALL introduce no duplicate-search REST API or provider-specific external-MCP wrapper contract.
 
 Schema integer bounds outside the exact JavaScript integer range SHALL be emitted

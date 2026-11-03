@@ -4,8 +4,8 @@
 
 This task consumes the published Octa 0.8.0 / Codex 0.161.0 version-2 native
 trace/provenance contract qualified by upstream
-[capture and cancellation](../archive/2026-10-28-enable-local-stand-runtime-mcp/mcp-evidence-verification.md)
-and [packaged execution](../archive/2026-10-28-enable-local-stand-runtime-mcp/packaged-mcp-verification.md).
+[capture and cancellation](../2026-10-28-enable-local-stand-runtime-mcp/mcp-evidence-verification.md)
+and [packaged execution](../2026-10-28-enable-local-stand-runtime-mcp/packaged-mcp-verification.md).
 Task [4.3 execution qualification](mcp-execution-verification.md) remains the
 composition evidence for isolated HTTP/stdio credentials and actual OctaCity
 Issue search/detail calls. No additional MCP client, provider search adapter,

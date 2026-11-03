@@ -167,7 +167,7 @@ ambient-setting isolation and current token revocation. The finite model chooses
 prescribed tool calls; it does not qualify semantic duplicate judgments or prove
 that a model will ignore every prompt injection. Actual authority remains enforced
 outside the model. Other AI plugins and ready-made external server releases need
-their own qualification. See the [triage execution evidence](../../openspec/changes/add-factory-triage-pipeline/mcp-execution-verification.md)
+their own qualification. See the [triage execution evidence](../../openspec/changes/archive/2026-11-03-add-factory-triage-pipeline/mcp-execution-verification.md)
 for the consumed packaged Agent evidence and precise verification boundaries.
 
 ## Retained investigation evidence
@@ -232,6 +232,6 @@ A field actually present in a truncated response can be observed; unknown
 coverage and false proof flags still prevent treating that observation as
 duplicate or absence proof.
 
-The [evidence verification report](../../openspec/changes/add-factory-triage-pipeline/mcp-evidence-verification.md)
+The [evidence verification report](../../openspec/changes/archive/2026-11-03-add-factory-triage-pipeline/mcp-evidence-verification.md)
 records Red/Green cycles, ordinary signed-Job/Artifact regressions and a test that
 feeds actual published plugin/native-client captures into the public verifier.

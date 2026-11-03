@@ -6,13 +6,13 @@ This task consumes the archived `enable-local-stand-runtime-mcp` installation
 evidence rather than introducing another MCP client, launcher, secret store or
 provider wrapper:
 
-- [1.2 / 1.4 execution and independent credentials](../archive/2026-10-28-enable-local-stand-runtime-mcp/mcp-execution-verification.md):
+- [1.2 / 1.4 execution and independent credentials](../2026-10-28-enable-local-stand-runtime-mcp/mcp-execution-verification.md):
   exact HTTP/stdio settings, signed per-connection private-variable bindings,
   independent credential purposes/resources, executable pins and Agent revalidation.
-- [1.5 native capture and cancellation](../archive/2026-10-28-enable-local-stand-runtime-mcp/mcp-evidence-verification.md):
+- [1.5 native capture and cancellation](../2026-10-28-enable-local-stand-runtime-mcp/mcp-evidence-verification.md):
   the ordinary version-2 native trace/provenance contract, redaction and partial
   cancelled observations without fabricated results.
-- [3.1 actual packaged Agent qualification](../archive/2026-10-28-enable-local-stand-runtime-mcp/packaged-mcp-verification.md):
+- [3.1 actual packaged Agent qualification](../2026-10-28-enable-local-stand-runtime-mcp/packaged-mcp-verification.md):
   macOS ARM64 Agent → Microsandbox 0.7.6 → Linux ARM64 Codex 0.161.0 → published
   Octa 0.8.0, through ordinary installation composition, Runtime/Profile
   publication, managed Builds, independent credentials and restart recovery.

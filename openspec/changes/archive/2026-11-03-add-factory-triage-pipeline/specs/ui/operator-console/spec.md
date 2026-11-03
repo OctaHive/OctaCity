@@ -1,14 +1,14 @@
 ## ADDED Requirements
 
 ### Requirement: Operators configure a complete two-agent triage through guided setup
-The Console SHALL provide a Project-scoped triage setup using visible preset, Role/Profile, Project-context, repository, Source, workflow and reporting choices with existing validation/publication controls. It SHALL default to Project and Systems analyst stage labels while permitting reviewed Role/Profile selection; role names SHALL NOT imply installed tools or permission. Strictly unlabeled selection SHALL be distinguishable from exclusion-based filtering. The review SHALL identify process-completion criteria separately from implementation acceptance, finite outcomes/effects and missing installation or label-scope prerequisites. It SHALL require no raw JSON, opaque-ID entry or credential values in pipeline settings.
+The common Project-scoped Flow and Configuration authoring controls SHALL support two-agent triage using visible Role/Profile, Project-context, repository, Source, workflow and reporting choices with existing validation/publication controls. The supplied example SHALL use Project and Systems analyst stage labels. Authors SHALL be able to choose their own labels and reviewed Role/Profile bindings. Role names SHALL NOT imply installed tools or permission. Strictly unlabeled selection SHALL be distinguishable from exclusion-based filtering. The review SHALL identify process-completion criteria separately from implementation acceptance, finite outcomes/effects and missing installation or label-scope prerequisites. It SHALL require no raw JSON, opaque-ID entry or credential values in pipeline settings.
 
 Publication, source preview, canonical Issue import and execution intake SHALL remain separately controlled; new intake SHALL remain disabled until its normal explicit confirmation. Stale parents or partial setup SHALL preserve useful drafts and block invalid continuation without automatic repinning. English/Russian, narrow-screen and keyboard use SHALL expose the same decisions, and unconfirmed text, previews and mutation keys SHALL stay out of browser persistence.
 
 Setup SHALL expose safe selected MCP connection/tool, credential-reference and read-only/resource-scope metadata through existing Runtime/Profile choices and upstream installation guidance. It SHALL distinguish OctaCity/external MCP read access, AI-provider authentication and server Source/Reporter authority. Missing endpoint, scoped authentication, plugin transport or evidence-capture support SHALL have actionable readiness reasons. Triage setup SHALL NOT collect token values, add a provider-specific MCP editor or imply that saved configuration proves an actual permitted call.
 
-#### Scenario: An operator configures the preset for the first time
-- **WHEN** compatible execution, read/update, context and label choices exist
+#### Scenario: An operator configures triage for the first time
+- **WHEN** the operator uses common authoring and compatible execution, read/update, context and label choices exist
 - **THEN** the operator can review and publish both stage bindings and exact input/reporting settings, preview raw unlabeled tickets and separately enable intake using the normal controls
 
 #### Scenario: A requested label is unavailable

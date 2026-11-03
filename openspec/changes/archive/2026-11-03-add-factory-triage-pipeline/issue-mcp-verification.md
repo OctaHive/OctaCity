@@ -90,7 +90,7 @@ updated from four to five for the newly tested MCP route.
 
 ## Validation
 
-See [the endpoint contract and installation guide](../../../docs/reference/issue-mcp.md)
+See [the endpoint contract and installation guide](../../../../docs/reference/issue-mcp.md)
 for exact protocol, bounds, result coverage, availability and token semantics.
 Documentation and archive/link edits have no executable behavior; validate their
 links, OpenSpec consistency and formatting rather than fabricate TDD results.

@@ -4,7 +4,7 @@ The default command now installs the actual disabled two-stage triage pipeline.
 Current-owner publication and the assembled native/gateway/Console installation
 passed, including immutable document edits and restart without republishing.
 This qualifies the installation boundary, not live model entitlement or paid
-model/GitHub-write behavior. See the [operating procedure](../../../docs/operations/local-stand.md#default-two-stage-triage).
+model/GitHub-write behavior. See the [operating procedure](../../../../docs/operations/local-stand.md#default-two-stage-triage).
 
 ## Credential and output boundaries
 
