@@ -710,7 +710,12 @@ async fn stage_owned_effects_override_input_mapping_and_keep_original_target_aft
       .store
       .seed_factory_configuration_policies(
         config.reference(),
-        octacity_server_store::testing::factory_project_policies(config.reference().project_id(), true, true),
+        octacity_server_store::testing::factory_project_policies_with_access(
+          config.reference().project_id(),
+          true,
+          true,
+          config.flow().limits.permissions().clone(),
+        ),
       )
       .unwrap();
     let source = WorkSourceCapability {
