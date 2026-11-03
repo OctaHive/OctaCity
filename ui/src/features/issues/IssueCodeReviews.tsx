@@ -172,7 +172,14 @@ function ReviewCard({
       <button type="button" aria-expanded={history} onClick={() => setHistory(!history)}>
         {t('issueReviews.history')}
       </button>
-      {history ? <IssueCodeReviewHistory issue={issue} review={review} api={api} /> : null}
+      {history ? (
+        <IssueCodeReviewHistory
+          issue={issue}
+          reviewId={review.association.id}
+          currentHead={review.observation?.head}
+          api={api}
+        />
+      ) : null}
     </article>
   );
 }

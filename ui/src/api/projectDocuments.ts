@@ -27,38 +27,51 @@ export async function readExactProjectDocument(
   artifact: components['schemas']['FactoryArtifactReference'],
 ): Promise<string> {
   const result = await api.read(projectId, artifact.artifact_id);
+  requireDocumentIdentity(result, projectId, artifact.artifact_id);
   if (
-    result.project_id !== projectId ||
-    result.artifact.artifact_id !== artifact.artifact_id ||
     result.artifact.content_digest !== artifact.content_digest ||
     result.artifact.encoded_size !== artifact.encoded_size
   )
     throw new Error('Project document response is invalid');
   return result.content;
 }
-export const projectDocumentsApi: ProjectDocumentsApi = {
-  async read(project_id, artifact_id, signal) {
-    const { data } = await managementApi.GET(
-      '/api/v1/projects/{project_id}/input-documents/{artifact_id}',
-      {
-        params: { path: { project_id, artifact_id } },
+function requireDocumentIdentity(
+  result: components['schemas']['ProjectDocumentContent'],
+  projectId: string,
+  artifactId: string,
+) {
+  if (result.project_id !== projectId || result.artifact.artifact_id !== artifactId)
+    throw new Error('Project document response is invalid');
+}
+
+export function createProjectDocumentsApi(client = managementApi): ProjectDocumentsApi {
+  return {
+    async read(project_id, artifact_id, signal) {
+      const { data } = await client.GET(
+        '/api/v1/projects/{project_id}/input-documents/{artifact_id}',
+        {
+          params: { path: { project_id, artifact_id } },
+          signal: signal ?? null,
+        },
+      );
+      const result = requireManagementResponse(data);
+      requireDocumentIdentity(result, project_id, artifact_id);
+      return result;
+    },
+    async list(project_id, after, signal) {
+      const { data } = await client.GET('/api/v1/projects/{project_id}/input-documents', {
+        params: { path: { project_id }, query: { ...(after === null ? {} : { after }) } },
         signal: signal ?? null,
-      },
-    );
-    return requireManagementResponse(data);
-  },
-  async list(project_id, after, signal) {
-    const { data } = await managementApi.GET('/api/v1/projects/{project_id}/input-documents', {
-      params: { path: { project_id }, query: { ...(after === null ? {} : { after }) } },
-      signal: signal ?? null,
-    });
-    return requireManagementResponse(data);
-  },
-  async publish(project_id, body, headers) {
-    const { data } = await managementApi.POST('/api/v1/projects/{project_id}/input-documents', {
-      params: { path: { project_id }, header: headers },
-      body,
-    });
-    return requireManagementResponse(data);
-  },
-};
+      });
+      return requireManagementResponse(data);
+    },
+    async publish(project_id, body, headers) {
+      const { data } = await client.POST('/api/v1/projects/{project_id}/input-documents', {
+        params: { path: { project_id }, header: headers },
+        body,
+      });
+      return requireManagementResponse(data);
+    },
+  };
+}
+export const projectDocumentsApi = createProjectDocumentsApi();

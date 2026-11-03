@@ -79,6 +79,8 @@ export function artifactsPage(): components['schemas']['IssueArtifactsPage'] {
 }
 export function fakeResultPanels(vi: (typeof import('vitest'))['vi']) {
   return {
+    projectDocument: vi.fn<IssueResultPanelsApi['projectDocument']>(),
+    buildArtifact: vi.fn<IssueResultPanelsApi['buildArtifact']>(),
     checks: vi.fn<IssueResultPanelsApi['checks']>().mockResolvedValue(checksPage()),
     artifacts: vi.fn<IssueResultPanelsApi['artifacts']>().mockResolvedValue(artifactsPage()),
     externalChecks: vi.fn<IssueResultPanelsApi['externalChecks']>(),

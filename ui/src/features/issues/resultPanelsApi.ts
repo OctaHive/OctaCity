@@ -1,11 +1,29 @@
 import type { components } from '../../../.generated/api/schema';
 import { ISSUE_CONSTRAINTS as bounds } from '../../../.generated/api/constraints';
+import { createProjectDocumentsApi } from '../../api/projectDocuments';
 import { managementApi, requireManagementResponse } from '../../api/client';
 export type IssueArtifact = components['schemas']['IssueArtifactProjection'];
 export type IssueChecksPage = components['schemas']['IssueChecksPage'];
 /** Exact retained reads only; this client owns no provider or execution commands. */
-export function createIssueResultPanelsApi(client = managementApi) {
+export function createIssueResultPanelsApi(
+  client = managementApi,
+  documents = createProjectDocumentsApi(client),
+) {
   return {
+    async projectDocument(projectId: string, artifactId: string, signal?: AbortSignal) {
+      return (await documents.read(projectId, artifactId, signal)).content;
+    },
+    async buildArtifact(artifact_id: string, signal?: AbortSignal) {
+      return requireManagementResponse(
+        (
+          await client.GET('/api/v1/artifacts/{artifact_id}', {
+            params: { path: { artifact_id } },
+            cache: 'no-store',
+            signal: signal ?? null,
+          })
+        ).data,
+      );
+    },
     async externalChecks(
       project_id: string,
       issue_id: string,

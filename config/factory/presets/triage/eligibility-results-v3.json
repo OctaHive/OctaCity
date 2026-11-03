@@ -152,7 +152,7 @@
     },
     "eligibility_accepted": {
       "identity": "factory.triage.eligibility_accepted",
-      "version": "v2",
+      "version": "v3",
       "shape": {
         "type": "object",
         "fields": {
@@ -162,7 +162,7 @@
           },
           "duplicate_coverage": {
             "required": false,
-            "value": { "type": "enum", "values": ["complete", "unknown"] }
+            "value": { "type": "enum", "values": ["complete", "unknown", "not_checked"] }
           },
           "accepted": {
             "required": true,

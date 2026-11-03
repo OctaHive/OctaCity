@@ -38,7 +38,7 @@ def flow_draft(client, project: str, selection: dict, namespace, criteria: dict)
     """Compose the bundled example through ordinary authoring contracts."""
     if selection.get("effects"):
         raise ValueError("stand reporting requires separately reviewed ordinary action settings")
-    manifest = _read("presets/triage/v2.json")
+    manifest = _read("presets/triage/v3.json")
     parts = [_read(path) for path in manifest["parts"]]
     schemas = {alias: schema for part in parts for alias, schema in part.get("schemas", {}).items()}
     normalized = {alias: client.post("/api/v1/flow-data-schemas/validate", f"{namespace}-manual-v1-schema-{alias}",

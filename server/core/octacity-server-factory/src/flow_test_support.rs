@@ -2,7 +2,7 @@ use super::factory::*;
 
 #[allow(dead_code)] // Release-template contracts are shared by core and application owners.
 pub(crate) fn supplied_triage_template() -> Result<FlowDefinitionTemplate, FactoryError> {
-  supplied_triage_template_variant("v2.json")
+  supplied_triage_template_variant("v3.json")
 }
 
 #[allow(dead_code)] // Optional command composition is qualified by application output-source tests.

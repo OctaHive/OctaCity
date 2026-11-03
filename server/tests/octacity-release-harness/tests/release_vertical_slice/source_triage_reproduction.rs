@@ -146,7 +146,7 @@ pub(super) fn bind(draft: Value, command: &FactoryCommandBuildProfile, flow: Flo
     .unwrap()
     .join("config/factory");
   let mut template = FlowDefinitionTemplate::from_manifest(
-    &fs::read(root.join("presets/triage/with-reproduction-v2.json")).unwrap(),
+    &fs::read(root.join("presets/triage/with-reproduction-v3.json")).unwrap(),
     |path| {
       fs::read(root.join(path.as_str())).map_err(|_| FactoryError::InvalidConfiguration {
         field: "qualified template",

@@ -1,5 +1,6 @@
 import { IssueLegacyExecutions } from './IssueLegacyExecutions';
 import type { IssueLegacyWorkApi } from './executionApi';
+import { IssueOutcomes } from './IssueOutcomes';
 import { IssueRequirements } from './IssueRequirements';
 import { FactoryActions } from '../../shared/FactoryActions';
 import type { FactoryActionsApi } from '../../api/factoryActions';
@@ -200,6 +201,7 @@ function Card({
     await current.refetch();
     await Promise.all([
       choices.refetch(),
+      queryClient.invalidateQueries({ queryKey: queryKeys.issueOutcomes(projectId, issueId) }),
       queryClient.invalidateQueries({ queryKey: queryKeys.issueChildrenRoot(projectId, issueId) }),
       ...(issue?.planning?.parent_id
         ? [
@@ -353,6 +355,7 @@ function Card({
                     <IssueRequirements issue={issue} />
                     <p>{t('issues.revision', { version: issue.version })}</p>
                   </section>
+                  <IssueOutcomes api={api} panels={panels} reviews={reviews} issue={issue} />
                   <IssueActivity api={activity} issue={issue} preview />
                   <IssueHistory api={api} workflows={workflows} issue={issue} preview />
                 </>

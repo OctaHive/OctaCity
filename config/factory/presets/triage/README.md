@@ -2,7 +2,7 @@
 
 ## Versioned Flow and responsibilities
 
-Load `v2.json` through `FlowDefinitionTemplate::from_manifest`, resolving its
+Load `v3.json` through `FlowDefinitionTemplate::from_manifest`, resolving its
 `parts` relative to `config/factory`. The manifest uses the ordinary bounded
 resolver; it needs no triage registry or phase-name dispatch. It composes exactly
 two reasoning nodes (`eligibility`, `classification`), a reviewed eligibility
@@ -35,7 +35,10 @@ as described below, and select analyst Context separately; the handoff does not
 implicitly expose the Project's private Context.
 
 Project observations use the shared verified native MCP conclusion envelope and
-the bounded eligibility assessment described below. Classification uses the
+the bounded eligibility assessment described below. The v3 eligibility gate
+records `not_checked` when no search observation was retained and `unknown`
+when observations exist but coverage is unresolved. Previously published
+definitions and their retained results continue to use their pinned contract. Classification uses the
 versioned triage contracts in `classification-results-v2.json` and
 `classification-gate-v2.json`. The default accepts feature and unresolved defect
 assessments without a reproduction command. The manifest imports no spec, research
@@ -241,7 +244,7 @@ two-agent journey remains task 8.1.
 
 ## Optional bounded reproduction command
 
-`with-reproduction-v2.json` composes the same two reasoning stages and gates with
+`with-reproduction-v3.json` composes the same two reasoning stages and gates with
 one ordinary `build_command` between accepted eligibility and classification.
 It requires a separately selected installed `reproduction` profile. The template
 intentionally has no invented `reproduction_report` schema: bind that alias to
@@ -379,7 +382,7 @@ provide credentials or enable a write tool.
 
 ## Issue outcome presentation
 
-The released triage preset v2 binds its reviewed terminal outcomes to the
+The released triage preset binds its reviewed terminal outcomes to the
 `triage` Issue slot. If the Project gate stops triage, the card uses its
 bounded reason and finite decision. An eligible Project handoff continues to
 the analyst. The classification gate supplies the card at the end of that
@@ -389,10 +392,11 @@ conclusion and leaves the unaccepted classification fields in Run diagnostics.
 
 The card reports complete duplicate coverage when the bounded search was
 verified, including when the Project decision still needs review or input.
-Without that proof, the gate records unknown coverage under the same review
-outcome. Reporter mappings continue to use the existing outcome keys. The terminal
-record carries the conclusion once. The separate analyst handoff carries its
-reason and lookup evidence without Issue display fields.
+Without that proof, the gate distinguishes unresolved coverage from the absence
+of retained search observations under the same review outcome. Reporter
+mappings continue to use the existing outcome keys. The terminal record carries
+the conclusion once. The separate analyst handoff carries its reason and lookup
+evidence without Issue display fields.
 Accepted priority, size and component are recommendations. Issue planning
 continues to use its separate write authority. Previously published Flows and
 their accepted records retain their original schema pins. `v1.json` and

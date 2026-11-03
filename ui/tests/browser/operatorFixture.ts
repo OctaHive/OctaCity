@@ -86,6 +86,10 @@ export async function installOperatorFixture(page: Page) {
       await fulfill(route, issue);
       return;
     }
+    if (url.pathname === `${issueBase}/${issue.id}/outcomes`) {
+      await fulfill(route, { items: [] });
+      return;
+    }
     if (url.pathname === `${issueBase}/${issue.id}/code-reviews`) {
       await fulfill(route, {
         items: [],

@@ -386,8 +386,7 @@ export function compatibleFactoryShape(
   from: components['schemas']['FactoryFlowValueSchema'],
   to: components['schemas']['FactoryFlowValueSchema'],
 ): boolean {
-  if (from.type === 'enum' && to.type === 'externally_tagged')
-    return from.values.every((value) => validFactoryValue(to, value));
+  if (from.type === 'enum') return from.values.every((value) => validFactoryValue(to, value));
   if (from.type !== to.type) return false;
   if (from.type === 'boolean' && to.type === 'boolean') return true;
   if (from.type === 'integer' && to.type === 'integer') {
@@ -404,8 +403,6 @@ export function compatibleFactoryShape(
   }
   if (from.type === 'string' && to.type === 'string')
     return from.min_bytes >= to.min_bytes && from.max_bytes <= to.max_bytes;
-  if (from.type === 'enum' && to.type === 'enum')
-    return from.values.every((value) => to.values.includes(value));
   if (from.type === 'array' && to.type === 'array')
     return (
       from.min_items >= to.min_items &&

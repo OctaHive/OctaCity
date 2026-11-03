@@ -26,6 +26,9 @@ export function issueConstraints(document) {
     priorityMinimum: bound(unwrap(fields?.priority)?.minimum, 0),
     priorityMaximum: bound(unwrap(fields?.priority)?.maximum),
     defaultPageSize: bound(limit?.default),
+    outcomeConclusionMaximumBytes: bound(
+      document.components?.schemas?.IssueOutcomeCard?.properties?.conclusion?.['x-max-utf8-bytes'],
+    ),
     reasonMaximumBytes: bound(
       unwrap(document.components?.schemas?.TransitionIssueRequest?.properties?.reason)?.[
         'x-max-utf8-bytes'

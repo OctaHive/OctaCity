@@ -628,6 +628,23 @@ directory and reloading the proxy. Removing the console static route does not
 remove or alter any REST workflow; headless clients continue to use the
 private management API.
 
+## Pipeline outcomes on a task
+
+In a Flow draft, open the producing step’s **Expected result** and edit the
+outcome. Use **Show on Issue** to choose a compatible built-in card or a custom
+one. A custom card needs a title and a required, bounded conclusion. Review
+the fields, any declared resource links, and the slot in the publication
+preview, then publish and use that Flow version for new Work. Older Runs keep
+their original bindings.
+
+Open the task’s **Overview → Outcomes** to read the latest accepted conclusion
+in each slot. The same slot replaces its previous card; **Open Run** shows
+execution details. Triage priority, size and component are recommendations.
+An unknown duplicate-search coverage means the available evidence cannot establish
+coverage; **Search not verified** means no search observation was retained by the
+gate. Readable resource links use the task reader’s existing permissions. This
+display neither changes the task’s fields nor posts to an external provider.
+
 ## Legacy tasks and unavailable requirements
 
 A migrated task keeps its human key and original execution identity. **Runs**

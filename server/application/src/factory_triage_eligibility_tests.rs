@@ -1042,3 +1042,29 @@ fn reviewed_eligibility_publishes_lookup_scope_but_analyst_receives_only_selecte
     &json!({"accepted":true,"decision":"eligible","reason":assessment()["reason"],"evidence":verified["evidence"]})
   );
 }
+
+#[test]
+fn triage_eligibility_distinguishes_no_duplicate_check_from_unknown_coverage() {
+  let f = fixture(r#"{"candidate":{"id":"ISSUE-42","version":3},"coverage":{"has_more":false}}"#);
+  let capture = f.capture();
+  let bound = capture
+    .bind_mcp_connections(&f.role, &f.compiled, &f.configurations)
+    .unwrap();
+  let mut retained = bound.verify_conclusion(conclusion()).unwrap();
+  let template = template();
+  let schemas = template.data_schemas().unwrap();
+  let wire = serde_json::to_value(reviewed_gate(&template)).unwrap();
+  let mapping: octacity_server_factory::FlowDataMapping =
+    serde_json::from_value(wire["precondition_failure_output"].clone()).unwrap();
+  let project = |retained| {
+    mapping
+      .project_value(&owner_input(&f, retained), &schemas[&key("eligibility_accepted")])
+      .unwrap()
+  };
+  assert_eq!(project(retained.clone()).value()["duplicate_coverage"], "unknown");
+  retained["verification"]["observations"] = json!([]);
+  retained["verification"]["status"] = json!("needs_review");
+  retained["evidence"] = json!([]);
+  retained["claims"] = json!([]);
+  assert_eq!(project(retained).value()["duplicate_coverage"], "not_checked");
+}

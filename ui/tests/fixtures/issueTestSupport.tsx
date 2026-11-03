@@ -77,6 +77,7 @@ export function fakeIssueSourcesApi() {
 }
 export function fakeIssuesApi() {
   return {
+    outcomes: vi.fn().mockResolvedValue({ items: [] }),
     publishProperties: vi.fn(),
     editPlanning: vi
       .fn()

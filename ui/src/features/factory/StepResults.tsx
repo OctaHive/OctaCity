@@ -8,6 +8,12 @@ import { SelectMenu } from '../../shared/SelectMenu';
 import { ShapeEditor } from './SchemaEditor';
 import type { FlowAuthoringServices } from './FlowPrimitives';
 import { FlowSchemaSelect } from './FlowSchemaSelect';
+import {
+  canSaveIssuePresentation,
+  issuePresentationTitle,
+  OutcomeIssuePresentationEditor,
+  type IssuePresentation,
+} from './OutcomeIssuePresentation';
 
 type Schema = components['schemas'];
 type Node = Schema['FactoryFlowNodeDefinition'];
@@ -16,6 +22,7 @@ export type ResultDraft = {
   name: string;
   kind: 'success' | 'failure';
   shape: Schema['FactoryFlowValueSchema'];
+  issuePresentation?: IssuePresentation | undefined;
 };
 
 /** Step-local result editing compiles to the existing server-normalized immutable schema. */
@@ -58,6 +65,7 @@ export function StepResults({
           index ? `result_${index + 1}` : 'result',
         ).find((key) => !node.outcomes.some((item) => item.key === key))!,
       kind: result?.kind ?? 'success',
+      issuePresentation: result?.issue_presentation,
       shape: structuredClone(schema?.shape ?? { type: 'string', min_bytes: 0, max_bytes: 4096 }),
     });
   };
@@ -66,7 +74,8 @@ export function StepResults({
     new RegExp(FACTORY_AUTHORING_SCHEMAS.FactoryFlowOutcome.properties.key.pattern).test(
       draft.name,
     ) &&
-    !node.outcomes.some((item, index) => index !== draft.index && item.key === draft.name);
+    !node.outcomes.some((item, index) => index !== draft.index && item.key === draft.name) &&
+    canSaveIssuePresentation(draft.shape, draft.issuePresentation);
   const save = async () => {
     if (!services || !draft || !valid || pending) return;
     const controller = new AbortController();
@@ -74,22 +83,35 @@ export function StepResults({
     setPending(true);
     setError(null);
     try {
-      const schema = await services.api.normalizeSchema(
-        {
-          project_id: services.projectId,
-          identity: `result.${crypto.randomUUID()}`,
-          version: '1',
-          shape: draft.shape,
-        },
-        controller.signal,
-      );
+      const existing = draft.index === null ? undefined : node.outcomes[draft.index];
+      const retained = schemas.find((item) => item.reference.digest === existing?.schema.digest);
+      // A display-only edit must preserve the schema pinned by the rest of the Flow.
+      const schema =
+        retained && JSON.stringify(retained.shape) === JSON.stringify(draft.shape)
+          ? retained
+          : await services.api.normalizeSchema(
+              {
+                project_id: services.projectId,
+                identity: `result.${crypto.randomUUID()}`,
+                version: '1',
+                shape: draft.shape,
+              },
+              controller.signal,
+            );
       if (controller.signal.aborted) return;
-      const outcome = {
-        ...(draft.index === null ? {} : node.outcomes[draft.index]),
+      const outcome: Schema['FactoryFlowOutcome'] = {
+        ...existing,
         key: draft.name,
         kind: draft.kind,
         schema: schema.reference,
       };
+      if (draft.issuePresentation?.kind === 'custom_v1')
+        outcome.issue_presentation = {
+          ...draft.issuePresentation,
+          title: draft.issuePresentation.title.trim(),
+        };
+      else if (draft.issuePresentation) outcome.issue_presentation = draft.issuePresentation;
+      else delete outcome.issue_presentation;
       onChange(
         {
           outcomes:
@@ -97,7 +119,7 @@ export function StepResults({
               ? [...node.outcomes, outcome]
               : node.outcomes.map((old, index) => (index === draft.index ? outcome : old)),
         },
-        [schema],
+        schema === retained ? [] : [schema],
       );
       onDraftChange(undefined);
     } catch (failure) {
@@ -127,6 +149,11 @@ export function StepResults({
               </ul>
             ) : shape?.type === 'string' ? (
               <p>{t('factory.textResult')}</p>
+            ) : null}
+            {outcome.issue_presentation ? (
+              <p>
+                {t('factory.showOnIssue')} · {issuePresentationTitle(outcome.issue_presentation, t)}
+              </p>
             ) : null}
             <button type="button" disabled={!!draft || !services} onClick={() => edit(index)}>
               {t('factory.editResult')}
@@ -198,6 +225,11 @@ export function StepResults({
                 onChange={(shape) => onDraftChange({ ...draft, shape })}
               />
             </details>
+            <OutcomeIssuePresentationEditor
+              shape={draft.shape}
+              value={draft.issuePresentation}
+              onChange={(issuePresentation) => onDraftChange({ ...draft, issuePresentation })}
+            />
             {error ? (
               <QueryFailureNotice
                 title={t('factory.expectedResult')}

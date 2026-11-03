@@ -5,12 +5,12 @@ use octacity_server_factory::*;
 // Immutable release assets use the existing manifest resolver. No request supplies a filesystem path.
 pub(super) fn released_triage() -> Result<(FlowDefinitionTemplate, ImmutableReference), ApplicationError> {
   let template = FlowDefinitionTemplate::from_manifest(
-    include_bytes!("../../../../config/factory/presets/triage/v2.json"),
+    include_bytes!("../../../../config/factory/presets/triage/v3.json"),
     |path| {
       let bytes: &[u8] = match path.as_str() {
         "presets/triage/inputs-v2.json" => include_bytes!("../../../../config/factory/presets/triage/inputs-v2.json"),
-        "presets/triage/eligibility-results-v2.json" => {
-          include_bytes!("../../../../config/factory/presets/triage/eligibility-results-v2.json")
+        "presets/triage/eligibility-results-v3.json" => {
+          include_bytes!("../../../../config/factory/presets/triage/eligibility-results-v3.json")
         }
         "flows/base-flow/schemas/artifact_reference.json" => {
           include_bytes!("../../../../config/factory/flows/base-flow/schemas/artifact_reference.json")
@@ -24,8 +24,8 @@ pub(super) fn released_triage() -> Result<(FlowDefinitionTemplate, ImmutableRefe
         "presets/triage/eligibility-v1.json" => {
           include_bytes!("../../../../config/factory/presets/triage/eligibility-v1.json")
         }
-        "presets/triage/eligibility-gate-v2.json" => {
-          include_bytes!("../../../../config/factory/presets/triage/eligibility-gate-v2.json")
+        "presets/triage/eligibility-gate-v3.json" => {
+          include_bytes!("../../../../config/factory/presets/triage/eligibility-gate-v3.json")
         }
         "presets/triage/classification-v2.json" => {
           include_bytes!("../../../../config/factory/presets/triage/classification-v2.json")
@@ -53,7 +53,7 @@ pub(super) fn released_triage() -> Result<(FlowDefinitionTemplate, ImmutableRefe
     .map_err(|_| ApplicationError::invalid())?;
   let reference = ImmutableReference::new(
     "triage".parse().map_err(|_| ApplicationError::invalid())?,
-    "v2".parse().map_err(|_| ApplicationError::invalid())?,
+    "v3".parse().map_err(|_| ApplicationError::invalid())?,
     FactoryDigest::content_sha256(&bytes),
   );
   Ok((template, reference))

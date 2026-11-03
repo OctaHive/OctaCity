@@ -86,7 +86,7 @@ export function IssueArtifacts({
                           api={api}
                           issue={issue}
                           work={work}
-                          item={item}
+                          artifact={{ id: item.artifact.artifact_id, name: item.metadata.name }}
                         />
                       ) : null}
                       <details>

@@ -5,7 +5,10 @@ use crate::{
   MAX_WORK_PRIORITY,
 };
 use serde::{Deserialize, Serialize};
-use std::collections::BTreeSet;
+use std::{
+  collections::{BTreeMap, BTreeSet},
+  sync::LazyLock,
+};
 
 /// Maximum UTF-8 bytes allowed in a displayed conclusion.
 pub const MAX_ISSUE_OUTCOME_CONCLUSION_BYTES: usize = 1024;
@@ -17,7 +20,7 @@ pub const MAX_ISSUE_OUTCOME_REFERENCES: u16 = 8;
 /// Allowed decisions in a triage Issue card.
 pub const ISSUE_OUTCOME_TRIAGE_DECISIONS: &[&str] = &["eligible", "duplicate", "out_of_scope", "needs_input", "review"];
 /// Allowed duplicate coverage states in a triage Issue card.
-pub const ISSUE_OUTCOME_DUPLICATE_COVERAGE: &[&str] = &["complete", "partial", "unknown"];
+pub const ISSUE_OUTCOME_DUPLICATE_COVERAGE: &[&str] = &["complete", "partial", "unknown", "not_checked"];
 /// Allowed verdicts in a review Issue card.
 pub const ISSUE_OUTCOME_REVIEW_VERDICTS: &[&str] = &["approved", "changes_required", "needs_review"];
 
@@ -152,140 +155,205 @@ pub struct FlowIssuePresentationViolation {
   pub field: &'static str,
 }
 
+// The Console consumes these same rules through the OpenAPI authoring schema.
+#[derive(Serialize)]
+struct BuiltInContract {
+  slot: &'static str,
+  fields: Vec<BuiltInField>,
+}
+
+#[derive(Serialize)]
+struct BuiltInField {
+  name: &'static str,
+  required: bool,
+  // A missing shape requires a finite enumeration of Factory keys.
+  shape: Option<FlowValueSchema>,
+  #[serde(skip)]
+  path: &'static str,
+}
+
+static BUILT_INS: LazyLock<BTreeMap<&'static str, BuiltInContract>> = LazyLock::new(|| {
+  macro_rules! field {
+    ($name:literal, $required:expr, $shape:expr) => {
+      BuiltInField {
+        name: $name,
+        required: $required,
+        shape: $shape,
+        path: concat!("schema/shape/fields/", $name),
+      }
+    };
+  }
+  let contract = |slot, mut fields: Vec<_>| {
+    fields.insert(0, field!("conclusion", true, Some(conclusion_shape())));
+    BuiltInContract { slot, fields }
+  };
+  let choices = |values: &[&str]| {
+    Some(FlowValueSchema::Enum {
+      values: values.iter().map(|value| serde_json::Value::from(*value)).collect(),
+    })
+  };
+  BTreeMap::from([
+    (
+      "triage_v1",
+      contract(
+        "triage",
+        vec![
+          field!("decision", true, choices(ISSUE_OUTCOME_TRIAGE_DECISIONS)),
+          field!("duplicate_coverage", false, choices(ISSUE_OUTCOME_DUPLICATE_COVERAGE)),
+          field!(
+            "priority",
+            false,
+            Some(FlowValueSchema::Integer {
+              minimum: 0,
+              maximum: i64::from(MAX_WORK_PRIORITY),
+            })
+          ),
+          field!("size", false, None),
+          field!("component", false, None),
+        ],
+      ),
+    ),
+    (
+      "specifications_v1",
+      contract(
+        "specifications",
+        vec![field!(
+          "documents",
+          true,
+          Some(FlowValueSchema::Array {
+            item: Box::new(FlowIssueReferenceKind::Document.reference_shape()),
+            min_items: 1,
+            max_items: MAX_ISSUE_OUTCOME_REFERENCES,
+          })
+        )],
+      ),
+    ),
+    (
+      "review_v1",
+      contract(
+        "review",
+        vec![
+          field!("verdict", true, choices(ISSUE_OUTCOME_REVIEW_VERDICTS)),
+          field!("review", true, Some(FlowIssueReferenceKind::Review.reference_shape())),
+        ],
+      ),
+    ),
+  ])
+});
+
+/// Read-only built-in Issue presentation rules for Flow authoring.
+pub fn flow_issue_builtin_contracts() -> impl Serialize {
+  &*BUILT_INS
+}
+
+fn conclusion_shape() -> FlowValueSchema {
+  FlowValueSchema::String {
+    min_bytes: 1,
+    max_bytes: MAX_ISSUE_OUTCOME_CONCLUSION_BYTES,
+  }
+}
+
+impl BuiltInField {
+  fn accepts_shape(&self, actual: &FlowValueSchema) -> bool {
+    match &self.shape {
+      Some(expected @ FlowValueSchema::Array { .. }) => {
+        matches!(actual, FlowValueSchema::Array { .. }) && expected.covers(actual)
+      }
+      Some(expected) => expected.covers(actual),
+      None => matches!(actual, FlowValueSchema::Enum { values } if values.iter().all(|value|
+        value.as_str().is_some_and(|key| FactoryKey::new(key).is_ok())
+      )),
+    }
+  }
+}
+
 impl FlowIssuePresentation {
+  fn built_in(&self) -> Option<&'static BuiltInContract> {
+    let kind = match self {
+      Self::TriageV1 { .. } => "triage_v1",
+      Self::SpecificationsV1 { .. } => "specifications_v1",
+      Self::ReviewV1 { .. } => "review_v1",
+      Self::CustomV1 { .. } => return None,
+    };
+    Some(&BUILT_INS[kind])
+  }
+
   /// Resolves the stable slot for an outcome on the exact producing step.
   #[must_use]
   pub fn slot(&self, flow: FlowDefinitionId, node: &FactoryKey, outcome: &FactoryKey) -> FlowIssueSlot {
-    let (slot, default) = match self {
-      Self::TriageV1 { slot } => (slot, "triage"),
-      Self::SpecificationsV1 { slot } => (slot, "specifications"),
-      Self::ReviewV1 { slot } => (slot, "review"),
-      Self::CustomV1 { slot: Some(slot), .. } => return FlowIssueSlot::Named(slot.clone()),
-      Self::CustomV1 { slot: None, .. } => {
-        return FlowIssueSlot::Custom {
-          flow,
-          node: node.clone(),
-          outcome: outcome.clone(),
-        };
-      }
+    let slot = match self {
+      Self::TriageV1 { slot }
+      | Self::SpecificationsV1 { slot }
+      | Self::ReviewV1 { slot }
+      | Self::CustomV1 { slot, .. } => slot,
     };
-    FlowIssueSlot::Named(
-      slot
-        .clone()
-        .unwrap_or_else(|| FactoryKey::new(default).expect("static Issue slot")),
-    )
+    if let Some(slot) = slot {
+      return FlowIssueSlot::Named(slot.clone());
+    }
+    if let Some(contract) = self.built_in() {
+      return FlowIssueSlot::Named(FactoryKey::new(contract.slot).expect("static Issue slot"));
+    }
+    FlowIssueSlot::Custom {
+      flow,
+      node: node.clone(),
+      outcome: outcome.clone(),
+    }
   }
 
   pub(super) fn validate(&self, shape: &FlowValueSchema) -> Result<(), &'static str> {
     let FlowValueSchema::Object { fields } = shape else {
       return Err("schema/shape");
     };
-    let field = |name: &str| {
-      fields
-        .iter()
-        .find(|(key, _)| key.as_str() == name)
-        .map(|(_, field)| field)
-    };
-    let required = |name: &str| {
-      field(name)
-        .filter(|field| field.is_required())
-        .map(|field| field.value())
-    };
-    let (conclusion, path) = match self {
-      Self::CustomV1 { conclusion_field, .. } => (conclusion_field.as_str(), "issue_presentation/conclusion_field"),
-      _ => ("conclusion", "schema/shape/fields/conclusion"),
-    };
-    check(
-      required(conclusion).is_some_and(|shape| {
-        FlowValueSchema::String {
-          min_bytes: 1,
-          max_bytes: MAX_ISSUE_OUTCOME_CONCLUSION_BYTES,
-        }
-        .covers(shape)
-      }),
-      path,
-    )?;
-
-    match self {
-      Self::TriageV1 { .. } => {
-        check(
-          required("decision").is_some_and(|shape| finite_keys(shape, Some(ISSUE_OUTCOME_TRIAGE_DECISIONS))),
-          "schema/shape/fields/decision",
-        )?;
-        check(
-          field("duplicate_coverage")
-            .is_none_or(|field| finite_keys(field.value(), Some(ISSUE_OUTCOME_DUPLICATE_COVERAGE))),
-          "schema/shape/fields/duplicate_coverage",
-        )?;
-        check(
-          field("priority").is_none_or(|field| {
-            FlowValueSchema::Integer {
-              minimum: 0,
-              maximum: i64::from(MAX_WORK_PRIORITY),
-            }
-            .covers(field.value())
+    if let Self::CustomV1 {
+      title,
+      conclusion_field,
+      references,
+      ..
+    } = self
+    {
+      check(
+        fields
+          .get(conclusion_field)
+          .is_some_and(|field| field.is_required() && conclusion_shape().covers(field.value())),
+        "issue_presentation/conclusion_field",
+      )?;
+      check(
+        title.as_str().len() <= MAX_ISSUE_OUTCOME_TITLE_BYTES,
+        "issue_presentation/title",
+      )?;
+      let mut selected = BTreeSet::from([conclusion_field]);
+      return check(
+        references.len() <= usize::from(MAX_ISSUE_OUTCOME_REFERENCES)
+          && references.iter().all(|binding| {
+            selected.insert(&binding.field)
+              && fields
+                .get(&binding.field)
+                .is_some_and(|field| binding.kind.reference_shape().covers(field.value()))
           }),
-          "schema/shape/fields/priority",
-        )?;
-        for (name, path) in [
-          ("size", "schema/shape/fields/size"),
-          ("component", "schema/shape/fields/component"),
-        ] {
-          check(field(name).is_none_or(|field| finite_keys(field.value(), None)), path)?;
-        }
-        Ok(())
-      }
-      Self::SpecificationsV1 { .. } => check(
-        matches!(required("documents"),
-        Some(FlowValueSchema::Array { item, min_items, max_items })
-          if *min_items > 0 && *max_items <= MAX_ISSUE_OUTCOME_REFERENCES
-            && FlowIssueReferenceKind::Document.accepts_shape(item)),
-        "schema/shape/fields/documents",
-      ),
-      Self::ReviewV1 { .. } => {
-        check(
-          required("verdict").is_some_and(|shape| finite_keys(shape, Some(ISSUE_OUTCOME_REVIEW_VERDICTS))),
-          "schema/shape/fields/verdict",
-        )?;
-        check(
-          required("review").is_some_and(|shape| FlowIssueReferenceKind::Review.accepts_shape(shape)),
-          "schema/shape/fields/review",
-        )
-      }
-      Self::CustomV1 {
-        title,
-        conclusion_field,
-        references,
-        ..
-      } => {
-        check(
-          title.as_str().len() <= MAX_ISSUE_OUTCOME_TITLE_BYTES,
-          "issue_presentation/title",
-        )?;
-        let mut selected = BTreeSet::from([conclusion_field]);
-        check(
-          references.len() <= usize::from(MAX_ISSUE_OUTCOME_REFERENCES)
-            && references.iter().all(|binding| {
-              selected.insert(&binding.field)
-                && fields
-                  .get(&binding.field)
-                  .is_some_and(|field| binding.kind.accepts_shape(field.value()))
-            }),
-          "issue_presentation/references",
-        )
-      }
+        "issue_presentation/references",
+      );
     }
+
+    for rule in &self.built_in().expect("non-custom Issue presentation").fields {
+      let field = fields.iter().find(|(key, _)| key.as_str() == rule.name);
+      let compatible = match field {
+        Some((_, field)) => (!rule.required || field.is_required()) && rule.accepts_shape(field.value()),
+        None => !rule.required,
+      };
+      check(compatible, rule.path)?;
+    }
+    Ok(())
   }
 }
 
 impl FlowIssueReferenceKind {
-  fn accepts_shape(self, shape: &FlowValueSchema) -> bool {
+  fn reference_shape(self) -> FlowValueSchema {
     let exact_text = |length| FlowValueSchema::String {
       min_bytes: length,
       max_bytes: length,
     };
     match self {
-      Self::Review => exact_text(64).covers(shape),
+      Self::Review => exact_text(64),
       Self::Document | Self::Artifact => {
         use crate::FlowFieldSchema;
         let fields = [
@@ -307,18 +375,10 @@ impl FlowIssueReferenceKind {
           )
         })
         .collect();
-        FlowValueSchema::Object { fields }.covers(shape)
+        FlowValueSchema::Object { fields }
       }
     }
   }
-}
-
-fn finite_keys(shape: &FlowValueSchema, allowed: Option<&[&str]>) -> bool {
-  matches!(shape, FlowValueSchema::Enum { values } if values.iter().all(|value| {
-    value.as_str().is_some_and(|key| {
-      allowed.map_or_else(|| FactoryKey::new(key).is_ok(), |choices| choices.contains(&key))
-    })
-  }))
 }
 
 fn check(compatible: bool, field: &'static str) -> Result<(), &'static str> {

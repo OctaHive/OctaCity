@@ -17,6 +17,7 @@ import {
 import { QueryFailureNotice } from '../../shared/QueryStateNotice';
 import { validateFlowDraft, validateConfigurationDraft, type DraftIssue } from './validateDraft';
 import type { FactoryApi } from './api';
+import { OutcomeIssuePresentationReview } from './OutcomeIssuePresentation';
 
 type Subject =
   | { kind: 'flow'; request: components['schemas']['CreateFactoryFlowDefinitionRequest'] }
@@ -88,7 +89,7 @@ export function FactoryPublication({
   const [proof, setProof] = useState<{ signature: string; preview: Preview } | null>(null);
   const [review, setReview] = useState<{
     subject: Subject;
-    actionSummary: string[];
+    flow: components['schemas']['FactoryFlowConfiguration'];
     returnFocus: HTMLElement;
   } | null>(null);
   const latestSignatureRef = useRef('');
@@ -229,7 +230,7 @@ export function FactoryPublication({
               : proof.preview.value.configuration.flow;
           setReview({
             subject: structuredClone(subject),
-            actionSummary: actionEffectsSummary(flow.closure.definitions, t),
+            flow,
             returnFocus: event.currentTarget,
           });
         }}
@@ -249,7 +250,11 @@ export function FactoryPublication({
               ? 'factory.publishFlowTitle'
               : 'factory.publishConfigurationTitle',
           )}
-          consequence={[t('factory.publishConsequence'), ...review.actionSummary].join('\n')}
+          consequence={[
+            t('factory.publishConsequence'),
+            ...actionEffectsSummary(review.flow.closure.definitions, t),
+          ].join('\n')}
+          renderReview={<OutcomeIssuePresentationReview flow={review.flow} />}
           confirmLabel={t('factory.confirmPublish')}
           request={review.subject}
           ready={ready}

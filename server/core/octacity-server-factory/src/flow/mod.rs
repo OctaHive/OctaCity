@@ -73,7 +73,7 @@ pub use issue_presentation::{
   FlowIssueOutcomeLocation, FlowIssuePresentation, FlowIssuePresentationViolation, FlowIssueReferenceBinding,
   FlowIssueReferenceKind, FlowIssueSlot, FlowIssueSlotConflict, ISSUE_OUTCOME_DUPLICATE_COVERAGE,
   ISSUE_OUTCOME_REVIEW_VERDICTS, ISSUE_OUTCOME_TRIAGE_DECISIONS, MAX_ISSUE_OUTCOME_CONCLUSION_BYTES,
-  MAX_ISSUE_OUTCOME_REFERENCES, MAX_ISSUE_OUTCOME_TITLE_BYTES,
+  MAX_ISSUE_OUTCOME_REFERENCES, MAX_ISSUE_OUTCOME_TITLE_BYTES, flow_issue_builtin_contracts,
 };
 mod definition;
 mod history;

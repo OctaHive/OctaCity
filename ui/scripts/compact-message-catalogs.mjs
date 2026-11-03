@@ -2,8 +2,8 @@ import { readFile } from 'node:fs/promises';
 import path from 'node:path';
 import ts from 'typescript';
 
-// Keep complete, type-checked source catalogs. Production stores translated
-// values in the English key order instead of shipping every long key twice.
+// Keep complete, type-checked source catalogs. Production stores English key prefixes
+// once per run and translated values in the reconstructed English key order.
 function catalog(code, name) {
   const source = ts.createSourceFile(`${name}.ts`, code, ts.ScriptTarget.Latest, true);
   const declaration = source.statements
@@ -35,7 +35,21 @@ export function compactMessageCatalogs() {
     apply: 'build',
     enforce: 'pre',
     async transform(code, id) {
-      if (!id.replaceAll('\\', '/').endsWith('/app/presentation/messages.ru.ts')) return;
+      const file = id.replaceAll('\\', '/');
+      if (file.endsWith('/app/presentation/messages.en.ts')) {
+        const groups = [];
+        for (const [key, value] of catalog(code, 'enMessages')) {
+          const boundary = key.indexOf('.') + 1;
+          const prefix = key.slice(0, boundary);
+          if (groups.at(-1)?.[0] !== prefix) groups.push([prefix, []]);
+          groups.at(-1)[1].push([key.slice(boundary), value]);
+        }
+        return {
+          code: `const groups=${JSON.stringify(groups)};export const enMessages=Object.fromEntries(groups.flatMap(([prefix,items])=>items.map(([key,value])=>[prefix+key,value])));`,
+          map: null,
+        };
+      }
+      if (!file.endsWith('/app/presentation/messages.ru.ts')) return;
       const englishPath = path.join(path.dirname(id), 'messages.en.ts');
       this.addWatchFile(englishPath);
       const english = catalog(await readFile(englishPath, 'utf8'), 'enMessages');

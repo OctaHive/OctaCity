@@ -228,7 +228,7 @@ fn openapi_describes_bounded_read_only_issue_outcomes() {
   );
   assert_eq!(
     triage["duplicate_coverage"]["enum"],
-    json!(["complete", "partial", "unknown"])
+    json!(["complete", "partial", "unknown", "not_checked"])
   );
   let review = &schemas["IssueOutcomePresentation"]["oneOf"][2]["properties"];
   assert_eq!(

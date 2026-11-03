@@ -516,7 +516,12 @@
                 "value": "review"
               },
               "conclusion": { "mapping": "pointer", "path": "/conclusion/assessment/reason" },
-              "duplicate_coverage": { "mapping": "constant", "value": "unknown" },
+              "duplicate_coverage": {
+                "mapping": "if_present",
+                "path": "/conclusion/verification/observations/0",
+                "then": { "mapping": "constant", "value": "unknown" },
+                "otherwise": { "mapping": "constant", "value": "not_checked" }
+              },
               "evidence": {
                 "mapping": "pointer",
                 "path": "/conclusion/evidence"

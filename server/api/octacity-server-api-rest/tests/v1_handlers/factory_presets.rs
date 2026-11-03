@@ -187,7 +187,7 @@ async fn presets_discovery_exposes_bounded_release_identity_without_factory_exec
   assert_eq!(page["items"].as_array().unwrap().len(), 1);
   let preset = &page["items"][0];
   assert_eq!(preset["reference"]["identity"], "triage");
-  assert_eq!(preset["reference"]["version"], "v2");
+  assert_eq!(preset["reference"]["version"], "v3");
   assert_eq!(preset["reference"]["digest"].as_str().unwrap().len(), 64);
   let aliases = preset["profile_aliases"].as_array().unwrap();
   assert!(aliases.contains(&serde_json::json!("eligibility")));

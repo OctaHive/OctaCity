@@ -196,3 +196,120 @@ it('cancels a pending result check and ignores its late response', async () => {
   expect(onChange).not.toHaveBeenCalled();
   expect(normalizeSchema.mock.calls[0]?.[1]?.aborted).toBe(true);
 });
+
+it('adds a standard Issue card in one choice and lets a custom card name its conclusion', async () => {
+  const flow = configurationFixture().configuration.flow;
+  const schema: (typeof flow.data_schemas)[number] = {
+    reference: { identity: 'assessment', version: '1', digest: 'a'.repeat(64) },
+    shape: {
+      type: 'object',
+      fields: {
+        conclusion: { required: true, value: { type: 'string', min_bytes: 1, max_bytes: 200 } },
+        decision: { required: true, value: { type: 'enum', values: ['eligible'] } },
+        summary: { required: true, value: { type: 'string', min_bytes: 1, max_bytes: 200 } },
+        private_notes: { required: false, value: { type: 'string', min_bytes: 1, max_bytes: 200 } },
+      },
+    },
+  };
+  const original: (typeof flow.closure.definitions)[number]['nodes'][number] = {
+    ...flow.closure.definitions[0]!.nodes[0]!,
+    outcomes: [{ key: 'assessment', kind: 'success' as const, schema: schema.reference }],
+  };
+  const onChange = vi.fn();
+  const normalizeSchema = vi.fn(async () => schema);
+  function Harness() {
+    const [node, setNode] = useState(original);
+    const [draft, setDraft] = useState<ResultDraft>();
+    return (
+      <StepResults
+        node={node}
+        schemas={[schema]}
+        draft={draft}
+        onDraftChange={setDraft}
+        services={{
+          projectId: 'project',
+          api: { ...factoryApi, normalizeSchema },
+        }}
+        onChange={(patch) => {
+          onChange(patch);
+          setNode((current) => ({ ...current, ...patch }));
+        }}
+      />
+    );
+  }
+  const user = userEvent.setup();
+  render(<Harness />);
+  const edit = () => user.click(screen.getByRole('button', { name: 'Edit result' }));
+  const choose = async (name: string, option: string) => {
+    await user.click(screen.getByRole('combobox', { name }));
+    await user.click(screen.getByRole('option', { name: option }));
+  };
+  const save = () => user.click(screen.getByRole('button', { name: 'Save result' }));
+
+  await edit();
+  await choose('Show on Issue', 'Triage');
+  expect(screen.queryByRole('textbox', { name: 'Card title' })).toBeNull();
+  await save();
+  expect(onChange).toHaveBeenLastCalledWith({
+    outcomes: [{ ...original.outcomes[0], issue_presentation: { kind: 'triage_v1' } }],
+  });
+
+  await edit();
+  expect(screen.getByRole('combobox', { name: 'Show on Issue' }).textContent).toContain('Triage');
+  await choose('Show on Issue', 'Custom');
+  await user.type(screen.getByRole('textbox', { name: 'Card title' }), 'Project assessment');
+  expect(screen.getByRole('button', { name: 'Save result' })).toHaveProperty('disabled', true);
+  await user.click(screen.getByRole('combobox', { name: 'Conclusion field' }));
+  expect(screen.queryByRole('option', { name: 'private_notes' })).toBeNull();
+  await user.click(screen.getByRole('option', { name: 'summary' }));
+  await save();
+  expect(onChange).toHaveBeenLastCalledWith({
+    outcomes: [
+      {
+        ...original.outcomes[0],
+        issue_presentation: {
+          kind: 'custom_v1',
+          title: 'Project assessment',
+          conclusion_field: 'summary',
+        },
+      },
+    ],
+  });
+
+  await edit();
+  await choose('Show on Issue', 'Off');
+  await save();
+  expect(onChange).toHaveBeenLastCalledWith({ outcomes: original.outcomes });
+  expect(normalizeSchema).not.toHaveBeenCalled();
+});
+
+it('offers only compatible built-in cards even when required field names exist', async () => {
+  const shape = {
+    type: 'object' as const,
+    fields: {
+      conclusion: {
+        required: true,
+        value: { type: 'string' as const, min_bytes: 1, max_bytes: 200 },
+      },
+      decision: { required: true, value: { type: 'boolean' as const } },
+      documents: { required: true, value: { type: 'boolean' as const } },
+      verdict: { required: true, value: { type: 'enum' as const, values: ['approved'] } },
+      review: { required: true, value: { type: 'string' as const, min_bytes: 64, max_bytes: 64 } },
+    },
+  };
+  const node = configurationFixture().configuration.flow.closure.definitions[0]!.nodes[0]!;
+  render(
+    <StepResults
+      node={node}
+      schemas={[]}
+      onChange={vi.fn()}
+      onDraftChange={vi.fn()}
+      draft={{ index: null, name: 'assessment', kind: 'success', shape }}
+      services={{ api: factoryApi, projectId: 'project' }}
+    />,
+  );
+  await userEvent.click(screen.getByRole('combobox', { name: 'Show on Issue' }));
+  expect(screen.queryByRole('option', { name: 'Triage' })).toBeNull();
+  expect(screen.queryByRole('option', { name: 'Specifications' })).toBeNull();
+  expect(screen.getByRole('option', { name: 'Code review' })).toBeTruthy();
+});

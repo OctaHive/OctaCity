@@ -4,20 +4,22 @@ import { queryKeys } from '../../app/query';
 import { usePresentation } from '../../app/presentation/PresentationProvider';
 import { QueryLoadingNotice, QueryFailureNotice } from '../../shared/QueryStateNotice';
 import type { Issue } from './api';
-import type { IssueResultPanelsApi, IssueArtifact } from './resultPanelsApi';
+import type { IssueResultPanelsApi } from './resultPanelsApi';
 import styles from './Issues.module.css';
+
+type ArtifactTarget = { id: string; name: string | undefined };
 
 /** Bytes live only in an explicitly opened expansion and are released on close/leave. */
 export function IssueArtifactContent({
   api,
   issue,
   work,
-  item,
+  artifact,
 }: {
   api: IssueResultPanelsApi;
   issue: Issue;
   work: string;
-  item: IssueArtifact;
+  artifact: ArtifactTarget;
 }) {
   const { t } = usePresentation();
   const [preview, setPreview] = useState(false);
@@ -31,10 +33,10 @@ export function IssueArtifactContent({
         {t(download ? 'issueResults.closeDownload' : 'artifacts.download')}
       </button>
       {preview ? (
-        <Expansion api={api} issue={issue} work={work} item={item} mode="preview" />
+        <Expansion api={api} issue={issue} work={work} artifact={artifact} mode="preview" />
       ) : null}
       {download ? (
-        <Expansion api={api} issue={issue} work={work} item={item} mode="download" />
+        <Expansion api={api} issue={issue} work={work} artifact={artifact} mode="download" />
       ) : null}
     </>
   );
@@ -43,38 +45,25 @@ function Expansion({
   api,
   issue,
   work,
-  item,
+  artifact,
   mode,
 }: {
   api: IssueResultPanelsApi;
   issue: Issue;
   work: string;
-  item: IssueArtifact;
+  artifact: ArtifactTarget;
   mode: 'preview' | 'download';
 }) {
   const { t } = usePresentation();
   const query = useQuery({
-    queryKey: queryKeys.issueArtifactContent(
-      issue.project_id,
-      issue.id,
-      work,
-      item.artifact.artifact_id,
-      mode,
-    ),
+    queryKey: queryKeys.issueArtifactContent(issue.project_id, issue.id, work, artifact.id, mode),
     gcTime: 0,
     staleTime: Infinity,
     retry: false,
     refetchOnWindowFocus: false,
     refetchOnReconnect: false,
     queryFn: async ({ signal }) => {
-      const blob = await api.content(
-        issue.project_id,
-        issue.id,
-        work,
-        item.artifact.artifact_id,
-        mode,
-        signal,
-      );
+      const blob = await api.content(issue.project_id, issue.id, work, artifact.id, mode, signal);
       if (mode === 'download') return { blob, text: null };
       // Only the server-normalized preview representations can enter the DOM.
       const mediaType = blob.type.split(';', 1)[0]?.trim();
@@ -96,17 +85,17 @@ function Expansion({
   ) : query.data.text !== null ? (
     <pre className={styles.prose}>{query.data.text}</pre>
   ) : query.data.blob ? (
-    <LocalBlob blob={query.data.blob} item={item} mode={mode} />
+    <LocalBlob blob={query.data.blob} artifact={artifact} mode={mode} />
   ) : null;
 }
 /** Object URLs are local to a mounted expansion; no provider URL or HTML renderer is used. */
 function LocalBlob({
   blob,
-  item,
+  artifact,
   mode,
 }: {
   blob: Blob;
-  item: IssueArtifact;
+  artifact: ArtifactTarget;
   mode: 'preview' | 'download';
 }) {
   const { t } = usePresentation();
@@ -127,10 +116,10 @@ function LocalBlob({
     <img
       ref={attach}
       className={styles.artifactPreview}
-      alt={item.metadata?.name ?? t('issueResults.preview')}
+      alt={artifact.name ?? t('issueResults.preview')}
     />
   ) : (
-    <a ref={attach} download={item.metadata?.name ?? item.artifact.artifact_id}>
+    <a ref={attach} download={artifact.name ?? artifact.id}>
       {t('issueResults.save')}
     </a>
   );

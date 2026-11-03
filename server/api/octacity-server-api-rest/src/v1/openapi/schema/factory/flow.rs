@@ -114,6 +114,7 @@ pub(super) fn insert(schemas: &mut Map<String, Value>) {
   schemas.insert(
     "FactoryFlowIssuePresentation".to_owned(),
     json!({
+      "x-built-in-contracts": octacity_server_application::flow_issue_builtin_contracts(),
       "description":"Optional Issue display binding for the accepted outcome. It grants no execution or mutation authority.",
       "oneOf":[
         tagged("kind", "triage_v1", [("slot", key())], &[]),

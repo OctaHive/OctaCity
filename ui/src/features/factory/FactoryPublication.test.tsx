@@ -892,3 +892,56 @@ it.each([
     expect(document.activeElement).toBe(input);
   },
 );
+
+it('reviews the normalized Issue card slots and only the fields that will be shown', async () => {
+  const { config, request } = setup();
+  const schema = config.flow.data_schemas[0]!;
+  schema.shape = {
+    type: 'object',
+    fields: {
+      conclusion: { required: true, value: { type: 'string', min_bytes: 1, max_bytes: 200 } },
+      decision: { required: true, value: { type: 'enum', values: ['eligible'] } },
+      priority: { required: false, value: { type: 'integer', minimum: 0, maximum: 4 } },
+      private_notes: { required: true, value: { type: 'string', min_bytes: 1, max_bytes: 200 } },
+    },
+  };
+  const root = config.flow.closure.definitions[0]!;
+  root.nodes[0]!.outcomes[0] = {
+    ...root.nodes[0]!.outcomes[0]!,
+    schema: schema.reference,
+    issue_presentation: { kind: 'triage_v1' },
+  };
+  root.nodes[0]!.outcomes[1] = {
+    ...root.nodes[0]!.outcomes[1]!,
+    schema: schema.reference,
+    issue_presentation: {
+      kind: 'custom_v1',
+      title: 'Project assessment',
+      conclusion_field: 'conclusion',
+    },
+  };
+  const api = { ...factoryApi, validateFlow: vi.fn(async () => config.flow) };
+  render(
+    <QueryClientProvider client={createConsoleQueryClient()}>
+      <FactoryPublication api={api} subject={{ kind: 'flow', request }} />
+    </QueryClientProvider>,
+  );
+  await userEvent.click(screen.getByRole('button', { name: 'Validate draft' }));
+  await userEvent.click(screen.getByRole('button', { name: 'Review publication' }));
+  const dialog = within(await screen.findByRole('dialog'));
+  const triage = within(dialog.getByRole('article', { name: 'Triage' }));
+  expect(triage.getByText('Card slot: triage')).toBeTruthy();
+  expect(triage.getByText('Conclusion')).toBeTruthy();
+  expect(triage.getByText('Decision')).toBeTruthy();
+  expect(triage.getByText('Recommended priority')).toBeTruthy();
+  expect(triage.queryByText('Size')).toBeNull();
+  const custom = within(dialog.getByRole('article', { name: 'Project assessment' }));
+  const outcome = root.nodes[0]!.outcomes[1]!;
+  expect(
+    custom.getByText(
+      `Automatic slot · Flow ${root.reference.id} · Step ${root.nodes[0]!.key} · Outcome ${outcome.key}`,
+    ),
+  ).toBeTruthy();
+  expect(custom.getByText('conclusion', { exact: true })).toBeTruthy();
+  expect(dialog.queryByText('private_notes', { exact: false })).toBeNull();
+});

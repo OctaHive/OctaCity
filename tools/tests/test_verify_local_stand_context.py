@@ -326,6 +326,7 @@ assert.deepEqual(issueConstraints({
   components: {schemas: {
     IssueCommentBody: {type: 'string', maxLength: 31, 'x-max-utf8-bytes': 7},
     IssuePlanning: {properties: {labels: {maxItems: 2}}},
+    IssueOutcomeCard: {properties: {conclusion: {'x-max-utf8-bytes': 96}}},
     IssueContent: {properties: {
       title: {'x-max-utf8-bytes': 64},
       description: {'x-max-utf8-bytes': 1024},
@@ -338,7 +339,7 @@ assert.deepEqual(issueConstraints({
   }},
 }), {
   commentMaximumBytes: 7, labelsMaximumCount: 2, titleMaximumBytes: 64, descriptionMaximumBytes: 1024, acceptanceMaximumBytes: 512,
-  priorityMinimum: 0, priorityMaximum: 9, defaultPageSize: 3, reasonMaximumBytes: 80,
+  priorityMinimum: 0, priorityMaximum: 9, defaultPageSize: 3, outcomeConclusionMaximumBytes: 96, reasonMaximumBytes: 80,
 });
 assert.deepEqual(issueWorkflowConstraints({components: {schemas: {
   IssueWorkflowDefinition: {properties: {

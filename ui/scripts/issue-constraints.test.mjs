@@ -13,6 +13,9 @@ function contract() {
     components: {
       schemas: {
         IssueCommentBody: { type: 'string', maxLength: 31, 'x-max-utf8-bytes': 7 },
+        IssueOutcomeCard: {
+          properties: { conclusion: { maxLength: 92, 'x-max-utf8-bytes': 73 } },
+        },
         IssuePlanning: { properties: { labels: { maxItems: 3 } } },
         IssueContent: {
           properties: {
@@ -34,7 +37,7 @@ function contract() {
   };
 }
 
-test('derives reason UTF-8 bytes independently of its character bound', () => {
+test('derives reason and outcome conclusion limits in UTF-8 bytes', () => {
   assert.deepEqual(issueConstraints(contract()), {
     commentMaximumBytes: 7,
     labelsMaximumCount: 3,
@@ -45,6 +48,7 @@ test('derives reason UTF-8 bytes independently of its character bound', () => {
     priorityMaximum: 9,
     defaultPageSize: 3,
     reasonMaximumBytes: 7,
+    outcomeConclusionMaximumBytes: 73,
   });
 });
 

@@ -12,8 +12,8 @@
 
 ## 3. Present and configure the cards
 
-- [ ] 3.1 Add **Show on Issue** to the outcome editor and publication review. Verify that a standard result needs one display choice and that a custom result supports its title and brief conclusion.
-- [ ] 3.2 Add the **Outcomes** section to the Issue Overview. In browser tests verify the triage, specification, review and custom card presentations, meaningful links, unavailable states, English and Russian labels, and keyboard operation at narrow widths.
+- [x] 3.1 Add **Show on Issue** to the outcome editor and publication review. Verify that a standard result needs one display choice and that a custom result supports its title and brief conclusion.
+- [x] 3.2 Add the **Outcomes** section to the Issue Overview. In browser tests verify the triage, specification, review and custom card presentations, meaningful links, unavailable states, English and Russian labels, and keyboard operation at narrow widths.
 
 ## 4. Apply local triage classification when enabled
 

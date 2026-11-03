@@ -9,32 +9,28 @@ import {
   QueryEmptyNotice,
 } from '../../shared/QueryStateNotice';
 import type { Issue } from './api';
-import type { IssueCodeReview, IssueCodeReviewsApi } from './codeReviewApi';
+import type { IssueCodeReviewsApi } from './codeReviewApi';
 import { ReviewObservation } from './IssueCodeReviewObservation';
 import styles from './Issues.module.css';
 
 /** Expansion reads one authorized original-association page, never a fresh provider observation. */
 export function IssueCodeReviewHistory({
   issue,
-  review,
+  reviewId,
+  currentHead,
   api,
 }: {
   issue: Issue;
-  review: IssueCodeReview;
+  reviewId: string;
+  currentHead?: string | null | undefined;
   api: IssueCodeReviewsApi;
 }) {
   const { t } = usePresentation();
   const [after, setAfter] = useState<string | null>(null);
   const query = useQuery({
-    queryKey: queryKeys.issueCodeReviewHistory(
-      issue.project_id,
-      issue.id,
-      review.association.id,
-      after,
-    ),
+    queryKey: queryKeys.issueCodeReviewHistory(issue.project_id, issue.id, reviewId, after),
     gcTime: 0,
-    queryFn: ({ signal }) =>
-      api.observations(issue.project_id, issue.id, review.association.id, after, signal),
+    queryFn: ({ signal }) => api.observations(issue.project_id, issue.id, reviewId, after, signal),
   });
   return (
     <section aria-label={t('issueReviews.retainedHistory')}>
@@ -66,8 +62,8 @@ export function IssueCodeReviewHistory({
                     })}
                   </p>
                   {record.observation.head &&
-                  review.observation?.head &&
-                  record.observation.head !== review.observation.head ? (
+                  currentHead &&
+                  record.observation.head !== currentHead ? (
                     <p>{t('issueReviews.historicalObservation')}</p>
                   ) : null}
                   <ReviewObservation observation={record.observation} />
