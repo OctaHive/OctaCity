@@ -1911,6 +1911,7 @@ export const enMessages = {
     'Factory authoring is unavailable on this server. Ordinary CI/CD remains available.',
 
   'factory.invalidContract': 'Invalid contract',
+  'factory.ambiguousIssueSlot': 'More than one outcome can publish to Issue slot {name}',
   'factory.unavailableReference': 'Unavailable reference',
   'factory.unboundedCycle': 'Cycle requires a finite repeat bound and exhaustion terminal',
   'factory.unreachableNode': 'Node is unreachable from the entry',

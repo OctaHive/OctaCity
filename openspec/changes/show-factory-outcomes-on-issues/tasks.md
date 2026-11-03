@@ -1,8 +1,8 @@
 ## 1. Declare summaries in Flow outcomes
 
-- [ ] 1.1 Add the optional outcome presentation contract and its publication validation. Through Flow publication tests verify legacy round trips, compatible built-in and custom bindings, exclusive producers for one slot, and rejection of incompatible or ambiguous bindings.
-- [ ] 1.2 Bind accepted triage results to the presentation contract, including a bounded conclusion and available assessment fields. Verify eligible and needs-review branches both produce correct summaries and that the original accepted records retain their provenance.
-- [ ] 1.3 Bind specification and review outcomes through the same contract using retained resource references. Verify accepted document and review references through ordinary published Flow fixtures, including one custom outcome with a short conclusion.
+- [x] 1.1 Add the optional outcome presentation contract and its publication validation. Through Flow publication tests verify legacy round trips, compatible built-in and custom bindings, exclusive producers for one slot, and rejection of incompatible or ambiguous bindings.
+- [x] 1.2 Bind accepted triage results to the presentation contract, including a bounded conclusion and available assessment fields. Verify eligible and needs-review branches both produce correct summaries and that the original accepted records retain their provenance.
+- [x] 1.3 Bind specification and review outcomes through the same contract using retained resource references. Verify accepted document and review references through ordinary published Flow fixtures, including one custom outcome with a short conclusion.
 
 ## 2. Read current summaries for an Issue
 

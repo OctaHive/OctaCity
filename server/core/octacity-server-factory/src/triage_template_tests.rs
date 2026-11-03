@@ -8,6 +8,36 @@ fn triage_template() -> Result<FlowDefinitionTemplate, FactoryError> {
 }
 
 #[test]
+fn released_triage_v1_manifests_preserve_their_original_result_contracts() {
+  for manifest in ["v1.json", "with-reproduction-v1.json"] {
+    let template = crate::flow_test_support::supplied_triage_template_variant(manifest).unwrap();
+    let schemas = template.data_schemas().unwrap();
+    for name in ["eligibility_accepted", "classification_observations", "summary"] {
+      assert_eq!(
+        schemas[&key(name)].reference().version().as_str(),
+        "v1",
+        "{manifest}: {name}"
+      );
+    }
+    assert!(
+      template
+        .nodes
+        .iter()
+        .flat_map(|node| &node.outcomes)
+        .all(|outcome| outcome.issue_presentation.is_none())
+    );
+  }
+  let current = triage_template().unwrap();
+  assert!(
+    current
+      .nodes
+      .iter()
+      .flat_map(|node| &node.outcomes)
+      .any(|outcome| outcome.issue_presentation.is_some())
+  );
+}
+
+#[test]
 fn an_unpriced_observation_cannot_be_used_as_a_declared_selection_reservation() {
   let project = octacity_server_domain::ProjectId::generate();
   let (mut template, _) = reviewed_template(project);
@@ -522,7 +552,7 @@ fn triage_normal_publication_and_admission_freeze_profiles_context_schemas_and_g
     .schemas
     .get_mut(&key("eligibility_observations"))
     .unwrap()
-    .version = key("v2");
+    .version = key("revised");
   let gate = template
     .nodes
     .iter_mut()

@@ -48,6 +48,32 @@ fn factory_public_result_contract_is_optional_and_keeps_the_exact_schema_referen
 }
 
 #[test]
+fn factory_outcome_presentation_is_an_optional_closed_authoring_contract() {
+  let document = octacity_server_api_rest::v1::openapi_document();
+  let schemas = &document["components"]["schemas"];
+  let outcome = &schemas["FactoryFlowOutcome"];
+  assert!(
+    !outcome["required"]
+      .as_array()
+      .unwrap()
+      .contains(&json!("issue_presentation"))
+  );
+  let binding = &outcome["properties"]["issue_presentation"];
+  assert_eq!(binding["$ref"], "#/components/schemas/FactoryFlowIssuePresentation");
+  let variants = schemas["FactoryFlowIssuePresentation"]["oneOf"].as_array().unwrap();
+  let kinds = variants
+    .iter()
+    .map(|variant| &variant["properties"]["kind"]["const"])
+    .collect::<Vec<_>>();
+  assert_eq!(kinds, vec!["triage_v1", "specifications_v1", "review_v1", "custom_v1"]);
+  assert!(variants.iter().all(|variant| variant["additionalProperties"] == false));
+  let custom = &variants[3];
+  assert_eq!(custom["required"], json!(["kind", "title", "conclusion_field"]));
+  assert_eq!(custom["properties"]["title"]["x-max-utf8-bytes"], 128);
+  assert_eq!(custom["properties"]["references"]["maxItems"], 8);
+}
+
+#[test]
 fn signal_diagnostics_publish_bounded_typed_answers_without_provider_input() {
   let document = octacity_server_api_rest::v1::openapi_document();
   let signal = document["components"]["schemas"]["FactoryDomainFacts"]["oneOf"]

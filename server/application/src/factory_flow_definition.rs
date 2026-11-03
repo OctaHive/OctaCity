@@ -299,7 +299,7 @@ impl<S: FactoryFlowDefinitionStore + octacity_server_store::FactoryConfiguration
       draft.pools,
     )
     .map_err(|error| {
-      crate::FactoryValidationDiagnostics::constraint_ceiling_error(&error).unwrap_or_else(ApplicationError::invalid)
+      crate::FactoryValidationDiagnostics::flow_validation_error(&error).unwrap_or_else(ApplicationError::invalid)
     })?;
     crate::factory_configuration_choices::validate_flow_choices(&flow, &choices, "")?;
     crate::factory_code_sources::validate_sources(

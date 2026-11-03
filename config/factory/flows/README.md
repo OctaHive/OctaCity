@@ -68,6 +68,44 @@ action can set any allowed status string; its connector translates that value
 to a label or native status. Notifications and other actions use the same port.
 No research outcome automatically invokes an external action.
 
+### Issue outcome presentation
+
+A declared outcome can include `issue_presentation` in a new Flow publication.
+Its versioned `kind` selects the following fields from the accepted outcome's
+schema.
+
+| Kind | Required fields | Optional fields |
+| --- | --- | --- |
+| `triage_v1` | `conclusion` and a finite `decision` | `duplicate_coverage`, `priority`, `size`, `component` |
+| `specifications_v1` | `conclusion` and one to eight retained Project `documents` | |
+| `review_v1` | `conclusion`, a finite `verdict` and a retained `review` association digest | |
+| `custom_v1` | The field named by `conclusion_field` | Fields named by typed `references` |
+
+A custom binding also supplies a `title` of up to 128 UTF-8 bytes. A conclusion
+is required and bounded to 1,024 UTF-8 bytes. Custom references select up to
+eight distinct fields. Each entry names a `field` and a `kind` of `document`,
+`artifact` or `review`. Document and Artifact links use the exact retained
+Artifact identity, digest and encoded size. Review links use the exact retained
+Issue review association digest.
+
+The built-in kinds default to their respective `triage`, `specifications` and
+`review` slots. A custom card defaults to its stable Flow, node and outcome.
+An explicit `slot` lets mutually exclusive outcomes supply one card. Publication
+checks the resolved schema and rejects routes that can produce distinct
+declarations for the same slot in one execution. A conflict identifies the slot
+and both declarations, including their exact Flow definitions. Shared-slot
+analysis counts expanded step entries, outcomes and repeat choices against the
+product graph safety limit, including across reused subflows. The binding is
+independent of `public_result` and grants only Issue presentation.
+
+[`issue-outcomes-flow.json`](issue-outcomes-flow.json) is an editable example
+with three alternative presentations. It reads only the accepted payload of
+its predecessor. The example producer emits a custom conclusion by default.
+To exercise the other outcomes, select an exact Project document or Issue
+review association from its owner and include that reference in the producer's
+configured result. The journal retains the producing attempt and its result
+digest. Access to each resource is evaluated separately when reading it.
+
 ## Extending the example
 
 1. Add a schema choice or reuse a compatible existing one.

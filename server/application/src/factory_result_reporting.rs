@@ -184,6 +184,7 @@ impl FactoryResultReportingDraft {
           kind: FlowOutcomeKind::Success,
           schema: outcome.schema.clone(),
           public_result: false,
+          issue_presentation: None,
         }],
         budget: self.execution.budget(),
         max_execution_retries: 0,

@@ -665,12 +665,13 @@ fn triage_eligibility_failed_malformed_and_cancelled_calls_cannot_authorize_reje
 fn triage_eligibility_committed_results_prepare_the_gate_and_only_the_declared_successor() {
   // The capture verifier is tested above; this owner fixture exercises retained
   // records, metadata-only provenance projections and actual interpreter progress.
-  for (decision, fit, uncertainty, duplicate) in [
-    ("duplicate", "fits", "clear", true),
-    ("out_of_scope", "out_of_scope", "clear", false),
-    ("needs_input", "fits", "needs_input", false),
-    ("review", "inconclusive", "clear", false),
-    ("eligible", "fits", "clear", false),
+  for (decision, fit, uncertainty, duplicate, verified_search) in [
+    ("duplicate", "fits", "clear", true, true),
+    ("out_of_scope", "out_of_scope", "clear", false, true),
+    ("needs_input", "fits", "needs_input", false, true),
+    ("review", "inconclusive", "clear", false, true),
+    ("review", "inconclusive", "clear", false, false),
+    ("eligible", "fits", "clear", false, true),
   ] {
     let f = fixture(r#"{"candidate":{"id":"ISSUE-42","version":3},"coverage":{"has_more":false}}"#);
     let capture = f.capture();
@@ -682,6 +683,9 @@ fn triage_eligibility_committed_results_prepare_the_gate_and_only_the_declared_s
     model["assessment"]["uncertainty"] = json!(uncertainty);
     if !duplicate {
       model["assessment"]["duplicate"] = json!(false);
+    }
+    if !verified_search {
+      model["claims"].as_array_mut().unwrap().truncate(1);
     }
     let value = bound.verify_conclusion(model).unwrap();
     let mut template = template();
@@ -880,16 +884,10 @@ fn triage_eligibility_committed_results_prepare_the_gate_and_only_the_declared_s
           1,
           "all three views retain one exact predecessor record"
         );
-        FlowGateProgram::from_node(node)
-          .unwrap()
-          .record(
-            &input,
-            &attempt,
-            &definition,
-            admitted.data_schema(node.outcomes()[0].schema()).unwrap(),
-            at(1014),
-          )
-          .unwrap()
+        let gate = FlowGateProgram::from_node(node).unwrap();
+        let selected = gate.select_at(input.payload(), at(1014)).unwrap();
+        let schema = admitted.data_schema(node.outcome(&selected).unwrap().schema()).unwrap();
+        gate.record(&input, &attempt, &definition, schema, at(1014)).unwrap()
       };
       completions.push(
         record
@@ -917,7 +915,34 @@ fn triage_eligibility_committed_results_prepare_the_gate_and_only_the_declared_s
     let progress = FlowInterpreter::new(&validated)
       .progress(admitted.root_run(), admitted.initial_cycle(), history)
       .unwrap();
-    let accepted = records.last().unwrap().payload().value();
+    let record = records.last().unwrap();
+    if decision == "review" {
+      assert_eq!(record.outcome().as_str(), "review");
+    }
+    let accepted = record.payload().value();
+    assert!(accepted.get("reason").is_none());
+    assert_eq!(accepted["conclusion"], assessment()["reason"]);
+    if decision == "eligible" {
+      assert!(accepted.get("duplicate_coverage").is_none());
+    } else {
+      assert_eq!(
+        accepted["duplicate_coverage"],
+        if verified_search { "complete" } else { "unknown" },
+        "search coverage for {decision}"
+      );
+    }
+    assert_eq!(
+      FlowNodeRecord::restore(
+        &serde_json::to_vec(record).unwrap(),
+        inputs.last().unwrap(),
+        attempts.last().unwrap(),
+        &definition,
+        admitted.data_schema(record.payload().schema()).unwrap(),
+        completions.last().unwrap(),
+      )
+      .unwrap(),
+      *record,
+    );
     assert_eq!(accepted["decision"], decision);
     assert_eq!(accepted["accepted"], decision == "eligible");
     assert!(accepted.get("claims").is_none());
@@ -993,6 +1018,11 @@ fn reviewed_eligibility_publishes_lookup_scope_but_analyst_receives_only_selecte
     verified["verification"]["observations"]
   );
   assert!(accepted.value().get("claims").is_none());
+  assert!(accepted.value().get("reason").is_none(), "handoff keeps one conclusion");
+  assert!(
+    accepted.value().get("duplicate_coverage").is_none(),
+    "handoff carries lookup evidence"
+  );
   let analyst = template
     .nodes
     .iter()
@@ -1004,7 +1034,7 @@ fn reviewed_eligibility_publishes_lookup_scope_but_analyst_receives_only_selecte
   let payload = selected
     .project_value(
       &json!({"eligibility":accepted.value()}),
-      &schemas[&key("eligibility_accepted")],
+      &schemas[&key("eligibility_handoff")],
     )
     .unwrap();
   assert_eq!(

@@ -37,7 +37,15 @@ type FactoryValidationIssue =
   components['schemas']['FactoryValidationDiagnostics']['errors'][number];
 export type ManagementValidationIssue = Pick<
   FactoryValidationIssue,
-  'field' | 'code' | 'ceiling' | 'resource' | 'requested' | 'maximum'
+  | 'field'
+  | 'code'
+  | 'ceiling'
+  | 'resource'
+  | 'requested'
+  | 'maximum'
+  | 'node'
+  | 'issue_slot'
+  | 'outcome'
 >;
 
 interface ManagementApiErrorOptions {
@@ -247,7 +255,8 @@ function publicValidationIssues(value: unknown): readonly ManagementValidationIs
         issue.code !== 'launch_policy_denied' &&
         issue.code !== 'permission_exceeds_ceiling' &&
         issue.code !== 'budget_exceeds_ceiling' &&
-        issue.code !== 'concurrency_exceeds_ceiling')
+        issue.code !== 'concurrency_exceeds_ceiling' &&
+        issue.code !== 'ambiguous_issue_presentation_slot')
     )
       return [];
     const ceiling =
@@ -273,6 +282,24 @@ function publicValidationIssues(value: unknown): readonly ManagementValidationIs
       {
         field: issue.field,
         code: issue.code,
+        ...(issue.code === 'ambiguous_issue_presentation_slot' &&
+        'issue_slot' in issue &&
+        typeof issue.issue_slot === 'string' &&
+        /^[a-z0-9][a-z0-9_.-]{0,293}$/u.test(issue.issue_slot)
+          ? { issue_slot: issue.issue_slot }
+          : {}),
+        ...(issue.code === 'ambiguous_issue_presentation_slot' &&
+        'node' in issue &&
+        typeof issue.node === 'string' &&
+        /^[a-z0-9][a-z0-9_.-]{0,127}$/u.test(issue.node)
+          ? { node: issue.node }
+          : {}),
+        ...(issue.code === 'ambiguous_issue_presentation_slot' &&
+        'outcome' in issue &&
+        typeof issue.outcome === 'string' &&
+        /^[a-z0-9][a-z0-9_.-]{0,127}$/u.test(issue.outcome)
+          ? { outcome: issue.outcome }
+          : {}),
         ...(ceiling ? { ceiling } : {}),
         ...(resource ? { resource } : {}),
         ...('requested' in issue &&

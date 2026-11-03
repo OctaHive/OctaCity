@@ -1,0 +1,90 @@
+{
+  "schemas": {
+    "project_input": {
+      "identity": "factory.triage.project_input",
+      "version": "v1",
+      "shape": {
+        "type": "object",
+        "fields": {
+          "task": {
+            "required": true,
+            "value": {
+              "type": "reference",
+              "schema": "artifact_reference"
+            }
+          },
+          "completion": {
+            "required": true,
+            "value": {
+              "type": "reference",
+              "schema": "artifact_reference"
+            }
+          },
+          "work": {
+            "required": true,
+            "value": {
+              "type": "reference",
+              "schema": "work"
+            }
+          }
+        }
+      }
+    },
+    "analyst_input": {
+      "identity": "factory.triage.analyst_input",
+      "version": "v2",
+      "shape": {
+        "type": "object",
+        "fields": {
+          "task": {
+            "required": true,
+            "value": {
+              "type": "reference",
+              "schema": "artifact_reference"
+            }
+          },
+          "completion": {
+            "required": true,
+            "value": {
+              "type": "reference",
+              "schema": "artifact_reference"
+            }
+          },
+          "work": {
+            "required": true,
+            "value": {
+              "type": "reference",
+              "schema": "work"
+            }
+          },
+          "eligibility": {
+            "required": true,
+            "value": {
+              "type": "reference",
+              "schema": "eligibility_handoff"
+            }
+          },
+          "command_policy": {
+            "required": true,
+            "value": {
+              "type": "array",
+              "min_items": 0,
+              "max_items": 1,
+              "item": {
+                "type": "reference",
+                "schema": "command_policy"
+              }
+            }
+          },
+          "observation": {
+            "required": true,
+            "value": {
+              "type": "reference",
+              "schema": "command_evidence"
+            }
+          }
+        }
+      }
+    }
+  }
+}

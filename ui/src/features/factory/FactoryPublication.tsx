@@ -43,6 +43,7 @@ const ISSUE_LABELS = {
   entry_input: 'factory.entryInputHelp',
   enclosing_permissions: 'factory.enclosingPermissionsHelp',
   invalid_contract: 'factory.invalidContract',
+  ambiguous_issue_presentation_slot: 'factory.ambiguousIssueSlot',
   unavailable_reference: 'factory.unavailableReference',
   unmapped_legacy_policy: 'factory.unmappedLegacyPolicy',
   launch_policy_denied: 'factory.launchPolicyDenied',
@@ -170,25 +171,33 @@ export function FactoryPublication({
       setError(failure instanceof Error ? failure : new Error('Baseline refresh failed'));
     }
   }
-  const displayedIssues = [
-    ...new Map(
-      [...issues, ...returnedErrors].map((issue) => [`${issue.field}:${issue.code}`, issue]),
-    ).values(),
-  ];
+  const displayedIssues = new Map(
+    [...issues, ...returnedErrors].map((issue, index) => [
+      issue.code === 'ambiguous_issue_presentation_slot'
+        ? `issue-slot:${index}`
+        : `${issue.field}:${issue.code}`,
+      issue,
+    ]),
+  );
   return (
     <section aria-labelledby={`${regionId}-heading`}>
       <h3 id={`${regionId}-heading`}>{t('factory.validation')}</h3>
       {issues.length || returnedErrors.length ? (
         <ul role="alert">
-          {displayedIssues.map((issue) => (
-            <li key={`${issue.field}:${issue.code}`}>
+          {Array.from(displayedIssues, ([key, issue]) => (
+            <li key={key}>
               <button type="button" onClick={() => focusFactoryField(issue.field)}>
+                {'node' in issue && issue.node
+                  ? `${[issue.node, issue.outcome].filter(Boolean).join(' › ')} · `
+                  : ''}
                 {validationFieldLabel(issue.field, t)}
               </button>{' '}
               ·{' '}
               {t(ISSUE_LABELS[issue.code], {
                 name:
-                  issue.field.split('/').at(-1)?.replaceAll('~1', '/').replaceAll('~0', '~') ?? '',
+                  ('issue_slot' in issue ? issue.issue_slot : undefined) ??
+                  issue.field.split('/').at(-1)?.replaceAll('~1', '/').replaceAll('~0', '~') ??
+                  '',
               })}
               <LimitFailure issue={issue} />
               <details>

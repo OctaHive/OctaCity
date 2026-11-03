@@ -2,6 +2,9 @@ use super::*;
 use octacity_server_factory::{ExternalWorkIdentity, ImmutableReference, WorkSourceBinding};
 use octacity_server_store::{IssueStore, WorkSourceItem};
 use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
+
+#[path = "factory_issue_outcome_owner_tests.rs"]
+mod factory_outcomes;
 fn exact(value: &str) -> ImmutableReference {
   serde_json::from_value(serde_json::json!({"identity":value,"version":"v1","digest":"01".repeat(32)})).unwrap()
 }

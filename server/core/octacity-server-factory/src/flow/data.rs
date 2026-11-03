@@ -335,7 +335,7 @@ impl FlowValueSchema {
     }
     Ok(())
   }
-  fn covers(&self, producer: &Self) -> bool {
+  pub(super) fn covers(&self, producer: &Self) -> bool {
     if let Self::Enum { values } = producer {
       return values.iter().all(|value| self.accepts(value));
     }

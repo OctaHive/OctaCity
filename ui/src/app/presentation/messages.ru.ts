@@ -1927,6 +1927,7 @@ export const ruMessages = {
     'Создание и редактирование черновиков фабрики недоступно на этом сервере. Обычный CI/CD доступен.',
 
   'factory.invalidContract': 'Некорректный контракт',
+  'factory.ambiguousIssueSlot': 'Несколько исходов могут записать результат в слот задачи {name}',
   'factory.unavailableReference': 'Недоступная ссылка',
   'factory.unboundedCycle':
     'Цикл требует конечного ограничения повторов и завершения при исчерпании',

@@ -40,6 +40,7 @@ impl ValidatedFlowDefinitionClosure {
     {
       return Err(invalid("Flow admission authority"));
     }
+    super::issue_slots::validate(&closure)?;
     Ok(Self {
       closure,
       limits,

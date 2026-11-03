@@ -103,6 +103,31 @@ pub(super) fn insert(schemas: &mut Map<String, Value>) {
       &["budget", "permissions", "max_active_nodes"],
     ),
   );
+  let title_bytes = octacity_server_application::MAX_ISSUE_OUTCOME_TITLE_BYTES;
+  let references = object(
+    [
+      ("field", key()),
+      ("kind", json!({"type":"string","enum":["document","artifact","review"]})),
+    ],
+    &["field", "kind"],
+  );
+  schemas.insert(
+    "FactoryFlowIssuePresentation".to_owned(),
+    json!({
+      "description":"Optional Issue display binding for the accepted outcome. It grants no execution or mutation authority.",
+      "oneOf":[
+        tagged("kind", "triage_v1", [("slot", key())], &[]),
+        tagged("kind", "specifications_v1", [("slot", key())], &[]),
+        tagged("kind", "review_v1", [("slot", key())], &[]),
+        tagged("kind", "custom_v1", [
+          ("slot", key()),
+          ("title", json!({"type":"string","minLength":1,"maxLength":title_bytes,"x-max-utf8-bytes":title_bytes})),
+          ("conclusion_field", key()),
+          ("references", bounded_array(references, octacity_server_application::MAX_ISSUE_OUTCOME_REFERENCES.into())),
+        ], &["title", "conclusion_field"]),
+      ],
+    }),
+  );
   schemas.insert(
     "FactoryFlowOutcome".to_owned(),
     object(
@@ -110,6 +135,7 @@ pub(super) fn insert(schemas: &mut Map<String, Value>) {
         ("key", key()),
         ("kind", json!({"type":"string","enum":["success","failure"]})),
         ("schema", schema_ref("FactoryImmutableReferenceResource")),
+        ("issue_presentation", schema_ref("FactoryFlowIssuePresentation")),
         ("public_result", json!({"type":"boolean",
           "description":"Defaults to false when omitted. Explicitly disclose this outcome's schema-checked result to authorized Run readers; inputs, Context and evidence stay private."})),
       ],

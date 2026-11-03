@@ -13,6 +13,10 @@ pub(super) fn insert(schemas: &mut Map<String, Value>) {
       [
         ("precondition", nullable(schema_ref("FactoryFlowPredicate"))),
         (
+          "precondition_failure_output",
+          nullable(schema_ref("FactoryFlowDataMapping")),
+        ),
+        (
           "rules",
           bounded_array(
             object(

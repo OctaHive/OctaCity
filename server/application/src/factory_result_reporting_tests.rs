@@ -254,7 +254,9 @@ fn classified_result() -> (FlowDataSchema, serde_json::Value) {
     .unwrap();
   let value = serde_json::json!({"assessment":{"priority_assessment":75,"work_kind":"feature_request","severity":"advisory",
     "size":"large","component":"server","risk":"low","dependencies":[],"recommended_route":"requirements","reproducibility":"not_applicable"},
-    "admission_priority":20,"admission_risk":"low","accepted":true,"evidence":"absent"});
+    "admission_priority":20,"admission_risk":"low","accepted":true,"evidence":"absent",
+    "conclusion":"A large server change needs requirements.","decision":"eligible","duplicate_coverage":"complete",
+    "priority":75,"size":"large","component":"server"});
   (schema, value)
 }
 #[test]
@@ -476,6 +478,7 @@ fn source_template() -> FlowDefinitionTemplate {
       kind: FlowOutcomeKind::Success,
       schema: key("summary"),
       public_result: true,
+      issue_presentation: None,
     })
     .collect();
   source.budget = BudgetLimit::new(1, 1000, 0, 0, 1024).unwrap();

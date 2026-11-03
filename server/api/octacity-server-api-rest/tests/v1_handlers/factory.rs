@@ -453,6 +453,8 @@ impl ManagementQueryUseCase<octacity_server_application::ValidateFactoryConfigur
             code: "unavailable_reference",
             definition: None,
             node: None,
+            issue_slot: None,
+            outcome: None,
           }],
           unavailable_references: vec!["/admission_policy".to_owned()],
           ..Default::default()

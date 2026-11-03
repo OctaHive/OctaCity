@@ -1,0 +1,340 @@
+{
+  "schemas": {
+    "document": {
+      "identity": "factory.issue-outcomes.document",
+      "version": "v1",
+      "shape": {
+        "type": "object",
+        "fields": {
+          "artifact_id": {
+            "required": true,
+            "value": {
+              "type": "string",
+              "min_bytes": 36,
+              "max_bytes": 36
+            }
+          },
+          "content_digest": {
+            "required": true,
+            "value": {
+              "type": "string",
+              "min_bytes": 64,
+              "max_bytes": 64
+            }
+          },
+          "encoded_size": {
+            "required": true,
+            "value": {
+              "type": "integer",
+              "minimum": 1,
+              "maximum": 16777216
+            }
+          }
+        }
+      }
+    },
+    "specifications": {
+      "identity": "factory.issue-outcomes.specifications",
+      "version": "v1",
+      "shape": {
+        "type": "object",
+        "fields": {
+          "conclusion": {
+            "required": true,
+            "value": {
+              "type": "string",
+              "min_bytes": 1,
+              "max_bytes": 1024
+            }
+          },
+          "documents": {
+            "required": true,
+            "value": {
+              "type": "array",
+              "item": {
+                "type": "reference",
+                "schema": "document"
+              },
+              "min_items": 1,
+              "max_items": 8
+            }
+          }
+        }
+      }
+    },
+    "review": {
+      "identity": "factory.issue-outcomes.review",
+      "version": "v1",
+      "shape": {
+        "type": "object",
+        "fields": {
+          "conclusion": {
+            "required": true,
+            "value": {
+              "type": "string",
+              "min_bytes": 1,
+              "max_bytes": 1024
+            }
+          },
+          "review": {
+            "required": true,
+            "value": {
+              "type": "string",
+              "min_bytes": 64,
+              "max_bytes": 64
+            }
+          },
+          "verdict": {
+            "required": true,
+            "value": {
+              "type": "enum",
+              "values": [
+                "approved",
+                "changes_required",
+                "needs_review"
+              ]
+            }
+          }
+        }
+      }
+    },
+    "custom": {
+      "identity": "factory.issue-outcomes.custom",
+      "version": "v1",
+      "shape": {
+        "type": "object",
+        "fields": {
+          "conclusion": {
+            "required": true,
+            "value": {
+              "type": "string",
+              "min_bytes": 1,
+              "max_bytes": 1024
+            }
+          }
+        }
+      }
+    },
+    "start": {
+      "identity": "factory.issue-outcomes.start",
+      "version": "v1",
+      "shape": {
+        "type": "boolean"
+      }
+    },
+    "producer_result": {
+      "identity": "factory.issue-outcomes.producer_result",
+      "version": "v1",
+      "shape": {
+        "type": "externally_tagged",
+        "variants": {
+          "custom": {
+            "type": "reference",
+            "schema": "custom"
+          },
+          "review": {
+            "type": "reference",
+            "schema": "review"
+          },
+          "specifications": {
+            "type": "reference",
+            "schema": "specifications"
+          }
+        }
+      }
+    }
+  },
+  "nodes": [
+    {
+      "key": "produce_outcome",
+      "kind": "deterministic_gate",
+      "input_schema": "start",
+      "outcomes": [
+        {
+          "key": "produced",
+          "kind": "success",
+          "schema": "producer_result"
+        }
+      ],
+      "budget": {
+        "max_attempts": 1,
+        "max_elapsed_millis": 1000,
+        "max_tokens": 0,
+        "max_cost_micro_units": 0,
+        "max_output_bytes": 8192
+      },
+      "required": true,
+      "input_binding": {
+        "sources": {},
+        "mapping": {
+          "value": {
+            "mapping": "constant",
+            "value": true
+          }
+        }
+      },
+      "gate": {
+        "rules": [],
+        "fallback": "produced",
+        "default_output": {
+          "value": {
+            "mapping": "constant",
+            "value": {
+              "custom": {
+                "conclusion": "Acceptance checks are ready."
+              }
+            }
+          }
+        }
+      }
+    },
+    {
+      "key": "retain_outcome",
+      "kind": "deterministic_gate",
+      "input_schema": "producer_result",
+      "outcomes": [
+        {
+          "key": "specifications",
+          "kind": "success",
+          "schema": "specifications",
+          "issue_presentation": {
+            "kind": "specifications_v1"
+          }
+        },
+        {
+          "key": "review",
+          "kind": "success",
+          "schema": "review",
+          "issue_presentation": {
+            "kind": "review_v1"
+          }
+        },
+        {
+          "key": "custom",
+          "kind": "success",
+          "schema": "custom",
+          "issue_presentation": {
+            "kind": "custom_v1",
+            "title": "Acceptance checks",
+            "conclusion_field": "conclusion"
+          }
+        }
+      ],
+      "budget": {
+        "max_attempts": 1,
+        "max_elapsed_millis": 1000,
+        "max_tokens": 0,
+        "max_cost_micro_units": 0,
+        "max_output_bytes": 8192
+      },
+      "required": true,
+      "input_binding": {
+        "sources": {
+          "result": {
+            "source": "predecessor",
+            "view": "payload",
+            "path": ""
+          }
+        },
+        "mapping": {
+          "value": {
+            "mapping": "pointer",
+            "path": "/result"
+          }
+        }
+      },
+      "gate": {
+        "rules": [
+          {
+            "when": {
+              "operation": "exists",
+              "operand": {
+                "source": "path",
+                "path": "/specifications"
+              }
+            },
+            "outcome": "specifications"
+          },
+          {
+            "when": {
+              "operation": "exists",
+              "operand": {
+                "source": "path",
+                "path": "/review"
+              }
+            },
+            "outcome": "review"
+          }
+        ],
+        "fallback": "custom",
+        "outputs": {
+          "specifications": {
+            "value": {
+              "mapping": "pointer",
+              "path": "/specifications"
+            }
+          },
+          "review": {
+            "value": {
+              "mapping": "pointer",
+              "path": "/review"
+            }
+          },
+          "custom": {
+            "value": {
+              "mapping": "pointer",
+              "path": "/custom"
+            }
+          }
+        }
+      }
+    }
+  ],
+  "transitions": [
+    {
+      "predecessor": "produce_outcome",
+      "outcome": "produced",
+      "target": {
+        "kind": "node",
+        "key": "retain_outcome"
+      },
+      "max_repeats": 0,
+      "exhausted_terminal": null
+    },
+    {
+      "predecessor": "retain_outcome",
+      "outcome": "specifications",
+      "target": {
+        "kind": "terminal",
+        "key": "specifications"
+      },
+      "max_repeats": 0,
+      "exhausted_terminal": null
+    },
+    {
+      "predecessor": "retain_outcome",
+      "outcome": "review",
+      "target": {
+        "kind": "terminal",
+        "key": "review"
+      },
+      "max_repeats": 0,
+      "exhausted_terminal": null
+    },
+    {
+      "predecessor": "retain_outcome",
+      "outcome": "custom",
+      "target": {
+        "kind": "terminal",
+        "key": "custom"
+      },
+      "max_repeats": 0,
+      "exhausted_terminal": null
+    }
+  ],
+  "terminals": {
+    "specifications": "specifications",
+    "review": "review",
+    "custom": "custom"
+  }
+}

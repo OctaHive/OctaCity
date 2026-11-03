@@ -2,7 +2,7 @@ use super::factory::*;
 
 #[allow(dead_code)] // Release-template contracts are shared by core and application owners.
 pub(crate) fn supplied_triage_template() -> Result<FlowDefinitionTemplate, FactoryError> {
-  supplied_triage_template_variant("v1.json")
+  supplied_triage_template_variant("v2.json")
 }
 
 #[allow(dead_code)] // Optional command composition is qualified by application output-source tests.
@@ -29,7 +29,7 @@ pub(crate) fn supplied_base_flow_template() -> FlowDefinitionTemplate {
 pub(crate) fn supplied_verification_flow_template() -> FlowDefinitionTemplate {
   supplied_flow_template("verification-flow.json")
 }
-fn supplied_flow_template(name: &str) -> FlowDefinitionTemplate {
+pub(crate) fn supplied_flow_template(name: &str) -> FlowDefinitionTemplate {
   let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
     .ancestors()
     .find(|path| path.join("config/factory/flows").is_dir())

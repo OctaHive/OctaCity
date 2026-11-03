@@ -7,6 +7,11 @@
 #![forbid(unsafe_code)]
 #![deny(missing_docs)]
 
+pub use flow::{
+  FlowIssueOutcomeLocation, FlowIssuePresentation, FlowIssuePresentationViolation, FlowIssueReferenceBinding,
+  FlowIssueReferenceKind, FlowIssueSlot, FlowIssueSlotConflict, MAX_ISSUE_OUTCOME_CONCLUSION_BYTES,
+  MAX_ISSUE_OUTCOME_REFERENCES, MAX_ISSUE_OUTCOME_TITLE_BYTES,
+};
 pub use flow::{FlowProfileAdmissionOverride, FlowProfileAdmissionOverrides, FlowStageAddress};
 
 /// Maximum exact installed execution identities admitted by one Factory owner.

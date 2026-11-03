@@ -35,22 +35,20 @@ def _shape(value, schemas: dict, depth: int = 0):
 
 
 def flow_draft(client, project: str, selection: dict, namespace, criteria: dict) -> dict:
-    """Compose this explicit four-step example; no preset or prior Flow is read."""
+    """Compose the bundled example through ordinary authoring contracts."""
     if selection.get("effects"):
         raise ValueError("stand reporting requires separately reviewed ordinary action settings")
-    schemas = {}
-    for path in ("flows/base-flow/schemas/artifact_reference.json", "flows/base-flow/schemas/work.json",
-                 "presets/triage/inputs-v1.json", "presets/triage/eligibility-results-v1.json",
-                 "presets/triage/classification-results-v1.json"):
-        schemas.update(_read(path)["schemas"])
+    manifest = _read("presets/triage/v2.json")
+    parts = [_read(path) for path in manifest["parts"]]
+    schemas = {alias: schema for part in parts for alias, schema in part.get("schemas", {}).items()}
     normalized = {alias: client.post("/api/v1/flow-data-schemas/validate", f"{namespace}-manual-v1-schema-{alias}",
         {"project_id": project, "identity": schema["identity"], "version": schema["version"],
          "shape": _shape(schema["shape"], schemas)}) for alias, schema in schemas.items()}
     tasks = json.loads((EXAMPLE / "factory-triage-tasks.json").read_text())
-    deny = _read("presets/triage/v1.json")["execution"]["permissions"]
-    nodes = []
-    for stage in ("eligibility", "eligibility_gate", "classification", "classification_gate"):
-        node = _read(f"presets/triage/{stage.replace('_', '-')}-v1.json")["nodes"][0]
+    deny = manifest["execution"]["permissions"]
+    nodes = [node for part in parts for node in part.get("nodes", [])]
+    for node in nodes:
+        stage = node["key"]
         node["input_schema"] = normalized[node["input_schema"]]["reference"]
         node["outcomes"] = [{**outcome, "schema": normalized[outcome["schema"]]["reference"]}
                             for outcome in node["outcomes"]]
@@ -87,12 +85,12 @@ def flow_draft(client, project: str, selection: dict, namespace, criteria: dict)
             node["context_binding"] = {"work_task": "task", "entries": {
                 name: {"source_kind": "specification", "source": {"value": {"mapping": "constant",
                        "value": {"kind": "artifact", "value": artifact}}}} for name, artifact in documents.items()}}
-        nodes.append(node)
-    routes = _read("presets/triage/routing-v1.json")
+    routes = [route for part in parts for route in part.get("transitions", [])]
+    terminals = [{"key": key, "schema": normalized[schema]["reference"]}
+                 for part in parts for key, schema in part.get("terminals", {}).items()]
     policy = json.loads((EXAMPLE / "factory-triage.json").read_text())
-    return {"root": {"input_schema": normalized["project_input"]["reference"], "entry": "eligibility",
-        "nodes": nodes, "transitions": routes["transitions"] + _read("presets/triage/direct-classification-v1.json")["transitions"],
-        "terminals": [{"key": key, "schema": normalized[schema]["reference"]} for key, schema in routes["terminals"].items()],
+    return {"root": {"input_schema": normalized[manifest["input_schema"]]["reference"], "entry": manifest["entry"],
+        "nodes": nodes, "transitions": routes, "terminals": terminals,
         "context_projections": [], "data_projections": [], "code_sources": {},
         "process": {"criteria": {"artifact": criteria, "recipients": list(tasks)}}, "execution": copy.deepcopy(selection["execution"])},
         "data_schemas": list(normalized.values()), "pools": {},

@@ -295,6 +295,12 @@ pub struct FactoryValidationIssue {
   /// Stable caller node key, independent of canonical ordering.
   #[serde(skip_serializing_if = "Option::is_none")]
   pub node: Option<octacity_server_factory::FactoryKey>,
+  /// Stable slot named by both conflicting outcome declarations.
+  #[serde(skip_serializing_if = "Option::is_none")]
+  pub issue_slot: Option<String>,
+  /// Named outcome in the declaring step, for Issue slot conflicts.
+  #[serde(skip_serializing_if = "Option::is_none")]
+  pub outcome: Option<octacity_server_factory::FactoryKey>,
 }
 impl FactoryValidationIssue {
   fn exceeded(
@@ -470,6 +476,39 @@ impl FactoryValidationDiagnostics {
   pub(crate) fn invalid(field: impl Into<String>) -> ApplicationError {
     ApplicationError::FactoryValidation(Box::new(Self::single_issue(field, "invalid_contract", None)))
   }
+  pub(crate) fn issue_presentation_error(error: &octacity_server_factory::FactoryError) -> Option<ApplicationError> {
+    use octacity_server_factory::FactoryError;
+    match error {
+      FactoryError::InvalidIssuePresentation { context } => Some(Self::invalid_binding(
+        context.definition,
+        &context.node,
+        &format!("/outcomes/{}/{}", context.outcome_index, context.field),
+      )),
+      FactoryError::AmbiguousIssuePresentationSlot { context } => {
+        let slot = context.slot.to_string();
+        Some(ApplicationError::FactoryValidation(Box::new(Self {
+          errors: context
+            .producers
+            .iter()
+            .map(|producer| FactoryValidationIssue {
+              definition: Some(producer.definition),
+              node: Some(producer.node.clone()),
+              field: format!("/outcomes/{}/issue_presentation", producer.outcome_index),
+              code: "ambiguous_issue_presentation_slot",
+              issue_slot: Some(slot.clone()),
+              outcome: Some(producer.outcome.clone()),
+              ..FactoryValidationIssue::default()
+            })
+            .collect(),
+          ..Self::default()
+        })))
+      }
+      _ => None,
+    }
+  }
+  pub(crate) fn flow_validation_error(error: &octacity_server_factory::FactoryError) -> Option<ApplicationError> {
+    Self::constraint_ceiling_error(error).or_else(|| Self::issue_presentation_error(error))
+  }
   pub(crate) fn invalid_binding(
     definition: octacity_server_factory::FlowDefinitionRef,
     node: &octacity_server_factory::FactoryKey,
@@ -506,7 +545,7 @@ impl FactoryValidationDiagnostics {
     }))
   }
   pub(crate) fn from_factory_error(error: octacity_server_factory::FactoryError) -> ApplicationError {
-    if let Some(diagnostics) = Self::constraint_ceiling_error(&error) {
+    if let Some(diagnostics) = Self::flow_validation_error(&error) {
       return diagnostics;
     }
     use octacity_server_factory::{FactoryChoiceKind, FactoryError};
@@ -520,14 +559,9 @@ impl FactoryValidationDiagnostics {
     }
     ApplicationError::FactoryValidation(Box::new(Self {
       errors: vec![FactoryValidationIssue {
-        resource: None,
-        requested: None,
-        maximum: None,
-        ceiling: None,
         field: "/flow".to_owned(),
         code: "invalid_contract",
-        definition: None,
-        node: None,
+        ..FactoryValidationIssue::default()
       }],
       ..Self::default()
     }))

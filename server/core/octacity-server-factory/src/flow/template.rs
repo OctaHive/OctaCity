@@ -30,6 +30,9 @@ pub struct FlowTemplateOutcome {
   /// Explicitly disclose only this outcome's bounded payload to authorized Run readers.
   #[serde(default, skip_serializing_if = "std::ops::Not::not")]
   pub public_result: bool,
+  /// Optional Issue display binding resolved against the same outcome schema.
+  #[serde(default, skip_serializing_if = "Option::is_none")]
+  pub issue_presentation: Option<FlowIssuePresentation>,
 }
 /// An inline policy or explicit local choice resolved before immutable publication.
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
@@ -203,7 +206,8 @@ impl FlowDefinitionTemplate {
             .map(|outcome| {
               Ok(
                 FlowOutcomeDefinition::new(outcome.key.clone(), outcome.kind, resolve(&outcome.schema)?)
-                  .with_public_result(outcome.public_result),
+                  .with_public_result(outcome.public_result)
+                  .with_issue_presentation(outcome.issue_presentation.clone()),
               )
             })
             .collect::<Result<Vec<_>, FactoryError>>()?,

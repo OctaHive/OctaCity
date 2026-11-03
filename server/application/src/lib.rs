@@ -761,6 +761,7 @@ pub use factory_discovery::{
 pub use management_input::factory::{FactoryNodeControlInput, FactoryRunListInput};
 pub use octacity_server_factory::{
   MAX_DECISION_ASSESSMENTS, MAX_DECISION_REASONS, MAX_DECISION_SIGNAL_RECEIPTS, MAX_FACTORY_SAFE_TEXT_BYTES,
+  MAX_ISSUE_OUTCOME_REFERENCES, MAX_ISSUE_OUTCOME_TITLE_BYTES,
 };
 pub use octacity_server_store::{
   FactoryRunPage as FactoryRunPageProjection, FactoryRunSummary as FactoryRunSummaryProjection,

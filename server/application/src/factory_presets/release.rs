@@ -5,18 +5,18 @@ use octacity_server_factory::*;
 // Immutable release assets use the existing manifest resolver. No request supplies a filesystem path.
 pub(super) fn released_triage() -> Result<(FlowDefinitionTemplate, ImmutableReference), ApplicationError> {
   let template = FlowDefinitionTemplate::from_manifest(
-    include_bytes!("../../../../config/factory/presets/triage/v1.json"),
+    include_bytes!("../../../../config/factory/presets/triage/v2.json"),
     |path| {
       let bytes: &[u8] = match path.as_str() {
-        "presets/triage/inputs-v1.json" => include_bytes!("../../../../config/factory/presets/triage/inputs-v1.json"),
-        "presets/triage/eligibility-results-v1.json" => {
-          include_bytes!("../../../../config/factory/presets/triage/eligibility-results-v1.json")
+        "presets/triage/inputs-v2.json" => include_bytes!("../../../../config/factory/presets/triage/inputs-v2.json"),
+        "presets/triage/eligibility-results-v2.json" => {
+          include_bytes!("../../../../config/factory/presets/triage/eligibility-results-v2.json")
         }
         "flows/base-flow/schemas/artifact_reference.json" => {
           include_bytes!("../../../../config/factory/flows/base-flow/schemas/artifact_reference.json")
         }
-        "presets/triage/classification-results-v1.json" => {
-          include_bytes!("../../../../config/factory/presets/triage/classification-results-v1.json")
+        "presets/triage/classification-results-v2.json" => {
+          include_bytes!("../../../../config/factory/presets/triage/classification-results-v2.json")
         }
         "flows/base-flow/schemas/work.json" => {
           include_bytes!("../../../../config/factory/flows/base-flow/schemas/work.json")
@@ -24,14 +24,14 @@ pub(super) fn released_triage() -> Result<(FlowDefinitionTemplate, ImmutableRefe
         "presets/triage/eligibility-v1.json" => {
           include_bytes!("../../../../config/factory/presets/triage/eligibility-v1.json")
         }
-        "presets/triage/eligibility-gate-v1.json" => {
-          include_bytes!("../../../../config/factory/presets/triage/eligibility-gate-v1.json")
+        "presets/triage/eligibility-gate-v2.json" => {
+          include_bytes!("../../../../config/factory/presets/triage/eligibility-gate-v2.json")
         }
-        "presets/triage/classification-v1.json" => {
-          include_bytes!("../../../../config/factory/presets/triage/classification-v1.json")
+        "presets/triage/classification-v2.json" => {
+          include_bytes!("../../../../config/factory/presets/triage/classification-v2.json")
         }
-        "presets/triage/classification-gate-v1.json" => {
-          include_bytes!("../../../../config/factory/presets/triage/classification-gate-v1.json")
+        "presets/triage/classification-gate-v2.json" => {
+          include_bytes!("../../../../config/factory/presets/triage/classification-gate-v2.json")
         }
         "presets/triage/routing-v1.json" => include_bytes!("../../../../config/factory/presets/triage/routing-v1.json"),
         "presets/triage/direct-classification-v1.json" => {
@@ -53,7 +53,7 @@ pub(super) fn released_triage() -> Result<(FlowDefinitionTemplate, ImmutableRefe
     .map_err(|_| ApplicationError::invalid())?;
   let reference = ImmutableReference::new(
     "triage".parse().map_err(|_| ApplicationError::invalid())?,
-    "v1".parse().map_err(|_| ApplicationError::invalid())?,
+    "v2".parse().map_err(|_| ApplicationError::invalid())?,
     FactoryDigest::content_sha256(&bytes),
   );
   Ok((template, reference))

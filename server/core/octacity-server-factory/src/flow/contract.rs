@@ -48,6 +48,8 @@ pub struct FlowOutcomeDefinition {
   schema: ImmutableReference,
   #[serde(default, skip_serializing_if = "std::ops::Not::not")]
   public_result: bool,
+  #[serde(default, skip_serializing_if = "Option::is_none")]
+  issue_presentation: Option<Box<crate::FlowIssuePresentation>>,
 }
 
 impl FlowOutcomeDefinition {
@@ -59,6 +61,7 @@ impl FlowOutcomeDefinition {
       kind,
       schema,
       public_result: false,
+      issue_presentation: None,
     }
   }
 
@@ -74,6 +77,19 @@ impl FlowOutcomeDefinition {
   #[must_use]
   pub const fn public_result(&self) -> bool {
     self.public_result
+  }
+
+  /// Returns the Issue display binding, independent of diagnostic result visibility.
+  #[must_use]
+  pub fn issue_presentation(&self) -> Option<&crate::FlowIssuePresentation> {
+    self.issue_presentation.as_deref()
+  }
+
+  /// Retains a display binding whose schema compatibility is checked at publication.
+  #[must_use]
+  pub fn with_issue_presentation(mut self, presentation: Option<crate::FlowIssuePresentation>) -> Self {
+    self.issue_presentation = presentation.map(Box::new);
+    self
   }
 
   /// Returns the finite outcome key.

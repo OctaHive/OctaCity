@@ -187,7 +187,7 @@ async fn presets_discovery_exposes_bounded_release_identity_without_factory_exec
   assert_eq!(page["items"].as_array().unwrap().len(), 1);
   let preset = &page["items"][0];
   assert_eq!(preset["reference"]["identity"], "triage");
-  assert_eq!(preset["reference"]["version"], "v1");
+  assert_eq!(preset["reference"]["version"], "v2");
   assert_eq!(preset["reference"]["digest"].as_str().unwrap().len(), 64);
   let aliases = preset["profile_aliases"].as_array().unwrap();
   assert!(aliases.contains(&serde_json::json!("eligibility")));
@@ -353,6 +353,21 @@ async fn selected_preset_profiles_resolve_to_an_ordinary_immutable_flow_draft() 
       parameters["profiles"][alias]["profile"]
     );
   }
+  let cards: Vec<_> = nodes
+    .iter()
+    .flat_map(|node| {
+      node["outcomes"].as_array().unwrap().iter().filter_map(|outcome| {
+        outcome.get("issue_presentation").map(|presentation| {
+          assert_eq!(presentation, &serde_json::json!({"kind":"triage_v1"}));
+          (node["key"].as_str().unwrap(), outcome["key"].as_str().unwrap())
+        })
+      })
+    })
+    .collect();
+  assert_eq!(cards.len(), 11);
+  assert!(cards.contains(&("eligibility_gate", "review")));
+  assert!(cards.contains(&("classification_gate", "requirements")));
+  assert!(!cards.contains(&("eligibility_gate", "classify")));
   assert_eq!(result["configuration"]["enabled"], false);
   assert_eq!(
     result["configuration"]["flow"]["closure"]["root"]["id"],

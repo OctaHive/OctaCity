@@ -149,6 +149,72 @@ fn over_ceiling_step_budget_names_the_enclosing_owner_without_silently_clamping(
   });
 }
 
+#[test]
+fn flow_authoring_identifies_the_incompatible_issue_presentation_field() {
+  run_ready(async {
+    let mut wire = serde_json::to_value(layout_draft()).unwrap();
+    wire["root"]["nodes"][0]["outcomes"][0]["issue_presentation"] = serde_json::json!({
+      "kind":"custom_v1","title":"Layout report","conclusion_field":"private_notes"
+    });
+    let error = authoring_queries()
+      .handle_query(
+        &context(),
+        crate::ValidateFactoryFlowDefinitionQuery {
+          id: FlowDefinitionId::generate(),
+          project_id: ProjectId::generate(),
+          draft: serde_json::from_value(wire).unwrap(),
+        },
+      )
+      .await
+      .unwrap_err();
+    let ManagementHandlerError::Application(crate::ApplicationError::FactoryValidation(report)) = error else {
+      panic!("expected field-specific diagnostics, got {error:?}");
+    };
+    let issue = &report.errors[0];
+    assert_eq!(issue.code, "invalid_contract");
+    assert_eq!(issue.field, "/outcomes/0/issue_presentation/conclusion_field");
+    assert_eq!(issue.node, Some(key("measure_layout")));
+  });
+}
+
+#[test]
+fn flow_authoring_reports_both_declarations_of_a_conflicting_issue_slot() {
+  run_ready(async {
+    let mut wire = serde_json::to_value(layout_draft()).unwrap();
+    let presentation = serde_json::json!({
+      "kind":"custom_v1","title":"Layout report","conclusion_field":"caption","slot":"layout"
+    });
+    let schema = wire["root"]["nodes"][0]["outcomes"][0]["schema"].clone();
+    for index in [0, 1] {
+      wire["root"]["nodes"][index]["outcomes"][0]["schema"] = schema.clone();
+      wire["root"]["nodes"][index]["outcomes"][0]["issue_presentation"] = presentation.clone();
+    }
+    let error = authoring_queries()
+      .handle_query(
+        &context(),
+        crate::ValidateFactoryFlowDefinitionQuery {
+          id: FlowDefinitionId::generate(),
+          project_id: ProjectId::generate(),
+          draft: serde_json::from_value(wire).unwrap(),
+        },
+      )
+      .await
+      .unwrap_err();
+    let ManagementHandlerError::Application(crate::ApplicationError::FactoryValidation(report)) = error else {
+      panic!("expected field-specific diagnostics, got {error:?}");
+    };
+    let errors = serde_json::to_value(&report.errors).unwrap();
+    assert_eq!(errors.as_array().unwrap().len(), 2, "{errors}");
+    for (index, node) in ["measure_layout", "proof_caption"].into_iter().enumerate() {
+      assert_eq!(errors[index]["node"], node);
+      assert_eq!(errors[index]["outcome"], ["measured", "proofed"][index]);
+      assert_eq!(errors[index]["code"], "ambiguous_issue_presentation_slot");
+      assert_eq!(errors[index]["issue_slot"], "layout");
+      assert_eq!(errors[index]["field"], "/outcomes/0/issue_presentation");
+    }
+  });
+}
+
 fn layout_draft() -> crate::FactoryFlowDefinitionDraft {
   let document = FlowDataSchema::new(
     key("layout.document"),

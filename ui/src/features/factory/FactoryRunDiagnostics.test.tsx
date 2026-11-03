@@ -519,10 +519,15 @@ it('copies a later-page Flow link with its cursor and filters and reopens the se
   expect(await screen.findByText('e'.repeat(64))).toBeTruthy();
 });
 
-it('opens retained assessments directly and preserves exact provenance without running agents or writes', async () => {
+it.each(['v1', 'v2'] as const)(
+  'opens retained %s assessments and preserves exact provenance without running agents or writes',
+  assertRetainedTriage,
+);
+
+async function assertRetainedTriage(version: 'v1' | 'v2') {
   const run = runFixture();
-  const acceptedProject = triageCompletion('eligibility');
-  const acceptedAnalyst = triageCompletion('classification');
+  const acceptedProject = triageCompletion('eligibility', version);
+  const acceptedAnalyst = triageCompletion('classification', version);
   const api = {
     ...factoryApi,
     getConfiguration: vi.fn(async () => configurationFixture()),
@@ -589,4 +594,4 @@ it('opens retained assessments directly and preserves exact provenance without r
   expect(api.respondNode).not.toHaveBeenCalled();
   expect(api.retryNode).not.toHaveBeenCalled();
   expect(api.cancelRun).not.toHaveBeenCalled();
-});
+}

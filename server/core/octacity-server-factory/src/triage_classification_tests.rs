@@ -250,7 +250,7 @@ fn triage_projects_absent_command_and_independent_assessment_without_a_synthetic
     .project_value(
       &serde_json::json!({
         "task":work.artifacts().task(),"completion":work.artifacts().acceptance(),"priority":20,"risk":"low",
-        "eligibility":{"accepted":true,"decision":"eligible","reason":"Reviewed fit","evidence":[]},
+        "eligibility":{"accepted":true,"decision":"eligible","conclusion":"Reviewed fit","evidence":[]},
         "previous":{"build":null}
       }),
       &schemas[&key("analyst_input")],
@@ -328,7 +328,7 @@ fn triage_analyst_consumes_only_the_safe_owner_projection_and_retains_command_ev
     &template,
     "classification",
     serde_json::json!({"task":work.artifacts().task(),"completion":work.artifacts().acceptance(),
-    "priority":20,"risk":"low","previous":previous,"eligibility":{"accepted":true,"decision":"eligible","reason":"Reviewed fit","evidence":[]}}),
+    "priority":20,"risk":"low","previous":previous,"eligibility":{"accepted":true,"decision":"eligible","conclusion":"Reviewed fit","evidence":[]}}),
   );
   assert_eq!(input.value()["observation"], expected["evidence"]);
   assert!(
@@ -483,8 +483,27 @@ fn triage_public_results_are_explicit_immutable_outcome_choices() {
   let published = template
     .instantiate(FlowDefinitionId::generate(), FlowDefinitionVersion::INITIAL, &profiles)
     .unwrap();
+  FactoryFlowConfiguration::new(
+    PinnedFlowDefinitionClosure::new(published.definition.reference(), vec![published.definition.clone()]).unwrap(),
+    FlowAdmissionLimits::product_defaults(1, template.execution.budget(), FactoryPermissionSet::deny_all()).unwrap(),
+    published.schemas,
+    Default::default(),
+  )
+  .unwrap();
   for node in published.definition.nodes() {
     for outcome in node.outcomes() {
+      let presents = match node.key().as_str() {
+        "classification_gate" => true,
+        "eligibility_gate" => outcome.key().as_str() != "classify",
+        _ => false,
+      };
+      assert_eq!(
+        outcome.issue_presentation(),
+        presents.then_some(&FlowIssuePresentation::TriageV1 { slot: None }),
+        "{}/{}",
+        node.key(),
+        outcome.key(),
+      );
       let wire = serde_json::to_value(outcome).unwrap();
       if [
         "factory.triage.eligibility_accepted",
@@ -573,6 +592,9 @@ fn triage_analyst_gate_retains_results_and_rejects_substituted_dependency_refere
   );
   for accepted in [true, false] {
     let mut input_value = value.clone();
+    if accepted {
+      input_value["assessment"]["conclusion"] = "A focused server change needs requirements.".into();
+    }
     input_value["admission_priority"] = work.priority().get().into();
     if !accepted {
       input_value["fresh_until"] = 1000.into();
@@ -611,11 +633,21 @@ fn triage_analyst_gate_retains_results_and_rejects_substituted_dependency_refere
       .unwrap()
       .record(&input, &attempt, &definition, schema, at(1001))
       .unwrap();
-    assert_eq!(
-      record.payload().value(),
-      &serde_json::json!({"accepted":accepted,"assessment":value["assessment"],
-      "admission_priority":work.priority(), "admission_risk":work.risk(), "evidence":value["evidence"]})
-    );
+    let mut expected = serde_json::json!({
+      "accepted":accepted,"assessment":value["assessment"],
+      "admission_priority":work.priority(), "admission_risk":work.risk(), "evidence":value["evidence"],
+      "decision":if accepted { "eligible" } else { "review" },
+      "duplicate_coverage":"complete",
+      "conclusion":if accepted { "A focused server change needs requirements." }
+        else { "The classification needs human review." }
+    });
+    if accepted {
+      expected["assessment"]["conclusion"] = expected["conclusion"].clone();
+      expected["priority"] = 75.into();
+      expected["size"] = "small".into();
+      expected["component"] = "server".into();
+    }
+    assert_eq!(record.payload().value(), &expected);
     let completion = record
       .completion(
         &attempt,

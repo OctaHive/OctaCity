@@ -1,0 +1,42 @@
+{
+  "input_schema": "start",
+  "entry": "produce_outcome",
+  "execution": {
+    "budget": {
+      "max_attempts": 2,
+      "max_elapsed_millis": 1000,
+      "max_tokens": 0,
+      "max_cost_micro_units": 0,
+      "max_output_bytes": 8192
+    },
+    "permissions": {
+      "plugins": [],
+      "executables": [],
+      "tools": [],
+      "commands": [],
+      "max_descendants": 0,
+      "mounts": [],
+      "network_hosts": [],
+      "secret_profiles": [],
+      "workload_identity_profiles": [],
+      "resources": {
+        "cpu_millis": 0,
+        "memory_bytes": 0,
+        "disk_bytes": 0,
+        "process_count": 0,
+        "elapsed_millis": 0
+      },
+      "outputs": {
+        "kinds": [],
+        "max_artifact_count": 0,
+        "max_artifact_bytes": 0,
+        "max_report_count": 0,
+        "max_report_bytes": 0
+      }
+    },
+    "max_active_nodes": 1
+  },
+  "parts": [
+    "issue-outcomes-flow/contracts.json"
+  ]
+}

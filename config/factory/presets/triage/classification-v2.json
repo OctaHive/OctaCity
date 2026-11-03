@@ -1,0 +1,226 @@
+{
+  "nodes": [
+    {
+      "key": "classification",
+      "kind": "reasoning",
+      "input_schema": "analyst_input",
+      "outcomes": [
+        {
+          "key": "observed",
+          "kind": "success",
+          "schema": "classification_observations"
+        }
+      ],
+      "budget": {
+        "max_attempts": 1,
+        "max_elapsed_millis": 60000,
+        "max_tokens": 10000,
+        "max_cost_micro_units": 1000000,
+        "max_output_bytes": 1048576
+      },
+      "required": true,
+      "input_binding": {
+        "sources": {
+          "task": {
+            "source": "work",
+            "path": "/artifacts/task"
+          },
+          "completion": {
+            "source": "work",
+            "path": "/artifacts/acceptance"
+          },
+          "priority": {
+            "source": "work",
+            "path": "/priority"
+          },
+          "risk": {
+            "source": "work",
+            "path": "/risk"
+          },
+          "eligibility": {
+            "source": "record",
+            "node": "eligibility_gate",
+            "outcome": "classify",
+            "path": ""
+          },
+          "previous": {
+            "source": "predecessor",
+            "view": "metadata",
+            "path": ""
+          }
+        },
+        "mapping": {
+          "value": {
+            "mapping": "object",
+            "fields": {
+              "task": {
+                "mapping": "pointer",
+                "path": "/task"
+              },
+              "completion": {
+                "mapping": "pointer",
+                "path": "/completion"
+              },
+              "work": {
+                "mapping": "object",
+                "fields": {
+                  "priority": {
+                    "mapping": "pointer",
+                    "path": "/priority"
+                  },
+                  "admission_risk": {
+                    "mapping": "pointer",
+                    "path": "/risk"
+                  }
+                }
+              },
+              "eligibility": {
+                "mapping": "object",
+                "fields": {
+                  "accepted": {
+                    "mapping": "pointer",
+                    "path": "/eligibility/accepted"
+                  },
+                  "decision": {
+                    "mapping": "pointer",
+                    "path": "/eligibility/decision"
+                  },
+                  "reason": {
+                    "mapping": "pointer",
+                    "path": "/eligibility/conclusion"
+                  },
+                  "evidence": {
+                    "mapping": "pointer",
+                    "path": "/eligibility/evidence"
+                  }
+                }
+              },
+              "command_policy": {
+                "mapping": "constant",
+                "value": []
+              },
+              "observation": {
+                "mapping": "if_present",
+                "path": "/previous/build/outputs/reproduction-report",
+                "then": {
+                  "mapping": "object",
+                  "fields": {
+                    "observed": {
+                      "mapping": "object",
+                      "fields": {
+                        "policy": {
+                          "mapping": "object",
+                          "fields": {
+                            "command": {
+                              "mapping": "pointer",
+                              "path": "/previous/build/profile/model_or_tool"
+                            },
+                            "tool": {
+                              "mapping": "pointer",
+                              "path": "/previous/build/outputs/reproduction-report/producer/tool"
+                            },
+                            "plugin": {
+                              "mapping": "pointer",
+                              "path": "/previous/build/outputs/reproduction-report/producer/plugin"
+                            },
+                            "task_digest": {
+                              "mapping": "pointer",
+                              "path": "/previous/build/profile/task_digest"
+                            },
+                            "build_configuration": {
+                              "mapping": "pointer",
+                              "path": "/previous/build/profile/build_configuration"
+                            },
+                            "result_output": {
+                              "mapping": "pointer",
+                              "path": "/previous/build/profile/result_output"
+                            },
+                            "schema": {
+                              "mapping": "pointer",
+                              "path": "/previous/build/outputs/reproduction-report/schema"
+                            },
+                            "environment": {
+                              "mapping": "pointer",
+                              "path": "/previous/build/outputs/reproduction-report/data/payload/value/environment"
+                            },
+                            "criterion": {
+                              "mapping": "pointer",
+                              "path": "/previous/build/outputs/reproduction-report/data/payload/value/criterion"
+                            }
+                          }
+                        },
+                        "scope": {
+                          "mapping": "object",
+                          "fields": {
+                            "input_digest": {
+                              "mapping": "pointer",
+                              "path": "/previous/build/outputs/reproduction-report/data/payload/value/input_digest"
+                            },
+                            "subject": {
+                              "mapping": "pointer",
+                              "path": "/previous/build/outputs/reproduction-report/data/payload/value/subject"
+                            },
+                            "command": {
+                              "mapping": "pointer",
+                              "path": "/previous/build/outputs/reproduction-report/data/payload/value/command"
+                            },
+                            "output": {
+                              "mapping": "pointer",
+                              "path": "/previous/build/outputs/reproduction-report/name"
+                            }
+                          }
+                        },
+                        "owner_input_digest": {
+                          "mapping": "pointer",
+                          "path": "/previous/input_digest"
+                        },
+                        "record_digest": {
+                          "mapping": "pointer",
+                          "path": "/previous/record_digest"
+                        },
+                        "status": {
+                          "mapping": "pointer",
+                          "path": "/previous/build/outputs/reproduction-report/data/payload/value/status"
+                        },
+                        "finding": {
+                          "mapping": "pointer",
+                          "path": "/previous/build/outputs/reproduction-report/data/payload/value/finding"
+                        },
+                        "fresh_until": {
+                          "mapping": "pointer",
+                          "path": "/previous/build/outputs/reproduction-report/fresh_until"
+                        },
+                        "producer": {
+                          "mapping": "object",
+                          "fields": {
+                            "build_id": {
+                              "mapping": "pointer",
+                              "path": "/previous/build/outputs/reproduction-report/producer/build_id"
+                            },
+                            "attempt_id": {
+                              "mapping": "pointer",
+                              "path": "/previous/build/outputs/reproduction-report/producer/attempt_id"
+                            },
+                            "job_id": {
+                              "mapping": "pointer",
+                              "path": "/previous/build/outputs/reproduction-report/producer/job_id"
+                            }
+                          }
+                        }
+                      }
+                    }
+                  }
+                },
+                "otherwise": {
+                  "mapping": "constant",
+                  "value": "absent"
+                }
+              }
+            }
+          }
+        }
+      },
+      "build_profile": "classification"
+    }
+  ]
+}

@@ -67,6 +67,13 @@ pub use gate::{FlowGateBinding, MAX_FLOW_GATE_PARAMETER_BYTES};
 pub use input::{FlowInputPreparation, FlowNodeCode, FlowNodeInput, FlowRecordReference};
 pub use record::{FlowNodeRecord, FlowRecordObservation};
 mod contract;
+mod issue_presentation;
+mod issue_slots;
+pub use issue_presentation::{
+  FlowIssueOutcomeLocation, FlowIssuePresentation, FlowIssuePresentationViolation, FlowIssueReferenceBinding,
+  FlowIssueReferenceKind, FlowIssueSlot, FlowIssueSlotConflict, MAX_ISSUE_OUTCOME_CONCLUSION_BYTES,
+  MAX_ISSUE_OUTCOME_REFERENCES, MAX_ISSUE_OUTCOME_TITLE_BYTES,
+};
 mod definition;
 mod history;
 mod interpreter;

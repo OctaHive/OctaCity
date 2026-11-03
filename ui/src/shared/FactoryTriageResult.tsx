@@ -191,14 +191,14 @@ function Lookup({ value, evidence }: { value: unknown; evidence: unknown }) {
     </section>
   );
 }
+function triageStage(record: Completion) {
+  const { identity, version } = record.output_schema;
+  if (record.public_result === undefined || (version !== 'v1' && version !== 'v2')) return;
+  if (identity === 'factory.triage.eligibility_accepted') return 'project';
+  if (identity === 'factory.triage.classification_summary') return 'analyst';
+}
 export function isTriageCompletion(record: Completion) {
-  return (
-    record.public_result !== undefined &&
-    record.output_schema.version === 'v1' &&
-    ['factory.triage.eligibility_accepted', 'factory.triage.classification_summary'].includes(
-      record.output_schema.identity,
-    )
-  );
+  return triageStage(record) !== undefined;
 }
 /** Only reviewed public schema identities are rendered. Reasoning outputs remain private. */
 export function FactoryTriageResult({ record }: { record: Completion }) {
@@ -207,16 +207,19 @@ export function FactoryTriageResult({ record }: { record: Completion }) {
   const assessment = object(value.assessment);
   const dependencies = Array.isArray(assessment.dependencies) ? assessment.dependencies : [];
   const dependencyKeys = useDraftRowKeys(dependencies);
-  if (!Object.keys(value).length || record.output_schema.version !== 'v1') return null;
-  if (record.output_schema.identity === 'factory.triage.eligibility_accepted')
+  const stage = triageStage(record);
+  if (!stage || !Object.keys(value).length) return null;
+  if (stage === 'project')
     return (
       <section aria-label={t('triageResult.project')}>
         <h3>{t('triageResult.project')}</h3>
-        <Rows value={value} names={['accepted', 'decision', 'reason']} />
+        <Rows
+          value={{ ...value, reason: value.conclusion ?? value.reason }}
+          names={['accepted', 'decision', 'reason']}
+        />
         <Lookup value={value.lookup} evidence={value.evidence} />
       </section>
     );
-  if (record.output_schema.identity !== 'factory.triage.classification_summary') return null;
   const observed = object(object(value.evidence).observed);
   const producer = object(observed.producer);
   const scope = object(observed.scope);

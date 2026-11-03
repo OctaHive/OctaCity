@@ -366,6 +366,18 @@ pub enum FactoryError {
     /// Stable field or relationship name safe to expose in diagnostics.
     field: &'static str,
   },
+  /// A declared Issue card cannot read the requested fields from its outcome schema.
+  #[error("incompatible Flow outcome Issue presentation field: {}", context.field)]
+  InvalidIssuePresentation {
+    /// Safe field location and its declaring step.
+    context: Box<crate::FlowIssuePresentationViolation>,
+  },
+  /// A single execution could accept more than one declaration for an Issue slot.
+  #[error("Flow outcome Issue presentation slot {context}")]
+  AmbiguousIssuePresentationSlot {
+    /// Shared slot and exact conflicting declarations.
+    context: Box<crate::FlowIssueSlotConflict>,
+  },
   /// A Factory permission value is malformed or outside a safety bound.
   #[error("invalid factory permission in {category:?}")]
   InvalidPermission {

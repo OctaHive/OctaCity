@@ -2,7 +2,10 @@ import type { components } from '../../.generated/api/schema';
 type Completion = components['schemas']['FactoryNodeCompletionDiagnostic'];
 
 /** Public gate projections; private reasoning and agent inputs are intentionally absent. */
-export function triageCompletion(stage: 'eligibility' | 'classification'): Completion {
+export function triageCompletion(
+  stage: 'eligibility' | 'classification',
+  version: 'v1' | 'v2' = 'v1',
+): Completion {
   return {
     result_provenance: [
       {
@@ -55,7 +58,7 @@ export function triageCompletion(stage: 'eligibility' | 'classification'): Compl
     outcome: stage === 'eligibility' ? 'review' : 'accepted',
     output_schema: {
       identity: `factory.triage.${stage === 'eligibility' ? 'eligibility_accepted' : 'classification_summary'}`,
-      version: 'v1',
+      version,
       digest: 'a'.repeat(64),
     },
     output_digest: 'b'.repeat(64),
@@ -66,7 +69,7 @@ export function triageCompletion(stage: 'eligibility' | 'classification'): Compl
         ? {
             accepted: false,
             decision: 'review',
-            reason: 'Scope needs an operator decision',
+            [version === 'v2' ? 'conclusion' : 'reason']: 'Scope needs an operator decision',
             evidence: [
               {
                 traceArtifactRef: 'retained-trace',

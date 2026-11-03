@@ -167,6 +167,8 @@ pub struct FlowGateRule {
 pub struct FlowGateProgram {
   #[serde(default, skip_serializing_if = "Option::is_none")]
   precondition: Option<FlowPredicate>,
+  #[serde(default, skip_serializing_if = "Option::is_none")]
+  precondition_failure_output: Option<FlowDataMapping>,
   rules: Vec<FlowGateRule>,
   fallback: FactoryKey,
   #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
@@ -179,6 +181,8 @@ pub struct FlowGateProgram {
 struct ProgramWire {
   #[serde(default)]
   precondition: Option<FlowPredicate>,
+  #[serde(default)]
+  precondition_failure_output: Option<FlowDataMapping>,
   rules: Vec<FlowGateRule>,
   fallback: FactoryKey,
   #[serde(default)]
@@ -193,6 +197,8 @@ impl TryFrom<ProgramWire> for FlowGateProgram {
     if let Some(precondition) = wire.precondition {
       program = program.with_precondition(precondition)?;
     }
+    program.precondition_failure_output = wire.precondition_failure_output;
+    program.validate_bytes()?;
     if let Some(mapping) = wire.default_output {
       program = program.with_default_output_mapping(mapping)?;
     }
@@ -254,16 +260,20 @@ impl FlowGateProgram {
     if &Self::from_node(node)? != self {
       return Err(invalid());
     }
-    let outcome = self.select_at(input.payload(), at)?;
+    let (outcome, precondition_passed) = self.select_with_time(input.payload(), Some(Value::from(at.unix_millis())))?;
     if node
-      .outcome(&outcome)
+      .outcome(outcome)
       .is_none_or(|declared| declared.schema() != schema.reference())
     {
       return Err(invalid());
     }
-    let payload = self
-      .outputs
-      .get(&outcome)
+    let failure_output = if precondition_passed {
+      None
+    } else {
+      self.precondition_failure_output.as_ref()
+    };
+    let payload = failure_output
+      .or_else(|| self.outputs.get(outcome))
       .or(self.default_output.as_ref())
       .ok_or_else(invalid)?
       .project(input.payload(), schema)?;
@@ -272,7 +282,7 @@ impl FlowGateProgram {
       attempt,
       definition,
       FlowRecordObservation {
-        outcome,
+        outcome: outcome.clone(),
         payload,
         producer: NodeExecutionIdentity::BuiltIn,
         observed_at: at,
@@ -306,6 +316,7 @@ impl FlowGateProgram {
     }
     let program = Self {
       precondition: None,
+      precondition_failure_output: None,
       rules,
       fallback,
       outputs: BTreeMap::new(),
@@ -315,6 +326,9 @@ impl FlowGateProgram {
     Ok(program)
   }
   fn validate_bytes(&self) -> Result<(), FactoryError> {
+    if self.precondition.is_none() && self.precondition_failure_output.is_some() {
+      return Err(invalid());
+    }
     validate_predicates(self.precondition.iter().chain(self.rules.iter().map(|rule| &rule.when)))?;
     if serde_json::to_vec(self).map_err(|_| invalid())?.len() > MAX_FLOW_GATE_PARAMETER_BYTES {
       return Err(invalid());
@@ -323,13 +337,16 @@ impl FlowGateProgram {
   }
   /// Selects the first matching rule or the explicit fallback, without lifecycle authority.
   pub fn select(&self, input: &FlowPayload) -> Result<FactoryKey, FactoryError> {
-    self.select_with_time(input, None)
+    self.select_with_time(input, None).map(|(outcome, _)| outcome.clone())
   }
   /// Evaluates configured temporal rules against the authoritative owner observation time.
   pub fn select_at(&self, input: &FlowPayload, at: Timestamp) -> Result<FactoryKey, FactoryError> {
-    self.select_with_time(input, Some(Value::from(at.unix_millis())))
+    self
+      .select_with_time(input, Some(Value::from(at.unix_millis())))
+      .map(|(outcome, _)| outcome.clone())
   }
-  fn select_with_time(&self, input: &FlowPayload, at: Option<Value>) -> Result<FactoryKey, FactoryError> {
+  // The fallback can be reached with or without a verified precondition.
+  fn select_with_time(&self, input: &FlowPayload, at: Option<Value>) -> Result<(&FactoryKey, bool), FactoryError> {
     let mut remaining = MAX_EVALUATION_STEPS;
     if let Some(precondition) = &self.precondition {
       let matched = precondition
@@ -339,7 +356,7 @@ impl FlowGateProgram {
         return Err(invalid());
       }
       if matched != Some(true) {
-        return Ok(self.fallback.clone());
+        return Ok((&self.fallback, false));
       }
     }
     for rule in &self.rules {
@@ -351,10 +368,10 @@ impl FlowGateProgram {
         return Err(invalid());
       }
       if matched == Some(true) {
-        return Ok(rule.outcome.clone());
+        return Ok((&rule.outcome, true));
       }
     }
-    Ok(self.fallback.clone())
+    Ok((&self.fallback, true))
   }
 }
 pub(super) fn validate_binding(node: &FlowNodeDefinition) -> Result<(), FactoryError> {

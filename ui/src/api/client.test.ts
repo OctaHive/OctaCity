@@ -264,6 +264,29 @@ it.each([
   expect(error.validationIssues).toEqual([{ field: '/execution/budget', code }]);
 });
 
+it('keeps both safe outcome locations and the name of their conflicting Issue slot', async () => {
+  const errors = ['measure', 'review'].map((node) => ({
+    field: '/outcomes/0/issue_presentation',
+    code: 'ambiguous_issue_presentation_slot',
+    node,
+    outcome: `${node}-done`,
+    issue_slot: 'assessment',
+  }));
+  const client = createManagementApiClient(async () =>
+    jsonResponse(
+      {
+        code: 'invalid_request',
+        message: 'The definition is invalid.',
+        request_id: REQUEST_ID,
+        diagnostics: { errors },
+      },
+      400,
+    ),
+  );
+  const error = await captureApiError(client.GET(OPENAPI_PATH));
+  expect(error.validationIssues).toEqual(errors);
+});
+
 it.each(['flow_definition', 'installation', 'installed_runtime_policy'])(
   'retains only closed %s metadata needed to explain an authoritative execution ceiling',
   async (ceiling) => {

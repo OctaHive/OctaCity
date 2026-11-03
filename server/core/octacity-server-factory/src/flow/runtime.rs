@@ -848,6 +848,24 @@ pub(crate) fn validate_data_catalogue(
   }
   for definition in closure.definitions() {
     for node in definition.nodes() {
+      for (outcome_index, outcome) in node.outcomes().iter().enumerate() {
+        if let Some(presentation) = outcome.issue_presentation() {
+          let schema = schemas
+            .iter()
+            .find(|schema| schema.reference() == outcome.schema())
+            .ok_or_else(invalid)?;
+          presentation
+            .validate(schema.shape())
+            .map_err(|field| FactoryError::InvalidIssuePresentation {
+              context: Box::new(crate::FlowIssuePresentationViolation {
+                definition: definition.reference(),
+                node: node.key().clone(),
+                outcome_index,
+                field,
+              }),
+            })?;
+        }
+      }
       if let Some(binding) = node.operator_requests() {
         for disposition in binding.dispositions() {
           let schema = binding
