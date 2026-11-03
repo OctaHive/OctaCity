@@ -386,7 +386,7 @@ free. No commits were created.
 The new `factory_manual_authoring` journey uses normal Server/Agent processes,
 management HTTP, fresh PostgreSQL and S3, and two actual isolated ordinary Jobs.
 Technical prerequisites, invocation, evidence retention and explicit limits are
-listed in [the qualification guide](../../../docs/testing/manual-factory-authoring.md).
+listed in [the qualification guide](../../../../docs/testing/manual-factory-authoring.md).
 There is no saved business Flow/Configuration, bootstrap Build/Run, Repository,
 handler replacement or hidden stage resolver. Project documents, two generic
 Roles/Profiles, step-owned assignments, finite schemas, two declarative gates,
