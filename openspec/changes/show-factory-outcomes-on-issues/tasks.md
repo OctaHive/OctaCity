@@ -6,9 +6,9 @@
 
 ## 2. Read current summaries for an Issue
 
-- [ ] 2.1 Resolve bounded, current cards from the exact Issue association and accepted outcomes. At the Issue query boundary verify per-slot coexistence, retries and out-of-order completion, requirement changes, and legacy Issues or Runs without a configured summary.
-- [ ] 2.2 Resolve document, artifact and review links through existing read owners. Verify that cross-Project, revoked and hidden references reveal no link, title or count, and that visible expired references have an unavailable state.
-- [ ] 2.3 Expose the summary query through REST and regenerate OpenAPI clients. Verify authorization, exact Issue and Run references, bounded response, and the absence of mutations or provider calls on read.
+- [x] 2.1 Resolve bounded, current cards from the exact Issue association and accepted outcomes. At the Issue query boundary verify per-slot coexistence, retries and out-of-order completion, requirement changes, and legacy Issues or Runs without a configured summary.
+- [x] 2.2 Resolve document, artifact and review links through existing read owners. Verify that cross-Project, revoked and hidden references reveal no link, title or count, and that visible expired references have an unavailable state.
+- [x] 2.3 Expose the summary query through REST and regenerate OpenAPI clients. Verify authorization, exact Issue and Run references, bounded response, and the absence of mutations or provider calls on read.
 
 ## 3. Present and configure the cards
 

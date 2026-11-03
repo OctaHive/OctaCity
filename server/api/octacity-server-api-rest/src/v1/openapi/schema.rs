@@ -13,6 +13,7 @@ mod issue_code_reviews;
 mod issue_discussion;
 mod issue_executions;
 mod issue_journal;
+mod issue_outcomes;
 mod issue_planning;
 mod issue_result_panels;
 mod issue_sources;

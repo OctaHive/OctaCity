@@ -1,7 +1,7 @@
 //! The document variant shares the existing Project text preparation/object/cleanup journal.
 use crate::mutation::{MutationFacts, MutationIdentity, MutationKind};
 use crate::{PostgresStore, database::unavailable};
-use octacity_server_domain::{EntityKind, ProjectId};
+use octacity_server_domain::{ArtifactId, EntityKind, ProjectId};
 use octacity_server_factory::FactoryDigest;
 use octacity_server_store::*;
 use serde_json::{Value, json};
@@ -35,6 +35,25 @@ async fn save(connection: &mut PgConnection, record: &ProjectDocumentPreparation
 }
 #[async_trait::async_trait]
 impl ProjectDocumentInputStore for PostgresStore {
+  async fn project_document_metadata(
+    &self,
+    project: ProjectId,
+    artifact: ArtifactId,
+  ) -> Result<Option<ProjectDocumentResource>, StoreError> {
+    let row: Option<Json<Value>> = sqlx::query_scalar(
+      "SELECT p.document FROM project_text_preparations p \
+       JOIN project_text_input_objects o ON o.preparation_id=p.id \
+       WHERE p.project_id=$1 AND o.artifact_id=$2 AND o.role='document' \
+         AND p.document->>'published_at' IS NOT NULL",
+    )
+    .bind(project.as_uuid())
+    .bind(artifact.as_uuid())
+    .fetch_optional(self.pool())
+    .await
+    .map_err(unavailable)?;
+    row.map(|row| decode(row)?.resource()).transpose()
+  }
+
   async fn list_project_documents(&self, request: ListProjectDocuments) -> Result<ProjectDocumentPage, StoreError> {
     request.validate()?;
     crate::discovery::require_project(self.pool(), request.project_id).await?;

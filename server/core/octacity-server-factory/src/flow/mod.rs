@@ -71,7 +71,8 @@ mod issue_presentation;
 mod issue_slots;
 pub use issue_presentation::{
   FlowIssueOutcomeLocation, FlowIssuePresentation, FlowIssuePresentationViolation, FlowIssueReferenceBinding,
-  FlowIssueReferenceKind, FlowIssueSlot, FlowIssueSlotConflict, MAX_ISSUE_OUTCOME_CONCLUSION_BYTES,
+  FlowIssueReferenceKind, FlowIssueSlot, FlowIssueSlotConflict, ISSUE_OUTCOME_DUPLICATE_COVERAGE,
+  ISSUE_OUTCOME_REVIEW_VERDICTS, ISSUE_OUTCOME_TRIAGE_DECISIONS, MAX_ISSUE_OUTCOME_CONCLUSION_BYTES,
   MAX_ISSUE_OUTCOME_REFERENCES, MAX_ISSUE_OUTCOME_TITLE_BYTES,
 };
 mod definition;

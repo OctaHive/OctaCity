@@ -324,6 +324,7 @@ unavailable_query!(
   "list_issue_timeline"
 );
 unavailable_query!(octacity_server_application::ListIssueResultsQuery, "list_issue_results");
+unavailable_query!(octacity_server_application::GetIssueOutcomesQuery, "get_issue_outcomes");
 unavailable_query!(octacity_server_application::ListIssueChecksQuery, "list_issue_checks");
 unavailable_query!(
   octacity_server_application::ListIssueArtifactsQuery,
@@ -1263,6 +1264,7 @@ fn management_contract_requests() -> Vec<Request<Body>> {
     json_request("POST",&format!("{source_path}/comments"),"comment",None,r#"{"body":"operator discussion"}"#),
     empty_request("GET",&format!("{source_path}/comments/{repository_id}"),None),
     empty_request("GET",&format!("{source_path}/timeline?limit=1"),None),
+    empty_request("GET",&format!("{source_path}/outcomes"),None),
     empty_request("GET",&format!("{source_path}/results?work_id={repository_id}&collection=evidence&limit=1"),None),
     empty_request("GET",&format!("/api/v1/projects/{project_id}/issues/{pipeline_id}/executions?limit=1"),None),
     empty_request("GET",&format!("/api/v1/projects/{project_id}/issues/{pipeline_id}/executions/{repository_id}"),None),
@@ -1737,6 +1739,7 @@ async fn every_management_operation_is_allowed_before_application_dispatch() {
       "append_issue_comment",
       "get_issue_comment_body",
       "list_issue_timeline",
+      "get_issue_outcomes",
       "list_issue_results",
       "list_issue_executions",
       "get_issue_execution",

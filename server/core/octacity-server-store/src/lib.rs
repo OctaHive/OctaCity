@@ -35,6 +35,8 @@ mod issue_source_status;
 pub use issue_source_status::*;
 mod issue_execution;
 pub use issue_execution::*;
+mod issue_outcomes;
+pub use issue_outcomes::*;
 mod issue_pipeline_action;
 mod issue_policy;
 pub use issue::*;

@@ -14,9 +14,12 @@ pub const MAX_ISSUE_OUTCOME_TITLE_BYTES: usize = 128;
 /// Maximum retained resource references per card.
 pub const MAX_ISSUE_OUTCOME_REFERENCES: u16 = 8;
 
-const TRIAGE_DECISIONS: &[&str] = &["eligible", "duplicate", "out_of_scope", "needs_input", "review"];
-const DUPLICATE_COVERAGE: &[&str] = &["complete", "partial", "unknown"];
-const REVIEW_VERDICTS: &[&str] = &["approved", "changes_required", "needs_review"];
+/// Allowed decisions in a triage Issue card.
+pub const ISSUE_OUTCOME_TRIAGE_DECISIONS: &[&str] = &["eligible", "duplicate", "out_of_scope", "needs_input", "review"];
+/// Allowed duplicate coverage states in a triage Issue card.
+pub const ISSUE_OUTCOME_DUPLICATE_COVERAGE: &[&str] = &["complete", "partial", "unknown"];
+/// Allowed verdicts in a review Issue card.
+pub const ISSUE_OUTCOME_REVIEW_VERDICTS: &[&str] = &["approved", "changes_required", "needs_review"];
 
 /// Versioned presentation of an accepted outcome on its associated Issue.
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
@@ -97,7 +100,8 @@ impl std::fmt::Display for FlowIssueSlot {
   fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
     match self {
       Self::Named(slot) => write!(formatter, "{slot}"),
-      Self::Custom { flow, node, outcome } => write!(formatter, "{flow}.{node}.{outcome}"),
+      // Factory keys cannot contain colons, so every component and the namespace are unambiguous.
+      Self::Custom { flow, node, outcome } => write!(formatter, "custom:{flow}:{node}:{outcome}"),
     }
   }
 }
@@ -205,11 +209,12 @@ impl FlowIssuePresentation {
     match self {
       Self::TriageV1 { .. } => {
         check(
-          required("decision").is_some_and(|shape| finite_keys(shape, Some(TRIAGE_DECISIONS))),
+          required("decision").is_some_and(|shape| finite_keys(shape, Some(ISSUE_OUTCOME_TRIAGE_DECISIONS))),
           "schema/shape/fields/decision",
         )?;
         check(
-          field("duplicate_coverage").is_none_or(|field| finite_keys(field.value(), Some(DUPLICATE_COVERAGE))),
+          field("duplicate_coverage")
+            .is_none_or(|field| finite_keys(field.value(), Some(ISSUE_OUTCOME_DUPLICATE_COVERAGE))),
           "schema/shape/fields/duplicate_coverage",
         )?;
         check(
@@ -239,7 +244,7 @@ impl FlowIssuePresentation {
       ),
       Self::ReviewV1 { .. } => {
         check(
-          required("verdict").is_some_and(|shape| finite_keys(shape, Some(REVIEW_VERDICTS))),
+          required("verdict").is_some_and(|shape| finite_keys(shape, Some(ISSUE_OUTCOME_REVIEW_VERDICTS))),
           "schema/shape/fields/verdict",
         )?;
         check(

@@ -2,6 +2,20 @@ use super::{ManagementOperation, ParameterProfile};
 use octacity_server_application::{CreateIssueCommand, EditIssueCommand, GetIssueQuery};
 pub(super) const OPERATIONS: &[ManagementOperation] = &[
   operation!(
+    octacity_server_application::GetIssueOutcomesQuery,
+    "GET",
+    "/api/v1/projects/{project_id}/issues/{issue_id}/outcomes",
+    "getIssueOutcomes",
+    "Issues",
+    "Read current accepted pipeline outcomes and visible retained references",
+    None,
+    "IssueOutcomes",
+    "200",
+    false,
+    false
+  )
+  .with_no_store_response(),
+  operation!(
     octacity_server_application::GetIssueContentRetentionQuery,
     "GET",
     "/api/v1/projects/{project_id}/issues/{issue_id}/content-retention/{retention_kind}",

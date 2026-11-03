@@ -499,3 +499,44 @@ fn metadata_only(mut observation: IssueCodeReviewObservation) -> IssueCodeReview
   observation.check_details = None;
   observation
 }
+
+impl<S: IssueCodeReviewStore> IssueCodeReviewHandlers<S> {
+  // Card links have a stricter read contract than the retained review history:
+  // revoking the installed reader removes the link and its retained title.
+  pub(crate) async fn outcome_link(
+    &self,
+    context: &ManagementRequestContext,
+    project: ProjectId,
+    issue: IssueId,
+    id: FactoryDigest,
+  ) -> Result<Option<IssueOutcomeLink>, ApplicationError> {
+    let scope = context.security_scope().to_store();
+    let association = match self.store.issue_code_review(project, issue, &scope, id).await {
+      Ok(association) => association,
+      Err(octacity_server_store::StoreError::NotFound { .. }) => return Ok(None),
+      Err(error) => return Err(error.into()),
+    };
+    let visibility = self.reader.visibility(context, project).await?;
+    if !visibility.allows(&association.selection.repository_identity())
+      || self.availability(context, project, &association.selection).await != IssueCodeReviewAvailability::Available
+    {
+      return Ok(None);
+    }
+    let observation = self
+      .store
+      .latest_issue_code_review_observation(&association, &scope)
+      .await?;
+    if self
+      .visible_repository(context, project, &association.selection)
+      .await
+      .is_err()
+      || self.availability(context, project, &association.selection).await != IssueCodeReviewAvailability::Available
+    {
+      return Ok(None);
+    }
+    Ok(Some(IssueOutcomeLink {
+      title: observation.and_then(|row| row.title).map(|title| title.to_string()),
+      target: IssueOutcomeLinkTarget::Review(id),
+    }))
+  }
+}

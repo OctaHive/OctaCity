@@ -186,6 +186,61 @@ fn build_resource_retains_a_factory_operation_without_fabricating_a_trigger() {
 }
 
 #[test]
+fn openapi_describes_bounded_read_only_issue_outcomes() {
+  let api = octacity_server_api_rest::v1::openapi_document();
+  let path = &api["paths"]["/api/v1/projects/{project_id}/issues/{issue_id}/outcomes"];
+  assert_eq!(path.as_object().unwrap().len(), 1);
+  let operation = &path["get"];
+  assert_eq!(operation["operationId"], "getIssueOutcomes");
+  let response = &operation["responses"]["200"];
+  assert_eq!(response["headers"]["Cache-Control"]["schema"]["const"], "no-store");
+  assert_eq!(
+    response["content"]["application/json"]["schema"]["$ref"],
+    "#/components/schemas/IssueOutcomes"
+  );
+  let schemas = &api["components"]["schemas"];
+  assert_eq!(schemas["IssueOutcomes"]["properties"]["items"]["maxItems"], 32);
+  let card = &schemas["IssueOutcomeCard"]["properties"];
+  assert_eq!(card["run_id"]["format"], "uuid");
+  assert_eq!(card["conclusion"]["maxLength"], 1024);
+  assert!(card.get("payload").is_none());
+  let variants = |name: &str| {
+    schemas[name]["oneOf"]
+      .as_array()
+      .unwrap()
+      .iter()
+      .map(|variant| variant["properties"]["kind"]["const"].as_str().unwrap())
+      .collect::<Vec<_>>()
+  };
+  assert_eq!(
+    variants("IssueOutcomePresentation"),
+    ["triage", "specifications", "review", "custom"]
+  );
+  assert_eq!(
+    variants("IssueOutcomeLink"),
+    ["document", "artifact", "work_artifact", "review", "unavailable"]
+  );
+  let triage = &schemas["IssueOutcomePresentation"]["oneOf"][0]["properties"];
+  assert_eq!(triage["recommended_priority"]["maximum"], 100);
+  assert_eq!(
+    triage["decision"]["enum"],
+    json!(["eligible", "duplicate", "out_of_scope", "needs_input", "review"])
+  );
+  assert_eq!(
+    triage["duplicate_coverage"]["enum"],
+    json!(["complete", "partial", "unknown"])
+  );
+  let review = &schemas["IssueOutcomePresentation"]["oneOf"][2]["properties"];
+  assert_eq!(
+    review["verdict"]["enum"],
+    json!(["approved", "changes_required", "needs_review"])
+  );
+  let unavailable = &schemas["IssueOutcomeLink"]["oneOf"][4];
+  assert!(unavailable["properties"].get("artifact_id").is_none());
+  assert!(unavailable["properties"].get("review_id").is_none());
+}
+
+#[test]
 fn openapi_describes_an_optional_factory_build_origin_and_an_absent_trigger() {
   let schemas = &octacity_server_api_rest::v1::openapi_document()["components"]["schemas"];
   let build = &schemas["BuildResource"];

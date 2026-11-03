@@ -261,6 +261,7 @@ struct TextArtifacts;
 impl IssueArtifactReader for TextArtifacts {
   async fn metadata(&self, _: ReadFactoryArtifact) -> Result<IssueArtifactMetadata, ApplicationError> {
     Ok(IssueArtifactMetadata {
+      build_owner: None,
       name: "requirements.txt".into(),
       media_type: "text/plain".into(),
       origin: IssueArtifactOrigin::ProjectInput,
@@ -358,6 +359,7 @@ struct PreviewArtifacts {
 impl IssueArtifactReader for PreviewArtifacts {
   async fn metadata(&self, _: ReadFactoryArtifact) -> Result<IssueArtifactMetadata, ApplicationError> {
     Ok(IssueArtifactMetadata {
+      build_owner: None,
       name: "safe-preview".into(),
       media_type: self.media_type.into(),
       origin: IssueArtifactOrigin::BuildOutput,

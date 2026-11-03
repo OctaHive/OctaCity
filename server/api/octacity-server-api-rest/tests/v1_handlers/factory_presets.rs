@@ -509,6 +509,7 @@ impl IssueArtifactReader for PresetArtifacts {
       visible.store(false, Ordering::SeqCst);
     }
     Ok(IssueArtifactMetadata {
+      build_owner: None,
       name: "project document".into(),
       media_type: "text/plain".into(),
       origin: IssueArtifactOrigin::ProjectInput,

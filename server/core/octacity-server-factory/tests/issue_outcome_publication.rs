@@ -549,3 +549,22 @@ fn parallel_child_terminals_still_select_one_caller_outcome() {
   );
   publish_graph(schema, vec![parent, child]).unwrap();
 }
+
+#[test]
+fn issue_slot_display_distinguishes_dotted_keys_and_explicit_slots() {
+  use octacity_server_factory::{FlowDefinitionId, FlowIssueSlot};
+  let flow: FlowDefinitionId = "0199a6f4-d56c-7440-9aa2-6a320f862795".parse().unwrap();
+  let first = FlowIssueSlot::Custom {
+    flow,
+    node: "review.main".parse().unwrap(),
+    outcome: "accepted".parse().unwrap(),
+  };
+  let second = FlowIssueSlot::Custom {
+    flow,
+    node: "review".parse().unwrap(),
+    outcome: "main.accepted".parse().unwrap(),
+  };
+  let named = FlowIssueSlot::Named(format!("{flow}.review.main.accepted").parse().unwrap());
+  assert_ne!(first.to_string(), second.to_string());
+  assert_ne!(first.to_string(), named.to_string());
+}

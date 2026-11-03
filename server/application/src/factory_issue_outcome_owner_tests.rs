@@ -27,42 +27,53 @@ fn published_issue_outcomes_use_accepted_producer_records_with_owner_references(
     .await
     .unwrap()
     .issue;
-    let review = AuthorizedCommandHandler::new(
+    let reader = Arc::new(Reader {
+      hidden_repository: AtomicBool::new(false),
+      revoked: AtomicBool::new(false),
+      reads: AtomicUsize::new(0),
+    });
+    let reviews = Arc::new(IssueCodeReviewHandlers::new(
+      issues.clone(),
+      reader.clone(),
       policy.clone(),
-      Arc::new(IssueCodeReviewHandlers::new(
-        issues,
-        Arc::new(Reader {
-          hidden_repository: AtomicBool::new(false),
-          revoked: AtomicBool::new(false),
-          reads: AtomicUsize::new(0),
-        }),
-        policy.clone(),
-        Arc::new(Clock),
-      )),
-    )
-    .handle_command(
-      &request,
-      AttachIssueCodeReviewCommand {
-        intent: AttachIssueCodeReviewIntent {
+      Arc::new(Clock),
+    ));
+    let review = AuthorizedCommandHandler::new(policy.clone(), reviews.clone())
+      .handle_command(
+        &request,
+        AttachIssueCodeReviewCommand {
+          intent: AttachIssueCodeReviewIntent {
+            project_id,
+            issue_id: issue.id,
+            expected_version: issue.version,
+            selection: selection(),
+            binding: None,
+          },
+          idempotency_key: key("reviewed-specification-link"),
+        },
+      )
+      .await
+      .unwrap()
+      .association;
+    AuthorizedCommandHandler::new(policy.clone(), reviews.clone())
+      .handle_command(
+        &request,
+        RefreshIssueCodeReviewCommand {
           project_id,
           issue_id: issue.id,
-          expected_version: issue.version,
-          selection: selection(),
-          binding: None,
+          association_id: review.id,
+          idempotency_key: key("rename-outcome-review"),
         },
-        idempotency_key: key("reviewed-specification-link"),
-      },
-    )
-    .await
-    .unwrap()
-    .association;
+      )
+      .await
+      .unwrap();
     let store = Arc::new(InMemoryFactoryConfigurationStore::new());
     store.seed_project(project_id).unwrap();
     let document = ProjectTextIntake::new(
       store.clone(),
       Arc::new(crate::factory_test_support::InMemoryArtifactBytes::default()),
       Arc::new(ExactRevisionResolver),
-      policy,
+      policy.clone(),
       Arc::new(Clock),
     )
     .publish_document(
@@ -76,6 +87,184 @@ fn published_issue_outcomes_use_accepted_producer_records_with_owner_references(
     )
     .await
     .unwrap();
+
+    let work = fixtures::work();
+    let scope = crate::issue_outcome_links::IssueOutcomeLinkScope {
+      project: project_id,
+      issue: issue.id,
+      work_id: work.id(),
+      inputs: work.artifacts(),
+    };
+    let selected = [
+      octacity_server_store::IssueOutcomeReference::Document(document.artifact.clone()),
+      octacity_server_store::IssueOutcomeReference::Review(review.id),
+    ];
+    let links = IssueOutcomeLinkReaders::new(
+      store.clone(),
+      Arc::new(LinkArtifacts(Some(at(30)), IssueArtifactOrigin::BuildOutput)),
+      reviews.clone(),
+      Arc::new(Clock),
+    );
+    let visible = links
+      .resolve(&request, policy.as_ref(), scope, &selected)
+      .await
+      .unwrap();
+    assert_eq!(
+      visible,
+      vec![
+        IssueOutcomeLink {
+          title: Some("Accepted design".into()),
+          target: IssueOutcomeLinkTarget::Document(document.artifact.artifact_id()),
+        },
+        IssueOutcomeLink {
+          title: Some("Renamed code change".into()),
+          target: IssueOutcomeLinkTarget::Review(review.id),
+        },
+      ]
+    );
+    let foreign = project(&issues).await;
+    assert!(
+      links
+        .resolve(
+          &request,
+          policy.as_ref(),
+          crate::issue_outcome_links::IssueOutcomeLinkScope {
+            project: foreign,
+            ..scope
+          },
+          &selected
+        )
+        .await
+        .unwrap()
+        .is_empty()
+    );
+    reader.hidden_repository.store(true, Ordering::SeqCst);
+    assert_eq!(
+      links
+        .resolve(&request, policy.as_ref(), scope, &selected)
+        .await
+        .unwrap(),
+      visible[..1]
+    );
+    reader.hidden_repository.store(false, Ordering::SeqCst);
+    reader.revoked.store(true, Ordering::SeqCst);
+    assert_eq!(
+      links
+        .resolve(&request, policy.as_ref(), scope, &selected)
+        .await
+        .unwrap(),
+      visible[..1]
+    );
+    assert_eq!(
+      reader.reads.load(Ordering::SeqCst),
+      2,
+      "link resolution never refreshes the provider"
+    );
+    let expired = IssueOutcomeLinkReaders::new(
+      store.clone(),
+      Arc::new(LinkArtifacts(Some(at(30)), IssueArtifactOrigin::BuildOutput)),
+      reviews.clone(),
+      Arc::new(LinkClock(document.expires_at)),
+    );
+    assert_eq!(
+      expired
+        .resolve(&request, policy.as_ref(), scope, &selected)
+        .await
+        .unwrap(),
+      vec![IssueOutcomeLink {
+        title: Some("Accepted design".into()),
+        target: IssueOutcomeLinkTarget::Unavailable
+      },]
+    );
+    let output = octacity_server_factory::FactoryArtifactReference::new(
+      octacity_server_domain::ArtifactId::generate(),
+      FactoryDigest::from_bytes([5; 32]),
+      100,
+    )
+    .unwrap();
+    let artifact = octacity_server_store::IssueOutcomeReference::Artifact(output.clone());
+    assert_eq!(
+      links
+        .resolve(&request, policy.as_ref(), scope, std::slice::from_ref(&artifact))
+        .await
+        .unwrap(),
+      vec![IssueOutcomeLink {
+        title: Some("Retained output".into()),
+        target: IssueOutcomeLinkTarget::Artifact(output.artifact_id())
+      },]
+    );
+    assert_eq!(
+      expired
+        .resolve(&request, policy.as_ref(), scope, std::slice::from_ref(&artifact))
+        .await
+        .unwrap(),
+      vec![IssueOutcomeLink {
+        title: Some("Retained output".into()),
+        target: IssueOutcomeLinkTarget::Unavailable,
+      }]
+    );
+    assert!(
+      links
+        .resolve(
+          &request,
+          &HideLinkResource(ManagementResourceKind::Build),
+          scope,
+          std::slice::from_ref(&artifact)
+        )
+        .await
+        .unwrap()
+        .is_empty()
+    );
+    let private = IssueOutcomeLinkReaders::new(
+      store.clone(),
+      Arc::new(LinkArtifacts(Some(at(30)), IssueArtifactOrigin::SourceInput)),
+      reviews.clone(),
+      Arc::new(Clock),
+    );
+    let task = work.artifacts().task();
+    assert_eq!(
+      private
+        .resolve(
+          &request,
+          policy.as_ref(),
+          scope,
+          &[
+            octacity_server_store::IssueOutcomeReference::Artifact(task.clone()),
+            artifact.clone(),
+          ]
+        )
+        .await
+        .unwrap(),
+      vec![IssueOutcomeLink {
+        title: Some("Retained output".into()),
+        target: IssueOutcomeLinkTarget::WorkArtifact {
+          work_id: work.id(),
+          artifact_id: task.artifact_id()
+        },
+      }],
+    );
+    let unpublished = IssueOutcomeLinkReaders::new(
+      store.clone(),
+      Arc::new(LinkArtifacts(None, IssueArtifactOrigin::BuildOutput)),
+      reviews,
+      Arc::new(LinkClock(document.expires_at)),
+    );
+    assert!(
+      unpublished
+        .resolve(&request, policy.as_ref(), scope, std::slice::from_ref(&artifact))
+        .await
+        .unwrap()
+        .is_empty(),
+      "expiry must not make an unpublished artifact visible"
+    );
+    let hidden = HideLinkResource(ManagementResourceKind::Artifact);
+    assert!(
+      links
+        .resolve(&request, &hidden, scope, &[selected[0].clone(), artifact])
+        .await
+        .unwrap()
+        .is_empty()
+    );
 
     for (kind, value) in [
       (
@@ -235,5 +424,51 @@ async fn assert_accepted_outcome(
       assert!(references.is_empty());
     }
     other => panic!("unexpected Issue presentation: {other:?}"),
+  }
+}
+
+struct LinkClock(Timestamp);
+impl FactoryExecutionClock for LinkClock {
+  fn now(&self) -> Result<Timestamp, ApplicationError> {
+    Ok(self.0)
+  }
+}
+struct LinkArtifacts(Option<Timestamp>, IssueArtifactOrigin);
+#[async_trait::async_trait]
+impl IssueArtifactReader for LinkArtifacts {
+  async fn metadata(&self, _: ReadFactoryArtifact) -> Result<IssueArtifactMetadata, ApplicationError> {
+    Ok(IssueArtifactMetadata {
+      build_owner: (self.1 == IssueArtifactOrigin::BuildOutput).then(|| {
+        (
+          octacity_server_domain::BuildId::from_uuid(uuid::Uuid::from_u128(1)).unwrap(),
+          octacity_server_domain::JobId::from_uuid(uuid::Uuid::from_u128(2)).unwrap(),
+        )
+      }),
+      name: "Retained output".into(),
+      media_type: "text/plain".into(),
+      origin: self.1,
+      availability: IssueArtifactAvailability::Available,
+      published_at: self.0,
+      expires_at: Some(at(10_000)),
+    })
+  }
+
+  async fn content(&self, _: ReadFactoryArtifact) -> Result<Vec<u8>, ApplicationError> {
+    panic!("link resolution must never read artifact bytes")
+  }
+}
+struct HideLinkResource(ManagementResourceKind);
+#[async_trait::async_trait]
+impl ManagementAuthorizationPolicy for HideLinkResource {
+  async fn authorize(
+    &self,
+    _: &ManagementRequestContext,
+    _: ManagementAction,
+    resource: &ManagementResource,
+  ) -> Result<ManagementAuthorizationGrant, ManagementAuthorizationDenial> {
+    if resource.kind() == self.0 {
+      return Err(ManagementAuthorizationDenial::forbidden());
+    }
+    Ok(ManagementAuthorizationGrant::new(ManagementVisibility::all()))
   }
 }

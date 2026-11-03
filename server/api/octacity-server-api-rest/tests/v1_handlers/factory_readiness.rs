@@ -76,6 +76,7 @@ struct RetainedReadinessDocuments;
 impl IssueArtifactReader for RetainedReadinessDocuments {
   async fn metadata(&self, _: ReadFactoryArtifact) -> Result<IssueArtifactMetadata, ApplicationError> {
     Ok(IssueArtifactMetadata {
+      build_owner: None,
       name: "document".into(),
       media_type: "text/plain".into(),
       origin: IssueArtifactOrigin::ProjectInput,

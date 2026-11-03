@@ -61,5 +61,6 @@ pub(crate) fn component_schemas() -> Value {
   super::issue_journal::insert(&mut schemas);
   super::issue_code_reviews::insert(&mut schemas);
   super::issue_result_panels::insert(&mut schemas);
+  super::issue_outcomes::insert(&mut schemas);
   Value::Object(schemas)
 }

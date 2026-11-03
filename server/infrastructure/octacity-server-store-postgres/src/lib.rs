@@ -63,6 +63,7 @@ mod issue_activity;
 mod issue_code_review;
 mod issue_discussion;
 mod issue_execution;
+mod issue_outcomes;
 mod issue_planning;
 mod issue_reporter;
 mod issue_source;

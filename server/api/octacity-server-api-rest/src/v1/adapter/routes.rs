@@ -327,6 +327,7 @@ fn registered_routes() -> ManagementRoutes {
       "readIssueArtifactContent",
       super::issue_result_panels::content,
     )
+    .get::<octacity_server_application::GetIssueOutcomesQuery, _, _>("getIssueOutcomes", super::issue_outcomes::get)
     .get::<octacity_server_application::ListIssueResultsQuery, _, _>("listIssueResults", super::issue_activity::results)
     .post::<octacity_server_application::RefreshIssueCodeReviewCommand, _, _>(
       "refreshIssueCodeReview",

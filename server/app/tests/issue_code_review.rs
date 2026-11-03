@@ -97,6 +97,14 @@ async fn code_review_application_rechecks_current_reads_and_metadata_visibility_
   };
   let observed = commands.handle_command(&context, refresh.clone()).await.unwrap();
   let restarted = Arc::new(PostgresStore::new(database.pool.clone()));
+  let latest = restarted
+    .latest_issue_code_review_observation(
+      &original.association,
+      &octacity_server_store::ManagementSecurityScope::trusted_network(),
+    )
+    .await
+    .unwrap();
+  assert_eq!(latest, Some(observed.observation.observation.clone()));
   let handlers = Arc::new(IssueCodeReviewHandlers::new(
     restarted,
     reader.clone(),

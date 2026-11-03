@@ -31,6 +31,9 @@ pub enum IssueArtifactOrigin {
 /// Safe metadata supplied by the existing retained Artifact reader without byte I/O.
 #[derive(Clone, Debug, Serialize)]
 pub struct IssueArtifactMetadata {
+  /// Build and Job whose visibility protects an ordinary output.
+  #[serde(skip)]
+  pub build_owner: Option<(octacity_server_domain::BuildId, octacity_server_domain::JobId)>,
   /// Authorized logical name.
   pub name: String,
   /// Verified logical media type.
@@ -201,10 +204,7 @@ impl<S: IssueExecutionStore + IssueStore, F: FactoryDiscoveryStore + octacity_se
     snapshot: &octacity_server_store::FactoryRunSnapshot,
   ) -> Result<Vec<IssueArtifactProjection>, ApplicationError> {
     let mut items = Vec::new();
-    for artifact in [snapshot.work.artifacts().task(), snapshot.work.artifacts().acceptance()]
-      .into_iter()
-      .chain(snapshot.work.artifacts().specifications())
-    {
+    for artifact in snapshot.work.artifacts().iter() {
       items.push(IssueArtifactProjection {
         artifact: artifact.clone(),
         group: IssueArtifactGroup::OriginalInput,

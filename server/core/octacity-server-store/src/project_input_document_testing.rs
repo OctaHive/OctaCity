@@ -3,6 +3,24 @@ use super::*;
 use crate::project_input_document::document_conflict;
 #[async_trait::async_trait]
 impl ProjectDocumentInputStore for crate::testing::InMemoryFactoryConfigurationStore {
+  async fn project_document_metadata(
+    &self,
+    project: ProjectId,
+    artifact: ArtifactId,
+  ) -> Result<Option<ProjectDocumentResource>, StoreError> {
+    Ok(
+      self
+        .lock()?
+        .project_text
+        .records
+        .values()
+        .filter_map(|row| row.document().ok())
+        .filter(|row| row.intent.project_id == project)
+        .filter_map(|row| row.resource().ok())
+        .find(|row| row.artifact.artifact_id() == artifact),
+    )
+  }
+
   async fn list_project_documents(&self, request: ListProjectDocuments) -> Result<ProjectDocumentPage, StoreError> {
     request.validate()?;
     let state = self.lock()?;

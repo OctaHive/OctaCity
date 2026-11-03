@@ -49,6 +49,8 @@ pub use issue_discussion::*;
 mod issue_source;
 pub use issue_source::*;
 mod issue_execution;
+mod issue_outcome_links;
+pub use issue_outcome_links::*;
 mod issue_execution_publication;
 pub use factory_issue_status_action::*;
 pub use issue_execution_publication::*;
@@ -760,8 +762,9 @@ pub use factory_discovery::{
 };
 pub use management_input::factory::{FactoryNodeControlInput, FactoryRunListInput};
 pub use octacity_server_factory::{
+  ISSUE_OUTCOME_DUPLICATE_COVERAGE, ISSUE_OUTCOME_REVIEW_VERDICTS, ISSUE_OUTCOME_TRIAGE_DECISIONS,
   MAX_DECISION_ASSESSMENTS, MAX_DECISION_REASONS, MAX_DECISION_SIGNAL_RECEIPTS, MAX_FACTORY_SAFE_TEXT_BYTES,
-  MAX_ISSUE_OUTCOME_REFERENCES, MAX_ISSUE_OUTCOME_TITLE_BYTES,
+  MAX_ISSUE_OUTCOME_CONCLUSION_BYTES, MAX_ISSUE_OUTCOME_REFERENCES, MAX_ISSUE_OUTCOME_TITLE_BYTES, MAX_WORK_PRIORITY,
 };
 pub use octacity_server_store::{
   FactoryRunPage as FactoryRunPageProjection, FactoryRunSummary as FactoryRunSummaryProjection,

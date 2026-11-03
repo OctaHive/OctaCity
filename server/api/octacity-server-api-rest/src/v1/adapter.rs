@@ -96,6 +96,7 @@ mod issue;
 pub use issue::IssueManagementApplication;
 mod issue_code_review;
 pub use issue_code_review::IssueCodeReviewManagementApplication;
+mod issue_outcomes;
 mod issue_result_panels;
 pub use issue_result_panels::IssueResultPanelManagementApplication;
 mod issue_activity;
@@ -216,6 +217,14 @@ pub struct ManagementApplication {
   issues: Option<IssueManagementApplication>,
   issue_executions: Option<IssueExecutionManagementApplication>,
   issue_activity: Option<IssueActivityManagementApplication>,
+  issue_outcomes: Option<
+    Arc<
+      dyn octacity_server_application::AuthorizedManagementQueryHandler<
+          octacity_server_application::GetIssueOutcomesQuery,
+          Error = octacity_server_application::ApplicationError,
+        >,
+    >,
+  >,
   issue_result_panels: Option<IssueResultPanelManagementApplication>,
   issue_discussion: Option<IssueDiscussionManagementApplication>,
   factory_actions: Option<FactoryActionManagementApplication>,
@@ -332,6 +341,7 @@ impl ManagementApplication {
       factory_readiness: None,
       factory_presets: None,
       issue_activity: None,
+      issue_outcomes: None,
       issue_result_panels: None,
       issue_sources: None,
       issue_code_reviews: None,

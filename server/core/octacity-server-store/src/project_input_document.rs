@@ -215,6 +215,12 @@ pub struct ReserveProjectDocument {
 /// Standalone documents use the same Project input owner, byte store and cleanup journal.
 #[async_trait::async_trait]
 pub trait ProjectDocumentInputStore: crate::ProjectInputQueryStore {
+  /// Reads one exact published document while its metadata is retained, including after byte expiry.
+  async fn project_document_metadata(
+    &self,
+    project: ProjectId,
+    artifact: ArtifactId,
+  ) -> Result<Option<ProjectDocumentResource>, StoreError>;
   /// Lists complete live named documents under visibility applied before page boundaries.
   async fn list_project_documents(&self, request: ListProjectDocuments) -> Result<ProjectDocumentPage, StoreError>;
   /// Looks up the original scoped document operation; another operation kind is a conflict.

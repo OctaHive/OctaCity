@@ -3335,3 +3335,6 @@ mod issue_journal;
 
 #[path = "support/factory_role_packages.rs"]
 mod role_packages;
+
+#[path = "factory_configured_flow/issue_outcomes.rs"]
+mod issue_outcomes;

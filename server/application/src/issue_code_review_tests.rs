@@ -66,7 +66,15 @@ impl IssueCodeReviewObservations for Reader {
     Ok(IssueCodeReviewObservation {
       selection: selection.clone(),
       observed_at: at(20),
-      title: Some("Visible code change".parse().unwrap()),
+      title: Some(
+        if read == 0 {
+          "Visible code change"
+        } else {
+          "Renamed code change"
+        }
+        .parse()
+        .unwrap(),
+      ),
       number: Some("42".parse().unwrap()),
       url: None,
       author: None,

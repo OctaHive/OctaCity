@@ -10,6 +10,15 @@ pub(super) struct IssueCodeReviewMemoryState {
   replays: BTreeMap<ManagementIdempotencyKey, (AttachIssueCodeReviewIntent, IssueCodeReviewOutcome)>,
 }
 impl IssueCodeReviewMemoryState {
+  fn latest(&self, scope: &ManagementSecurityScope, association: FactoryDigest) -> Option<IssueCodeReviewObservation> {
+    self
+      .observations
+      .iter()
+      .filter(|((owner, id, _), _)| owner == scope && *id == association)
+      .map(|(_, record)| record)
+      .max_by_key(|record| (record.observation.observed_at, record.sequence))
+      .map(|record| record.observation.clone())
+  }
   pub(super) fn mutation_count(&self) -> usize {
     self.replays.len() + self.observed_replays.len()
   }
@@ -153,6 +162,16 @@ impl IssueCodeReviewStore for crate::testing::InMemoryProjectStore {
       .ok_or(StoreError::NotFound {
         entity: EntityKind::Issue,
       })
+  }
+  async fn latest_issue_code_review_observation(
+    &self,
+    association: &IssueCodeReviewAssociation,
+    scope: &ManagementSecurityScope,
+  ) -> Result<Option<IssueCodeReviewObservation>, StoreError> {
+    self
+      .issue_code_review(association.project_id, association.issue_id, scope, association.id)
+      .await?;
+    Ok(self.lock()?.issues.code_reviews.latest(scope, association.id))
   }
   async fn issue_code_review_observation_replay(
     &self,
@@ -327,15 +346,7 @@ impl IssueCodeReviewStore for crate::testing::InMemoryProjectStore {
     let items = items
       .into_iter()
       .map(|association| {
-        let observation = state
-          .issues
-          .code_reviews
-          .observations
-          .iter()
-          .filter(|((scope, id, _), _)| scope == &request.scope && *id == association.id)
-          .map(|(_, record)| record)
-          .max_by_key(|record| (record.observation.observed_at, record.sequence))
-          .map(|record| record.observation.clone());
+        let observation = state.issues.code_reviews.latest(&request.scope, association.id);
         IssueCodeReviewRow {
           association,
           observation,

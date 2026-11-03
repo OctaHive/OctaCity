@@ -257,6 +257,12 @@ pub trait IssueCodeReviewStore: IssueStore {
     scope: &ManagementSecurityScope,
     id: FactoryDigest,
   ) -> Result<IssueCodeReviewAssociation, StoreError>;
+  /// Latest retained observation for an exact, scoped review association.
+  async fn latest_issue_code_review_observation(
+    &self,
+    association: &IssueCodeReviewAssociation,
+    scope: &ManagementSecurityScope,
+  ) -> Result<Option<IssueCodeReviewObservation>, StoreError>;
   /// Original refresh acknowledgement, before dispatching another installed read.
   async fn issue_code_review_observation_replay(
     &self,

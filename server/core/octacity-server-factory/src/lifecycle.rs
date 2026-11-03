@@ -144,6 +144,11 @@ impl WorkArtifacts {
     })
   }
 
+  /// Iterates the original task, acceptance and specification inputs.
+  pub fn iter(&self) -> impl Iterator<Item = &FactoryArtifactReference> {
+    [&self.task, &self.acceptance].into_iter().chain(&self.specifications)
+  }
+
   /// Returns the task Artifact.
   #[must_use]
   pub const fn task(&self) -> &FactoryArtifactReference {

@@ -11,6 +11,9 @@ mod records;
 mod results;
 pub use records::*;
 pub use results::*;
+#[path = "issue_outcomes.rs"]
+mod outcomes;
+pub use outcomes::*;
 #[path = "issue_result_panels.rs"]
 mod panels;
 pub use panels::*;
@@ -271,19 +274,23 @@ async fn producer_visible(
   context: &ManagementRequestContext,
   producer: &octacity_server_factory::EvidenceProducer,
 ) -> bool {
-  crate::factory_configuration_choices::require_visible_reference(
-    policy,
-    context,
-    ManagementResourceKind::Build,
-    producer.build_id(),
-  )
-  .await
-  .is_ok()
+  build_job_visible(policy, context, producer.build_id(), producer.job_id()).await
+}
+
+pub(crate) async fn build_job_visible(
+  policy: &dyn ManagementAuthorizationPolicy,
+  context: &ManagementRequestContext,
+  build: octacity_server_domain::BuildId,
+  job: octacity_server_domain::JobId,
+) -> bool {
+  crate::factory_configuration_choices::require_visible_reference(policy, context, ManagementResourceKind::Build, build)
+    .await
+    .is_ok()
     && crate::factory_configuration_choices::require_visible_reference(
       policy,
       context,
       ManagementResourceKind::Job,
-      producer.job_id(),
+      job,
     )
     .await
     .is_ok()

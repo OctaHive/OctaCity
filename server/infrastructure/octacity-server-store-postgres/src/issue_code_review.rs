@@ -8,6 +8,21 @@ use octacity_server_domain::{EntityKind, IssueId, ProjectId, Timestamp};
 use octacity_server_factory::FactoryDigest;
 use octacity_server_store::*;
 use sqlx::{PgConnection, types::Json};
+// Shared ordering for the list and exact metadata reads. History uses append order.
+macro_rules! review_rows_sql {
+  ($selection:literal, $filter:literal) => {
+    concat!(
+      "SELECT ",
+      $selection,
+      " FROM issue_code_review_associations a \
+       LEFT JOIN LATERAL (SELECT document FROM issue_code_review_observations \
+       WHERE project_id=a.project_id AND issue_id=a.issue_id AND security_scope=a.security_scope \
+         AND association_id=a.id ORDER BY observed_at DESC,sequence DESC LIMIT 1) o ON TRUE ",
+      $filter
+    )
+  };
+}
+
 #[async_trait::async_trait]
 impl IssueCodeReviewStore for PostgresStore {
   async fn issue_code_review_replay(
@@ -118,6 +133,26 @@ impl IssueCodeReviewStore for PostgresStore {
       entity: EntityKind::Issue,
     })
   }
+  async fn latest_issue_code_review_observation(
+    &self,
+    association: &IssueCodeReviewAssociation,
+    scope: &ManagementSecurityScope,
+  ) -> Result<Option<IssueCodeReviewObservation>, StoreError> {
+    let observation: Option<Json<IssueCodeReviewObservationRecord>> = sqlx::query_scalar(review_rows_sql!(
+      "o.document",
+      "WHERE a.project_id=$1 AND a.issue_id=$2 AND a.security_scope=$3 AND a.id=$4"
+    ))
+    .bind(association.project_id.as_uuid())
+    .bind(association.issue_id.as_uuid())
+    .bind(scope.as_str())
+    .bind(association.id.as_bytes().as_slice())
+    .fetch_optional(self.pool())
+    .await
+    .map_err(unavailable)?
+    .flatten();
+    Ok(observation.map(|Json(record)| record.observation))
+  }
+
   async fn issue_code_review_observation_replay(
     &self,
     scope: &ManagementSecurityScope,
@@ -212,7 +247,25 @@ impl IssueCodeReviewStore for PostgresStore {
     let repositories = repository_visibility(&request.visibility);
     let maximum = sqlx::query_scalar::<_,i64>("SELECT COALESCE(MAX(sequence),0) FROM issue_code_review_associations WHERE project_id=$1 AND issue_id=$2 AND security_scope=$3 AND ($4::bytea[] IS NULL OR repository_identity=ANY($4))").bind(request.project_id.as_uuid()).bind(request.issue_id.as_uuid()).bind(request.scope.as_str()).bind(&repositories).fetch_one(self.pool()).await.map_err(unavailable)? as u64;
     let boundary = request.retained_boundary(maximum)?;
-    let rows:Vec<(Json<IssueCodeReviewAssociation>,Option<Json<IssueCodeReviewObservationRecord>>)>=sqlx::query_as("SELECT a.document,o.document FROM issue_code_review_associations a LEFT JOIN LATERAL (SELECT document FROM issue_code_review_observations WHERE project_id=a.project_id AND issue_id=a.issue_id AND security_scope=a.security_scope AND association_id=a.id ORDER BY observed_at DESC,sequence DESC LIMIT 1) o ON TRUE WHERE a.project_id=$1 AND a.issue_id=$2 AND a.security_scope=$3 AND ($7::bytea[] IS NULL OR a.repository_identity=ANY($7)) AND a.sequence<=$4 AND ($5::bigint IS NULL OR a.sequence>$5) ORDER BY a.sequence LIMIT $6").bind(request.project_id.as_uuid()).bind(request.issue_id.as_uuid()).bind(request.scope.as_str()).bind(page_number(boundary)?).bind(request.after.map(page_number).transpose()?).bind(i64::from(request.limit)+1).bind(&repositories).fetch_all(self.pool()).await.map_err(unavailable)?;
+    let rows: Vec<(
+      Json<IssueCodeReviewAssociation>,
+      Option<Json<IssueCodeReviewObservationRecord>>,
+    )> = sqlx::query_as(review_rows_sql!(
+      "a.document,o.document",
+      "WHERE a.project_id=$1 AND a.issue_id=$2 AND a.security_scope=$3 \
+         AND ($7::bytea[] IS NULL OR a.repository_identity=ANY($7)) \
+         AND a.sequence<=$4 AND ($5::bigint IS NULL OR a.sequence>$5) ORDER BY a.sequence LIMIT $6"
+    ))
+    .bind(request.project_id.as_uuid())
+    .bind(request.issue_id.as_uuid())
+    .bind(request.scope.as_str())
+    .bind(page_number(boundary)?)
+    .bind(request.after.map(page_number).transpose()?)
+    .bind(i64::from(request.limit) + 1)
+    .bind(&repositories)
+    .fetch_all(self.pool())
+    .await
+    .map_err(unavailable)?;
     let items = rows
       .into_iter()
       .map(|(Json(association), observation)| IssueCodeReviewRow {

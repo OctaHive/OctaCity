@@ -359,7 +359,7 @@ pub(super) fn management_application(
   });
   let result_artifacts = Arc::new(octacity_server_application::IssueArtifactHandlers::new(
     executions.clone(),
-    retained_artifacts,
+    retained_artifacts.clone(),
     Arc::new(octacity_server_application::SystemFactoryExecutionClock),
     management_policy.clone(),
   ));
@@ -527,6 +527,19 @@ pub(super) fn management_application(
       ISSUE_EXECUTION_PUBLICATION_WAIT,
     ),
   )
+  .with_issue_outcomes(authorized_queries(
+    &management_policy,
+    Arc::new(octacity_server_application::IssueOutcomeHandlers::new(
+      store.clone(),
+      management_policy.clone(),
+      octacity_server_application::IssueOutcomeLinkReaders::new(
+        store.clone(),
+        retained_artifacts,
+        reviews.clone(),
+        Arc::new(octacity_server_application::SystemFactoryExecutionClock),
+      ),
+    )),
+  ))
   .with_issue_code_reviews(
     octacity_server_api_rest::v1::IssueCodeReviewManagementApplication::new(
       authorized_commands(&management_policy, reviews.clone()),

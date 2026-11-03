@@ -67,6 +67,7 @@ impl<A: ArtifactRecordStore, S: BuildQueryStore, B: ArtifactByteReader> IssueArt
       declared => declared,
     };
     Ok(IssueArtifactMetadata {
+      build_owner: Some((identity.build_id, identity.job_id)),
       name: identity.logical_name.as_str().to_owned(),
       media_type: media_type.to_owned(),
       origin: IssueArtifactOrigin::BuildOutput,
@@ -91,6 +92,7 @@ fn private_metadata(
     return Err(ApplicationError::invalid());
   }
   Ok(IssueArtifactMetadata {
+    build_owner: None,
     name: match object.role {
       octacity_server_store::FactoryInputRole::Task => "task",
       octacity_server_store::FactoryInputRole::Acceptance => "acceptance",

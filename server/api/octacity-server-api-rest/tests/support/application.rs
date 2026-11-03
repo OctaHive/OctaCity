@@ -226,6 +226,7 @@ where
     octacity_server_api_rest::v1::IssueActivityManagementApplication::new(issue_queries.clone())
       .with_results(issue_queries.clone()),
   )
+  .with_issue_outcomes(issue_queries.clone())
   .with_issue_result_panels(
     octacity_server_api_rest::v1::IssueResultPanelManagementApplication::new(
       issue_queries.clone(),
