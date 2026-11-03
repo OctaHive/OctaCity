@@ -72,6 +72,12 @@ before adding grants or choosing a usable Project default. The command also
 accepts a bounded `legacy_references` list for exact compatibility backfill.
 Provisioning retains existing operator edits and selected defaults.
 
+An installed legacy launch marker maps to the exact initial Standard launch
+version because both admit the same origins. Previously imported launch
+versions remain available through their exact references. The catalog omits
+an equivalent imported first version when the current Standard offers the
+same rules and the imported version is not the selected default.
+
 Publish a new policy version, then choose **Use as Project default** to select
 it for future Configuration drafts. For an existing pipeline, open a
 Configuration replacement draft, select the intended policy version, validate

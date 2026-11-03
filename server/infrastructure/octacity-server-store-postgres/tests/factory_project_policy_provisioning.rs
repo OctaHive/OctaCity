@@ -353,6 +353,11 @@ async fn existing_configuration_backfill_maps_exact_references_without_rewriting
     .unwrap()
     .unwrap();
   assert_eq!(mapped_launch.legacy, launch);
+  assert_eq!(
+    mapped_launch.target,
+    FactoryProjectPolicyRef::Launch(accepted.provisioning.standard_launch.clone()),
+    "the verified legacy launch rules reuse the exact initial Standard version",
+  );
   let FactoryProjectPolicyRecord::Launch(rules) = store
     .factory_project_policy(project, &mapped_launch.target)
     .await
@@ -859,6 +864,86 @@ async fn provisioning_preserves_preexisting_operator_defaults_even_when_names_ma
       .items
       .len(),
     3
+  );
+  database.cleanup().await;
+}
+
+#[tokio::test]
+#[ignore = "requires an explicitly configured disposable PostgreSQL service"]
+async fn catalog_omits_equivalent_imported_launch_but_keeps_its_exact_mapping() {
+  let database = TestDatabase::migrated().await;
+  let installed = reference("triage-admission", 12);
+  let store = PostgresStore::with_factory_capabilities(
+    database.pool.clone(),
+    Arc::new(Installed(inventory(vec![(
+      FactoryChoiceKind::AdmissionPolicy,
+      "triage",
+      installed.clone(),
+      None,
+    )]))),
+  );
+  let project = create_project(&store).await;
+  let legacy = FactoryLegacyPolicyReference::Launch(installed);
+  let (mut request, audit) = provision(project, None, "catalog-upgrade").into_parts();
+  request.intent.legacy_references = vec![legacy.clone()];
+  let provisioned = store
+    .provision_factory_project_policies(ManagementMutation::new(request, audit))
+    .await
+    .unwrap();
+  let imported = FactoryProjectPolicyRecord::Launch(
+    FactoryLaunchPolicy::publish(
+      FactoryLaunchPolicyId::generate(),
+      project,
+      FactoryLaunchPolicyDefinition {
+        name: FactoryText::new("Imported triage-admission v1").unwrap(),
+        allow_manual: true,
+        allow_automatic_source: true,
+      },
+    )
+    .unwrap(),
+  );
+  let target = imported.reference();
+  store
+    .publish_factory_project_policy(management_mutation(PublishFactoryProjectPolicy {
+      intent: FactoryProjectPolicyIntent {
+        policy: imported.clone(),
+        expected_current: None,
+      },
+      idempotency_key: IdempotencyKey::new("previously-imported-launch").unwrap(),
+      published_at: time(3),
+    }))
+    .await
+    .unwrap();
+  // Reproduce the persisted mapping written by the previous importer.
+  let mapping = FactoryLegacyPolicyMapping {
+    project_id: project,
+    legacy: legacy.clone(),
+    target: target.clone(),
+  };
+  sqlx::query("UPDATE factory_project_policy_mappings SET document=$2 WHERE project_id=$1")
+    .bind(project.as_uuid())
+    .bind(sqlx::types::Json(&mapping))
+    .execute(&database.pool)
+    .await
+    .unwrap();
+
+  let page = store.list_factory_project_policies(project, None, 2).await.unwrap();
+  assert_eq!(page.items.len(), 2);
+  assert!(
+    page.next_cursor.is_none(),
+    "the duplicate must not consume a catalog slot"
+  );
+  assert_eq!(
+    page.items[1].reference,
+    FactoryProjectPolicyRef::Launch(provisioned.provisioning.standard_launch)
+  );
+  assert_eq!(
+    store.factory_legacy_policy_mapping(project, &legacy).await.unwrap(),
+    Some(mapping)
+  );
+  assert_eq!(
+    store.factory_project_policy(project, &target).await.unwrap(),
+    Some(imported)
   );
   database.cleanup().await;
 }

@@ -1,5 +1,9 @@
 //! Exact compatibility provenance, independent of current heads or defaults.
-use crate::{database::unavailable, factory_project_policy::append_policy, factory_project_provision::invalid};
+use crate::{
+  database::unavailable,
+  factory_project_policy::{append_policy, read_policy},
+  factory_project_provision::invalid,
+};
 use octacity_server_domain::ProjectId;
 use octacity_server_factory::*;
 use octacity_server_store::*;
@@ -44,6 +48,7 @@ pub(super) async fn import(
   project: ProjectId,
   legacy: &FactoryLegacyPolicyReference,
   installed: &FactoryConfigurationAvailability,
+  standard_launch: &FactoryLaunchPolicyRef,
 ) -> Result<Result<FactoryLegacyPolicyMapping, FactoryLegacyPolicyUnresolved>, StoreError> {
   let unresolved = |reason| FactoryLegacyPolicyUnresolved {
     legacy: legacy.clone(),
@@ -65,27 +70,28 @@ pub(super) async fn import(
       FactoryPolicyProvisionPrerequisite::ReferenceNotInstalled,
     )));
   }
-  let name =
-    FactoryText::new(format!("Imported {} {}", reference.identity(), reference.version())).map_err(|_| invalid())?;
-  let policy = match legacy {
-    FactoryLegacyPolicyReference::Launch(_) => FactoryProjectPolicyRecord::Launch(
-      FactoryLaunchPolicy::publish(
-        FactoryLaunchPolicyId::generate(),
-        project,
-        FactoryLaunchPolicyDefinition {
-          name,
-          allow_manual: true,
-          allow_automatic_source: true,
-        },
-      )
-      .map_err(|_| invalid())?,
-    ),
+  let target = match legacy {
+    FactoryLegacyPolicyReference::Launch(_) => {
+      // The installed marker admitted both origins. Bind its equivalent exact
+      // initial publication even if the operator has since changed the default.
+      let target = FactoryProjectPolicyRef::Launch(standard_launch.clone());
+      match read_policy(&mut *tx, project, &target).await? {
+        Some(FactoryProjectPolicyRecord::Launch(policy))
+          if policy.definition().allow_manual && policy.definition().allow_automatic_source =>
+        {
+          target
+        }
+        _ => return Err(StoreError::Unavailable),
+      }
+    }
     FactoryLegacyPolicyReference::Access(_) => {
       let permissions = match factory_policy_access_declaration(choices, reference) {
         Ok(value) => value,
         Err(reason) => return Ok(Err(unresolved(reason))),
       };
-      FactoryProjectPolicyRecord::Access(
+      let name = FactoryText::new(format!("Imported {} {}", reference.identity(), reference.version()))
+        .map_err(|_| invalid())?;
+      let policy = FactoryProjectPolicyRecord::Access(
         FactoryAccessProfile::publish(
           FactoryAccessProfileId::generate(),
           project,
@@ -93,15 +99,16 @@ pub(super) async fn import(
         )
         .map_err(|_| invalid())?
         .into(),
-      )
+      );
+      append_policy(&mut *tx, &policy).await?;
+      policy.reference()
     }
   };
   let mapping = FactoryLegacyPolicyMapping {
     project_id: project,
     legacy: legacy.clone(),
-    target: policy.reference(),
+    target,
   };
-  append_policy(&mut *tx, &policy).await?;
   sqlx::query("INSERT INTO factory_project_policy_mappings(project_id,legacy_key,document) VALUES ($1,$2,$3)")
     .bind(project.as_uuid())
     .bind(legacy_key(legacy)?)

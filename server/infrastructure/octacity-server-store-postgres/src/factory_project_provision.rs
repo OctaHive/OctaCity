@@ -161,6 +161,7 @@ pub(super) async fn provision(
       project,
       legacy,
       installed.as_ref().expect("loaded installed declarations"),
+      &provisioning.standard_launch,
     )
     .await?
     {

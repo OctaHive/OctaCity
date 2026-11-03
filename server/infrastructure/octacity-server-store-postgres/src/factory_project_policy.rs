@@ -94,10 +94,45 @@ impl FactoryProjectPolicyStore for PostgresStore {
       });
     }
     crate::discovery::require_project(self.pool(), project).await?;
-    let rows: Vec<(String,uuid::Uuid,i64,Json<FactoryProjectPolicyRecord>)> = sqlx::query_as(
-      "SELECT DISTINCT ON (kind,id) kind,id,version,document FROM factory_project_policies WHERE project_id=$1 AND ($2::text IS NULL OR (kind,id)>($2,$3::uuid)) ORDER BY kind,id,version DESC LIMIT $4"
-    ).bind(project.as_uuid()).bind(after.map(kind)).bind(after.map(FactoryProjectPolicyRef::id)).bind(i64::from(limit)+1)
-      .fetch_all(self.pool()).await.map_err(unavailable)?;
+    // Earlier importers published a separate launch v1. Hide the redundant
+    // catalog option while keeping exact reads and explicit default choices.
+    let rows: Vec<(String, uuid::Uuid, i64, Json<FactoryProjectPolicyRecord>)> = sqlx::query_as(
+      "WITH standard_launch AS (
+         SELECT policy.id, (policy.document #> '{policy,definition}') - 'name' AS rules
+         FROM factory_project_policy_provisioning AS provisioning
+         JOIN factory_project_policies AS policy
+           ON policy.project_id=provisioning.project_id AND policy.kind='launch'
+           AND policy.id=(provisioning.document #>> '{standard_launch,id}')::uuid
+         WHERE provisioning.project_id=$1 ORDER BY policy.version DESC LIMIT 1
+       ), launch_default AS (
+         SELECT document->'launch_policy' AS reference
+         FROM factory_project_policy_defaults WHERE project_id=$1 ORDER BY version DESC LIMIT 1
+       )
+       SELECT DISTINCT ON (policy.kind,policy.id) policy.kind,policy.id,policy.version,policy.document
+       FROM factory_project_policies AS policy
+       WHERE policy.project_id=$1 AND ($2::text IS NULL OR (policy.kind,policy.id)>($2,$3::uuid))
+         AND NOT (
+           policy.kind='launch' AND policy.version=1
+           AND (policy.document #> '{policy,reference}') IS DISTINCT FROM (SELECT reference FROM launch_default)
+           AND EXISTS (
+             SELECT 1 FROM standard_launch AS standard
+             WHERE standard.id<>policy.id AND standard.rules=(policy.document #> '{policy,definition}') - 'name'
+           )
+           AND EXISTS (
+             SELECT 1 FROM factory_project_policy_mappings AS mapping
+             WHERE mapping.project_id=policy.project_id AND mapping.document #>> '{target,kind}'='launch'
+               AND mapping.document #> '{target,reference}'=policy.document #> '{policy,reference}'
+           )
+         )
+       ORDER BY policy.kind,policy.id,policy.version DESC LIMIT $4",
+    )
+    .bind(project.as_uuid())
+    .bind(after.map(kind))
+    .bind(after.map(FactoryProjectPolicyRef::id))
+    .bind(i64::from(limit) + 1)
+    .fetch_all(self.pool())
+    .await
+    .map_err(unavailable)?;
     let mut items = Vec::with_capacity(rows.len());
     for (stored_kind, id, version, Json(record)) in rows {
       let reference = record.reference();
@@ -319,7 +354,7 @@ pub(super) async fn lock_project<'e>(
   Ok(())
 }
 
-async fn read_policy<'e>(
+pub(super) async fn read_policy<'e>(
   executor: impl sqlx::PgExecutor<'e>,
   project: ProjectId,
   reference: &FactoryProjectPolicyRef,
