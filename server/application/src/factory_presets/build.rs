@@ -8,5 +8,10 @@ pub(super) fn for_profile(
   let [outcome] = node.outcomes.as_slice() else {
     return None;
   };
-  crate::factory_execution_bindings::for_profile(choices, profile, &outcome.key)
+  crate::factory_execution_bindings::for_profile(
+    choices,
+    profile,
+    &outcome.key,
+    !profile.definition().execution.mcp_servers.is_empty(),
+  )
 }

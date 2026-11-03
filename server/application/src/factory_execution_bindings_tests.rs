@@ -13,7 +13,7 @@ fn a_static_build_compiler_is_not_a_role_profile_execution_choice() {
   crate::factory_admission_tests::run_ready(async {
     let BindingFixture {
       store, handlers, query, ..
-    } = fixture(false).await;
+    } = fixture(false, false).await;
     let policy = Arc::new(TrustedNetworkManagementPolicy);
     let queries = AuthorizedQueryHandler::new(policy, handlers);
     let before = store.mutation_evidence_counts().await;
@@ -29,6 +29,17 @@ fn a_static_build_compiler_is_not_a_role_profile_execution_choice() {
     assert_eq!(store.mutation_evidence_counts().await, before);
   });
 }
+#[test]
+fn selecting_an_agent_with_mcp_keeps_the_manually_authored_result_contract() {
+  crate::factory_admission_tests::run_ready(async {
+    let fixture = fixture(true, true).await;
+    let queries = AuthorizedQueryHandler::new(Arc::new(TrustedNetworkManagementPolicy), fixture.handlers);
+    let resolved = queries.handle_query(&context(), fixture.query).await.unwrap();
+    let binding = resolved.build.expect("the MCP-enabled agent is selectable");
+    assert_eq!(binding.result_tool(), &binding.tool);
+  });
+}
+
 fn context() -> ManagementRequestContext {
   ManagementRequestContext::trusted_network(ManagementRequestId::new(uuid::Uuid::new_v4()).unwrap())
 }
@@ -39,17 +50,36 @@ struct BindingFixture {
   query: ResolveFactoryExecutionBindingQuery,
   role: FactoryRoleRef,
 }
-async fn fixture(role_compiler: bool) -> BindingFixture {
+async fn fixture(role_compiler: bool, with_mcp: bool) -> BindingFixture {
   let project = ProjectId::generate();
   let store = Arc::new(InMemoryFactoryConfigurationStore::new());
   store.seed_project(project).unwrap();
-  let (installed, definition) = crate::factory_test_support::installed_role_execution_choices(project);
+  let (installed, mut definition) = crate::factory_test_support::installed_role_execution_choices(project);
   let mut compiler = installed.build_pipeline_contracts()[0].clone();
   compiler.compilation.as_mut().unwrap().role_profiles = role_compiler;
   let alias = FactoryKey::new("dependency-1").unwrap();
-  let mut choices = FactoryConfigurationChoices::try_new(installed.entries())
+  let mut entries = installed.entries();
+  if with_mcp {
+    definition.execution.mcp_servers.insert(
+      "issues".parse().unwrap(),
+      FactoryRoleMcpBinding {
+        configuration: definition.skills.values().next().unwrap().clone(),
+        integration: None,
+      },
+    );
+    let verifier = factory_mcp_evidence_verifier();
+    entries.references.push(FactoryReferenceChoice {
+      kind: FactoryChoiceKind::NodeCapability,
+      alias: verifier.identity().clone(),
+      reference: verifier.clone(),
+    });
+    compiler.compilation.as_mut().unwrap().mcp_result_tool = Some(verifier);
+  }
+  let mut capability = installed.role_profile_capabilities()[&alias].clone();
+  capability.ceiling = definition.clone();
+  let mut choices = FactoryConfigurationChoices::try_new(entries)
     .unwrap()
-    .with_role_profile_capability(alias.clone(), installed.role_profile_capabilities()[&alias].clone())
+    .with_role_profile_capability(alias.clone(), capability)
     .unwrap()
     .with_build_pipeline_contract(compiler)
     .unwrap();
@@ -100,7 +130,7 @@ async fn fixture(role_compiler: bool) -> BindingFixture {
 #[test]
 fn a_deleted_agent_cannot_supply_a_new_execution_binding_from_its_retained_profile() {
   crate::factory_admission_tests::run_ready(async {
-    let fixture = fixture(true).await;
+    let fixture = fixture(true, false).await;
     let commands = AuthorizedCommandHandler::new(Arc::new(TrustedNetworkManagementPolicy), fixture.handlers.clone());
     commands
       .handle_command(
@@ -192,7 +222,7 @@ impl ManagementAuthorizationPolicy for HiddenCommandChoices {
 fn command_discovery_keeps_builtin_gates_but_discloses_no_hidden_compiler_or_profile_commands() {
   crate::factory_admission_tests::run_ready(async {
     for role_compiler in [false, true] {
-      let fixture = fixture(role_compiler).await;
+      let fixture = fixture(role_compiler, false).await;
       let policy: Arc<dyn ManagementAuthorizationPolicy> = if role_compiler {
         Arc::new(TrustedNetworkManagementPolicy)
       } else {

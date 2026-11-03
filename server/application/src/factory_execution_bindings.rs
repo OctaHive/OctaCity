@@ -10,6 +10,7 @@ pub(super) fn for_profile(
   choices: &FactoryConfigurationChoices,
   profile: &FactoryRoleProfile,
   result_outcome: &FactoryKey,
+  verify_mcp_evidence: bool,
 ) -> Option<FlowBuildBinding> {
   let definition = profile.definition();
   let mut candidates = choices.build_pipeline_contracts().iter().filter_map(|installed| {
@@ -21,10 +22,10 @@ pub(super) fn for_profile(
       return None;
     }
     let compilation = installed.compilation.as_ref()?;
-    let result_tool = if definition.execution.mcp_servers.is_empty() {
-      None
-    } else {
+    let result_tool = if verify_mcp_evidence {
       Some(compilation.mcp_result_tool.clone()?)
+    } else {
+      None
     };
     let build = FlowBuildBinding {
       tool: installed.tool.clone(),
@@ -125,7 +126,9 @@ impl<
         incompatibility: Some(FactoryExecutionBindingProblem::ProfileIncompatible),
       });
     }
-    let build = for_profile(&choices, &profile, &query.result_outcome).filter(|build| {
+    // A manually authored outcome keeps its declared schema even when the
+    // executor uses MCP. Evidence verification is a separate result contract.
+    let build = for_profile(&choices, &profile, &query.result_outcome, false).filter(|build| {
       // Manual agent selection requires a compiler that actually retains the
       // exact Role/Profile, rather than the static legacy task contract.
       choices.build_pipeline_contract(build).is_some_and(|installed| {

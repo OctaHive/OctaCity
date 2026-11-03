@@ -181,6 +181,40 @@ fn source_free_codex_node_results_require_absent_revision_provenance() {
 }
 
 #[test]
+fn verifies_a_provider_text_result_as_the_original_flow_value() {
+  use octacity_server_factory::{FlowDataSchema, FlowValueSchema};
+  let (mut fixture, profile, _) = node_observation_fixture();
+  let schema = FlowDataSchema::new(
+    FactoryKey::new("text-result").unwrap(),
+    FactoryKey::new("v1").unwrap(),
+    FlowValueSchema::String {
+      min_bytes: 1,
+      max_bytes: 32,
+    },
+  )
+  .unwrap();
+  let envelope = fixture.envelope.clone();
+  let contract = || crate::FactoryCodexNodeRunContract {
+    model_identifier: None,
+    usage_policy: &crate::FactoryCodexUsagePolicy::ReportedCost,
+    profile: &profile,
+    schema: &schema,
+    prompt_digest: envelope.digests().prompt_provenance,
+    source_revision: Some(envelope.subject().exact().unwrap().base_revision()),
+    budget: envelope.budget(),
+    execution_window: Timestamp::from_unix_millis(1000).unwrap()..=Timestamp::from_unix_millis(1010).unwrap(),
+  };
+  let mut result: Value = serde_json::from_slice(&fixture.documents[0].bytes).unwrap();
+  result["structured_result"] = json!({"value":"Needs review"});
+  fixture.replace_document("codex-run-result", result.clone());
+  let verified = crate::verify_codex_node_run(contract(), &fixture.documents).unwrap();
+  assert_eq!(verified.data.unwrap().payload().value(), &json!("Needs review"));
+  result["structured_result"]["value"] = json!("x".repeat(33));
+  fixture.replace_document("codex-run-result", result);
+  assert!(crate::verify_codex_node_run(contract(), &fixture.documents).is_err());
+}
+
+#[test]
 fn codex_nullable_transport_preserves_optional_flow_fields_and_required_validation() {
   use crate::{FactoryCodexNodeRunContract, verify_codex_node_run};
   use octacity_server_factory::{FlowDataSchema, FlowFieldSchema, FlowValueSchema};

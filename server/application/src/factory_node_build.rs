@@ -113,6 +113,8 @@ pub enum FactoryNodeBuildCancellation {
 pub enum FactoryNodeBuildStep {
   /// The same ordinary Build is still executing.
   Waiting(Box<FlowBuildExecution>),
+  /// The dispatch window closed without an accepted Build.
+  DispatchExpired,
   /// Ordinary execution failure or cancellation, never a semantic observation.
   ExecutionStopped {
     /// Exact retained ordinary execution.
@@ -215,7 +217,11 @@ where
       return Err(ApplicationError::invalid());
     }
     request.causality.action_input = self.action_input.clone();
-    match observe_build(self.builds.as_ref(), request, intent.node(), ownership.clone(), at).await? {
+    let Some(observation) = observe_build(self.builds.as_ref(), request, intent.node(), ownership.clone(), at).await?
+    else {
+      return Ok(FactoryNodeBuildStep::DispatchExpired);
+    };
+    match observation {
       BuildObservation::Waiting(observed) => Ok(FactoryNodeBuildStep::Waiting(Box::new(
         FlowBuildExecution::new(intent, observed.build_id, observed.attempt_id, observed.jobs).map_err(invalid)?,
       ))),
@@ -750,7 +756,7 @@ pub(super) async fn observe_build<B: OrdinaryBuildApplication + BuildQueryStore>
   node: &NodeAttempt,
   ownership: FactoryClaimOwnership,
   at: Timestamp,
-) -> Result<BuildObservation, ApplicationError> {
+) -> Result<Option<BuildObservation>, ApplicationError> {
   node.verify_observer(&ownership, at).map_err(invalid)?;
   let accepted = match builds
     .factory_build_for_operation(request.operation_id)
@@ -758,7 +764,7 @@ pub(super) async fn observe_build<B: OrdinaryBuildApplication + BuildQueryStore>
     .map_err(build_error)?
   {
     Some(accepted) => accepted,
-    None if at >= node.deadline() => return Err(ApplicationError::invalid()),
+    None if at >= node.deadline() => return Ok(None),
     None => {
       let accepted = builds
         .create_factory_build(request.clone())
@@ -768,14 +774,14 @@ pub(super) async fn observe_build<B: OrdinaryBuildApplication + BuildQueryStore>
       // Admission can finish after this pass's observation time. Retain its
       // atomically verified receipt first; the next fenced owner pass observes
       // the Build using its own fresh time rather than manufacturing one here.
-      return Ok(BuildObservation::Waiting(ObservedBuild {
+      return Ok(Some(BuildObservation::Waiting(ObservedBuild {
         build_id: accepted.build_id,
         attempt_id: accepted.attempt_id,
         jobs: accepted.job_ids,
-      }));
+      })));
     }
   };
-  observe_accepted_build(builds, &request, accepted, at).await
+  observe_accepted_build(builds, &request, accepted, at).await.map(Some)
 }
 async fn observe_accepted_build<B: BuildQueryStore>(
   builds: &B,
@@ -938,6 +944,10 @@ where
       .observe_or_dispatch(intent, request.admitted, schema, request.ownership, request.observed_at)
       .await?
     {
+      FactoryNodeBuildStep::DispatchExpired => Ok(crate::FactoryNodeExecutionStep::ExecutionStopped {
+        execution: None,
+        usage: BudgetUsage::default(),
+      }),
       FactoryNodeBuildStep::Waiting(execution) => Ok(crate::FactoryNodeExecutionStep::Waiting {
         execution: Some(execution),
       }),

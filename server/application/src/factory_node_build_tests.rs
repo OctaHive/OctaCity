@@ -944,7 +944,7 @@ fn ordinary_retries_keep_actual_attempt_and_job_provenance_and_failures_do_not_s
 #[test]
 fn ownership_and_frozen_deadlines_are_checked_before_any_ordinary_dispatch() {
   crate::factory_admission_tests::run_ready(async {
-    let (_, admitted, schema, input, node) = execution_fixture(FlowNodeKind::Reasoning);
+    let (work, admitted, schema, input, node) = execution_fixture(FlowNodeKind::Reasoning);
     let intent = FlowBuildIntent::new(input, &admitted, node, BudgetUsage::default(), 7).unwrap();
     let builds = Arc::new(Builds::new());
     let adapter = FactoryNodeBuildAdapter::new(builds.clone(), Arc::new(Outputs(None)));
@@ -963,18 +963,6 @@ fn ownership_and_frozen_deadlines_are_checked_before_any_ordinary_dispatch() {
         .await
         .is_err()
     );
-    assert!(
-      adapter
-        .observe_or_dispatch(
-          &intent,
-          &admitted,
-          &schema,
-          ownership(&intent),
-          intent.node().deadline()
-        )
-        .await
-        .is_err()
-    );
     assert!(builds.requests.lock().unwrap().is_empty());
     let successor = FactoryClaimOwnership::new(
       key("successor"),
@@ -985,12 +973,26 @@ fn ownership_and_frozen_deadlines_are_checked_before_any_ordinary_dispatch() {
       )
       .unwrap(),
     );
-    assert!(
-      adapter
-        .observe_or_dispatch(&intent, &admitted, &schema, successor, time(101))
-        .await
-        .is_err(),
-      "owner takeover cannot extend the frozen execution deadline"
+    let step = adapter
+      .observe(crate::FactoryNodeExecutionRequest {
+        run_id: intent.node().factory_run_id(),
+        admitted: &admitted,
+        work: &work,
+        input: intent.input(),
+        attempt: intent.node(),
+        build: Some(&intent),
+        ownership: successor,
+        observed_at: time(101),
+      })
+      .await
+      .unwrap();
+    assert_eq!(
+      step,
+      FactoryNodeExecutionStep::ExecutionStopped {
+        execution: None,
+        usage: BudgetUsage::default()
+      },
+      "an expired attempt without a Build must stop under the successor's fence"
     );
     assert!(builds.requests.lock().unwrap().is_empty());
   });

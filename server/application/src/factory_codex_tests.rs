@@ -185,6 +185,61 @@ fn source_free_reasoning_compiles_selected_inputs_without_inventing_codex_revisi
 }
 
 #[test]
+fn native_flow_text_results_use_a_provider_object_without_changing_the_flow_schema() {
+  use crate::factory_node_test_support::fixtures;
+  use octacity_server_factory::{FactoryCredentialConsumer, FlowBuildIntent, FlowNodeKind};
+  let work = fixtures::work();
+  let plugin = reference("codex", 10);
+  let executable = reference("codex-cli", 11);
+  let grants = permissions(FactoryTaskMode::Evaluate, plugin.clone(), executable.clone(), true);
+  let mut binding = fixtures::binding(work.subject().project_id());
+  binding.plugin = plugin;
+  binding.tool = executable;
+  binding.model_or_tool = reference("an-exact-model", 12);
+  binding.result_output = key("codex-run-result");
+  let instructions =
+    octacity_server_factory::FactoryText::new("Measure the selected input and return the declared observation.")
+      .unwrap();
+  binding.task_digest = crate::codex_flow_task_digest(
+    &instructions,
+    credential_profiles().profile(FactoryCredentialConsumer::ReadOnlyReview.purpose()),
+    FactoryCredentialConsumer::ReadOnlyReview,
+    &crate::FactoryCodexUsagePolicy::ReportedCost,
+  );
+  let schema = octacity_server_factory::FlowDataSchema::new(
+    key("text-result"),
+    key("v1"),
+    octacity_server_factory::FlowValueSchema::String {
+      min_bytes: 0,
+      max_bytes: 4096,
+    },
+  )
+  .unwrap();
+  let (_, admitted, _, input, attempt) =
+    fixtures::execution_fixture_with_permissions(FlowNodeKind::Reasoning, work, binding, Some(schema.clone()), grants);
+  let intent = FlowBuildIntent::new(input, &admitted, attempt, Default::default(), 0).unwrap();
+  let compiled = crate::compile_codex_flow_task(
+    &intent,
+    &admitted,
+    &instructions,
+    &credential_profiles(),
+    FactoryCredentialConsumer::ReadOnlyReview,
+    &crate::FactoryCodexUsagePolicy::ReportedCost,
+  )
+  .unwrap();
+  let octafile: Value =
+    serde_json::from_slice(compiled.document(FactoryProtectedDocumentKind::Octafile).bytes()).unwrap();
+  let task = &octafile["tasks"].as_object().unwrap().values().next().unwrap()["cmds"][0]["codex"];
+  let provider = &task["result_schema"];
+  assert_eq!(provider["type"], "object");
+  assert_eq!(provider["properties"]["value"]["type"], "string");
+  assert_eq!(provider["required"], serde_json::json!(["value"]));
+  let envelope: Value =
+    serde_json::from_slice(compiled.document(FactoryProtectedDocumentKind::TaskEnvelope).bytes()).unwrap();
+  assert_eq!(envelope["result_schema"], serde_json::json!(schema.reference()));
+}
+
+#[test]
 fn a_read_only_codex_flow_task_uses_the_declared_schema_and_frozen_input_without_stage_names() {
   use crate::factory_node_test_support::fixtures;
   use octacity_server_factory::{FactoryCredentialConsumer, FlowBuildIntent, FlowNodeKind};

@@ -472,7 +472,7 @@ fn compile_flow_task(
   } else if options.reviewer.is_some() {
     result_schema(FactoryTaskResultSchema::EvaluationV1)?
   } else {
-    json_schema(schema.shape())?
+    crate::factory_codex_schema::flow_result_schema(schema.shape())?
   };
   let model_budget = options
     .tool_risk

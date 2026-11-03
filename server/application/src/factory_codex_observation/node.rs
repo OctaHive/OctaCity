@@ -113,10 +113,11 @@ pub fn verify_codex_node_run(
   expected: FactoryCodexNodeRunContract<'_>,
   documents: &[FactoryCodexOutputDocument],
 ) -> Result<FactoryCodexNodeRunObservation, ApplicationError> {
-  let mut records = verified_records(&expected, documents)?;
-  crate::factory_codex_schema::restore_optional_fields(expected.schema.shape(), &mut records.value);
+  let records = verified_records(&expected, documents)?;
   let data = if records.outcome == CodexHarnessOutcome::Completed {
-    Some(FlowVerifiedBuildData::new(expected.schema.clone(), records.value).map_err(|_| ApplicationError::invalid())?)
+    let value = crate::factory_codex_schema::decode_flow_result(expected.schema.shape(), records.value)
+      .ok_or_else(ApplicationError::invalid)?;
+    Some(FlowVerifiedBuildData::new(expected.schema.clone(), value).map_err(|_| ApplicationError::invalid())?)
   } else {
     None
   };

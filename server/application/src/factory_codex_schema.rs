@@ -7,6 +7,35 @@ use octacity_server_factory::FlowValueSchema;
 use serde_json::{Value, json};
 use std::collections::BTreeMap;
 
+const RESULT_VALUE: &str = "value";
+
+pub(crate) fn flow_result_schema(shape: &FlowValueSchema) -> Result<Value, CodexCompilationError> {
+  let schema = json_schema(shape)?;
+  if !matches!(shape, FlowValueSchema::String { .. }) {
+    return Ok(schema);
+  }
+  // Structured Outputs requires an object at the root. The Flow contract
+  // and handoff still carry the declared value, without this wire envelope.
+  Ok(json!({
+    "type": "object",
+    "properties": {(RESULT_VALUE): schema},
+    "required": [RESULT_VALUE],
+    "additionalProperties": false
+  }))
+}
+
+pub(crate) fn decode_flow_result(shape: &FlowValueSchema, mut value: Value) -> Option<Value> {
+  if matches!(shape, FlowValueSchema::String { .. }) {
+    let envelope = value.as_object_mut()?;
+    if envelope.len() != 1 {
+      return None;
+    }
+    value = envelope.remove(RESULT_VALUE)?;
+  }
+  restore_optional_fields(shape, &mut value);
+  Some(value)
+}
+
 pub(crate) fn json_schema(shape: &FlowValueSchema) -> Result<Value, CodexCompilationError> {
   Ok(match shape {
     FlowValueSchema::Reference { .. } => return Err(CodexCompilationError::NodeBindings),
