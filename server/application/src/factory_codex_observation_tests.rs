@@ -209,9 +209,23 @@ fn verifies_a_provider_text_result_as_the_original_flow_value() {
   fixture.replace_document("codex-run-result", result.clone());
   let verified = crate::verify_codex_node_run(contract(), &fixture.documents).unwrap();
   assert_eq!(verified.data.unwrap().payload().value(), &json!("Needs review"));
-  result["structured_result"]["value"] = json!("x".repeat(33));
+  let accepted_usage = verified.usage;
+  result["structured_result"]["value"] = json!("я".repeat(17));
   fixture.replace_document("codex-run-result", result);
-  assert!(crate::verify_codex_node_run(contract(), &fixture.documents).is_err());
+  let stopped = crate::verify_codex_node_run(contract(), &fixture.documents).unwrap();
+  assert_eq!(stopped.outcome, crate::CodexHarnessOutcome::Failed);
+  assert!(stopped.data.is_none());
+  assert_eq!(
+    stopped.usage,
+    octacity_server_factory::BudgetUsage {
+      output_bytes: fixture
+        .documents
+        .iter()
+        .map(|document| document.identity.size_bytes)
+        .sum(),
+      ..accepted_usage
+    }
+  );
 }
 
 #[test]

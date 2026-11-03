@@ -88,7 +88,7 @@ pub enum CodexHarnessOutcome {
   NeedsInput,
   /// The harness exhausted its own budget.
   BudgetExhausted,
-  /// The harness reported a semantic failure.
+  /// The harness failed, or verification rejected its completed result.
   Failed,
 }
 

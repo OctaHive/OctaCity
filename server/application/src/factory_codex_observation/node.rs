@@ -117,6 +117,17 @@ pub fn verify_codex_node_run(
   let data = if records.outcome == CodexHarnessOutcome::Completed {
     let value = crate::factory_codex_schema::decode_flow_result(expected.schema.shape(), records.value)
       .ok_or_else(ApplicationError::invalid)?;
+    // The provider checks string length in characters. A verified report can
+    // still exceed the Flow's UTF-8 byte limit, with measured usage to settle.
+    if let octacity_server_factory::FlowValueSchema::String { max_bytes, .. } = expected.schema.shape()
+      && value.as_str().is_some_and(|text| text.len() > *max_bytes)
+    {
+      return Ok(FactoryCodexNodeRunObservation {
+        outcome: CodexHarnessOutcome::Failed,
+        data: None,
+        usage: records.usage,
+      });
+    }
     Some(FlowVerifiedBuildData::new(expected.schema.clone(), value).map_err(|_| ApplicationError::invalid())?)
   } else {
     None
