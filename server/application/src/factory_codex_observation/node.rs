@@ -115,20 +115,25 @@ pub fn verify_codex_node_run(
 ) -> Result<FactoryCodexNodeRunObservation, ApplicationError> {
   let records = verified_records(&expected, documents)?;
   let data = if records.outcome == CodexHarnessOutcome::Completed {
-    let value = crate::factory_codex_schema::decode_flow_result(expected.schema.shape(), records.value)
-      .ok_or_else(ApplicationError::invalid)?;
-    // The provider checks string length in characters. A verified report can
-    // still exceed the Flow's UTF-8 byte limit, with measured usage to settle.
-    if let octacity_server_factory::FlowValueSchema::String { max_bytes, .. } = expected.schema.shape()
-      && value.as_str().is_some_and(|text| text.len() > *max_bytes)
-    {
+    let data = crate::factory_codex_schema::decode_flow_result(expected.schema.shape(), records.value)
+      .and_then(|value| FlowVerifiedBuildData::new(expected.schema.clone(), value).ok());
+    // Usage belongs to the independently verified execution even when the
+    // model's answer cannot be accepted as Flow data.
+    if data.is_none() {
+      tracing::warn!(
+        build_id = %documents[0].identity.build_id,
+        attempt_id = %documents[0].identity.attempt_id,
+        job_id = %documents[0].identity.job_id,
+        schema = %expected.schema.reference().identity(),
+        "Codex result does not satisfy the admitted Flow schema"
+      );
       return Ok(FactoryCodexNodeRunObservation {
         outcome: CodexHarnessOutcome::Failed,
         data: None,
         usage: records.usage,
       });
     }
-    Some(FlowVerifiedBuildData::new(expected.schema.clone(), value).map_err(|_| ApplicationError::invalid())?)
+    data
   } else {
     None
   };

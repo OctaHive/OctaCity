@@ -28,6 +28,7 @@ use octacity_execution::{
 enum Scenario {
   Success,
   FinalOwnerAccounting,
+  FinalAccountingFailsAfterTimeout,
   MissingPluginProjection,
   Cancelled,
   BadHello,
@@ -103,7 +104,7 @@ impl ExecutionBackend for FakeBackend {
       destroyed: self.destroyed.clone(),
       killed: self.killed.clone(),
       exit_code: match self.scenario {
-        Scenario::Cancelled => 130,
+        Scenario::Cancelled | Scenario::FinalAccountingFailsAfterTimeout => 130,
         Scenario::Success
         | Scenario::FinalOwnerAccounting
         | Scenario::MissingPluginProjection
@@ -164,6 +165,11 @@ impl RunningExecution for FakeExecution {
   }
 
   async fn sample_final_usage(&mut self) -> Result<ResourceUsage, ExecutionError> {
+    if matches!(self.scenario, Scenario::FinalAccountingFailsAfterTimeout) {
+      return Err(ExecutionError::Backend(
+        "fixture terminal accounting failure".to_owned(),
+      ));
+    }
     let mut usage = self.sample_usage().await?;
     if matches!(self.scenario, Scenario::FinalOwnerAccounting) {
       // This fixture owns 15 ms of auxiliary CPU beyond the main's 2 ms.
@@ -241,7 +247,10 @@ async fn fake_runner(input: tokio::io::DuplexStream, mut output: tokio::io::Dupl
     }
     return;
   }
-  if matches!(scenario, Scenario::Cancelled) {
+  if matches!(
+    scenario,
+    Scenario::Cancelled | Scenario::FinalAccountingFailsAfterTimeout
+  ) {
     output
       .write_all(b"{\"type\":\"accepted\",\"request_id\":\"job-1-attempt-1\"}\n")
       .await
@@ -405,6 +414,40 @@ async fn cancellation_is_forwarded_and_reported_by_the_runner() {
 
   assert_eq!(completion.status, RunStatus::Cancelled);
   assert_eq!(completion.termination_reason, Some(TerminationReason::Cancelled));
+  assert!(destroyed.load(Ordering::SeqCst));
+}
+
+#[tokio::test]
+async fn a_runner_deadline_remains_a_timeout_when_final_accounting_fails() {
+  let workspace = tempfile::tempdir().unwrap();
+  std::fs::create_dir(workspace.path().join("data")).unwrap();
+  let destroyed = Arc::new(AtomicBool::new(false));
+  let backend = FakeBackend {
+    destroyed: destroyed.clone(),
+    killed: Arc::new(AtomicBool::new(false)),
+    scenario: Scenario::FinalAccountingFailsAfterTimeout,
+    cleanup_fails: false,
+  };
+  let mut request = job(&workspace.path().canonicalize().unwrap());
+  request.execution.max_duration = Duration::from_millis(50);
+  let (sender, _receiver) = mpsc::channel(8);
+  let failure = supervise(
+    &installation(),
+    &backend,
+    request,
+    CancellationToken::new(),
+    &sender,
+    &RunnerSupervisionPolicy::default(),
+  )
+  .await
+  .unwrap_err();
+  assert!(
+    matches!(
+      failure,
+      RunnerSupervisionError::Execution(ExecutionError::TimedOut { .. })
+    ),
+    "{failure:?}"
+  );
   assert!(destroyed.load(Ordering::SeqCst));
 }
 

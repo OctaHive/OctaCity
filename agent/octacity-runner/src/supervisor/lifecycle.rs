@@ -148,7 +148,19 @@ pub(super) async fn drive(
               execution,
               policy.resource_sample_timeout,
               policy.max_accounting_failures,
-            ).await?;
+            ).await;
+            let final_usage = match final_usage {
+              Ok(usage) => usage,
+              Err(_) if stop_reason == Some(TerminationReason::TimedOut) => {
+                warn!(
+                  request_id = %job.request_id,
+                  ?last_event_sequence,
+                  "runner stopped at the deadline without final resource accounting"
+                );
+                return Err(ExecutionError::TimedOut { operation: "running octa-runner request" }.into());
+              }
+              Err(error) => return Err(error),
+            };
             // The runner keeps a cancellation reader on stdin until its input
             // reaches EOF. Close our control pipe before waiting for the
             // process, otherwise a successful runner can remain alive after
@@ -191,7 +203,13 @@ pub(super) async fn drive(
         ).await;
       },
       () = &mut operation_deadline, if stop_reason.is_none() => {
-        warn!(request_id = %job.request_id, "octa-runner request timed out");
+        warn!(
+          request_id = %job.request_id,
+          accepted,
+          ?last_event_sequence,
+          timeout_ms = %job.execution.max_duration.as_millis(),
+          "octa-runner request timed out"
+        );
         begin_stop(
           &mut stop_reason,
           &mut stop_deadline,

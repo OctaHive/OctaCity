@@ -71,6 +71,11 @@ pub enum FactoryNodeExecutionStep {
     /// Exact ordinary execution to retain, when execution uses a Build.
     execution: Option<Box<FlowBuildExecution>>,
   },
+  /// The ordinary execution has stopped, but its verified consumption is unavailable.
+  AwaitingTerminalUsage {
+    /// Exact stopped execution whose reservation still has to be held.
+    execution: Box<FlowBuildExecution>,
+  },
   /// Bounded independently verified result and measured consumption.
   Completed {
     /// Exact ordinary execution to retain with the result, when present.
@@ -466,6 +471,25 @@ impl<S: FactoryRunStore, E: FactoryNodeExecutor> FactoryNodeRunner<S, E> {
         at = self.current_time(at)?;
         attempt.verify_observer(&ownership, at).map_err(invalid)?;
         match step {
+          FactoryNodeExecutionStep::AwaitingTerminalUsage { execution } => {
+            let build = execution.build_id();
+            let ordinary_attempt = execution.attempt_id();
+            retain_execution(&snapshot, &mut append, Some(execution));
+            if snapshot.run.state() != FactoryRunState::Waiting || append.record_count() != 0 {
+              self
+                .commit_progress(&snapshot, append, at, GraphDisposition::Waiting, vec![])
+                .await?;
+              tracing::warn!(
+                run_id = %run,
+                node = %attempt.node_key(),
+                node_attempt_id = %attempt.id(),
+                build_id = %build,
+                attempt_id = %ordinary_attempt,
+                "Factory execution stopped; waiting for verified terminal usage"
+              );
+            }
+            return Ok(FactoryNodeStep::Waiting);
+          }
           FactoryNodeExecutionStep::Waiting { execution } => {
             retain_execution(&snapshot, &mut append, execution);
             if append.record_count() != 0 {
@@ -486,7 +510,9 @@ impl<S: FactoryRunStore, E: FactoryNodeExecutor> FactoryNodeRunner<S, E> {
               .map_err(invalid)?,
             );
             retain_execution(&snapshot, &mut append, execution);
-            self.commit(&snapshot, append, at).await?;
+            self
+              .commit_progress(&snapshot, append, at, GraphDisposition::Waiting, vec![])
+              .await?;
             return Ok(FactoryNodeStep::ExecutionStopped);
           }
           FactoryNodeExecutionStep::Completed {
@@ -849,7 +875,7 @@ impl<S: FactoryRunStore, E: FactoryNodeExecutor> FactoryNodeRunner<S, E> {
       snapshot.run.id(),
       version,
       match &disposition {
-        GraphDisposition::Running => FactoryLifecycleProgress::FlowRunning {
+        GraphDisposition::Running | GraphDisposition::Waiting => FactoryLifecycleProgress::FlowRunning {
           root: snapshot.admitted_flow.root_run().id(),
         },
         GraphDisposition::Resolved(terminal) => FactoryLifecycleProgress::FlowResolved {
@@ -911,6 +937,7 @@ impl<S: FactoryRunStore, E: FactoryNodeExecutor> FactoryNodeRunner<S, E> {
         match disposition {
           GraphDisposition::Resolved(_) => FactoryRunState::Completed,
           GraphDisposition::Running => FactoryRunState::Running,
+          GraphDisposition::Waiting => FactoryRunState::Waiting,
           GraphDisposition::Cancelled => FactoryRunState::Cancelled,
         },
         version,
@@ -952,6 +979,7 @@ fn invalid(_: FactoryError) -> ApplicationError {
 
 enum GraphDisposition {
   Running,
+  Waiting,
   Resolved(FactoryKey),
   Cancelled,
 }

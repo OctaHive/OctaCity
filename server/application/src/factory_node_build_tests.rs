@@ -1037,11 +1037,8 @@ fn failed_build_executor_requires_measured_consumption_without_provider_results(
           matches!(observed.unwrap(), FactoryNodeExecutionStep::ExecutionStopped { usage, .. } if usage.tokens == 23 && usage.elapsed_millis == 2)
         );
       } else {
-        let FactoryNodeExecutionStep::Waiting {
-          execution: Some(execution),
-        } = observed.unwrap()
-        else {
-          panic!("unknown usage must hold this execution without failing the shared owner");
+        let FactoryNodeExecutionStep::AwaitingTerminalUsage { execution } = observed.unwrap() else {
+          panic!("a stopped Build without verified usage must be distinguishable from live execution");
         };
         assert_eq!(execution.build_id(), builds.acceptance.build_id);
         assert_eq!(execution.attempt_id(), builds.acceptance.attempt_id);

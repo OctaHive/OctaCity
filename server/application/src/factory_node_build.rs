@@ -983,9 +983,7 @@ where
             // Preserve this execution and its reservation. Unknown consumption
             // is a local wait, not a failure of the shared reconciliation pass.
             Err(crate::OrdinaryBuildApplicationError::Unavailable) => {
-              return Ok(crate::FactoryNodeExecutionStep::Waiting {
-                execution: Some(execution),
-              });
+              return Ok(crate::FactoryNodeExecutionStep::AwaitingTerminalUsage { execution });
             }
             Err(error) => return Err(build_error(error)),
           },

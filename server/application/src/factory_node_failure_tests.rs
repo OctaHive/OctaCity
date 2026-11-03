@@ -205,6 +205,27 @@ fn a_confirmed_retry_addresses_the_failed_node_and_preserves_its_frozen_input() 
 pub(crate) struct FailedExecution {
   pub(crate) ids: ExecutionIds,
 }
+struct StoppedWithoutUsage(ExecutionIds);
+#[async_trait]
+impl FactoryNodeExecutor for StoppedWithoutUsage {
+  async fn cancel(
+    &self,
+    _: FactoryNodeExecutionRequest<'_>,
+    _: octacity_server_domain::Timestamp,
+  ) -> Result<FactoryNodeCancellationStep, ApplicationError> {
+    panic!("the owner must observe the existing operation")
+  }
+
+  async fn observe(
+    &self,
+    request: FactoryNodeExecutionRequest<'_>,
+  ) -> Result<FactoryNodeExecutionStep, ApplicationError> {
+    let (build, attempt, job) = self.0;
+    Ok(FactoryNodeExecutionStep::AwaitingTerminalUsage {
+      execution: Box::new(FlowBuildExecution::new(request.build.unwrap(), build, attempt, vec![job]).unwrap()),
+    })
+  }
+}
 #[async_trait]
 impl FactoryNodeExecutor for FailedExecution {
   async fn cancel(
@@ -405,14 +426,43 @@ pub(crate) async fn verify_failed_node_owner<S: FactoryRunStore + 'static>(
     .unwrap()["active"],
     true
   );
+  let awaiting_usage = FactoryNodeRunner::new(
+    store.clone(),
+    Arc::new(StoppedWithoutUsage(ids)),
+    crate::factory_node_test_support::clock(),
+  );
+  for _ in 0..2 {
+    assert_eq!(
+      awaiting_usage
+        .run_once(run.id(), claim.id, target.clone(), None, at(12))
+        .await
+        .unwrap(),
+      FactoryNodeStep::Waiting
+    );
+  }
+  let waiting = store.factory_run_snapshot(run.id()).await.unwrap();
+  assert_eq!(waiting.run.state(), octacity_server_factory::FactoryRunState::Waiting);
+  assert_eq!(waiting.run.version().get(), running.run.version().get() + 1);
+  assert!(waiting.flow.data.stops.is_empty());
+  assert_eq!(waiting.flow.data.build_executions.len(), 1);
+  let current_usage = |snapshot: &octacity_server_store::FactoryRunSnapshot| {
+    snapshot
+      .budgets
+      .iter()
+      .find(|row| row.id == snapshot.current.budget_id)
+      .unwrap()
+      .usage
+  };
+  assert_eq!(current_usage(&waiting), current_usage(&running));
   assert_eq!(
     runner
-      .run_once(run.id(), claim.id, target.clone(), None, at(12))
+      .run_once(run.id(), claim.id, target.clone(), None, at(13))
       .await
       .unwrap(),
     FactoryNodeStep::ExecutionStopped
   );
   let stopped = store.factory_run_snapshot(run.id()).await.unwrap();
+  assert_eq!(stopped.run.state(), octacity_server_factory::FactoryRunState::Waiting);
   assert_eq!(
     serde_json::to_value(FactoryNodeAttemptProjection::from_snapshot(
       &stopped.flow.attempts[0],

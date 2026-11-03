@@ -146,9 +146,13 @@ fn document_guided_classification_retains_bounded_assessments_and_missing_values
     crate::verify_codex_node_run(contract(), &fixture.documents).is_ok(),
     "structural validity does not certify semantic compliance with document prose"
   );
-  result["structured_result"]["priority"] = json!("p".repeat(129));
+  result["structured_result"]["priority"] = json!("я".repeat(65));
   fixture.replace_document("codex-run-result", result);
-  assert!(crate::verify_codex_node_run(contract(), &fixture.documents).is_err());
+  let stopped = crate::verify_codex_node_run(contract(), &fixture.documents)
+    .expect("an invalid result cannot discard independently verified consumption");
+  assert_eq!(stopped.outcome, CodexHarnessOutcome::Failed);
+  assert!(stopped.data.is_none());
+  assert_eq!(stopped.usage.tokens, 18);
 }
 
 #[test]
@@ -295,14 +299,20 @@ fn codex_nullable_transport_preserves_optional_flow_fields_and_required_validati
   result["structured_result"]["count"] = Value::Null;
   fixture.replace_document("codex-run-result", result.clone());
   assert!(
-    verify_codex_node_run(expected(), &fixture.documents).is_err(),
+    verify_codex_node_run(expected(), &fixture.documents)
+      .unwrap()
+      .data
+      .is_none(),
     "required null cannot become missing or a fabricated default"
   );
   result["structured_result"]["count"] = json!(9);
   result["structured_result"]["undeclared"] = Value::Null;
   fixture.replace_document("codex-run-result", result);
   assert!(
-    verify_codex_node_run(expected(), &fixture.documents).is_err(),
+    verify_codex_node_run(expected(), &fixture.documents)
+      .unwrap()
+      .data
+      .is_none(),
     "unknown fields remain invalid even when null"
   );
 }
@@ -1440,7 +1450,9 @@ fn codex_node_accepts_the_released_report_media_without_weakening_its_record_con
   let mut result: Value = serde_json::from_slice(&fixture.documents[0].bytes).unwrap();
   result["structured_result"] = json!({"count":"wrong schema type"});
   fixture.replace_document("codex-run-result", result);
-  assert!(verify_codex_node_run(expected(), &fixture.documents).is_err());
+  let stopped = verify_codex_node_run(expected(), &fixture.documents).unwrap();
+  assert_eq!(stopped.outcome, CodexHarnessOutcome::Failed);
+  assert!(stopped.data.is_none());
 }
 #[test]
 fn qualified_common_reviewer_records_produce_server_owned_assessment_and_reject_a_model_authored_assessment() {

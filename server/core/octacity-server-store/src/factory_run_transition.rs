@@ -361,7 +361,20 @@ fn lifecycle_transition_is_valid(
   if let FactoryLifecycleProgress::FlowRunning { root } = &request.lifecycle_checkpoint.progress {
     return !baseline.run.state().is_terminal()
       && *root == baseline.admitted_flow.root_run().id()
-      && request.next_run.state() == FactoryRunState::Running;
+      && match request.next_run.state() {
+        FactoryRunState::Running => true,
+        // A technical stop can await operator disposition. A stop without
+        // verified usage can also wait while retaining its reservation.
+        FactoryRunState::Waiting => {
+          matches!(
+            baseline.run.state(),
+            FactoryRunState::Running | FactoryRunState::Waiting
+          ) && request.append.record_count()
+            == request.append.flow.data.build_executions.len() + request.append.flow.data.stops.len()
+            && request.outbox.is_empty()
+        }
+        _ => false,
+      };
   }
   if let FactoryLifecycleProgress::FlowResolved { root, terminal } = &request.lifecycle_checkpoint.progress {
     if baseline.run.state().is_terminal()
