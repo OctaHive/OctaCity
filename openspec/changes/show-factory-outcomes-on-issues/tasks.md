@@ -23,4 +23,4 @@
 
 ## 5. Verify the complete local workflow
 
-- [ ] 5.1 On a local stand, run configured outcomes against one OctaCity Issue and verify the visible conclusions, local priority and size label, specification and review links, and replacement of the triage card on a later accepted result. Confirm the Issue and Run histories retain their original records and the local-only workflow emits no provider intent.
+- [x] 5.1 On a local stand, run configured outcomes against one OctaCity Issue and verify the visible conclusions, local priority and size label, specification and review links, and replacement of the triage card on a later accepted result. Confirm the Issue and Run histories retain their original records and the local-only workflow emits no provider intent.

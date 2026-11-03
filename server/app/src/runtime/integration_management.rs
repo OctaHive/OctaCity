@@ -50,6 +50,43 @@ struct Catalog {
   checks: Vec<super::IntegrationCheckProfile>,
   #[serde(default)]
   source_profiles_file: Option<PathBuf>,
+  #[serde(default)]
+  review_readers: Vec<ReviewReader>,
+}
+
+/// One explicitly installed reader with an exact connection and Project boundary.
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct ReviewReader {
+  project_id: octacity_server_domain::ProjectId,
+  connection_id: octacity_server_domain::IntegrationId,
+  connection_version: octacity_server_domain::IntegrationVersion,
+  read: super::IntegrationCheckProfile,
+}
+
+impl ReviewReader {
+  fn bind(self, store: Arc<PostgresStore>, principal: &str) -> super::IssueCodeReviewReadProfile {
+    let read = self.read;
+    super::IssueCodeReviewReadProfile {
+      managed_access: ManagedIntegrationAccess::new(store, self.connection_id, self.connection_version),
+      project_id: self.project_id,
+      binding: octacity_server_factory::WorkSourceBinding {
+        installation: read.installation,
+        capability: read.capability.capability,
+        configuration: read.capability.configuration,
+        resource: read.resource_reference,
+      },
+      repository: None,
+      publication_targets: vec![],
+      plugin: read.plugin,
+      provider_configuration: read.provider_configuration,
+      resource: read.resource,
+      network_hosts: read.network_hosts,
+      context: request_context(principal),
+      page_items: octacity_work_source_protocol::source::MAX_ITEMS,
+      max_page_bytes: octacity_work_source_protocol::MAX_RESPONSE_BYTES as u32,
+    }
+  }
 }
 impl Catalog {
   async fn load(path: &std::path::Path) -> Result<Self, ServerRuntimeError> {
@@ -61,6 +98,7 @@ impl Catalog {
     if catalog.version != 1
       || !catalog.registry.is_absolute()
       || catalog.installations.len() > 128
+      || catalog.review_readers.len() > MAX_FACTORY_EXECUTOR_BINDINGS
       || catalog
         .source_profiles_file
         .as_ref()
@@ -260,6 +298,7 @@ pub(super) struct InstalledIntegrationManagement {
   pub(super) application: IntegrationManagementApplication,
   pub(super) source_reads: Option<super::issue_source_worker::IssueSourceWorker>,
   pub(super) source_management: Option<Arc<super::source_management::SourceManagement>>,
+  pub(super) code_reviews: Option<Arc<dyn IssueCodeReviewObservations>>,
 }
 #[cfg(all(test, unix))]
 pub(super) async fn install(
@@ -286,7 +325,7 @@ pub(super) async fn install_with_factory(
     return Ok(None);
   };
   let invalid = || ServerRuntimeError::InvalidManagementPolicy;
-  let catalog = Catalog::load(path).await?;
+  let mut catalog = Catalog::load(path).await?;
   let registry = Arc::new(WorkAdapterRegistry::discover(&catalog.registry).map_err(|_| invalid())?);
   for installed in &catalog.installations {
     installed.validate().map_err(|_| invalid())?;
@@ -301,6 +340,7 @@ pub(super) async fn install_with_factory(
         let supported = match capability.purpose {
           octacity_server_store::IntegrationPurpose::TaskRead => adapter.manifest.capabilities.source.is_some(),
           octacity_server_store::IntegrationPurpose::TaskUpdate => adapter.manifest.capabilities.reporter.is_some(),
+          octacity_server_store::IntegrationPurpose::RepositoryRead => adapter.manifest.capabilities.review.is_some(),
           _ => false,
         };
         if !supported {
@@ -309,6 +349,34 @@ pub(super) async fn install_with_factory(
       }
     }
   }
+  let code_reviews: Option<Arc<dyn IssueCodeReviewObservations>> = if catalog.review_readers.is_empty() {
+    None
+  } else {
+    for reader in &catalog.review_readers {
+      super::source_profiles_file::validate_access(
+        &reader.read,
+        octacity_server_store::IntegrationPurpose::RepositoryRead,
+        &catalog.installations,
+        &registry,
+      )
+      .map_err(|_| invalid())?;
+    }
+    let profiles = std::mem::take(&mut catalog.review_readers)
+      .into_iter()
+      .map(|reader| reader.bind(store.clone(), &local.principal))
+      .collect();
+    Some(Arc::new(
+      super::HostedIssueCodeReviewObservations::new(
+        registry.clone(),
+        profiles,
+        Arc::new(SystemFactoryExecutionClock),
+        std::time::Duration::from_millis(local.operation_timeout_milliseconds),
+        std::time::Duration::from_millis(local.cancellation_grace_milliseconds),
+        cancellation.clone(),
+      )
+      .map_err(|_| invalid())?,
+    ))
+  };
   let policy: Arc<dyn ManagementAuthorizationPolicy> = Arc::new(LocalIntegrationPolicy {
     principal: local.principal.clone(),
   });
@@ -435,5 +503,6 @@ pub(super) async fn install_with_factory(
     source_reads,
     source_management,
     issues,
+    code_reviews,
   }))
 }

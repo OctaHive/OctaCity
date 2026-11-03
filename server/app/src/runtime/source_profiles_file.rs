@@ -206,8 +206,8 @@ impl SourceReadDeclaration {
   }
 }
 
-// The installation scope is shared by Source reads and separately authorized Reporter writes.
-fn validate_access<'a>(
+// Independently authorized purposes share the same exact installation checks.
+pub(super) fn validate_access<'a>(
   profile: &super::IntegrationCheckProfile,
   purpose: IntegrationPurpose,
   installations: &[InstalledIntegration],
@@ -243,6 +243,9 @@ fn validate_access<'a>(
   if installed.adapter != profile.plugin
     || resource.native_id.as_str() != profile.resource.resource_id
     || !resource.capabilities.contains(&profile.capability)
+    || (purpose == IntegrationPurpose::RepositoryRead
+      && (resource.locator.as_str() != profile.resource.resource_locator
+        || profile.capability.configuration.digest() != profile.provider_configuration))
   {
     return Err(invalid());
   }
@@ -266,6 +269,16 @@ fn validate_access<'a>(
         .manifest
         .capabilities
         .reporter
+        .as_ref()
+        .ok_or_else(invalid)?
+        .configuration_digest,
+    ),
+    IntegrationPurpose::RepositoryRead => (
+      CredentialClass::RepositoryRead,
+      &adapter
+        .manifest
+        .capabilities
+        .review
         .as_ref()
         .ok_or_else(invalid)?
         .configuration_digest,

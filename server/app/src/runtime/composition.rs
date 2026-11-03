@@ -76,7 +76,7 @@ impl ServerRuntime {
   async fn start_configured(
     config: ServerConfig,
     installer: Option<Arc<dyn super::FactoryRuntimeInstaller>>,
-    issue_integrations: super::IssueRuntimeIntegrations,
+    mut issue_integrations: super::IssueRuntimeIntegrations,
   ) -> Result<Self, ServerRuntimeError> {
     if config.factory().is_some() && installer.is_none() {
       return Err(ServerRuntimeError::MissingFactoryInstallation);
@@ -197,8 +197,11 @@ impl ServerRuntime {
       retention_policy.retrying().maximum_retry_milliseconds(),
     )
     .map_err(|_| ServerRuntimeError::InvalidManagementPolicy)?;
-    let (integrations, source_reads, managed_issue_sources, source_management) = installed_integrations
-      .map_or((None, None, None, None), |i| {
+    let (integrations, source_reads, managed_issue_sources, source_management) =
+      installed_integrations.map_or((None, None, None, None), |i| {
+        if issue_integrations.code_reviews.is_none() {
+          issue_integrations.code_reviews = i.code_reviews;
+        }
         (Some(i.application), i.source_reads, i.issues, i.source_management)
       });
     let source_reporting = if let Some(sources) = &source_management {

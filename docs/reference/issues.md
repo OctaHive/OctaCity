@@ -1642,6 +1642,20 @@ check is informational and confers no Factory acceptance or Issue transition.
 
 Server composition accepts these independent ports through
 `ServerRuntime::start_with_issue_integrations` and `IssueRuntimeIntegrations`.
+The ordinary server process can also load review readers from the private
+`integration_management.catalog_file` used by the local stand. Add a
+`review_readers` entry with `project_id`, `connection_id`, `connection_version`
+and `read`. The `read` object uses the same installation, resource reference,
+capability, plugin, provider configuration, resource and network host fields as
+an installed integration check. Declare a `repository_read` capability on the
+matching installation resource and use its exact configuration digest and
+`vcs_read` credential class. The adapter manifest must advertise the matching
+review protocol and configuration. Activate the pinned connection with its
+configured credential and grant the Project that resource for `repository_read`.
+Catalog readers serve the Issue API through the verified local management
+socket. The profile is optional and uses the existing protected connection and
+Project grant owners.
+
 Existing `start_with_issue_sources` delegates to the same composition. An absent
 review reader exposes no installed repository metadata and starts no provider
 operation; manual tasks and an empty review collection remain usable. An installed

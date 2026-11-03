@@ -69,6 +69,89 @@ async fn released_runtime_exposes_only_verified_installed_providers_on_protected
 }
 
 #[tokio::test]
+async fn released_runtime_installs_repository_review_capability_without_contacting_provider() {
+  let (root, connection, mut read) = fixture("review-provider");
+  let registry = root.path().join("adapters");
+  let provider = registry.join("review-provider");
+  fs::create_dir(&registry).unwrap();
+  fs::rename(root.path().join("review-provider"), &provider).unwrap();
+  let manifest = provider.join("adapter.toml");
+  let mut contents = fs::read_to_string(&manifest).unwrap();
+  contents.push_str(&format!(
+    "\n[protocol.review]\nmin=1\nmax=1\n[capabilities.review]\nchecks=false\ncancel=false\ncredential_class=\"vcs_read\"\nconfiguration_digest=\"{}\"\n",
+    read.provider_configuration,
+  ));
+  fs::write(&manifest, contents).unwrap();
+  let definition = connection.definition;
+  let mut resource = definition.resources[0].clone();
+  read.resource.resource_locator = resource.locator.to_string();
+  read.resource.credential.class = CredentialClass::RepositoryRead;
+  read.capability.purpose = IntegrationPurpose::RepositoryRead;
+  read.capability.configuration = ImmutableReference::new(
+    read.capability.configuration.identity().clone(),
+    read.capability.configuration.version().clone(),
+    read.provider_configuration,
+  );
+  resource.capabilities = vec![read.capability.clone()];
+  let installed = InstalledIntegration {
+    installation: definition.installation,
+    provider: definition.provider,
+    adapter: definition.adapter,
+    endpoints: vec![definition.endpoint],
+    authentication: vec![definition.authentication],
+    resources: vec![resource],
+  };
+  let catalog = root.path().join("integrations.json");
+  let project = octacity_server_domain::ProjectId::generate();
+  fs::write(
+    &catalog,
+    serde_json::to_vec(&serde_json::json!({
+      "version":1, "registry":registry, "installations":[installed],
+      "review_readers":[{"project_id":project,"connection_id":connection.id,"connection_version":1,"read":read}]
+    }))
+    .unwrap(),
+  )
+  .unwrap();
+  fs::set_permissions(&catalog, fs::Permissions::from_mode(0o600)).unwrap();
+  let socket = root.path().join("management.sock");
+  use std::os::unix::fs::MetadataExt;
+  let extra = format!(
+    "[integration_management]\nsocket_path={:?}\npeer_uid={}\nprincipal='test-proxy'\ncatalog_file={:?}\n",
+    socket.to_str().unwrap(),
+    fs::metadata(root.path()).unwrap().uid(),
+    catalog.to_str().unwrap()
+  );
+  let config = crate::ServerConfig::parse_toml(&super::test_runtime_config::runtime_config_source(
+    root.path(),
+    "postgres://test@127.0.0.1:1/unused",
+    "http://127.0.0.1:9",
+    &extra,
+  ))
+  .unwrap();
+  let runtime = ServerRuntime::start(config).await.unwrap();
+  let installed: serde_json::Value = reqwest::Client::builder()
+    .unix_socket(socket.as_path())
+    .build()
+    .unwrap()
+    .get("http://localhost/api/v1/integration-installations")
+    .send()
+    .await
+    .unwrap()
+    .error_for_status()
+    .unwrap()
+    .json()
+    .await
+    .unwrap();
+  assert_eq!(
+    installed["items"][0]["resources"][0]["capabilities"][0]["purpose"],
+    "repository_read"
+  );
+  assert!(!provider.join("calls").exists());
+  assert!(!provider.join("review-requests.jsonl").exists());
+  runtime.shutdown().await.unwrap();
+}
+
+#[tokio::test]
 async fn installed_source_fixture_keeps_its_input_open_until_host_cancellation() {
   use octacity_work_source_protocol::{ConfigurationReference, Request, source};
   let (root, _, profile) = fixture("cancellation-fixture");
