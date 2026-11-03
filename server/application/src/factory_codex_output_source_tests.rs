@@ -212,6 +212,47 @@ async fn prepared_source() -> SourceFixture {
 }
 
 #[test]
+fn published_codex_result_exposes_its_json_format_in_issue_artifacts() {
+  crate::factory_admission_tests::run_ready(async {
+    let fixture = prepared_source().await;
+    let build = &fixture.query.build.build;
+    let artifacts = fixture
+      .artifacts
+      .list_published_artifacts(ListPublishedArtifacts {
+        build_id: build.id,
+        attempt_id: Some(fixture.query.attempt.id),
+        limit: 10,
+        visibility: ArtifactListVisibility::all(),
+      })
+      .await
+      .unwrap();
+    let reader = FactoryArtifactReader::new(fixture.artifacts, fixture.query.clone(), fixture.bytes.clone());
+    for (name, media_type) in [
+      ("codex-run-result", "application/json"),
+      ("codex-run-trace", "application/x-ndjson"),
+    ] {
+      let identity = artifacts
+        .iter()
+        .map(|record| record.artifact.identity())
+        .find(|identity| identity.logical_name.as_str() == name)
+        .unwrap();
+      let digest = FactoryDigest::content_sha256(&fixture.bytes.0.lock().unwrap()[&identity.artifact_id]);
+      let metadata = reader
+        .metadata(ReadFactoryArtifact {
+          project_id: build.project_id,
+          artifact: FactoryArtifactReference::new(identity.artifact_id, digest, identity.size_bytes).unwrap(),
+          maximum_bytes: 10_000,
+          observed_at: at(1018),
+          required_until: at(1019),
+        })
+        .await
+        .unwrap();
+      assert_eq!(metadata.media_type, media_type);
+    }
+  });
+}
+
+#[test]
 fn native_subscription_records_charge_tokens_without_fabricating_a_monetary_price() {
   crate::factory_admission_tests::run_ready(async {
     let policy = serde_json::from_value(serde_json::json!({"kind":"subscription"})).unwrap();
@@ -1247,7 +1288,7 @@ async fn finish_prepared_source(input: PreparedSourceInput) -> SourceFixture {
       "codex-run-result",
       result,
       ArtifactType::Report(ArtifactReportFormat::new("octa.codex.result.v1").unwrap()),
-      "application/json",
+      "application/octet-stream",
     ),
     (
       "codex-run-provenance",

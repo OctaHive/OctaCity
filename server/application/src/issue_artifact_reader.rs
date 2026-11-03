@@ -1,5 +1,6 @@
 //! Safe metadata projection at the existing retained Artifact authority.
 use super::*;
+use crate::factory_codex_contract::CODEX_RESULT_FORMAT;
 use crate::{IssueArtifactAvailability, IssueArtifactMetadata, IssueArtifactOrigin, IssueArtifactReader};
 
 #[async_trait::async_trait]
@@ -53,9 +54,21 @@ impl<A: ArtifactRecordStore, S: BuildQueryStore, B: ArtifactByteReader> IssueArt
     } else {
       IssueArtifactAvailability::Unavailable
     };
+    // Codex reports declare their format separately from the generic binary transport.
+    let media_type = match identity.media_type.as_str() {
+      "application/octet-stream"
+        if identity
+          .artifact_type
+          .report_format()
+          .is_some_and(|format| format.as_str() == CODEX_RESULT_FORMAT) =>
+      {
+        "application/json"
+      }
+      declared => declared,
+    };
     Ok(IssueArtifactMetadata {
       name: identity.logical_name.as_str().to_owned(),
-      media_type: identity.media_type.as_str().to_owned(),
+      media_type: media_type.to_owned(),
       origin: IssueArtifactOrigin::BuildOutput,
       availability,
       published_at: record.published_at(),
