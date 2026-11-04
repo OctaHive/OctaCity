@@ -233,37 +233,15 @@ pub(super) async fn verify_codex_outputs(client: &Client, origin: &str, build: &
   .await;
   let items = page["items"].as_array().unwrap();
   assert_eq!(items.len(), 3, "Codex must publish two artifacts and one report");
-  let trace = items.iter().find(|item| item["name"] == "codex-run-trace").unwrap();
-  assert_eq!(trace["output_type"]["kind"], "artifact");
-  assert_eq!(trace["media_type"], "application/x-ndjson");
-  let provenance = items
-    .iter()
-    .find(|item| item["name"] == "codex-run-provenance")
-    .unwrap();
-  assert_eq!(provenance["output_type"]["kind"], "artifact");
+  let (trace, provenance) = verify_codex_diagnostics(client, origin, items, "complete").await;
+  assert!(
+    trace.contains("*****"),
+    "sanitized trace did not retain a redaction marker"
+  );
+
   let result = items.iter().find(|item| item["name"] == "codex-run-result").unwrap();
   assert_eq!(result["output_type"]["kind"], "report");
   assert_eq!(result["output_type"]["format"], "octa.codex.result.v1");
-
-  let trace_bytes = download_output(client, origin, trace).await;
-  let trace_text = std::str::from_utf8(&trace_bytes).unwrap();
-  assert!(
-    !trace_text.contains("OCTACITY_CODEX_PROMPT_MUST_NOT_APPEAR_IN_TRACE"),
-    "sanitized trace retained prompt content"
-  );
-  assert!(
-    !trace_text.contains("release-secret-canary-must-not-appear"),
-    "sanitized trace retained an explicitly mapped credential"
-  );
-  assert!(
-    trace_text.contains("*****"),
-    "sanitized trace did not retain a redaction marker"
-  );
-  for line in trace_text.lines() {
-    let record: Value = serde_json::from_str(line).unwrap();
-    assert_eq!(record["format_version"], 2);
-  }
-
   let result_bytes = download_output(client, origin, result).await;
   let result_document: Value = serde_json::from_slice(&result_bytes).unwrap();
   assert_eq!(result_document["format_version"], 1);
@@ -272,35 +250,65 @@ pub(super) async fn verify_codex_outputs(client: &Client, origin: &str, build: &
     result_document["structured_result"],
     json!({"outcome": "completed", "files": 1})
   );
-  assert!(
-    !serde_json::to_string(&result_document)
-      .unwrap()
-      .contains("release-secret-canary-must-not-appear")
-  );
-  let provenance_bytes = download_output(client, origin, provenance).await;
-  let provenance_document: Value = serde_json::from_slice(&provenance_bytes).unwrap();
-  assert_eq!(provenance_document["format_version"], 2);
-  let retained = format!(
-    "{trace_text}\n{}\n{}",
-    serde_json::to_string(&result_document).unwrap(),
-    serde_json::to_string(&provenance_document).unwrap()
-  );
-  assert_no_codex_sensitive_text(&retained, "Codex published output");
-  json!({"page": page, "trace": trace_text, "result": result_document, "provenance": provenance_document})
+  assert_no_codex_sensitive_text(&result_document.to_string(), "Codex result");
+  json!({"page": page, "trace": trace, "result": result_document, "provenance": provenance})
 }
 
-pub(super) async fn verify_no_outputs(client: &Client, origin: &str, build: &Value) -> Value {
+async fn verify_codex_diagnostics(
+  client: &Client,
+  origin: &str,
+  items: &[Value],
+  capture_status: &str,
+) -> (String, Value) {
+  let trace = items
+    .iter()
+    .find(|item| item["name"] == "codex-run-trace")
+    .expect("missing Codex trace");
+  assert_eq!(trace["output_type"]["kind"], "artifact");
+  assert_eq!(trace["media_type"], "application/x-ndjson");
+  let provenance = items
+    .iter()
+    .find(|item| item["name"] == "codex-run-provenance")
+    .expect("missing Codex provenance");
+  assert_eq!(provenance["output_type"]["kind"], "artifact");
+  assert_eq!(provenance["media_type"], "application/json");
+
+  let trace = String::from_utf8(download_output(client, origin, trace).await).unwrap();
+  assert_no_codex_sensitive_text(&trace, "Codex trace");
+  for line in trace.lines() {
+    let record: Value = serde_json::from_str(line).unwrap();
+    assert_eq!(record["format_version"], 2);
+  }
+
+  let provenance = download_output(client, origin, provenance).await;
+  let provenance = std::str::from_utf8(&provenance).unwrap();
+  assert_no_codex_sensitive_text(provenance, "Codex provenance");
+  let provenance: Value = serde_json::from_str(provenance).unwrap();
+  assert_eq!(provenance["format_version"], 2);
+  assert_eq!(provenance["capture"]["status"], capture_status);
+  (trace, provenance)
+}
+
+pub(super) async fn verify_interrupted_codex_outputs(client: &Client, origin: &str, build: &Value) -> Value {
+  let state = string(build, "state");
+  assert!(matches!(state.as_str(), "failed" | "cancelled"));
   let page = get_json(
     client,
     format!("{origin}/api/v1/builds/{}/artifacts?limit=10", string(build, "id")),
   )
   .await;
+  let items = page["items"].as_array().expect("Build artifacts must be an array");
+  // A cancellation can stop the runner before it returns finalized records.
+  if state == "cancelled" && items.is_empty() {
+    return json!({"page": page});
+  }
   assert_eq!(
-    page["items"].as_array().map(Vec::len),
-    Some(0),
-    "failed or cancelled Codex execution published partial output"
+    items.len(),
+    2,
+    "interrupted Codex must publish only the diagnostic pair"
   );
-  page
+  let (trace, provenance) = verify_codex_diagnostics(client, origin, items, &state).await;
+  json!({"page": page, "trace": trace, "provenance": provenance})
 }
 
 pub(super) async fn verify_failed_codex_events(
@@ -453,8 +461,21 @@ async fn wait_for_search(
 mod tests {
   use super::*;
 
-  #[tokio::test]
-  async fn codex_release_accepts_native_trace_and_provenance_v2_with_result_v1() {
+  fn diagnostic_artifacts() -> [Value; 2] {
+    [
+      json!({"id":"trace", "name":"codex-run-trace", "media_type":"application/x-ndjson", "output_type":{"kind":"artifact"}}),
+      json!({"id":"provenance", "name":"codex-run-provenance", "media_type":"application/json", "output_type":{"kind":"artifact"}}),
+    ]
+  }
+
+  fn result_report() -> Value {
+    json!({"id":"result", "name":"codex-run-result", "output_type":{"kind":"report", "format":"octa.codex.result.v1"}})
+  }
+
+  async fn codex_artifact_server(
+    items: Vec<Value>,
+    capture_status: &'static str,
+  ) -> (String, tokio::task::JoinHandle<()>) {
     use axum::{
       Json, Router,
       extract::Path as AxumPath,
@@ -464,29 +485,41 @@ mod tests {
     let origin = format!("http://{}", listener.local_addr().unwrap());
     let download_origin = origin.clone();
     let router = Router::new()
-      .route("/api/v1/builds/released-build/artifacts", get(|| async {
-        Json(json!({"items":[
-          {"id":"trace", "name":"codex-run-trace", "media_type":"application/x-ndjson", "output_type":{"kind":"artifact"}},
-          {"id":"provenance", "name":"codex-run-provenance", "output_type":{"kind":"artifact"}},
-          {"id":"result", "name":"codex-run-result", "output_type":{"kind":"report", "format":"octa.codex.result.v1"}}
-        ]}))
-      }))
-      .route("/api/v1/artifacts/{id}/download", post(move |AxumPath(id): AxumPath<String>| {
-        let origin = download_origin.clone();
-        async move { Json(json!({"get_url":format!("{origin}/outputs/{id}")})) }
-      }))
-      .route("/outputs/{id}", get(|AxumPath(id): AxumPath<String>| async move {
-        let document = match id.as_str() {
-          "trace" => json!({"format_version":2, "sequence":0, "observed_at_unix_millis":1000,
+      .route(
+        "/api/v1/builds/released-build/artifacts",
+        get(move || async move { Json(json!({"items":items})) }),
+      )
+      .route(
+        "/api/v1/artifacts/{id}/download",
+        post(move |AxumPath(id): AxumPath<String>| {
+          let origin = download_origin.clone();
+          async move { Json(json!({"get_url":format!("{origin}/outputs/{id}")})) }
+        }),
+      )
+      .route(
+        "/outputs/{id}",
+        get(move |AxumPath(id): AxumPath<String>| async move {
+          let document = match id.as_str() {
+            "trace" => json!({"format_version":2, "sequence":0, "observed_at_unix_millis":1000,
             "event":{"type":"item.completed", "item":{"type":"agent_message", "text":"credential=*****"}}}),
-          "provenance" => json!({"format_version":2, "trace_format_version":2, "result_format_version":1,
-            "capture":{"status":"complete", "coverage":"emitted_native_events", "record_count":1}}),
-          "result" => json!({"format_version":1, "outcome":"completed", "structured_result":{"outcome":"completed", "files":1}}),
-          _ => panic!("unexpected artifact download: {id}"),
-        };
-        document.to_string()
-      }));
+            "provenance" => json!({"format_version":2, "trace_format_version":2, "result_format_version":1,
+            "capture":{"status":capture_status, "coverage":"emitted_native_events", "record_count":1}}),
+            "result" => {
+              json!({"format_version":1, "outcome":"completed", "structured_result":{"outcome":"completed", "files":1}})
+            }
+            _ => panic!("unexpected artifact download: {id}"),
+          };
+          document.to_string()
+        }),
+      );
     let server = tokio::spawn(async move { axum::serve(listener, router).await.unwrap() });
+    (origin, server)
+  }
+
+  #[tokio::test]
+  async fn codex_release_accepts_native_trace_and_provenance_v2_with_result_v1() {
+    let [trace, provenance] = diagnostic_artifacts();
+    let (origin, server) = codex_artifact_server(vec![trace, provenance, result_report()], "complete").await;
     let evidence = verify_codex_outputs(&Client::new(), &origin, &json!({"id":"released-build"})).await;
     server.abort();
     assert_eq!(
@@ -494,6 +527,48 @@ mod tests {
       json!({"outcome":"completed", "files":1})
     );
     assert_eq!(evidence["provenance"]["capture"]["record_count"], 1);
+  }
+
+  #[tokio::test]
+  async fn failed_codex_release_accepts_sanitized_diagnostics() {
+    let (origin, server) = codex_artifact_server(diagnostic_artifacts().into(), "failed").await;
+    let evidence = verify_interrupted_codex_outputs(
+      &Client::new(),
+      &origin,
+      &json!({"id":"released-build", "state":"failed"}),
+    )
+    .await;
+    server.abort();
+    assert_eq!(evidence["provenance"]["capture"]["status"], "failed");
+    assert!(evidence["trace"].as_str().unwrap().contains("*****"));
+  }
+
+  #[tokio::test]
+  async fn cancelled_codex_release_accepts_finalized_diagnostics_or_no_artifacts() {
+    for items in [diagnostic_artifacts().into(), vec![]] {
+      let (origin, server) = codex_artifact_server(items.clone(), "cancelled").await;
+      let evidence = verify_interrupted_codex_outputs(
+        &Client::new(),
+        &origin,
+        &json!({"id":"released-build", "state":"cancelled"}),
+      )
+      .await;
+      server.abort();
+      assert_eq!(evidence["page"]["items"], json!(items));
+    }
+  }
+
+  #[tokio::test]
+  #[should_panic(expected = "interrupted Codex must publish only the diagnostic pair")]
+  async fn failed_codex_release_rejects_a_semantic_result_report() {
+    let [trace, provenance] = diagnostic_artifacts();
+    let (origin, _server) = codex_artifact_server(vec![trace, provenance, result_report()], "failed").await;
+    verify_interrupted_codex_outputs(
+      &Client::new(),
+      &origin,
+      &json!({"id":"released-build", "state":"failed"}),
+    )
+    .await;
   }
 
   #[test]

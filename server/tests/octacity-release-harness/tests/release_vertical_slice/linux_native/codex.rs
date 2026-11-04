@@ -119,7 +119,7 @@ pub(super) async fn run(input: CodexScenarioInput<'_>) -> Option<Value> {
   )
   .await;
   assert_eq!(overflow_build["state"], "failed");
-  let overflow_outputs = verify_no_outputs(input.client, input.management_origin, &overflow_build).await;
+  let overflow_outputs = verify_interrupted_codex_outputs(input.client, input.management_origin, &overflow_build).await;
   let overflow_events =
     verify_failed_codex_events(input.client, input.management_origin, &overflow, &overflow_build).await;
   if let (Some((_, cgroup_root)), Some(baseline)) = (input.native_roots, input.cgroup_baseline) {
@@ -149,7 +149,8 @@ pub(super) async fn run(input: CodexScenarioInput<'_>) -> Option<Value> {
     agent.child_mut(),
   )
   .await;
-  let cancelled_outputs = verify_no_outputs(input.client, input.management_origin, &cancelled["build"]).await;
+  let cancelled_outputs =
+    verify_interrupted_codex_outputs(input.client, input.management_origin, &cancelled["build"]).await;
   if let (Some((_, cgroup_root)), Some(baseline)) = (input.native_roots, input.cgroup_baseline) {
     wait_for_directory_baseline(cgroup_root, baseline, "Codex cancellation cgroup").await;
   }

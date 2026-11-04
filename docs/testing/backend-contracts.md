@@ -28,7 +28,8 @@ startup rejects missing, mutable, wrong-digest, incompatible-platform, or
 release-incompatible tools. The successful, overflow, and cancellation cases
 then prove identical opaque read-only projection, explicit environment
 mapping, bounded/redacted trace/result/provenance and complete event evidence,
-no partial output on failure, descendant cleanup, and unchanged readiness for
+only sanitized trace and provenance artifacts on failure, no result report on
+interruption, descendant cleanup, and unchanged readiness for
 ordinary CI/CD Builds. JobSpec v1/v2 do not select tools individually, so this
 evidence uses a dedicated Agent/Pool profile without model credentials.
 
