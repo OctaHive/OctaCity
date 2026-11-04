@@ -6,7 +6,7 @@ use octacity_server_domain::{BuildConfigurationId, BuildConfigurationVersion, Pi
 use octacity_server_factory::*;
 use std::{collections::BTreeMap, sync::Arc, time::Duration};
 #[allow(dead_code)]
-#[path = "../../../../application/src/factory_job_test_support.rs"]
+#[path = "../../../../application/src/factory/execution/tests/factory_job_test_support.rs"]
 pub(in crate::runtime) mod managed;
 pub(in crate::runtime) fn resources() -> FactoryRuntimeResources {
   let pool = sqlx::postgres::PgPoolOptions::new()

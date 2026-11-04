@@ -1,0 +1,30 @@
+pub(crate) mod factory_action;
+pub(crate) mod factory_action_observation;
+pub(crate) mod factory_action_projection;
+pub(crate) mod factory_action_queue;
+pub(crate) mod factory_build;
+pub(crate) mod factory_build_materialization;
+pub(crate) mod factory_build_service;
+pub(crate) mod factory_code_sources;
+pub(crate) mod factory_control;
+pub(crate) mod factory_decision_signal;
+pub(crate) mod factory_decision_signal_node;
+pub(crate) mod factory_decision_signal_plan;
+pub(crate) mod factory_decision_signal_receipts;
+pub(crate) mod factory_flow;
+pub(crate) mod factory_job_spec;
+pub(crate) mod factory_node;
+pub(crate) mod factory_node_build;
+pub(crate) mod factory_node_registry;
+pub(crate) mod factory_observability;
+pub(crate) mod factory_operator;
+pub(crate) mod factory_phase_pool_selection;
+pub(crate) mod factory_profile_signal;
+pub(crate) mod factory_promotion;
+pub(crate) mod factory_reconciliation;
+pub(crate) mod factory_review_invocation;
+pub(crate) mod factory_review_planning;
+#[cfg(any(test, feature = "test-support"))]
+pub(crate) mod factory_test_support;
+#[cfg(test)]
+pub(crate) mod tests;

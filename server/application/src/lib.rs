@@ -7,392 +7,203 @@
 #![forbid(unsafe_code)]
 #![warn(missing_docs)]
 
-mod agent_cqrs;
-pub use agent_cqrs::MAX_AGENT_INVENTORY_ENTRIES;
-pub use agent_cqrs::SetAgentEnabledCommand;
+mod agents;
+mod artifacts;
+mod builds;
+mod cqrs;
+mod error;
+mod factory;
+mod integrations;
+mod issues;
+mod management;
+mod management_security;
+mod opaque_cursor;
+mod operations;
+#[cfg(test)]
+mod test_support;
+mod transaction;
+mod triggers;
+
+#[cfg(test)]
+#[path = "../tests/support/factory_candidate_context.rs"]
+mod factory_candidate_context_test_support;
+
+// Shared tests use the same fixture names in this crate and in server integration tests.
+#[cfg(test)]
+use factory::execution::tests::{factory_flow_tests, factory_node_failure_tests, factory_node_test_support};
+#[cfg(any(test, feature = "test-support"))]
+pub use issues::issue_test_support;
+
+pub use agents::agent_cqrs::MAX_AGENT_INVENTORY_ENTRIES;
+pub use agents::agent_cqrs::SetAgentEnabledCommand;
+pub use factory::reporting::factory_issue_classification_action::*;
+pub use factory::reporting::factory_issue_status_action::*;
+pub use issues::issue::*;
+pub use issues::issue_activity::*;
+pub use issues::issue_code_review::*;
+pub use issues::issue_discussion::*;
+pub use issues::issue_execution::*;
+pub use issues::issue_execution_publication::*;
+pub use issues::issue_outcome_links::*;
+pub use issues::issue_source::*;
+pub use management::project_text_intake::*;
 pub use octacity_protocol::{MAX_AGENT_HOST_TEXT_BYTES, MAX_AGENT_IP_ADDRESSES};
 pub use octacity_server_store::AgentResources;
-mod agent_enrollment;
-mod agent_execution;
-mod agent_heartbeat;
-mod agent_lease;
-mod agent_placement;
-mod agent_registration;
-mod agent_telemetry;
-#[cfg(test)]
-mod agent_telemetry_tests;
-mod agent_tool_action;
-mod artifact_transfer;
-#[cfg(test)]
-mod artifact_transfer_tests;
-mod audit_query;
-mod build_cqrs;
-mod build_discovery;
-mod cache_data_plane;
-mod cache_session;
-#[cfg(test)]
-mod cache_session_tests;
-mod configuration_cqrs;
-mod cqrs;
-mod definition_cqrs;
-mod definition_discovery;
-mod diagnostic;
-mod error;
-mod factory_issue_classification_action;
-mod factory_issue_classification_authoring;
-mod factory_issue_status_action;
-mod issue;
-mod issue_code_review;
-pub use issue_code_review::*;
-mod issue_activity;
-pub use issue_activity::*;
-mod issue_discussion;
-pub use issue_discussion::*;
-mod issue_source;
-pub use issue_source::*;
-mod issue_execution;
-mod issue_outcome_links;
-pub use issue_outcome_links::*;
-mod issue_execution_publication;
-pub use factory_issue_classification_action::*;
-pub use factory_issue_status_action::*;
-pub use issue_execution_publication::*;
-mod project_text_intake;
-#[cfg(test)]
-mod project_text_intake_tests;
-pub use issue_execution::*;
-pub use project_text_intake::*;
-#[cfg(any(test, feature = "test-support"))]
-mod factory_test_support;
-#[cfg(any(test, feature = "test-support"))]
-pub mod issue_test_support;
-#[cfg(test)]
-mod issue_tests;
-pub use issue::*;
 /// Shared memory ports and fixtures for public transport conformance; excluded from production builds.
 #[cfg(feature = "test-support")]
 pub mod testing {
-  pub use crate::factory_test_support::*;
+  pub use crate::factory::execution::factory_test_support::*;
   pub use crate::issue_test_support::*;
   pub use octacity_server_store::testing::{
     InMemoryFactoryConfigurationStore, MutationEvidenceProbe, role_profile_contract_intent,
   };
 }
-mod issue_workflow;
-pub use issue_workflow::*;
-mod external_trigger;
-mod factory_admission;
-#[cfg(test)]
-mod factory_admission_tests;
-mod factory_artifact_flow_inputs;
-mod factory_artifact_reader;
-mod factory_build;
-mod factory_build_service;
-mod factory_candidate_context;
-mod factory_source_admission;
-mod factory_source_completion;
-mod factory_triage_context;
-pub use factory_triage_context::{MAX_TRIAGE_SUPPORTING_ALIAS_BYTES, TriageContextProblem, TriageProjectContextDraft};
-mod factory_work_status_contract;
-pub use factory_work_status_contract::FactoryWorkStatusActionContract;
-mod factory_readiness;
-pub use factory_readiness::*;
-mod factory_presets;
-mod factory_result_reporting;
-pub use factory_presets::*;
-pub use factory_result_reporting::{
-  FactoryReportingCase, FactoryReportingDimension, FactoryReportingSelection, FactoryReportingTarget,
-  FactoryResultReportingDraft,
+pub use builds::build_execution_context::{
+  BuildExecutionContext, BuildExecutionContextError, BuildExecutionContextSource, StoreBackedBuildExecutionContext,
 };
-mod factory_source_input_retention;
-mod factory_source_mapping;
-pub use factory_source_completion::{SourceCompletionDocument, TRIAGE_COMPLETION_PRESET};
-mod source_polling;
-pub use source_polling::source_scan_schedule;
-mod factory_source_polling;
-mod factory_source_preparation;
-#[cfg(test)]
-mod issue_workflow_tests;
-mod work_source_observation;
-pub use factory_source_input_retention::{FactorySourceInputRetentionWorker, SourceInputCleanupPage};
-pub use factory_source_mapping::{
-  MAX_SOURCE_ACCEPTANCE_SELECTOR_BYTES, MappedWorkSource, SourceAcceptanceMapping, SourceMappingFailure,
-  WorkSourceMapping, WorkSourceSnapshot, map_work_source_snapshot,
+pub use factory::admission::factory_readiness::*;
+pub use factory::admission::factory_triage_context::{
+  MAX_TRIAGE_SUPPORTING_ALIAS_BYTES, TriageContextProblem, TriageProjectContextDraft,
 };
-pub use factory_source_polling::{
-  FactorySourceCandidateProcessor, FactorySourcePageReader, FactorySourcePoller, SourcePollOutcome, SourcePollPage,
-  SourcePollRequest, SourcePollingPolicy,
-};
-pub use factory_source_preparation::{FactoryWorkSourcePreparer, SourcePreparationOutcome, SourcePreparationSettings};
-pub use work_source_observation::{
-  ReadWorkSourceObservations, WorkSourceObservation, WorkSourceObservationFreshness, WorkSourceObservationPage,
-  WorkSourceObservations,
-};
-mod factory_stored_candidate_context;
-pub use factory_stored_candidate_context::{
-  FactoryNodeCandidateContextSource, FactoryRetainedCandidateContextSource, FactoryStoredCandidateContextSource,
-};
-mod factory_execution_input_publisher;
-mod factory_execution_input_retention;
-pub use factory_artifact_flow_inputs::FactoryArtifactFlowInputs;
-pub use factory_artifact_reader::{
+pub use factory::artifacts::factory_artifact_flow_inputs::FactoryArtifactFlowInputs;
+pub use factory::artifacts::factory_artifact_reader::{
   FactoryArtifactReader, FactoryNodeContextSource, FactoryProjectInputReader, FactoryRetainedArtifact,
   FactoryRetainedInput, ReadFactoryArtifact,
 };
-pub use factory_build_service::{FactoryBuildMaterializer, FactoryOrdinaryBuildService};
-pub use factory_candidate_context::{
+pub use factory::artifacts::factory_candidate_context::{
   FactoryCandidateContext, FactoryCandidateContextSource, ReadFactoryCandidateContext,
 };
-pub use factory_execution_input_publisher::{FactoryExecutionDocument, FactoryExecutionInputPublisher};
-pub use factory_execution_input_retention::FactoryExecutionInputRetentionWorker;
-mod factory_candidate_publication;
-mod factory_promotion;
-pub use factory_promotion::FactoryPromotionBuildAdapter;
-mod factory_codex;
-mod factory_codex_candidate_context;
-mod factory_codex_materializer;
-mod factory_codex_schema;
-pub use factory_codex_candidate_context::FactoryCodexCandidateContextSource;
-mod factory_codex_output_source;
-mod factory_codex_review_build;
-pub use factory_codex_output_source::FactoryCodexBuildOutputSource;
-#[cfg(test)]
-mod factory_codex_output_source_tests;
-pub use factory_codex_materializer::{
-  FactoryCodexBuildMaterializer, FactoryCodexBuildProfile, FactoryCodexCapturePolicy, FactoryCodexReviewerPolicy,
+pub use factory::artifacts::factory_candidate_deliverables::{
+  VerifiedFactoryCandidateDeliverables, verify_factory_node_candidate_deliverables,
 };
-mod factory_codex_contract;
-mod factory_codex_observation;
-mod factory_codex_tool_risk;
-mod factory_codex_usage;
-pub use factory_codex_observation::project_codex_node_output;
-pub use factory_codex_tool_risk::FactoryCodexToolRiskPolicy;
-pub use factory_codex_usage::FactoryCodexUsagePolicy;
-mod factory_action;
-mod factory_action_observation;
-mod factory_action_projection;
-mod factory_action_queue;
-pub use factory_action_observation::*;
-pub use factory_action_queue::*;
-#[cfg(test)]
-mod factory_codex_observation_tests;
-#[cfg(test)]
-mod factory_codex_tests;
-mod factory_configuration_choices;
-mod factory_configuration_cqrs;
-#[cfg(test)]
-mod factory_configuration_cqrs_tests;
-mod factory_configuration_policies;
-mod factory_control;
-pub use factory_action::*;
-pub use factory_action_projection::*;
-mod factory_operator;
-pub use factory_operator::FactoryOperatorHandlers;
-#[cfg(test)]
-mod factory_control_tests;
-mod factory_credentials;
-#[cfg(test)]
-mod factory_credentials_tests;
-mod factory_decision_signal;
-mod factory_decision_signal_node;
-pub use factory_decision_signal_node::{
-  FactoryDecisionSignalNodeBinding, FactoryDecisionSignalNodeExecutor, FactoryDecisionSignalNodeOutput,
-  FactoryDecisionSignalNodeProfile,
-};
-mod factory_decision_signal_plan;
-pub use factory_decision_signal_plan::FactoryDecisionSignalRequestPlan;
-mod factory_decision_signal_receipts;
-mod factory_profile_signal;
-pub use factory_profile_signal::{FactoryProfileSelectionDriver, FactoryProfileSelector, FactoryProfileSelectors};
-#[cfg(test)]
-mod factory_decision_signal_tests;
-mod factory_evaluation;
-mod factory_evaluation_action;
-pub use factory_evaluation_action::{FactoryEvaluationDecisionAction, FactoryEvaluationDecisionProfile};
-#[cfg(test)]
-mod factory_evaluation_action_tests;
-mod factory_evidence;
-#[cfg(test)]
-mod factory_promotion_tests;
-#[cfg(test)]
-mod factory_release_journey_tests;
-mod factory_verification;
-#[cfg(test)]
-mod factory_verification_tests;
-pub use factory_verification::{
-  VerifiedFactoryVerificationCheck, evaluate_factory_verification, verify_factory_verification_check,
-};
-mod factory_flow_action;
-mod factory_stage_source_update;
-pub use factory_stage_source_update::{
-  FactoryStageSourceAuthorizer, FactoryStageSourceUpdate, validate_issue_push_producers,
-};
-mod factory_review_invocation;
-pub use factory_review_invocation::{
-  FactoryReviewInvocation, FactoryReviewInvocationSource, FactoryStoredReviewInvocationSource,
-};
-#[cfg(test)]
-mod factory_review_invocation_tests;
-mod factory_review_planning;
-pub use factory_review_planning::{FactoryReviewPlanningAction, FactoryReviewPlanningProfile};
-mod issue_reporter;
-pub use issue_reporter::*;
-mod factory_work_status_outbox;
-pub use factory_candidate_publication::{
+pub use factory::artifacts::factory_candidate_publication::{
   FactoryCandidatePublication, FactoryCandidatePublicationAction, FactoryCandidatePublicationRequest,
   FactoryCandidatePublisher, FactoryPublicationFacts, FactoryReviewState,
 };
-pub use factory_work_status_outbox::{
-  FactoryOutboxDispatchSummary, FactoryOutboxDispatcher, FactoryReporterWorkerSettings, FactoryWorkStatusOutboxWorker,
-  accepted_factory_status_source_update, validate_accepted_factory_status_request,
+pub use factory::artifacts::factory_execution_input_publisher::{
+  FactoryExecutionDocument, FactoryExecutionInputPublisher,
 };
-mod factory_candidate_deliverables;
-#[cfg(test)]
-mod factory_flow_action_tests;
-mod factory_node_capture;
-#[cfg(test)]
-mod factory_protected_validation_evidence_action_tests;
-#[cfg(test)]
-mod factory_review_planning_tests;
-pub use factory_candidate_deliverables::{
-  VerifiedFactoryCandidateDeliverables, verify_factory_node_candidate_deliverables,
+pub use factory::artifacts::factory_execution_input_retention::FactoryExecutionInputRetentionWorker;
+pub use factory::artifacts::factory_stored_candidate_context::{
+  FactoryNodeCandidateContextSource, FactoryRetainedCandidateContextSource, FactoryStoredCandidateContextSource,
 };
-mod factory_node_capture_build;
-mod factory_protected_test_authoring;
-mod factory_protected_test_executor;
-mod factory_protected_test_plan;
-mod factory_protected_test_profile;
-pub use factory_protected_test_profile::{FactoryProtectedTestAuthoringPolicy, FactoryProtectedTestAuthoringProfile};
-mod factory_protected_test_finalizer;
-pub use factory_protected_test_finalizer::FactoryProtectedTestOutputFinalizer;
-mod factory_protected_test_publication;
-pub use factory_protected_test_publication::{
-  FactoryProtectedTestFileOutput, FactoryProtectedTestInventoryPublication, FactoryProtectedTestInventoryPublisher,
+pub use factory::authoring::factory_presets::*;
+pub use factory::codex::factory_codex_candidate_context::FactoryCodexCandidateContextSource;
+pub use factory::codex::factory_codex_materializer::{
+  FactoryCodexBuildMaterializer, FactoryCodexBuildProfile, FactoryCodexCapturePolicy, FactoryCodexReviewerPolicy,
 };
-#[cfg(test)]
-mod factory_protected_test_profile_tests;
-#[cfg(test)]
-mod factory_protected_test_publication_tests;
-mod factory_protected_tests;
-mod factory_protected_validation;
-mod factory_protected_validation_evidence_action;
-pub use factory_protected_validation_evidence_action::{
-  FactoryProtectedValidationEvidenceAction, FactoryProtectedValidationEvidenceProfile,
+pub use factory::codex::factory_codex_observation::project_codex_node_output;
+pub use factory::codex::factory_codex_output_source::FactoryCodexBuildOutputSource;
+pub use factory::codex::factory_codex_tool_risk::FactoryCodexToolRiskPolicy;
+pub use factory::codex::factory_codex_usage::FactoryCodexUsagePolicy;
+pub use factory::execution::factory_action::*;
+pub use factory::execution::factory_action_observation::*;
+pub use factory::execution::factory_action_projection::*;
+pub use factory::execution::factory_action_queue::*;
+pub use factory::execution::factory_build_materialization::{
+  FactoryManagedBuildInput, FactoryManagedCandidateProof, FactoryManagedJobProgram, FactoryManagedSourcePlan,
+  materialize_factory_managed_build, materialize_factory_managed_build_with_source,
 };
-mod factory_protected_validation_build;
-mod factory_verified_build_outputs;
-pub use factory_protected_test_authoring::{FactoryProtectedTestAuthoringAdapter, FactoryProtectedTestPlanSource};
-pub use factory_protected_test_executor::FactoryProtectedTestAuthoringExecutor;
-pub use factory_protected_test_plan::{
-  FactoryProtectedTestPolicy, FactoryStoredProtectedTestPlanSource, freeze_factory_protected_test_plan,
+pub use factory::execution::factory_build_service::{FactoryBuildMaterializer, FactoryOrdinaryBuildService};
+pub use factory::execution::factory_decision_signal_node::{
+  FactoryDecisionSignalNodeBinding, FactoryDecisionSignalNodeExecutor, FactoryDecisionSignalNodeOutput,
+  FactoryDecisionSignalNodeProfile,
 };
-pub use factory_protected_tests::{
-  FactoryProtectedTestInventory, factory_protected_test_materialization, restore_factory_protected_test_bundle,
-  verify_factory_protected_test_bundle,
-};
-pub use factory_protected_validation::construct_factory_protected_validation_evidence_manifest;
-pub use factory_protected_validation::{
-  FactoryProtectedValidationClassResult, FactoryProtectedValidationMaterialization, FactoryProtectedValidationReport,
-  FactoryProtectedValidationRequest, factory_protected_validation_materialization,
-};
-pub use factory_protected_validation_build::{
-  FactoryProtectedValidationAdapter, FactoryProtectedValidationInputSource,
-};
-#[cfg(test)]
-#[path = "../tests/support/factory_candidate_context.rs"]
-mod factory_candidate_context_test_support;
-#[cfg(test)]
-mod factory_node_capture_tests;
-#[cfg(test)]
-mod factory_protected_test_tests;
-pub use factory_flow::{FactoryFlowInputPreparer, FactoryFlowRunner};
-pub use factory_flow_action::{
-  FactoryFlowActionAdapter, FactoryFlowActionObservation, FactoryFlowActionPlugin, FactoryFlowActionRequest,
-  FactoryReporterRetryPolicy, FactoryWorkStatusAction, FactoryWorkStatusProjector, FactoryWorkStatusRequest,
-};
-mod factory_job_spec;
-#[cfg(test)]
-mod factory_job_spec_tests;
-mod factory_node;
-mod factory_node_build;
-mod factory_node_registry;
-mod factory_observability;
-mod factory_profile_selection;
-pub use factory_node::{
+pub use factory::execution::factory_decision_signal_plan::FactoryDecisionSignalRequestPlan;
+pub use factory::execution::factory_flow::{FactoryFlowInputPreparer, FactoryFlowRunner};
+pub use factory::execution::factory_node::{
   FactoryExecutionClock, FactoryFlowCoordinator, FactoryFlowStep, FactoryNodeCancellationStep,
   FactoryNodeExecutionRequest, FactoryNodeExecutionStep, FactoryNodeExecutor, FactoryNodeOutboxEffect,
   FactoryNodeRunner, FactoryNodeStep, FactoryNodeTarget, SystemFactoryExecutionClock, prepare_factory_flow_input,
 };
-pub use factory_node_registry::{
-  FactoryNodeExecutorBinding, FactoryNodeExecutorRegistry, MAX_FACTORY_EXECUTOR_BINDINGS,
-};
-#[cfg(test)]
-mod factory_node_cancellation_tests;
-#[cfg(test)]
-mod factory_node_failure_tests;
-#[cfg(test)]
-mod factory_node_test_support;
-#[cfg(test)]
-mod factory_node_tests;
-mod factory_reconciliation;
-#[cfg(test)]
-mod factory_reconciliation_tests;
-pub use factory_node_build::{
+pub use factory::execution::factory_node_build::{
   FactoryNodeBuildAdapter, FactoryNodeBuildCancellation, FactoryNodeBuildCompletion, FactoryNodeBuildExecutionFacts,
   FactoryNodeBuildOutputDocument, FactoryNodeBuildOutputObservation, FactoryNodeBuildOutputSource,
   FactoryNodeBuildOutputs, FactoryNodeBuildStep,
 };
-mod build_configuration_job_policy;
-mod build_configuration_policy;
-mod factory_build_materialization;
-pub use factory_build_materialization::{
-  FactoryManagedBuildInput, FactoryManagedCandidateProof, FactoryManagedJobProgram, FactoryManagedSourcePlan,
-  materialize_factory_managed_build, materialize_factory_managed_build_with_source,
+pub use factory::execution::factory_node_registry::{
+  FactoryNodeExecutorBinding, FactoryNodeExecutorRegistry, MAX_FACTORY_EXECUTOR_BINDINGS,
 };
-mod build_execution_context;
-#[cfg(test)]
-mod factory_node_build_tests;
-mod factory_tool_action;
-#[cfg(test)]
-mod factory_tool_action_tests;
-mod factory_tool_risk_authorizer;
-#[cfg(test)]
-mod factory_tool_risk_authorizer_tests;
-#[cfg(test)]
-mod factory_tool_risk_native_tests;
-mod internal_trigger;
-mod internal_trigger_management;
-mod job_event_cqrs;
-mod lease_expiry;
-mod log_archive;
-mod log_indexing;
-mod log_search;
-mod management_input;
-mod management_security;
-mod manual_trigger;
-pub use build_execution_context::{
-  BuildExecutionContext, BuildExecutionContextError, BuildExecutionContextSource, StoreBackedBuildExecutionContext,
+pub use factory::execution::factory_operator::FactoryOperatorHandlers;
+pub use factory::execution::factory_profile_signal::{
+  FactoryProfileSelectionDriver, FactoryProfileSelector, FactoryProfileSelectors,
 };
-mod opaque_cursor;
-mod operational_metadata;
-mod operator_attention;
-mod pipeline_cqrs;
-mod pool_cqrs;
-mod project_cqrs;
-mod project_policy;
-mod projections;
-mod resource_search;
-mod restore;
-mod retention;
-mod retention_hold;
-mod retry_policy;
-mod schedule_cqrs;
-mod snapshots;
-mod telemetry;
-#[cfg(test)]
-mod test_support;
-mod transaction;
-mod webhook_delivery;
+pub use factory::execution::factory_promotion::FactoryPromotionBuildAdapter;
+pub use factory::execution::factory_review_invocation::{
+  FactoryReviewInvocation, FactoryReviewInvocationSource, FactoryStoredReviewInvocationSource,
+};
+pub use factory::execution::factory_review_planning::{FactoryReviewPlanningAction, FactoryReviewPlanningProfile};
+pub use factory::reporting::factory_flow_action::{
+  FactoryFlowActionAdapter, FactoryFlowActionObservation, FactoryFlowActionPlugin, FactoryFlowActionRequest,
+  FactoryReporterRetryPolicy, FactoryWorkStatusAction, FactoryWorkStatusProjector, FactoryWorkStatusRequest,
+};
+pub use factory::reporting::factory_result_reporting::{
+  FactoryReportingCase, FactoryReportingDimension, FactoryReportingSelection, FactoryReportingTarget,
+  FactoryResultReportingDraft,
+};
+pub use factory::reporting::factory_work_status_contract::FactoryWorkStatusActionContract;
+pub use factory::reporting::factory_work_status_outbox::{
+  FactoryOutboxDispatchSummary, FactoryOutboxDispatcher, FactoryReporterWorkerSettings, FactoryWorkStatusOutboxWorker,
+  accepted_factory_status_source_update, validate_accepted_factory_status_request,
+};
+pub use factory::sources::factory_source_completion::{SourceCompletionDocument, TRIAGE_COMPLETION_PRESET};
+pub use factory::sources::factory_source_input_retention::{FactorySourceInputRetentionWorker, SourceInputCleanupPage};
+pub use factory::sources::factory_source_mapping::{
+  MAX_SOURCE_ACCEPTANCE_SELECTOR_BYTES, MappedWorkSource, SourceAcceptanceMapping, SourceMappingFailure,
+  WorkSourceMapping, WorkSourceSnapshot, map_work_source_snapshot,
+};
+pub use factory::sources::factory_source_polling::{
+  FactorySourceCandidateProcessor, FactorySourcePageReader, FactorySourcePoller, SourcePollOutcome, SourcePollPage,
+  SourcePollRequest, SourcePollingPolicy,
+};
+pub use factory::sources::factory_source_preparation::{
+  FactoryWorkSourcePreparer, SourcePreparationOutcome, SourcePreparationSettings,
+};
+pub use factory::sources::factory_stage_source_update::{
+  FactoryStageSourceAuthorizer, FactoryStageSourceUpdate, validate_issue_push_producers,
+};
+pub use factory::validation::factory_evaluation_action::{
+  FactoryEvaluationDecisionAction, FactoryEvaluationDecisionProfile,
+};
+pub use factory::validation::factory_protected_test_authoring::{
+  FactoryProtectedTestAuthoringAdapter, FactoryProtectedTestPlanSource,
+};
+pub use factory::validation::factory_protected_test_executor::FactoryProtectedTestAuthoringExecutor;
+pub use factory::validation::factory_protected_test_finalizer::FactoryProtectedTestOutputFinalizer;
+pub use factory::validation::factory_protected_test_plan::{
+  FactoryProtectedTestPolicy, FactoryStoredProtectedTestPlanSource, freeze_factory_protected_test_plan,
+};
+pub use factory::validation::factory_protected_test_profile::{
+  FactoryProtectedTestAuthoringPolicy, FactoryProtectedTestAuthoringProfile,
+};
+pub use factory::validation::factory_protected_test_publication::{
+  FactoryProtectedTestFileOutput, FactoryProtectedTestInventoryPublication, FactoryProtectedTestInventoryPublisher,
+};
+pub use factory::validation::factory_protected_tests::{
+  FactoryProtectedTestInventory, factory_protected_test_materialization, restore_factory_protected_test_bundle,
+  verify_factory_protected_test_bundle,
+};
+pub use factory::validation::factory_protected_validation::construct_factory_protected_validation_evidence_manifest;
+pub use factory::validation::factory_protected_validation::{
+  FactoryProtectedValidationClassResult, FactoryProtectedValidationMaterialization, FactoryProtectedValidationReport,
+  FactoryProtectedValidationRequest, factory_protected_validation_materialization,
+};
+pub use factory::validation::factory_protected_validation_build::{
+  FactoryProtectedValidationAdapter, FactoryProtectedValidationInputSource,
+};
+pub use factory::validation::factory_protected_validation_evidence_action::{
+  FactoryProtectedValidationEvidenceAction, FactoryProtectedValidationEvidenceProfile,
+};
+pub use factory::validation::factory_verification::{
+  VerifiedFactoryVerificationCheck, evaluate_factory_verification, verify_factory_verification_check,
+};
+pub use integrations::source_polling::source_scan_schedule;
+pub use integrations::work_source_observation::{
+  ReadWorkSourceObservations, WorkSourceObservation, WorkSourceObservationFreshness, WorkSourceObservationPage,
+  WorkSourceObservations,
+};
+pub use issues::issue_reporter::*;
+pub use issues::issue_workflow::*;
 
 pub use octacity_server_domain::{BuildSourceMode, BuildSourceSelection, ProjectId, RetentionHoldVersion, Timestamp};
 pub use octacity_server_orchestrator::{AttemptState, BuildState};
@@ -408,101 +219,101 @@ pub use octacity_server_store::{
   ReadVisibilityView, RepositoryListVisibility, ResourceSearchVisibility, StoreError, TriggerDefinitionListVisibility,
 };
 
-pub use agent_cqrs::{
+pub use agents::agent_cqrs::{
   AgentCapacityProjection, AgentCommandOutcome, AgentCurrentExecutionProjection, AgentCurrentLeaseStateProjection,
   AgentHandlers, AgentInventoryProjection, AgentPageProjection, AgentProjection, AgentStatusProjection,
   DrainAgentCommand, GetAgentQuery, ListAgentsQuery, ReassignAgentPoolCommand,
 };
-pub use agent_enrollment::{AgentEnrollmentHandler, IssueAgentEnrollmentCommand, IssueAgentEnrollmentCommandOutcome};
-pub use agent_execution::{
+pub use agents::agent_enrollment::{
+  AgentEnrollmentHandler, IssueAgentEnrollmentCommand, IssueAgentEnrollmentCommandOutcome,
+};
+pub use agents::agent_execution::{
   AgentExecutionError, AgentExecutionService, AgentExecutionUseCases, AgentOutputFinalization, AgentOutputFinalizer,
   AppendAgentEventsInput, CompleteAgentLeaseInput,
 };
-pub use agent_heartbeat::{AgentHeartbeatError, AgentHeartbeatInput, AgentHeartbeatService, AgentHeartbeatUseCases};
-pub use agent_placement::{
+pub use agents::agent_heartbeat::{
+  AgentHeartbeatError, AgentHeartbeatInput, AgentHeartbeatService, AgentHeartbeatUseCases,
+};
+pub use agents::agent_placement::{
   AcquireAgentLeaseInput, AgentLeaseError, AgentLeaseOutcome, AgentLeaseService, AgentLeaseUseCases,
   FailAgentLeaseAssignmentInput, ReadyJobWaiter,
 };
-pub use agent_registration::{
+pub use agents::agent_registration::{
   AgentOperation, AgentRegistrationError, AgentRegistrationInput, AgentRegistrationOutcome, AgentRegistrationService,
   AgentRegistrationUseCases, AuthorizeAgentInput, AuthorizedAgent,
 };
-pub use agent_telemetry::{
+pub use agents::agent_telemetry::{
   AgentTelemetryBatch, AgentTelemetryError, AgentTelemetryExportError, AgentTelemetryExporter, AgentTelemetryInput,
   AgentTelemetryService, AgentTelemetryUseCases,
 };
-pub use agent_tool_action::{
+pub use agents::agent_tool_action::{
   AgentToolActionError, AgentToolActionInput, AgentToolActionService, AgentToolActionUseCases,
   FailClosedToolActionAuthorizer, LeaseBoundToolActionAuthorizer, LeaseBoundToolActionInput,
 };
-pub use artifact_transfer::{
+pub use agents::lease_expiry::{LeaseExpiryBatchOutcome, LeaseExpiryWorker};
+pub use agents::pool_cqrs::{
+  AgentPlatformProjection, AgentPoolAdmissionPolicyProjection, AgentPoolCommandOutcome, AgentPoolDrainStateProjection,
+  AgentPoolFairnessPolicyProjection, AgentPoolHandlers, AgentPoolPageProjection, AgentPoolProjection,
+  CreateAgentPoolCommand, DeleteAgentPoolCommand, DeleteAgentPoolCommandOutcome, GetAgentPoolQuery,
+  ListAgentPoolsQuery, PoolExecutionModeProjection, PoolExecutionTargetProjection, PublishAgentPoolVersionCommand,
+};
+pub use artifacts::artifact_transfer::{
   AgentArtifactError, AgentArtifactTransferUseCases, ArtifactDownloadProjection, ArtifactHandlers, ArtifactProjection,
   ArtifactProjectionKind, AuthorizeArtifactDownloadQuery, AuthorizeProtectedInputsInput, BeginAgentArtifactUploadInput,
   CompleteAgentArtifactUploadInput, GetArtifactQuery, ListBuildArtifactsQuery,
 };
-pub use audit_query::{
-  AuditActorProjection, AuditCursorInput, AuditCursorProjection, AuditFactPageProjection, AuditFactProjection,
-  AuditFactQueryInput, AuditQueries, ListAuditFactsQuery,
-};
-pub use build_cqrs::{
-  AttemptDetailsProjection, BuildDetailsProjection, BuildHandlers, CancelBuildCommand, CancelBuildCommandOutcome,
-  GetAttemptQuery, GetBuildQuery, GetJobQuery, RetryBuildCommand, RetryBuildCommandOutcome,
-};
-pub use build_discovery::{
-  BuildListFilter, BuildPageCursor, BuildPageCursorError, BuildPageInputError, BuildPageProjection,
-  BuildSummaryProjection, ListProjectBuildsQuery, MAX_BUILD_LIST_PAGE_SIZE, MAX_BUILD_PAGE_CURSOR_BYTES,
-};
-pub use cache_data_plane::{
+pub use artifacts::cache_data_plane::{
   CacheDataPlaneError, CacheDataPlaneService, CacheDataPlaneUseCases, CacheRequestAuthority, CacheWriteResult,
 };
-pub use cache_session::{
+pub use artifacts::cache_session::{
   AgentCacheSessionError, AgentCacheSessionUseCases, BeginAgentCacheSessionInput, CacheSessionDiagnosticState,
   CacheSessionHandlers, CacheSessionProjection, GetCacheSessionQuery, ListBuildCacheSessionsQuery,
   RevokeAgentCacheSessionInput, validate_cache_endpoint,
 };
-pub use configuration_cqrs::{
-  BuildConfigurationCommandOutcome, BuildConfigurationHandlers, CreateBuildConfigurationCommand,
-  CreateRepositoryCommand, GetBuildConfigurationQuery, GetRepositoryQuery, PublishBuildConfigurationVersionCommand,
-  PublishRepositoryVersionCommand, RepositoryCommandOutcome,
+pub use builds::build_cqrs::{
+  AttemptDetailsProjection, BuildDetailsProjection, BuildHandlers, CancelBuildCommand, CancelBuildCommandOutcome,
+  GetAttemptQuery, GetBuildQuery, GetJobQuery, RetryBuildCommand, RetryBuildCommandOutcome,
 };
+pub use builds::build_discovery::{
+  BuildListFilter, BuildPageCursor, BuildPageCursorError, BuildPageInputError, BuildPageProjection,
+  BuildSummaryProjection, ListProjectBuildsQuery, MAX_BUILD_LIST_PAGE_SIZE, MAX_BUILD_PAGE_CURSOR_BYTES,
+};
+pub use builds::job_event_cqrs::{
+  JobEventLongPoll, JobEventPageProjection, JobEventProjection, JobEventWaiter, MAX_JOB_EVENT_WAIT, ReadJobEventsQuery,
+};
+pub use builds::retry_policy::{DurableRetryPolicy, DurableRetryPolicyError};
 pub use cqrs::{Command, CommandHandler, MutationDisposition, Query, QueryHandler};
-pub use definition_cqrs::{
-  CreateTriggerDefinitionCommand, DefinitionHandlers, GetManualTriggerDefinitionQuery,
-  ManualTriggerDefinitionProjection, ProjectPolicyCommandOutcome, PublishProjectPolicyCommand,
-  TriggerDefinitionCommandOutcome,
-};
-pub use definition_discovery::{
-  BuildConfigurationPageProjection, BuildConfigurationSummaryProjection, CurrentDefinitionPageError,
-  CurrentDefinitionPageInput, ListProjectBuildConfigurationsQuery, ListProjectPipelinesQuery,
-  ListProjectRepositoriesQuery, ListProjectTriggerDefinitionsQuery, MAX_CURRENT_DEFINITION_PAGE_SIZE,
-  PipelinePageProjection, PipelineSummaryProjection, RepositoryPageProjection, RepositorySummaryProjection,
-  TriggerDefinitionKindProjection, TriggerDefinitionPageProjection, TriggerDefinitionSummaryProjection,
-};
 pub use error::{ApplicationError, ApplicationFailure};
-pub use external_trigger::{
-  AcceptWebhookDeliveryCommand, AuthenticatedWebhookEvent, CreateManagedWebhookCommand, CreateUnmanagedWebhookCommand,
-  DeleteManagedWebhookRegistrationCommand, ManagedWebhookProjection, ManagedWebhookRegistration,
-  ManagedWebhookRegistrationRequest, ManagedWebhookRegistrationStatus, ObserveManagedWebhookRegistrationCommand,
-  RotateManagedWebhookRegistrationCommand, UnmanagedWebhookProjection, VerifyWebhookDelivery, WebhookCallbackOrigin,
-  WebhookDeliveryAccepted, WebhookDeliveryError, WebhookDeliveryFailure, WebhookDeliveryInputError,
-  WebhookDeliveryVerifier, WebhookIngressService, WebhookManagementProvider, WebhookManagementService,
-  WebhookVerificationError, WebhookVerificationFailure, WebhookVerificationRequirements,
-};
-pub use factory_admission::{
+pub use factory::admission::factory_admission::{
   AdmitManualFactoryWorkCommand, FactoryAdmissionHandlers, FactoryAdmissionOutcome, FactoryWorkAdmissionIntent,
 };
-pub use factory_build::{
-  CancelFactoryBuild, CreateFactoryBuild, FactoryBuildAcceptance, FactoryBuildObservation, FactoryBuildPolicyLayers,
-  FactoryCandidateMaterialization, FactoryNodeBuildCausality, OrdinaryBuildApplication, OrdinaryBuildApplicationError,
-  OrdinaryBuildCancellationApplication,
+pub use factory::artifacts::factory_node_capture::{
+  FactoryChangeSetError, VerifiedFactoryArtifact, factory_node_candidate_materialization, factory_node_change_set,
+  restore_factory_node_change_set, verify_factory_node_change_set,
 };
-pub use factory_codex::{
+pub use factory::artifacts::factory_node_capture_build::FactoryNodeCaptureBuildAdapter;
+pub use factory::authoring::factory_configuration_choices::{
+  FactoryChoiceIdentity, FactoryChoiceMetadata, FactoryChoiceReferenceProjection,
+  FactoryConfigurationChoicePageProjection, FactoryConfigurationChoiceProjection, FactoryConfigurationDocumentBounds,
+  ListFactoryConfigurationChoicesQuery, factory_configuration_choice_kinds, factory_configuration_document_bounds,
+  factory_flow_node_kinds, factory_permission_categories, factory_signal_fallbacks, factory_signal_modes,
+  factory_signal_purposes,
+};
+pub use factory::authoring::factory_configuration_cqrs::{
+  CreateFactoryConfigurationCommand, FactoryConfigurationCommandOutcome, FactoryConfigurationHandlers,
+  FactoryConfigurationPagePosition, FactoryConfigurationPageProjection, FactoryConfigurationProjection,
+  FactoryConfigurationValidation, FactoryEffectiveNodePermissions, FactoryEffectiveProfilePermissions,
+  FactoryValidationDiagnostics, FactoryValidationIssue, GetCurrentFactoryConfigurationQuery,
+  GetFactoryConfigurationQuery, ListProjectFactoryConfigurationsQuery, ReplaceFactoryConfigurationCommand,
+  ValidateFactoryConfigurationQuery,
+};
+pub use factory::codex::factory_codex::{
   CodexCompilationError, CompiledCodexTask, FactoryCodexAuthentication, FactoryCodexFlowCompilationOptions,
   FactoryCodexReviewCompilation, FactoryProtectedDocument, FactoryProtectedDocumentKind, codex_flow_task_digest,
   codex_prompt_digest, codex_prompt_provenance_digest, compile_codex_flow_task, compile_codex_flow_task_with_context,
   compile_codex_flow_task_with_options, compile_codex_node_task, compile_codex_reviewer, compile_codex_task,
 };
-pub use factory_codex_observation::{
+pub use factory::codex::factory_codex_observation::{
   CodexHarnessOutcome, FactoryCodexEvaluationObservation, FactoryCodexImplementationObservation,
   FactoryCodexMcpNodeRunContract, FactoryCodexNativeCapture, FactoryCodexNativeCaptureContract,
   FactoryCodexNodeRunContract, FactoryCodexNodeRunObservation, FactoryCodexObservationStatus,
@@ -512,81 +323,100 @@ pub use factory_codex_observation::{
   factory_mcp_conclusion_shape, factory_mcp_evidence_verifier, observe_codex_evaluation, observe_codex_implementation,
   verify_codex_mcp_node_run, verify_codex_native_capture, verify_codex_node_run, verify_codex_review_node_run,
 };
-pub use factory_configuration_choices::{
-  FactoryChoiceIdentity, FactoryChoiceMetadata, FactoryChoiceReferenceProjection,
-  FactoryConfigurationChoicePageProjection, FactoryConfigurationChoiceProjection, FactoryConfigurationDocumentBounds,
-  ListFactoryConfigurationChoicesQuery, factory_configuration_choice_kinds, factory_configuration_document_bounds,
-  factory_flow_node_kinds, factory_permission_categories, factory_signal_fallbacks, factory_signal_modes,
-  factory_signal_purposes,
+pub use factory::codex::factory_tool_action::{
+  DeterministicToolActionRule, PreparedToolAction, ProtectedToolActionGate, ToolActionGateError, ToolRiskAssessment,
+  ToolRiskSignalEvaluation, ToolRiskSignalEvaluator,
 };
-pub use factory_configuration_cqrs::{
-  CreateFactoryConfigurationCommand, FactoryConfigurationCommandOutcome, FactoryConfigurationHandlers,
-  FactoryConfigurationPagePosition, FactoryConfigurationPageProjection, FactoryConfigurationProjection,
-  FactoryConfigurationValidation, FactoryEffectiveNodePermissions, FactoryEffectiveProfilePermissions,
-  FactoryValidationDiagnostics, FactoryValidationIssue, GetCurrentFactoryConfigurationQuery,
-  GetFactoryConfigurationQuery, ListProjectFactoryConfigurationsQuery, ReplaceFactoryConfigurationCommand,
-  ValidateFactoryConfigurationQuery,
+pub use factory::codex::factory_tool_risk_authorizer::{
+  FactoryToolRiskAuthorizer, FactoryToolRiskBinding, FactoryToolRiskNodeProfile, factory_tool_risk_task_digest,
 };
-pub use factory_control::{
+pub use factory::execution::factory_build::{
+  CancelFactoryBuild, CreateFactoryBuild, FactoryBuildAcceptance, FactoryBuildObservation, FactoryBuildPolicyLayers,
+  FactoryCandidateMaterialization, FactoryNodeBuildCausality, OrdinaryBuildApplication, OrdinaryBuildApplicationError,
+  OrdinaryBuildCancellationApplication,
+};
+pub use factory::execution::factory_control::{
   CancelFactoryRunCommand, ConfirmFactoryNodeOperationCommand, FactoryControlHandlers, FactoryRunControlCommandOutcome,
   MAX_FACTORY_OPERATOR_REASON_BYTES, ResolveFactoryNodeCommand, RetryFactoryNodeCommand, SelectFactoryProfileCommand,
   SubmitFactoryNodeResponseCommand,
 };
-pub use factory_credentials::{FactoryCredentialResolutionError, ScopedFactoryCredential, resolve_factory_credential};
-pub use factory_decision_signal::{
+pub use factory::execution::factory_decision_signal::{
   DecisionSignalApplicationError, DecisionSignalCapabilityDiscovery, DecisionSignalDispatch,
   DecisionSignalDispatchAuthorization, DecisionSignalPortError, DecisionSignalReceiptPublication,
   DecisionSignalRequestObservation, DecisionSignalService,
 };
-pub use factory_decision_signal_receipts::FactoryDecisionSignalReceipts;
-pub use factory_evaluation::FactoryEvaluationDecision;
-pub use factory_evidence::{
-  FactoryEvidenceAttestation, FactoryEvidenceError, VerifiedFactoryEvidence, construct_factory_evidence_manifest,
-};
-pub use factory_job_spec::{
+pub use factory::execution::factory_decision_signal_receipts::FactoryDecisionSignalReceipts;
+pub use factory::execution::factory_job_spec::{
   FactoryManagedJobSpecInput, FactoryManagedJobSpecTemplateError, derive_factory_managed_job_spec_template,
 };
-pub use factory_node_capture::{
-  FactoryChangeSetError, VerifiedFactoryArtifact, factory_node_candidate_materialization, factory_node_change_set,
-  restore_factory_node_change_set, verify_factory_node_change_set,
-};
-pub use factory_node_capture_build::FactoryNodeCaptureBuildAdapter;
-pub use factory_reconciliation::{
+pub use factory::execution::factory_reconciliation::{
   FactoryReconciler, FactoryReconciliationBatchOutcome, FactoryReconciliationError, FactoryReconciliationShutdown,
 };
-pub use factory_source_admission::{
+pub use factory::profiles::factory_credentials::{
+  FactoryCredentialResolutionError, ScopedFactoryCredential, resolve_factory_credential,
+};
+pub use factory::sources::factory_source_admission::{
   AdmitPreparedSourceFactoryWorkCommand, AdmitSourceFactoryWorkCommand, FactorySourceAdmissionHandlers,
   FactorySourceAuthorization, FactorySourceAuthorizer, FactorySourceHandoff, FactorySourceItem,
   FactorySourcePredecessorTarget, FactorySourcePredecessors, IssueSourcePredecessorReader,
   RecoverSourceFactoryWorkCommand, source_predecessor_wait,
 };
-pub use factory_tool_action::{
-  DeterministicToolActionRule, PreparedToolAction, ProtectedToolActionGate, ToolActionGateError, ToolRiskAssessment,
-  ToolRiskSignalEvaluation, ToolRiskSignalEvaluator,
+pub use factory::validation::factory_evaluation::FactoryEvaluationDecision;
+pub use factory::validation::factory_evidence::{
+  FactoryEvidenceAttestation, FactoryEvidenceError, VerifiedFactoryEvidence, construct_factory_evidence_manifest,
 };
-pub use factory_tool_risk_authorizer::{
-  FactoryToolRiskAuthorizer, FactoryToolRiskBinding, FactoryToolRiskNodeProfile, factory_tool_risk_task_digest,
+pub use management::configuration_cqrs::{
+  BuildConfigurationCommandOutcome, BuildConfigurationHandlers, CreateBuildConfigurationCommand,
+  CreateRepositoryCommand, GetBuildConfigurationQuery, GetRepositoryQuery, PublishBuildConfigurationVersionCommand,
+  PublishRepositoryVersionCommand, RepositoryCommandOutcome,
 };
-pub use internal_trigger::{InternalTriggerBatchOutcome, InternalTriggerWorker, InternalTriggerWorkerError};
-pub use internal_trigger_management::{
-  CreateInternalTriggerCommand, GetInternalTriggerQuery, InternalTriggerCommandOutcome, InternalTriggerDefinition,
-  InternalTriggerHandlers, InternalTriggerPageProjection, InternalTriggerProjection, InternalTriggerSourceStrategy,
-  ListInternalTriggersQuery, PublishInternalTriggerVersionCommand,
+pub use management::definition_cqrs::{
+  CreateTriggerDefinitionCommand, DefinitionHandlers, GetManualTriggerDefinitionQuery,
+  ManualTriggerDefinitionProjection, ProjectPolicyCommandOutcome, PublishProjectPolicyCommand,
+  TriggerDefinitionCommandOutcome,
 };
-pub use job_event_cqrs::{
-  JobEventLongPoll, JobEventPageProjection, JobEventProjection, JobEventWaiter, MAX_JOB_EVENT_WAIT, ReadJobEventsQuery,
+pub use management::definition_discovery::{
+  BuildConfigurationPageProjection, BuildConfigurationSummaryProjection, CurrentDefinitionPageError,
+  CurrentDefinitionPageInput, ListProjectBuildConfigurationsQuery, ListProjectPipelinesQuery,
+  ListProjectRepositoriesQuery, ListProjectTriggerDefinitionsQuery, MAX_CURRENT_DEFINITION_PAGE_SIZE,
+  PipelinePageProjection, PipelineSummaryProjection, RepositoryPageProjection, RepositorySummaryProjection,
+  TriggerDefinitionKindProjection, TriggerDefinitionPageProjection, TriggerDefinitionSummaryProjection,
 };
-pub use lease_expiry::{LeaseExpiryBatchOutcome, LeaseExpiryWorker};
-pub use log_archive::LogRedactor;
-pub use log_indexing::{LogIndexingBatchOutcome, LogIndexingWorker, LogIndexingWorkerError};
-pub use log_search::{
-  BuildLogSearch, BuildLogSearchCursorInput, BuildLogSearchCursorProjection, BuildLogSearchError,
-  BuildLogSearchFreshnessProjection, BuildLogSearchHitProjection, BuildLogSearchInput, BuildLogSearchPageProjection,
-  GetBuildLogFreshnessQuery, SearchBuildLogsQuery,
-};
-pub use management_input::{
+pub use management::management_input::{
   InternalTriggerDefinitionInput, ManagedWebhookInput, ManagementInputError, ManagementInputFactory,
   ManualTriggerDefinitionInput, ManualTriggerInput, ScheduledTriggerDefinitionInput, UnmanagedWebhookInput,
+};
+pub use management::pipeline_cqrs::{
+  CreatePipelineCommand, GetPipelineQuery, PipelineCommandOutcome, PipelineHandlers, PublishPipelineVersionCommand,
+};
+pub use management::project_cqrs::{
+  CreateProjectCommand, DeleteProjectCommand, DeleteProjectCommandOutcome, GetProjectQuery, ListProjectsQuery,
+  MoveProjectCommand, ProjectCommandOutcome, ProjectHandlers, ProjectPageProjection, RenameProjectCommand,
+};
+pub use management::project_policy::{
+  ArtifactPolicy, CacheNamespace, CachePolicy, ConcurrencyPolicy, EffectiveProjectPolicy, IdentityProfileName,
+  MAX_POLICY_REFERENCE_BYTES, PolicyCategory, PolicyDirective, PolicyResolutionError, PolicySource,
+  ProjectExecutionTarget, ProjectPolicy, ProjectPolicyDefinition, ProjectPolicyLayer, RetentionPolicy, RuntimeClass,
+  SecretProfileName, resolve_project_policy,
+};
+pub use management::projections::{
+  AgentRequirementsProjection, ArtifactPolicyProjection, AttemptProjection, BuildConfigurationProjection,
+  BuildOriginProjection, BuildProjection, ConfigurationCacheProjection, ConfigurationRuntimeProjection,
+  DagCausalityProjection, DagEdgeProjection, DagNodeProjection, DependencyPolicyProjection,
+  ExecutionGuaranteeProjection, JobAssignmentProjection, JobExecutionProjection, JobFailureClassification,
+  JobOutputKind, JobOutputReference, JobPlacementProjection, JobProjection, JobProjectionFacts, JobQueueProjection,
+  JobTerminalOutcomeProjection, NetworkPolicyProjection, ParameterDefinitionProjection, ParameterSchemaProjection,
+  ParameterTypeProjection, ParameterValueProjection, PipelineEdgeProjection, PipelineNodeProjection,
+  PipelineProjection, PlatformArchitectureProjection, PlatformOsProjection, PlatformProjection,
+  ProjectNavigationProjection, ProjectProjection, ProjectSummaryProjection, ProjectionError, RepositoryProjection,
+  RepositorySelectionProjection, RetryClassProjection, RetryPolicyProjection, RuntimeClassProjection,
+  Sha256DigestProjection, TriggerCauseProjection, TriggerHistoryProjection, TriggerKindProjection,
+};
+pub use management::resource_search::{
+  MAX_RESOURCE_SEARCH_CURSOR_BYTES, MAX_RESOURCE_SEARCH_RESULT_CONTEXT_BYTES, MAX_RESOURCE_SEARCH_RESULT_LABEL_BYTES,
+  MAX_RESOURCE_SEARCH_RESULT_PAGE_SIZE, ResourceSearchCursor, ResourceSearchCursorError, ResourceSearchHandlers,
+  ResourceSearchIdentityProjection, ResourceSearchInputError, ResourceSearchKind, ResourceSearchKinds,
+  ResourceSearchPageProjection, ResourceSearchSummaryProjection, SearchResourcesQuery,
 };
 pub use management_security::{
   AuthorizedCommandHandler, AuthorizedManagementCommandHandler, AuthorizedManagementQueryHandler,
@@ -602,15 +432,6 @@ pub use management_security::{
   ManagementVisibilityInput, ManagementVisibilityKind, ManagementVisibilityTarget, ManagementVisibilityView,
   TrustedNetworkManagementPolicy,
 };
-pub use manual_trigger::{
-  AcceptManualTriggerCommand, DurableManualTriggerService, EffectiveProjectPolicySource,
-  EffectiveProjectPolicySourceError, ExactRevisionResolver, JobSpecToolchainPolicy, ManualSourceSelection,
-  ManualTriggerCommand, ManualTriggerContext, ManualTriggerContextError, ManualTriggerContextProvider,
-  ManualTriggerError, ManualTriggerInputError, ManualTriggerOutcome, ManualTriggerRetryBatchOutcome,
-  ManualTriggerRetryWorker, ManualTriggerRetryWorkerError, ManualTriggerService, RepositorySourceSelection,
-  RevisionResolutionError, RevisionResolutionRequest, RevisionResolver, StoreBackedEffectiveProjectPolicySource,
-  StoreBackedManualTriggerContext,
-};
 pub use octacity_server_cache::CacheCredentialKey;
 pub use octacity_server_cache::{
   ActionResultV1, BlobDescriptor, BlobEncoding, Digest, DigestAlgorithm, FindMissingBlobsRequestV1,
@@ -622,69 +443,65 @@ pub use octacity_server_secrets::AgentEnrollmentSecretKey;
 pub use octacity_server_store::RegistrationEpoch;
 pub use octacity_server_store::{AgentDrainMode, TerminalBuildEvent};
 pub use octacity_server_store::{LeaseGrant, LeaseHeartbeatOutcome};
-pub use operational_metadata::{
+pub use operations::audit_query::{
+  AuditActorProjection, AuditCursorInput, AuditCursorProjection, AuditFactPageProjection, AuditFactProjection,
+  AuditFactQueryInput, AuditQueries, ListAuditFactsQuery,
+};
+pub use operations::log_archive::LogRedactor;
+pub use operations::log_indexing::{LogIndexingBatchOutcome, LogIndexingWorker, LogIndexingWorkerError};
+pub use operations::log_search::{
+  BuildLogSearch, BuildLogSearchCursorInput, BuildLogSearchCursorProjection, BuildLogSearchError,
+  BuildLogSearchFreshnessProjection, BuildLogSearchHitProjection, BuildLogSearchInput, BuildLogSearchPageProjection,
+  GetBuildLogFreshnessQuery, SearchBuildLogsQuery,
+};
+pub use operations::operational_metadata::{
   GetOperationalMetadataQuery, ManagementOperationalMetadataProjection, OperationalMetadataQueries,
 };
-pub use operator_attention::{
+pub use operations::operator_attention::{
   ListOperatorAttentionQuery, MAX_OPERATOR_ATTENTION_CODE_BYTES, MAX_OPERATOR_ATTENTION_CURSOR_BYTES,
   MAX_OPERATOR_ATTENTION_RESULT_PAGE_SIZE, MAX_OPERATOR_ATTENTION_SCOPE_TARGETS, MAX_OPERATOR_ATTENTION_SUMMARY_BYTES,
   OperatorAttentionCategory, OperatorAttentionCursor, OperatorAttentionCursorError, OperatorAttentionHandlers,
   OperatorAttentionId, OperatorAttentionInputError, OperatorAttentionItemProjection, OperatorAttentionPageProjection,
   OperatorAttentionScopeInput, OperatorAttentionSeverity, OperatorAttentionTarget,
 };
-pub use pipeline_cqrs::{
-  CreatePipelineCommand, GetPipelineQuery, PipelineCommandOutcome, PipelineHandlers, PublishPipelineVersionCommand,
-};
-pub use pool_cqrs::{
-  AgentPlatformProjection, AgentPoolAdmissionPolicyProjection, AgentPoolCommandOutcome, AgentPoolDrainStateProjection,
-  AgentPoolFairnessPolicyProjection, AgentPoolHandlers, AgentPoolPageProjection, AgentPoolProjection,
-  CreateAgentPoolCommand, DeleteAgentPoolCommand, DeleteAgentPoolCommandOutcome, GetAgentPoolQuery,
-  ListAgentPoolsQuery, PoolExecutionModeProjection, PoolExecutionTargetProjection, PublishAgentPoolVersionCommand,
-};
-pub use project_cqrs::{
-  CreateProjectCommand, DeleteProjectCommand, DeleteProjectCommandOutcome, GetProjectQuery, ListProjectsQuery,
-  MoveProjectCommand, ProjectCommandOutcome, ProjectHandlers, ProjectPageProjection, RenameProjectCommand,
-};
-pub use project_policy::{
-  ArtifactPolicy, CacheNamespace, CachePolicy, ConcurrencyPolicy, EffectiveProjectPolicy, IdentityProfileName,
-  MAX_POLICY_REFERENCE_BYTES, PolicyCategory, PolicyDirective, PolicyResolutionError, PolicySource,
-  ProjectExecutionTarget, ProjectPolicy, ProjectPolicyDefinition, ProjectPolicyLayer, RetentionPolicy, RuntimeClass,
-  SecretProfileName, resolve_project_policy,
-};
-pub use projections::{
-  AgentRequirementsProjection, ArtifactPolicyProjection, AttemptProjection, BuildConfigurationProjection,
-  BuildOriginProjection, BuildProjection, ConfigurationCacheProjection, ConfigurationRuntimeProjection,
-  DagCausalityProjection, DagEdgeProjection, DagNodeProjection, DependencyPolicyProjection,
-  ExecutionGuaranteeProjection, JobAssignmentProjection, JobExecutionProjection, JobFailureClassification,
-  JobOutputKind, JobOutputReference, JobPlacementProjection, JobProjection, JobProjectionFacts, JobQueueProjection,
-  JobTerminalOutcomeProjection, NetworkPolicyProjection, ParameterDefinitionProjection, ParameterSchemaProjection,
-  ParameterTypeProjection, ParameterValueProjection, PipelineEdgeProjection, PipelineNodeProjection,
-  PipelineProjection, PlatformArchitectureProjection, PlatformOsProjection, PlatformProjection,
-  ProjectNavigationProjection, ProjectProjection, ProjectSummaryProjection, ProjectionError, RepositoryProjection,
-  RepositorySelectionProjection, RetryClassProjection, RetryPolicyProjection, RuntimeClassProjection,
-  Sha256DigestProjection, TriggerCauseProjection, TriggerHistoryProjection, TriggerKindProjection,
-};
-pub use resource_search::{
-  MAX_RESOURCE_SEARCH_CURSOR_BYTES, MAX_RESOURCE_SEARCH_RESULT_CONTEXT_BYTES, MAX_RESOURCE_SEARCH_RESULT_LABEL_BYTES,
-  MAX_RESOURCE_SEARCH_RESULT_PAGE_SIZE, ResourceSearchCursor, ResourceSearchCursorError, ResourceSearchHandlers,
-  ResourceSearchIdentityProjection, ResourceSearchInputError, ResourceSearchKind, ResourceSearchKinds,
-  ResourceSearchPageProjection, ResourceSearchSummaryProjection, SearchResourcesQuery,
-};
-pub use restore::{RestoreReconciler, RestoreReconciliationError, RestoreReconciliationSummary};
-pub use retention::{BuildRetentionBatchOutcome, BuildRetentionWorker, BuildRetentionWorkerError};
-pub use retention_hold::{
+pub use operations::restore::{RestoreReconciler, RestoreReconciliationError, RestoreReconciliationSummary};
+pub use operations::retention::{BuildRetentionBatchOutcome, BuildRetentionWorker, BuildRetentionWorkerError};
+pub use operations::retention_hold::{
   BuildResultHoldProjection, BuildResultHoldStateProjection, BuildResultRetentionCommandOutcome,
   BuildResultRetentionDeadlinesProjection, BuildResultRetentionHandlers, BuildResultRetentionProjection,
   BuildResultVisibilityProjection, GetBuildResultRetentionQuery, MAX_BUILD_RESULT_HOLD_REASON_BYTES,
   PlaceBuildResultHoldCommand, ReleaseBuildResultHoldCommand, RetentionAuditIdentityProjection,
 };
-pub use retry_policy::{DurableRetryPolicy, DurableRetryPolicyError};
-pub use schedule_cqrs::{
+pub use transaction::CommandTransaction;
+pub use triggers::external_trigger::{
+  AcceptWebhookDeliveryCommand, AuthenticatedWebhookEvent, CreateManagedWebhookCommand, CreateUnmanagedWebhookCommand,
+  DeleteManagedWebhookRegistrationCommand, ManagedWebhookProjection, ManagedWebhookRegistration,
+  ManagedWebhookRegistrationRequest, ManagedWebhookRegistrationStatus, ObserveManagedWebhookRegistrationCommand,
+  RotateManagedWebhookRegistrationCommand, UnmanagedWebhookProjection, VerifyWebhookDelivery, WebhookCallbackOrigin,
+  WebhookDeliveryAccepted, WebhookDeliveryError, WebhookDeliveryFailure, WebhookDeliveryInputError,
+  WebhookDeliveryVerifier, WebhookIngressService, WebhookManagementProvider, WebhookManagementService,
+  WebhookVerificationError, WebhookVerificationFailure, WebhookVerificationRequirements,
+};
+pub use triggers::internal_trigger::{InternalTriggerBatchOutcome, InternalTriggerWorker, InternalTriggerWorkerError};
+pub use triggers::internal_trigger_management::{
+  CreateInternalTriggerCommand, GetInternalTriggerQuery, InternalTriggerCommandOutcome, InternalTriggerDefinition,
+  InternalTriggerHandlers, InternalTriggerPageProjection, InternalTriggerProjection, InternalTriggerSourceStrategy,
+  ListInternalTriggersQuery, PublishInternalTriggerVersionCommand,
+};
+pub use triggers::manual_trigger::{
+  AcceptManualTriggerCommand, DurableManualTriggerService, EffectiveProjectPolicySource,
+  EffectiveProjectPolicySourceError, ExactRevisionResolver, JobSpecToolchainPolicy, ManualSourceSelection,
+  ManualTriggerCommand, ManualTriggerContext, ManualTriggerContextError, ManualTriggerContextProvider,
+  ManualTriggerError, ManualTriggerInputError, ManualTriggerOutcome, ManualTriggerRetryBatchOutcome,
+  ManualTriggerRetryWorker, ManualTriggerRetryWorkerError, ManualTriggerService, RepositorySourceSelection,
+  RevisionResolutionError, RevisionResolutionRequest, RevisionResolver, StoreBackedEffectiveProjectPolicySource,
+  StoreBackedManualTriggerContext,
+};
+pub use triggers::schedule_cqrs::{
   CreateScheduleCommand, GetScheduleQuery, ScheduleBatchOutcome, ScheduleCommandOutcome, ScheduleHandlers,
   ScheduleProjection, ScheduleWorker, ScheduleWorkerError, ScheduledBuildDefinition,
 };
-pub use transaction::CommandTransaction;
-pub use webhook_delivery::{
+pub use triggers::webhook_delivery::{
   ManagedWebhookBatchOutcome, ManagedWebhookRegistrationWorker, WebhookDeliveryBatchOutcome, WebhookDeliveryWorker,
   WebhookWorkerError,
 };
@@ -724,28 +541,12 @@ pub const MAX_WEBHOOK_HEADER_NAME_BYTES: usize = octacity_server_store::MAX_WEBH
 /// Maximum retained bytes in one allowlisted webhook header value.
 pub const MAX_WEBHOOK_HEADER_VALUE_BYTES: usize = octacity_server_store::MAX_WEBHOOK_HEADER_VALUE_BYTES;
 
-#[cfg(test)]
-mod factory_development_control_tests;
-#[cfg(test)]
-mod factory_flow_control_tests;
-#[cfg(test)]
-mod factory_flow_tests;
-#[cfg(test)]
-mod factory_requirements_tests;
-
-mod factory_flow;
-
-#[cfg(test)]
-mod factory_job_test_support;
-
-mod factory_code_sources;
-mod factory_flow_definition;
-pub use factory_flow_definition::{
+pub use factory::authoring::factory_flow_definition::{
   FactoryFlowDefinitionDraft, FactoryFlowDefinitionHandlers, FactoryFlowDefinitionValidation, FactoryFlowRootDraft,
   ValidateFactoryFlowDataSchemaQuery, ValidateFactoryFlowDefinitionQuery, factory_native_gate_policies,
 };
 
-pub use factory_flow_definition::{
+pub use factory::authoring::factory_flow_definition::{
   CreateFactoryFlowDefinitionCommand, FactoryFlowDefinitionCommandOutcome, GetFactoryFlowDefinitionQuery,
   ListProjectFactoryFlowDefinitionsQuery, ReplaceFactoryFlowDefinitionCommand,
 };
@@ -754,10 +555,9 @@ pub use octacity_server_store::{FactoryFlowDefinitionPage, PublishedFactoryFlowD
 /// Persistence mutation disposition used by exact Flow publication outcomes.
 pub use octacity_server_store::MutationDisposition as StoreMutationDisposition;
 
-pub use management_input::factory::ManualFactoryWorkInput;
+pub use management::management_input::factory::ManualFactoryWorkInput;
 
-mod factory_discovery;
-pub use factory_discovery::{
+pub use factory::authoring::factory_discovery::{
   FactoryAuditProjection, FactoryCallProjection, FactoryDiagnosticCollection, FactoryDiagnosticPage,
   FactoryDiagnosticRecord, FactoryDiscoveryHandlers, FactoryNodeAttemptProjection, FactoryNodeCompletionProjection,
   FactoryNodeStopProjection, FactoryProfileBuildProjection, FactoryProfileCandidateProjection,
@@ -765,7 +565,7 @@ pub use factory_discovery::{
   FactoryWorkProjection, GetFactoryRunQuery, ListFactoryDiagnosticsQuery, ListFactoryRunsQuery,
   MAX_FACTORY_DIAGNOSTIC_PAGE_SIZE,
 };
-pub use management_input::factory::{FactoryNodeControlInput, FactoryRunListInput};
+pub use management::management_input::factory::{FactoryNodeControlInput, FactoryRunListInput};
 pub use octacity_server_factory::{
   ISSUE_OUTCOME_DUPLICATE_COVERAGE, ISSUE_OUTCOME_REVIEW_VERDICTS, ISSUE_OUTCOME_TRIAGE_DECISIONS,
   MAX_DECISION_ASSESSMENTS, MAX_DECISION_REASONS, MAX_DECISION_SIGNAL_RECEIPTS, MAX_FACTORY_SAFE_TEXT_BYTES,
@@ -777,72 +577,41 @@ pub use octacity_server_store::{
   MAX_FACTORY_RUN_SUMMARY_NODES,
 };
 
-pub use factory_discovery::ListFactoryPhaseReadyQuery;
+pub use factory::authoring::factory_discovery::ListFactoryPhaseReadyQuery;
 pub use octacity_server_store::PhaseReadyPage as FactoryPhaseReadyPageProjection;
 
-pub use factory_configuration_choices::{
+pub use factory::authoring::factory_configuration_choices::{
   factory_decision_outcomes, factory_delivery_states, factory_finding_severities,
 };
 
-#[cfg(test)]
-mod factory_protected_test_context_tests;
+pub use factory::validation::factory_protected_test_context::{
+  FactoryProtectedTestContext, FactoryStoredProtectedTestContextSource,
+};
 
-mod factory_protected_test_context;
-pub use factory_protected_test_context::{FactoryProtectedTestContext, FactoryStoredProtectedTestContextSource};
+pub use factory::validation::factory_protected_validation_input_source::FactoryStoredProtectedValidationInputSource;
 
-#[cfg(test)]
-mod factory_protected_validation_input_source_tests;
+pub use factory::execution::factory_phase_pool_selection::{FactoryPhasePoolCoordination, FactoryPhasePoolSelector};
 
-mod factory_protected_validation_input_source;
-pub use factory_protected_validation_input_source::FactoryStoredProtectedValidationInputSource;
-
-mod factory_phase_pool_selection;
-pub use factory_phase_pool_selection::{FactoryPhasePoolCoordination, FactoryPhasePoolSelector};
-
-#[cfg(test)]
-mod factory_build_service_tests;
-#[cfg(test)]
-mod factory_command_materializer_tests;
-mod factory_command_observation;
-#[cfg(test)]
-mod factory_command_observation_tests;
-mod factory_command_output_source;
-#[cfg(test)]
-mod factory_command_output_source_tests;
-#[cfg(test)]
-mod factory_command_tests;
-pub use factory_command_observation::{
+pub use factory::commands::factory_command_observation::{
   FactoryCommandFinding, FactoryCommandObservationBinding, FactoryCommandObservationContract,
   verify_factory_command_observation,
 };
-pub use factory_command_output_source::FactoryCommandBuildOutputSource;
+pub use factory::commands::factory_command_output_source::FactoryCommandBuildOutputSource;
 
-mod factory_command;
-pub use factory_command::{
+pub use factory::commands::factory_command::{
   CompiledFactoryCommandTask, FactoryCommandBuildProfile, FactoryCommandOctafile, FactoryCommandProgram,
   FactoryManagedCommandProof, MAX_FACTORY_COMMAND_OCTAFILE_BYTES, compile_factory_command_task,
 };
-mod factory_deployment_command;
-#[cfg(test)]
-mod factory_deployment_command_tests;
-pub use factory_deployment_command::{
+pub use factory::commands::factory_command_materializer::FactoryCommandBuildMaterializer;
+pub use factory::commands::factory_deployment_command::{
   FactoryDeploymentCommandAuthority, FactoryDeploymentCommandProfile, compile_factory_deployment_command_task,
 };
-mod factory_command_catalog;
-mod factory_command_materializer;
-pub use factory_command_materializer::FactoryCommandBuildMaterializer;
 
-pub use factory_codex_review_build::FactoryCodexReviewBuildAdapter;
+pub use factory::codex::factory_codex_review_build::FactoryCodexReviewBuildAdapter;
 
-mod integration_administration;
-#[cfg(test)]
-mod integration_administration_tests;
-#[cfg(test)]
-mod integration_connection_tests;
-pub use integration_administration::*;
+pub use integrations::integration_administration::*;
 
-mod integration_connection;
-pub use integration_connection::{
+pub use integrations::integration_connection::{
   GetIntegrationConnectionQuery, IntegrationConnectionHandlers, IntegrationConnectionPage, IntegrationId,
   IntegrationInstallationPage, IntegrationVersion, ListIntegrationConnectionsQuery, ListIntegrationInstallationsQuery,
   MAX_INTEGRATION_AUTHENTICATION_METHODS, MAX_INTEGRATION_DISCOVERY_PAGE_SIZE, MAX_INTEGRATION_ENDPOINT_BYTES,
@@ -850,75 +619,33 @@ pub use integration_connection::{
   ValidateIntegrationConnectionQuery,
 };
 
-#[cfg(test)]
-mod integration_project_access_tests;
+pub use integrations::integration_project_access::*;
 
-mod integration_project_access;
-pub use integration_project_access::*;
+pub use integrations::integration_check::*;
 
-mod integration_check;
-#[cfg(test)]
-mod integration_check_tests;
-pub use integration_check::*;
+pub use factory::sources::factory_source_configuration::*;
 
-mod factory_source_configuration;
-pub use factory_source_configuration::*;
+pub use factory::reporting::factory_issue_status_authoring::FactoryIssueStatusAuthorizer;
 
-mod factory_issue_status_authoring;
-pub use factory_issue_status_authoring::FactoryIssueStatusAuthorizer;
+pub use issues::issue_legacy::*;
 
-mod issue_legacy;
-pub use issue_legacy::*;
+pub use factory::profiles::factory_role_profiles::*;
 
-mod factory_role_profiles;
-#[cfg(test)]
-mod factory_role_profiles_tests;
-pub use factory_role_profiles::*;
+pub use factory::authoring::factory_authoring_capabilities::*;
+pub use factory::authoring::factory_constraints::*;
+pub use factory::profiles::factory_execution_bindings::*;
 
-mod factory_authoring_capabilities;
-mod factory_constraints;
-pub use factory_constraints::*;
-mod factory_execution_bindings;
-pub use factory_authoring_capabilities::*;
-#[cfg(test)]
-mod factory_execution_bindings_tests;
-pub use factory_execution_bindings::*;
+pub use factory::profiles::factory_role_profile_catalog::*;
 
-mod factory_role_profile_catalog;
-pub use factory_role_profile_catalog::*;
+pub use factory::profiles::factory_role_catalog::*;
 
-mod factory_role_catalog;
-pub use factory_role_catalog::*;
+pub use factory::profiles::factory_skill_import::*;
 
-#[cfg(test)]
-mod factory_skill_import_tests;
+pub use factory::codex::factory_codex_role_source::FactoryStoredCodexRoleInvocationSource;
+pub use factory::profiles::factory_role_invocation::*;
 
-mod factory_skill_import;
-pub use factory_skill_import::*;
+pub use factory::codex::factory_codex_mcp::{FactoryCodexMcpConfiguration, FactoryCodexMcpServer};
 
-#[cfg(test)]
-mod factory_role_materialization_tests;
+pub use factory::profiles::factory_runtime_settings::*;
 
-mod factory_role_invocation;
-pub use factory_role_invocation::*;
-mod factory_codex_role_source;
-pub use factory_codex_role_source::FactoryStoredCodexRoleInvocationSource;
-
-#[cfg(test)]
-mod factory_profile_diagnostics_tests;
-
-mod factory_codex_mcp;
-pub use factory_codex_mcp::{FactoryCodexMcpConfiguration, FactoryCodexMcpServer};
-
-mod raster_preview;
-
-#[cfg(test)]
-mod factory_runtime_settings_tests;
-
-mod factory_runtime_settings;
-pub use factory_runtime_settings::*;
-
-mod factory_mcp;
-
-mod factory_project_policies;
-pub use factory_project_policies::*;
+pub use factory::authoring::factory_project_policies::*;

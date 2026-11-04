@@ -28,6 +28,6 @@ The triage pipeline stops with an accepted assessment. OctaCity needs the next u
 
 ## Impact
 
-Reuse `config/factory/flows/base-flow/`, `server/application/src/factory_presets*`, requirements/protected-test/review handlers, Issue execution and Source/Reporter contracts, Delivery protocol/runtime/store, `octacity-github`, REST/OpenAPI, the common visual Flow editor, Project policies and existing Run/Issue outcome views. Extend these owners only where the supported journey lacks behavior; do not add a second engine or lifecycle store.
+Reuse `config/factory/flows/base-flow/`, `server/application/src/factory/authoring/factory_presets*`, requirements/protected-test/review handlers, Issue execution and Source/Reporter contracts, Delivery protocol/runtime/store, `octacity-github`, REST/OpenAPI, the common visual Flow editor, Project policies and existing Run/Issue outcome views. Extend these owners only where the supported journey lacks behavior; do not add a second engine or lifecycle store.
 
 Builds on the archived triage, manual pipeline authoring, Project Factory policies and Issue outcomes changes. This change owns the explicit downstream handoff and any missing generic authoring or runtime bindings needed for this journey. `add-factory-bugfix-quickstart` remains independent. Merge automation, deployment, feature research, new providers and production promotion are out of scope. Implementation must follow repository behavioral Red/Green TDD; this change creates planning artifacts only.

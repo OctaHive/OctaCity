@@ -1,0 +1,12 @@
+pub(crate) mod audit_query;
+pub(crate) mod diagnostic;
+pub(crate) mod log_archive;
+pub(crate) mod log_indexing;
+pub(crate) mod log_search;
+pub(crate) mod operational_metadata;
+pub(crate) mod operator_attention;
+pub(crate) mod restore;
+pub(crate) mod retention;
+pub(crate) mod retention_hold;
+pub(crate) mod snapshots;
+pub(crate) mod telemetry;

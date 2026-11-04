@@ -10,7 +10,7 @@ use std::{sync::Arc, time::Duration};
 #[path = "support/factory_native_candidate.rs"]
 mod candidate_fixture;
 #[allow(dead_code)]
-#[path = "../../application/src/factory_job_test_support.rs"]
+#[path = "../../application/src/factory/execution/tests/factory_job_test_support.rs"]
 mod managed;
 #[allow(dead_code)]
 #[path = "support/factory_native_profiles.rs"]

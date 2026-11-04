@@ -1,0 +1,1381 @@
+use std::{
+  collections::BTreeSet,
+  future::Future,
+  sync::{Arc, Mutex},
+  task::{Context, Poll, Waker},
+};
+
+use async_trait::async_trait;
+use octacity_server_domain::{
+  ArtifactId, BuildConfigurationId, BuildConfigurationVersion, IntegrationId, ProjectId, RepositoryId,
+  RepositoryLocator, RepositoryName, RepositoryVersion, SourceReference, Timestamp,
+};
+use octacity_server_factory::{
+  BudgetLimit, BuildConfigurationRef, ExternalWorkIdentity, FactoryArtifactReference, FactoryChoiceKind,
+  FactoryConfiguration, FactoryConfigurationChoiceEntries, FactoryConfigurationChoices, FactoryConfigurationDraft,
+  FactoryConfigurationId, FactoryConfigurationVersion, FactoryDigest, FactoryKey, FactoryMetadata,
+  FactoryReferenceChoice, FactoryStageKind, FactoryWipLimits, ImmutableReference, RiskClass, WorkArtifacts,
+  WorkClassification, WorkPriority,
+};
+use octacity_server_store::{
+  FactoryRunStore, IdempotencyKey, PublishedFactoryConfiguration, PublishedRepository, RepositoryDefinition,
+  RepositorySelectionPolicy,
+  testing::{
+    InMemoryFactoryConfigurationStore, ManagementAuditProbe, MutationEvidenceProbe,
+    factory_project_policies as launch_policies,
+  },
+};
+use uuid::Uuid;
+
+#[path = "../../sources/tests/factory_source_admission_tests.rs"]
+pub(crate) mod installed_sources;
+
+#[path = "../../sources/tests/factory_source_configuration_tests.rs"]
+mod source_configuration;
+
+#[path = "factory_admission_profile_override_tests.rs"]
+mod profile_overrides;
+
+use crate::{
+  AdmitManualFactoryWorkCommand, ApplicationFailure, AuthorizedCommandHandler, FactoryAdmissionHandlers,
+  ManagementAction, ManagementAuthorizationDenial, ManagementAuthorizationGrant, ManagementAuthorizationPolicy,
+  ManagementCommandUseCase, ManagementHandlerError, ManagementRequestContext, ManagementRequestId, ManagementResource,
+  ManagementVisibility, MutationDisposition, RepositorySourceSelection, RevisionResolutionError,
+  RevisionResolutionRequest, RevisionResolver,
+};
+
+fn artifact(value: u8) -> FactoryArtifactReference {
+  FactoryArtifactReference::new(ArtifactId::generate(), digest(value), 1).unwrap()
+}
+
+include!("factory_admission_test_fixture.rs");
+
+pub(crate) fn command(
+  project_id: ProjectId,
+  configuration_id: FactoryConfigurationId,
+  repository_id: RepositoryId,
+) -> AdmitManualFactoryWorkCommand {
+  AdmitManualFactoryWorkCommand {
+    profile_overrides: Default::default(),
+    project_id,
+    configuration_id,
+    configuration_version: FactoryConfigurationVersion::INITIAL,
+    repository_id: Some(repository_id),
+    repository_version: Some(RepositoryVersion::INITIAL),
+    external_identity: ExternalWorkIdentity::new("manual/work-42").unwrap(),
+    source: RepositorySourceSelection::DefaultReference.into(),
+    artifacts: WorkArtifacts::new(artifact(90), artifact(91), Vec::new()).unwrap(),
+    classification: WorkClassification::new(
+      WorkPriority::new(20).unwrap(),
+      RiskClass::Medium,
+      FactoryMetadata::try_new([("tracker".to_owned(), "work-42".to_owned())]).unwrap(),
+    ),
+    idempotency_key: IdempotencyKey::new("admit-work-42").unwrap(),
+    admitted_at: time(2),
+  }
+}
+
+pub(crate) fn context() -> ManagementRequestContext {
+  ManagementRequestContext::trusted_network(
+    ManagementRequestId::new(Uuid::from_u128(0x1d3c_437b_e606_4895_9677_0c86_3466_b5f4)).unwrap(),
+  )
+}
+
+pub(crate) fn time(value: i64) -> Timestamp {
+  Timestamp::from_unix_millis(value).unwrap()
+}
+
+pub(crate) fn seeded_store(
+  project_id: ProjectId,
+  configuration_id: FactoryConfigurationId,
+  repository: PublishedRepository,
+) -> Arc<InMemoryFactoryConfigurationStore> {
+  seeded_store_with_launch_rules(project_id, configuration_id, repository, true, true)
+}
+
+pub(crate) fn seeded_store_with_launch_rules(
+  project_id: ProjectId,
+  configuration_id: FactoryConfigurationId,
+  repository: PublishedRepository,
+  manual: bool,
+  automatic: bool,
+) -> Arc<InMemoryFactoryConfigurationStore> {
+  let store = unmapped_store(project_id, configuration_id, repository);
+  store
+    .seed_factory_configuration_policies(
+      configuration(project_id, configuration_id).reference(),
+      launch_policies(project_id, manual, automatic),
+    )
+    .unwrap();
+  store
+}
+
+/// Existing admission scenarios explicitly install allow-both policies for their exact fixtures.
+pub(crate) fn seed_permitted_configuration(
+  store: &InMemoryFactoryConfigurationStore,
+  published: PublishedFactoryConfiguration,
+) -> Result<(), octacity_server_store::StoreError> {
+  let reference = published.configuration.reference().clone();
+  let policies = octacity_server_store::testing::factory_project_policies_with_access(
+    reference.project_id(),
+    true,
+    true,
+    published.configuration.flow().limits.permissions().clone(),
+  );
+  store.seed_factory_configuration_version(published)?;
+  store.seed_factory_configuration_policies(&reference, policies)
+}
+
+fn unmapped_store(
+  project_id: ProjectId,
+  configuration_id: FactoryConfigurationId,
+  repository: PublishedRepository,
+) -> Arc<InMemoryFactoryConfigurationStore> {
+  let store = Arc::new(InMemoryFactoryConfigurationStore::new());
+  store.seed_project(project_id).unwrap();
+  store
+    .seed_factory_configuration_version(PublishedFactoryConfiguration {
+      configuration: configuration(project_id, configuration_id),
+      published_at: time(1),
+    })
+    .unwrap();
+  store.seed_repository_version(repository).unwrap();
+  store
+}
+
+#[derive(Default)]
+pub(crate) struct RecordingResolver {
+  requests: Mutex<Vec<RevisionResolutionRequest>>,
+}
+
+impl RecordingResolver {
+  pub(crate) fn call_count(&self) -> usize {
+    self.requests.lock().unwrap().len()
+  }
+}
+
+#[async_trait]
+impl RevisionResolver for RecordingResolver {
+  async fn resolve(
+    &self,
+    request: RevisionResolutionRequest,
+  ) -> Result<octacity_server_domain::ImmutableRevision, RevisionResolutionError> {
+    self.requests.lock().unwrap().push(request);
+    Ok(octacity_server_domain::ImmutableRevision::new("0123456789abcdef").unwrap())
+  }
+}
+
+pub(crate) async fn admit(
+  handlers: &FactoryAdmissionHandlers<InMemoryFactoryConfigurationStore>,
+  command: AdmitManualFactoryWorkCommand,
+) -> Result<crate::FactoryAdmissionOutcome, crate::ApplicationError> {
+  handlers
+    .execute_management_command(
+      &context(),
+      &ManagementAuthorizationGrant::new(ManagementVisibility::all()),
+      command,
+    )
+    .await
+}
+
+pub(crate) fn incoming_result_configuration(project: ProjectId, id: FactoryConfigurationId) -> FactoryConfiguration {
+  use octacity_server_factory::*;
+  let ordinary = configuration(project, id);
+  let flow = ordinary.flow();
+  let root = flow.closure.definition(flow.closure.root()).unwrap();
+  let mut nodes = root.nodes().to_vec();
+  let index = nodes.iter().position(|node| node.key() == root.entry()).unwrap();
+  let schema = nodes[index].input_schema().unwrap().clone();
+  nodes[index] = nodes[index]
+    .clone()
+    .with_input_binding(
+      FlowInputBinding::new(
+        std::collections::BTreeMap::from([(
+          key("triage"),
+          FlowInputSource::Incoming {
+            schema,
+            path: String::new(),
+          },
+        )]),
+        FlowDataMapping::new(FlowValueMapping::Pointer { path: "/triage".into() }).unwrap(),
+      )
+      .unwrap(),
+    )
+    .unwrap();
+  let definition = FlowDefinition::new(FlowDefinitionInput {
+    id: root.reference().id(),
+    version: root.reference().version(),
+    input_schema: root.input_schema().cloned(),
+    entry: root.entry().clone(),
+    nodes,
+    transitions: root.transitions().to_vec(),
+    terminals: root.terminals().to_vec(),
+    context_projections: root.context_projections().to_vec(),
+    data_projections: root.data_projections().to_vec(),
+    execution: root.execution().clone(),
+  })
+  .unwrap();
+  let downstream = FactoryFlowConfiguration::new(
+    PinnedFlowDefinitionClosure::new(definition.reference(), vec![definition]).unwrap(),
+    flow.limits.clone(),
+    flow.data_schemas.clone(),
+    flow.pools.clone(),
+  )
+  .unwrap();
+  configuration_with_flow(project, id, Some(downstream))
+}
+
+#[test]
+fn admission_rejects_missing_required_incoming_result_before_publishing_work() {
+  run_ready(async {
+    let project = ProjectId::generate();
+    let id = FactoryConfigurationId::generate();
+    let repository_id = RepositoryId::generate();
+    let store = Arc::new(InMemoryFactoryConfigurationStore::new());
+    store.seed_project(project).unwrap();
+    store
+      .seed_repository_version(repository(
+        project,
+        repository_id,
+        Some("refs/heads/main".parse().unwrap()),
+      ))
+      .unwrap();
+    seed_permitted_configuration(
+      &store,
+      PublishedFactoryConfiguration {
+        configuration: incoming_result_configuration(project, id),
+        published_at: time(1),
+      },
+    )
+    .unwrap();
+    let resolver = Arc::new(RecordingResolver::default());
+    let handlers = FactoryAdmissionHandlers::new(store.clone(), resolver.clone());
+    let Err(crate::ApplicationError::FactoryValidation(report)) =
+      admit(&handlers, command(project, id, repository_id)).await
+    else {
+      panic!("required predecessor data must block admission with a diagnostic");
+    };
+    assert_eq!(report.errors[0].field, "/incoming_result");
+    assert_eq!(report.errors[0].code, "missing_incoming_result");
+    assert_eq!(resolver.call_count(), 0);
+    assert_eq!(store.mutation_evidence_counts().await.idempotency, 0);
+  });
+}
+
+#[test]
+fn admission_retains_the_exact_incoming_data_in_the_original_run() {
+  use octacity_server_factory::{FlowIncomingData, FlowPayload};
+  use octacity_server_store::{FactoryAdmissionStore, ReadFactoryAdmissionContext};
+
+  run_ready(async {
+    let project = ProjectId::generate();
+    let id = FactoryConfigurationId::generate();
+    let repository_id = RepositoryId::generate();
+    let configuration = incoming_result_configuration(project, id);
+    let store = InMemoryFactoryConfigurationStore::new();
+    store.seed_project(project).unwrap();
+    store
+      .seed_repository_version(repository(project, repository_id, None))
+      .unwrap();
+    seed_permitted_configuration(
+      &store,
+      PublishedFactoryConfiguration {
+        configuration: configuration.clone(),
+        published_at: time(1),
+      },
+    )
+    .unwrap();
+    let context = context();
+    let intent = command(project, id, repository_id);
+    let probe = crate::factory::admission::factory_admission::admission_probe(&context, &intent).unwrap();
+    let selected = store
+      .factory_admission_context(ReadFactoryAdmissionContext {
+        project_id: project,
+        configuration_id: id,
+        configuration_version: intent.configuration_version,
+        repository_id: intent.repository_id,
+        repository_version: intent.repository_version,
+      })
+      .await
+      .unwrap();
+    let mut request = crate::factory::admission::factory_admission::materialize_resolved_admission(
+      intent,
+      probe,
+      selected,
+      octacity_server_domain::ImmutableRevision::new("0123456789abcdef").unwrap(),
+    )
+    .unwrap();
+    let payload = FlowPayload::new(&configuration.flow().data_schemas[0], serde_json::json!(true)).unwrap();
+    let data = FlowIncomingData::new(&request.work, &request.flow, payload).unwrap();
+    request.incoming = Some(data.clone());
+    let admitted = store
+      .admit_factory_work(crate::management_security::audited_mutation(&context, request.clone()).unwrap())
+      .await
+      .unwrap();
+    let run = admitted.admission.run.id();
+    let replay = store
+      .admit_factory_work(crate::management_security::audited_mutation(&context, request).unwrap())
+      .await
+      .unwrap();
+    assert_eq!(replay.disposition, octacity_server_store::MutationDisposition::Replayed);
+    assert_eq!(replay.admission.run.id(), run);
+    assert_eq!(
+      store.factory_run_snapshot(run).await.unwrap().flow.data.incoming,
+      [data]
+    );
+  });
+}
+
+#[test]
+fn unmapped_launch_policy_blocks_manual_admission_before_revision_resolution_or_mutation() {
+  run_ready(async {
+    let project = ProjectId::generate();
+    let configuration = FactoryConfigurationId::generate();
+    let repository_id = RepositoryId::generate();
+    let store = unmapped_store(project, configuration, repository(project, repository_id, None));
+    let resolver = Arc::new(RecordingResolver::default());
+    let handlers = FactoryAdmissionHandlers::new(store.clone(), resolver.clone());
+    let mut request = command(project, configuration, repository_id);
+    request.source =
+      RepositorySourceSelection::ExactRevision(octacity_server_domain::ImmutableRevision::new("original").unwrap())
+        .into();
+    let error = admit(&handlers, request).await.unwrap_err();
+    let crate::ApplicationError::FactoryValidation(report) = error else {
+      panic!("missing policy must be an actionable prerequisite: {error:?}");
+    };
+    assert_eq!(report.errors[0].field, "/admission_policy");
+    assert_eq!(report.errors[0].code, "unmapped_legacy_policy");
+    assert_eq!(resolver.call_count(), 0);
+    assert_eq!(store.mutation_evidence_counts().await.idempotency, 0);
+    assert!(store.management_audit_facts().await.is_empty());
+  });
+}
+
+#[test]
+fn pinned_launch_rules_govern_manual_ingress_instead_of_caller_metadata() {
+  run_ready(async {
+    for (allow_manual, allow_automatic_source) in [(false, false), (false, true), (true, false), (true, true)] {
+      let project = ProjectId::generate();
+      let configuration_id = FactoryConfigurationId::generate();
+      let repository_id = RepositoryId::generate();
+      let main = SourceReference::new("refs/heads/main").unwrap();
+      let store = unmapped_store(
+        project,
+        configuration_id,
+        repository(project, repository_id, Some(main)),
+      );
+      let configuration = configuration(project, configuration_id);
+      store
+        .seed_factory_configuration_policies(
+          configuration.reference(),
+          launch_policies(project, allow_manual, allow_automatic_source),
+        )
+        .unwrap();
+      let resolver = Arc::new(RecordingResolver::default());
+      let handlers = FactoryAdmissionHandlers::new(store.clone(), resolver.clone());
+      let mut request = command(project, configuration_id, repository_id);
+      request.classification = WorkClassification::new(
+        WorkPriority::new(20).unwrap(),
+        RiskClass::Medium,
+        FactoryMetadata::try_new([("origin".to_owned(), "automatic_source".to_owned())]).unwrap(),
+      );
+      let outcome = admit(&handlers, request).await;
+      if allow_manual {
+        assert_eq!(outcome.unwrap().disposition, MutationDisposition::Applied);
+        assert_eq!(resolver.call_count(), 1);
+        assert_eq!(store.mutation_evidence_counts().await.idempotency, 1);
+      } else {
+        let error = outcome.unwrap_err();
+        let crate::ApplicationError::FactoryValidation(report) = error else {
+          panic!("launch denial must retain a safe policy diagnostic: {error:?}");
+        };
+        assert_eq!(report.errors[0].field, "/admission_policy");
+        assert_eq!(report.errors[0].code, "launch_policy_denied");
+        assert_eq!(resolver.call_count(), 0);
+        assert_eq!(store.mutation_evidence_counts().await.idempotency, 0);
+        assert!(store.management_audit_facts().await.is_empty());
+      }
+    }
+  });
+}
+
+#[test]
+fn admission_store_refuses_a_substituted_resolved_access_profile_without_writing() {
+  run_ready(async {
+    use octacity_server_store::FactoryAdmissionStore;
+    let project = ProjectId::generate();
+    let id = FactoryConfigurationId::generate();
+    let repository_id = RepositoryId::generate();
+    let store = seeded_store(
+      project,
+      id,
+      repository(
+        project,
+        repository_id,
+        Some(SourceReference::new("refs/heads/main").unwrap()),
+      ),
+    );
+    let handlers = FactoryAdmissionHandlers::new(store.clone(), Arc::new(RecordingResolver::default()));
+    let context = context();
+    let command = command(project, id, repository_id);
+    let probe = crate::factory::admission::factory_admission::admission_probe(&context, &command).unwrap();
+    let mut prepared = handlers
+      .prepare_fresh_intent(
+        &context,
+        command,
+        probe,
+        None,
+        octacity_server_factory::FactoryAdmissionOrigin::Manual,
+      )
+      .await
+      .unwrap();
+    let configuration = octacity_server_store::FactoryConfigurationStore::factory_configuration_version(
+      store.as_ref(),
+      id,
+      FactoryConfigurationVersion::INITIAL,
+    )
+    .await
+    .unwrap();
+    prepared.flow = prepared
+      .flow
+      .with_access_profile(
+        &configuration.configuration,
+        launch_policies(project, true, true).access_profile,
+      )
+      .unwrap();
+    assert!(
+      store
+        .admit_factory_work(crate::management_security::audited_mutation(&context, prepared).unwrap())
+        .await
+        .is_err()
+    );
+    assert_eq!(store.mutation_evidence_counts().await.idempotency, 0);
+  });
+}
+
+#[test]
+fn admission_retains_the_exact_access_profile_without_resolving_defaults_on_replay() {
+  run_ready(async {
+    let project = ProjectId::generate();
+    let id = FactoryConfigurationId::generate();
+    let repository_id = RepositoryId::generate();
+    let store = unmapped_store(project, id, repository(project, repository_id, None));
+    let policies = launch_policies(project, true, true);
+    let expected = serde_json::to_value(&policies.access_profile).unwrap();
+    store
+      .seed_factory_configuration_policies(configuration(project, id).reference(), policies)
+      .unwrap();
+    let handlers = FactoryAdmissionHandlers::new(store.clone(), Arc::new(RecordingResolver::default()));
+    let mut request = command(project, id, repository_id);
+    request.source =
+      RepositorySourceSelection::ExactRevision(octacity_server_domain::ImmutableRevision::new("pinned").unwrap())
+        .into();
+    let accepted = admit(&handlers, request.clone()).await.unwrap();
+    let snapshot = store.factory_run_snapshot(accepted.factory_run_id).await.unwrap();
+    assert_eq!(
+      serde_json::to_value(&snapshot.admitted_flow).unwrap()["access_profile"],
+      expected
+    );
+    let replayed = admit(&handlers, request).await.unwrap();
+    assert_eq!(replayed.factory_run_id, accepted.factory_run_id);
+    assert_eq!(
+      store
+        .factory_run_snapshot(accepted.factory_run_id)
+        .await
+        .unwrap()
+        .admitted_flow,
+      snapshot.admitted_flow
+    );
+  });
+}
+
+#[test]
+fn exact_scoped_replay_returns_one_run_before_resolving_mutable_state_again() {
+  run_ready(async {
+    let project_id = ProjectId::generate();
+    let configuration_id = FactoryConfigurationId::generate();
+    let repository_id = RepositoryId::generate();
+    let main = SourceReference::new("refs/heads/main").unwrap();
+    let store = seeded_store(
+      project_id,
+      configuration_id,
+      repository(project_id, repository_id, Some(main)),
+    );
+    let resolver = Arc::new(RecordingResolver::default());
+    let handlers = FactoryAdmissionHandlers::new(store.clone(), resolver.clone());
+    let request = command(project_id, configuration_id, repository_id);
+
+    let applied = admit(&handlers, request.clone()).await.unwrap();
+    let replayed = admit(
+      &handlers,
+      AdmitManualFactoryWorkCommand {
+        idempotency_key: IdempotencyKey::new("another-transport-attempt").unwrap(),
+        ..request.clone()
+      },
+    )
+    .await
+    .unwrap();
+    assert_eq!(applied.disposition, MutationDisposition::Applied);
+    assert_eq!(replayed.disposition, MutationDisposition::Replayed);
+    assert_eq!(applied.factory_run_id, replayed.factory_run_id);
+    assert_eq!(applied.work_envelope_id, replayed.work_envelope_id);
+    assert_eq!(resolver.call_count(), 1);
+    assert_eq!(store.mutation_evidence_counts().await.idempotency, 1);
+    assert_eq!(store.management_audit_facts().await.len(), 1);
+    let snapshot = store.factory_run_snapshot(applied.factory_run_id).await.unwrap();
+    assert_eq!(snapshot.work.id(), applied.work_envelope_id);
+    assert_eq!(snapshot.run.id(), applied.factory_run_id);
+    assert_eq!(snapshot.budgets.len(), 1);
+    let audit = store
+      .list_factory_run_diagnostics(
+        octacity_server_store::ListFactoryRunDiagnostics::new(
+          snapshot.run.id(),
+          octacity_server_store::FactoryRunDiagnosticKind::Audit,
+          None,
+          100,
+        )
+        .unwrap(),
+      )
+      .await
+      .unwrap();
+    assert_eq!(audit.items.len(), 1);
+    assert_eq!(snapshot.outbox.len(), 1);
+
+    let mismatch = admit(
+      &handlers,
+      AdmitManualFactoryWorkCommand {
+        source: RepositorySourceSelection::ExactRevision(
+          octacity_server_domain::ImmutableRevision::new("different-revision").unwrap(),
+        )
+        .into(),
+        ..request
+      },
+    )
+    .await
+    .unwrap_err();
+    assert_eq!(mismatch.classification(), ApplicationFailure::Conflict);
+    assert_eq!(resolver.call_count(), 1);
+  });
+}
+
+struct UnavailableResolver;
+
+#[async_trait]
+impl RevisionResolver for UnavailableResolver {
+  async fn resolve(
+    &self,
+    _request: RevisionResolutionRequest,
+  ) -> Result<octacity_server_domain::ImmutableRevision, RevisionResolutionError> {
+    Err(RevisionResolutionError::Unavailable)
+  }
+}
+
+#[test]
+fn source_launch_denial_is_a_blocked_policy_outcome_without_dependency_retry() {
+  let error = crate::ApplicationError::FactoryValidation(Box::new(crate::FactoryValidationDiagnostics::single_issue(
+    "/admission_policy",
+    "launch_policy_denied",
+    None,
+  )));
+  let schedule = crate::source_scan_schedule(
+    None,
+    time(10),
+    std::time::Duration::from_secs(1),
+    crate::DurableRetryPolicy::new(8, 1000, 10000).unwrap(),
+    Some(&error),
+  )
+  .unwrap();
+  assert_eq!(serde_json::to_value(&schedule).unwrap()["failure"], "policy_denied");
+  assert!(
+    schedule.exhausted,
+    "changing the pinned policy requires an explicit definition replacement"
+  );
+  assert_eq!(schedule.attempts, 0, "a launch rule is not a failed provider attempt");
+}
+
+#[test]
+fn source_waits_for_legacy_policy_backfill_without_exhausting_its_scan() {
+  let missing = crate::factory::authoring::factory_configuration_policies::prerequisite(
+    octacity_server_store::FactoryPolicyPrerequisite::AccessUnmapped,
+  );
+  let interval = std::time::Duration::from_secs(1);
+  let retry = crate::DurableRetryPolicy::new(2, 1000, 10000).unwrap();
+  let mut previous = None;
+  for at in [10, 1010, 2010] {
+    let schedule = crate::source_scan_schedule(previous.as_ref(), time(at), interval, retry, Some(&missing)).unwrap();
+    assert_eq!(
+      schedule.failure,
+      Some(octacity_server_store::WorkSourceFailure::Unavailable)
+    );
+    assert_eq!(schedule.retry_at, time(at + 1000));
+    assert_eq!(schedule.attempts, 0);
+    assert!(!schedule.exhausted);
+    previous = Some(schedule);
+  }
+  let recovered = crate::source_scan_schedule(previous.as_ref(), time(3010), interval, retry, None).unwrap();
+  assert!(recovered.failure.is_none());
+}
+
+#[test]
+fn missing_vcs_resolution_is_a_configuration_failure_without_transient_retries() {
+  run_ready(async {
+    let project = ProjectId::generate();
+    let configuration = FactoryConfigurationId::generate();
+    let repository_id = RepositoryId::generate();
+    let store = seeded_store(
+      project,
+      configuration,
+      repository(project, repository_id, Some("refs/heads/main".parse().unwrap())),
+    );
+    let error = admit(
+      &FactoryAdmissionHandlers::new(store, Arc::new(UnavailableResolver)),
+      command(project, configuration, repository_id),
+    )
+    .await
+    .unwrap_err();
+    assert!(matches!(
+      error,
+      crate::ApplicationError::SourceDependency {
+        class: octacity_server_store::WorkSourceFailure::InvalidConfiguration,
+        ..
+      }
+    ));
+    let schedule = crate::source_scan_schedule(
+      None,
+      time(10),
+      std::time::Duration::from_secs(1),
+      crate::DurableRetryPolicy::new(8, 1000, 10000).unwrap(),
+      Some(&error),
+    )
+    .unwrap();
+    assert!(schedule.exhausted);
+    assert_eq!(schedule.attempts, 1);
+  });
+}
+
+#[test]
+fn replay_after_handler_restart_retains_the_original_intent_when_vcs_is_unavailable() {
+  run_ready(async {
+    let project = ProjectId::generate();
+    let configuration = FactoryConfigurationId::generate();
+    let repository_id = RepositoryId::generate();
+    let store = seeded_store(
+      project,
+      configuration,
+      repository(project, repository_id, Some("refs/heads/main".parse().unwrap())),
+    );
+    let request = command(project, configuration, repository_id);
+    let handlers = FactoryAdmissionHandlers::new(store.clone(), Arc::new(RecordingResolver::default()));
+    let applied = admit(&handlers, request.clone()).await.unwrap();
+    let before = store.factory_run_snapshot(applied.factory_run_id).await.unwrap();
+    let restarted = FactoryAdmissionHandlers::new(store.clone(), Arc::new(UnavailableResolver));
+
+    let replayed = admit(
+      &restarted,
+      AdmitManualFactoryWorkCommand {
+        idempotency_key: IdempotencyKey::new("replay-after-restart").unwrap(),
+        admitted_at: time(100),
+        ..request.clone()
+      },
+    )
+    .await
+    .unwrap();
+    assert_eq!(
+      replayed,
+      crate::FactoryAdmissionOutcome {
+        disposition: MutationDisposition::Replayed,
+        ..applied.clone()
+      }
+    );
+
+    let fresh = admit(
+      &restarted,
+      AdmitManualFactoryWorkCommand {
+        external_identity: ExternalWorkIdentity::new("manual/fresh-work").unwrap(),
+        idempotency_key: IdempotencyKey::new("fresh-after-restart").unwrap(),
+        ..request
+      },
+    )
+    .await
+    .unwrap_err();
+    assert_eq!(fresh.classification(), ApplicationFailure::Unavailable);
+    assert_eq!(
+      store.factory_run_snapshot(applied.factory_run_id).await.unwrap(),
+      before
+    );
+    assert_eq!(store.mutation_evidence_counts().await.idempotency, 1);
+    assert_eq!(store.management_audit_facts().await.len(), 1);
+  });
+}
+
+#[test]
+fn replacing_admitted_artifacts_conflicts_without_resolving_or_replacing_the_original_work() {
+  run_ready(async {
+    let project = ProjectId::generate();
+    let configuration = FactoryConfigurationId::generate();
+    let repository_id = RepositoryId::generate();
+    let store = seeded_store(
+      project,
+      configuration,
+      repository(project, repository_id, Some("refs/heads/main".parse().unwrap())),
+    );
+    let resolver = Arc::new(RecordingResolver::default());
+    let handlers = FactoryAdmissionHandlers::new(store.clone(), resolver.clone());
+    let request = command(project, configuration, repository_id);
+    let applied = admit(&handlers, request.clone()).await.unwrap();
+    let before = store.factory_run_snapshot(applied.factory_run_id).await.unwrap();
+    let task = request.artifacts.task().clone();
+    let acceptance = request.artifacts.acceptance().clone();
+
+    for artifacts in [
+      WorkArtifacts::new(artifact(92), acceptance.clone(), vec![]).unwrap(),
+      WorkArtifacts::new(task.clone(), artifact(93), vec![]).unwrap(),
+      WorkArtifacts::new(task, acceptance, vec![artifact(94)]).unwrap(),
+    ] {
+      for idempotency_key in [
+        request.idempotency_key.clone(),
+        IdempotencyKey::new("changed-input-transport-attempt").unwrap(),
+      ] {
+        let error = admit(
+          &handlers,
+          AdmitManualFactoryWorkCommand {
+            artifacts: artifacts.clone(),
+            idempotency_key,
+            ..request.clone()
+          },
+        )
+        .await
+        .unwrap_err();
+        assert_eq!(error.classification(), ApplicationFailure::Conflict);
+      }
+    }
+    assert_eq!(resolver.call_count(), 1);
+    assert_eq!(
+      store.factory_run_snapshot(applied.factory_run_id).await.unwrap(),
+      before
+    );
+    assert_eq!(store.mutation_evidence_counts().await.idempotency, 1);
+    assert_eq!(store.management_audit_facts().await.len(), 1);
+    assert_eq!(
+      admit(&handlers, request).await.unwrap().disposition,
+      MutationDisposition::Replayed
+    );
+  });
+}
+
+#[test]
+fn configuration_active_run_limit_is_enforced_atomically_without_blocking_replay() {
+  run_ready(async {
+    let project_id = ProjectId::generate();
+    let configuration_id = FactoryConfigurationId::generate();
+    let repository_id = RepositoryId::generate();
+    let main = SourceReference::new("refs/heads/main").unwrap();
+    let store = seeded_store(
+      project_id,
+      configuration_id,
+      repository(project_id, repository_id, Some(main)),
+    );
+    let resolver = Arc::new(RecordingResolver::default());
+    let handlers = FactoryAdmissionHandlers::new(store.clone(), resolver);
+    let first = command(project_id, configuration_id, repository_id);
+    let second = AdmitManualFactoryWorkCommand {
+      external_identity: ExternalWorkIdentity::new("manual/work-43").unwrap(),
+      idempotency_key: IdempotencyKey::new("admit-work-43").unwrap(),
+      ..first.clone()
+    };
+    let third = AdmitManualFactoryWorkCommand {
+      external_identity: ExternalWorkIdentity::new("manual/work-44").unwrap(),
+      idempotency_key: IdempotencyKey::new("admit-work-44").unwrap(),
+      ..first.clone()
+    };
+
+    assert_eq!(
+      admit(&handlers, first.clone()).await.unwrap().disposition,
+      MutationDisposition::Applied
+    );
+    assert_eq!(
+      admit(&handlers, second).await.unwrap().disposition,
+      MutationDisposition::Applied
+    );
+    assert_eq!(
+      admit(&handlers, third).await.unwrap_err().classification(),
+      ApplicationFailure::Conflict
+    );
+    assert_eq!(
+      admit(&handlers, first).await.unwrap().disposition,
+      MutationDisposition::Replayed
+    );
+    assert_eq!(store.mutation_evidence_counts().await.idempotency, 2);
+  });
+}
+
+#[test]
+fn ambiguous_or_disallowed_repository_references_never_admit_work() {
+  run_ready(async {
+    let project_id = ProjectId::generate();
+    let configuration_id = FactoryConfigurationId::generate();
+    let repository_id = RepositoryId::generate();
+    let store = seeded_store(
+      project_id,
+      configuration_id,
+      repository(project_id, repository_id, None),
+    );
+    let resolver = Arc::new(RecordingResolver::default());
+    let handlers = FactoryAdmissionHandlers::new(store.clone(), resolver.clone());
+
+    let missing_default = admit(&handlers, command(project_id, configuration_id, repository_id))
+      .await
+      .unwrap_err();
+    assert_eq!(missing_default.classification(), ApplicationFailure::Invalid);
+    let disallowed = admit(
+      &handlers,
+      AdmitManualFactoryWorkCommand {
+        external_identity: ExternalWorkIdentity::new("manual/work-43").unwrap(),
+        idempotency_key: IdempotencyKey::new("admit-work-43").unwrap(),
+        source: RepositorySourceSelection::Reference(SourceReference::new("refs/heads/other").unwrap()).into(),
+        ..command(project_id, configuration_id, repository_id)
+      },
+    )
+    .await
+    .unwrap_err();
+    assert_eq!(disallowed.classification(), ApplicationFailure::Invalid);
+    assert_eq!(resolver.call_count(), 0);
+    assert_eq!(store.mutation_evidence_counts().await.idempotency, 0);
+  });
+}
+
+#[derive(Clone, Copy)]
+struct HideProjects;
+
+#[async_trait]
+impl ManagementAuthorizationPolicy for HideProjects {
+  async fn authorize(
+    &self,
+    _context: &ManagementRequestContext,
+    _action: ManagementAction,
+    _resource: &ManagementResource,
+  ) -> Result<ManagementAuthorizationGrant, ManagementAuthorizationDenial> {
+    Err(ManagementAuthorizationDenial::forbidden())
+  }
+}
+
+#[test]
+fn hidden_project_is_rejected_before_context_or_revision_access() {
+  run_ready(async {
+    let project_id = ProjectId::generate();
+    let configuration_id = FactoryConfigurationId::generate();
+    let repository_id = RepositoryId::generate();
+    let main = SourceReference::new("refs/heads/main").unwrap();
+    let store = seeded_store(
+      project_id,
+      configuration_id,
+      repository(project_id, repository_id, Some(main)),
+    );
+    let resolver = Arc::new(RecordingResolver::default());
+    let handler = AuthorizedCommandHandler::new(
+      Arc::new(HideProjects),
+      Arc::new(FactoryAdmissionHandlers::new(store.clone(), resolver.clone())),
+    );
+    let denied = handler
+      .handle_command(&context(), command(project_id, configuration_id, repository_id))
+      .await
+      .unwrap_err();
+    assert!(matches!(denied, ManagementHandlerError::Forbidden(_)));
+    assert_eq!(resolver.call_count(), 0);
+    assert_eq!(store.mutation_evidence_counts().await.idempotency, 0);
+  });
+}
+
+#[test]
+fn work_metadata_is_bounded_and_rejects_sensitive_keys_before_admission() {
+  assert!(FactoryMetadata::try_new([("token".to_owned(), "must-not-persist".to_owned())]).is_err());
+  assert!(
+    FactoryMetadata::try_new(
+      (0..=octacity_server_factory::MAX_FACTORY_METADATA_ENTRIES)
+        .map(|index| (format!("key-{index}"), "value".to_owned())),
+    )
+    .is_err()
+  );
+}
+
+pub(crate) fn run_ready<T>(future: impl Future<Output = T>) -> T {
+  let waker = Waker::noop();
+  let mut context = Context::from_waker(waker);
+  let mut future = std::pin::pin!(future);
+  match future.as_mut().poll(&mut context) {
+    Poll::Ready(value) => value,
+    Poll::Pending => panic!("deterministic in-memory future unexpectedly yielded"),
+  }
+}
+
+struct HideSelectedDependency(ManagementResource);
+#[async_trait]
+impl ManagementAuthorizationPolicy for HideSelectedDependency {
+  async fn authorize(
+    &self,
+    _context: &ManagementRequestContext,
+    _action: ManagementAction,
+    resource: &ManagementResource,
+  ) -> Result<ManagementAuthorizationGrant, ManagementAuthorizationDenial> {
+    if resource == &self.0 {
+      Err(ManagementAuthorizationDenial::forbidden())
+    } else {
+      Ok(ManagementAuthorizationGrant::new(ManagementVisibility::all()))
+    }
+  }
+}
+#[test]
+fn hidden_selected_dependencies_are_rejected_before_factory_revision_resolution() {
+  run_ready(async {
+    let project = ProjectId::generate();
+    let configuration = FactoryConfigurationId::generate();
+    let repository_id = RepositoryId::generate();
+    let store = seeded_store(
+      project,
+      configuration,
+      repository(
+        project,
+        repository_id,
+        Some(SourceReference::new("refs/heads/main").unwrap()),
+      ),
+    );
+    let resolver = Arc::new(RecordingResolver::default());
+    let mut request = command(project, configuration, repository_id);
+    request.artifacts = WorkArtifacts::new(
+      request.artifacts.task().clone(),
+      request.artifacts.acceptance().clone(),
+      vec![artifact(92)],
+    )
+    .unwrap();
+    use crate::ManagementResourceKind::{Artifact, FactoryConfiguration, Repository};
+    for (kind, identity) in [
+      (FactoryConfiguration, configuration.to_string()),
+      (Repository, repository_id.to_string()),
+      (Artifact, request.artifacts.task().artifact_id().to_string()),
+      (Artifact, request.artifacts.acceptance().artifact_id().to_string()),
+      (
+        Artifact,
+        request.artifacts.specifications()[0].artifact_id().to_string(),
+      ),
+    ] {
+      let resource =
+        ManagementResource::instance(kind, crate::ManagementResourceIdentity::new(identity).unwrap()).unwrap();
+      let policy = Arc::new(HideSelectedDependency(resource));
+      let handler = AuthorizedCommandHandler::new(
+        policy.clone(),
+        Arc::new(FactoryAdmissionHandlers::with_policy(
+          store.clone(),
+          resolver.clone(),
+          policy,
+        )),
+      );
+      let error = handler.handle_command(&context(), request.clone()).await.unwrap_err();
+      assert_eq!(
+        error.application().unwrap().classification(),
+        ApplicationFailure::Invalid
+      );
+    }
+    assert_eq!(resolver.call_count(), 0);
+    assert_eq!(store.mutation_evidence_counts().await.idempotency, 0);
+    assert!(store.management_audit_facts().await.is_empty());
+  });
+}
+
+#[test]
+fn factory_run_detail_cannot_disclose_a_run_owned_by_a_hidden_project() {
+  run_ready(async {
+    let project = ProjectId::generate();
+    let configuration = FactoryConfigurationId::generate();
+    let repository_id = RepositoryId::generate();
+    let store = seeded_store(
+      project,
+      configuration,
+      repository(project, repository_id, Some("refs/heads/main".parse().unwrap())),
+    );
+    let admission = admit(
+      &FactoryAdmissionHandlers::new(store.clone(), Arc::new(RecordingResolver::default())),
+      command(project, configuration, repository_id),
+    )
+    .await
+    .unwrap();
+    let policy = Arc::new(HideFactoryOwnerProject);
+    let queries = crate::AuthorizedQueryHandler::new(
+      policy.clone(),
+      Arc::new(crate::FactoryDiscoveryHandlers::with_policy(
+        store.clone(),
+        policy.clone(),
+      )),
+    );
+    let error = queries
+      .handle_query(
+        &context(),
+        crate::GetFactoryRunQuery {
+          run_id: admission.factory_run_id,
+        },
+      )
+      .await
+      .unwrap_err();
+    assert_eq!(
+      error.application().unwrap().classification(),
+      ApplicationFailure::NotFound
+    );
+    for collection in crate::FactoryDiagnosticCollection::ALL {
+      let error = queries
+        .handle_query(
+          &context(),
+          crate::ListFactoryDiagnosticsQuery::try_new(admission.factory_run_id, collection, None, 1).unwrap(),
+        )
+        .await
+        .unwrap_err();
+      assert_eq!(
+        error.application().unwrap().classification(),
+        ApplicationFailure::NotFound,
+        "{collection:?}"
+      );
+    }
+    let before = store.mutation_evidence_counts().await;
+    let operators = crate::AuthorizedCommandHandler::new(
+      policy.clone(),
+      Arc::new(crate::FactoryOperatorHandlers::new(store.clone(), policy)),
+    );
+    let error = operators
+      .handle_command(
+        &context(),
+        crate::CancelFactoryRunCommand {
+          run_id: admission.factory_run_id,
+          expected_version: octacity_server_factory::FactoryRunVersion::INITIAL,
+          idempotency_key: IdempotencyKey::new("hidden-run-cancellation").unwrap(),
+          requested_at: time(12),
+        },
+      )
+      .await
+      .unwrap_err();
+    assert_eq!(
+      error.application().unwrap().classification(),
+      ApplicationFailure::NotFound
+    );
+    let node = octacity_server_factory::NodeAttemptId::generate();
+    let error = operators
+      .handle_command(
+        &context(),
+        crate::RetryFactoryNodeCommand {
+          run_id: admission.factory_run_id,
+          node_attempt_id: node,
+          expected_version: octacity_server_factory::FactoryRunVersion::INITIAL,
+          idempotency_key: IdempotencyKey::new("hidden-node-retry").unwrap(),
+          requested_at: time(12),
+        },
+      )
+      .await
+      .unwrap_err();
+    assert_eq!(
+      error.application().unwrap().classification(),
+      ApplicationFailure::NotFound
+    );
+    let error = operators
+      .handle_command(
+        &context(),
+        crate::SubmitFactoryNodeResponseCommand {
+          run_id: admission.factory_run_id,
+          node_attempt_id: node,
+          outcome: "unseen".parse().unwrap(),
+          value: serde_json::json!(true),
+          expected_version: octacity_server_factory::FactoryRunVersion::INITIAL,
+          idempotency_key: IdempotencyKey::new("hidden-node-response").unwrap(),
+          requested_at: time(12),
+        },
+      )
+      .await
+      .unwrap_err();
+    assert_eq!(
+      error.application().unwrap().classification(),
+      ApplicationFailure::NotFound
+    );
+    let error = operators
+      .handle_command(
+        &context(),
+        crate::ConfirmFactoryNodeOperationCommand {
+          run_id: admission.factory_run_id,
+          node_attempt_id: node,
+          operation: octacity_server_factory::FlowHumanOperation::Promotion,
+          disposition: octacity_server_factory::FlowHumanDisposition::Confirm,
+          reason: octacity_server_factory::FactoryText::new("unseen request").unwrap(),
+          expected_version: octacity_server_factory::FactoryRunVersion::INITIAL,
+          idempotency_key: IdempotencyKey::new("hidden-node-request").unwrap(),
+          requested_at: time(12),
+        },
+      )
+      .await
+      .unwrap_err();
+    assert_eq!(
+      error.application().unwrap().classification(),
+      ApplicationFailure::NotFound
+    );
+    assert_eq!(
+      store.mutation_evidence_counts().await,
+      before,
+      "hidden parent must reject before mutation or audit"
+    );
+  });
+}
+
+struct HideFactoryOwnerProject;
+#[async_trait]
+impl ManagementAuthorizationPolicy for HideFactoryOwnerProject {
+  async fn authorize(
+    &self,
+    _context: &ManagementRequestContext,
+    _action: ManagementAction,
+    resource: &ManagementResource,
+  ) -> Result<ManagementAuthorizationGrant, ManagementAuthorizationDenial> {
+    Ok(ManagementAuthorizationGrant::new(
+      if resource.kind() == crate::ManagementResourceKind::Project {
+        ManagementVisibility::none()
+      } else {
+        ManagementVisibility::all()
+      },
+    ))
+  }
+}
+
+#[test]
+fn factory_cycle_collection_preserves_exact_causal_identity_and_rejects_foreign_cursors() {
+  run_ready(async {
+    let project = ProjectId::generate();
+    let configuration = FactoryConfigurationId::generate();
+    let repository_id = RepositoryId::generate();
+    let store = seeded_store(
+      project,
+      configuration,
+      repository(project, repository_id, Some("refs/heads/main".parse().unwrap())),
+    );
+    let admission = admit(
+      &FactoryAdmissionHandlers::new(store.clone(), Arc::new(RecordingResolver::default())),
+      command(project, configuration, repository_id),
+    )
+    .await
+    .unwrap();
+    let snapshot = store.factory_run_snapshot(admission.factory_run_id).await.unwrap();
+    let queries = crate::AuthorizedQueryHandler::new(
+      Arc::new(crate::TrustedNetworkManagementPolicy),
+      Arc::new(crate::FactoryDiscoveryHandlers::new(store)),
+    );
+    let collection = crate::FactoryDiagnosticCollection::WorkflowCycles;
+    let query = crate::ListFactoryDiagnosticsQuery::try_new(admission.factory_run_id, collection, None, 1).unwrap();
+    let page = queries.handle_query(&context(), query).await.unwrap();
+    let nodes = queries
+      .handle_query(
+        &context(),
+        crate::ListFactoryDiagnosticsQuery::try_new(
+          admission.factory_run_id,
+          crate::FactoryDiagnosticCollection::NodeAttempts,
+          None,
+          1,
+        )
+        .unwrap(),
+      )
+      .await
+      .unwrap();
+    assert!(nodes.items.is_empty());
+    let budgets = queries
+      .handle_query(
+        &context(),
+        crate::ListFactoryDiagnosticsQuery::try_new(
+          admission.factory_run_id,
+          crate::FactoryDiagnosticCollection::Budgets,
+          None,
+          1,
+        )
+        .unwrap(),
+      )
+      .await
+      .unwrap();
+    assert_eq!(
+      serde_json::to_value(&budgets.items[0]).unwrap()["record"]["usage"]["attempts"],
+      0
+    );
+    let builds = queries
+      .handle_query(
+        &context(),
+        crate::ListFactoryDiagnosticsQuery::try_new(
+          admission.factory_run_id,
+          crate::FactoryDiagnosticCollection::Builds,
+          None,
+          1,
+        )
+        .unwrap(),
+      )
+      .await
+      .unwrap();
+    assert!(builds.items.is_empty());
+    let audit = queries
+      .handle_query(
+        &context(),
+        crate::ListFactoryDiagnosticsQuery::try_new(
+          admission.factory_run_id,
+          crate::FactoryDiagnosticCollection::Audit,
+          None,
+          1,
+        )
+        .unwrap(),
+      )
+      .await
+      .unwrap();
+    assert_eq!(audit.items.len(), 1);
+    assert!(
+      serde_json::to_value(&audit.items[0]).unwrap()["record"]
+        .get("actor_identity")
+        .is_none()
+    );
+    let json = serde_json::to_value(page).unwrap();
+    assert_eq!(json["items"][0]["kind"], "workflow_cycle");
+    assert_eq!(
+      json["items"][0]["record"]["id"],
+      snapshot.admitted_flow.initial_cycle().id().to_string()
+    );
+    assert_eq!(json["items"][0]["record"]["number"], 1);
+    assert!(json["items"][0]["record"].get("input").is_none());
+    assert!(
+      crate::ListFactoryDiagnosticsQuery::try_new(
+        admission.factory_run_id,
+        collection,
+        Some(&format!(
+          "1:{}:flow-runs:{}",
+          admission.factory_run_id,
+          snapshot.admitted_flow.root_run().id()
+        )),
+        1
+      )
+      .is_err()
+    );
+  });
+}
+
+/// Configures a local action through the same immutable Flow constructors as publication.
+pub(crate) fn with_issue_status_action(
+  flow: &octacity_server_factory::FactoryFlowConfiguration,
+  selection: octacity_server_store::IssuePipelineStatusSelection,
+) -> octacity_server_factory::FactoryFlowConfiguration {
+  use octacity_server_factory::{FlowActionBinding, FlowDefinition, FlowDefinitionInput, PinnedFlowDefinitionClosure};
+  let original = flow.closure.definition(flow.closure.root()).unwrap();
+  let mut nodes = original.nodes().to_vec();
+  nodes[0] = nodes[0]
+    .clone()
+    .with_action(
+      FlowActionBinding::new(
+        nodes[0].action().unwrap().plugin().clone(),
+        key("transition_issue"),
+        serde_json::to_value(selection).unwrap(),
+      )
+      .unwrap(),
+    )
+    .unwrap();
+  let root = FlowDefinition::new(FlowDefinitionInput {
+    id: original.reference().id(),
+    version: original.reference().version(),
+    input_schema: original.input_schema().cloned(),
+    entry: original.entry().clone(),
+    nodes,
+    transitions: original.transitions().to_vec(),
+    terminals: original.terminals().to_vec(),
+    context_projections: original.context_projections().to_vec(),
+    data_projections: original.data_projections().to_vec(),
+    execution: original.execution().clone(),
+  })
+  .unwrap();
+  octacity_server_factory::FactoryFlowConfiguration::new(
+    PinnedFlowDefinitionClosure::new(root.reference(), vec![root]).unwrap(),
+    flow.limits.clone(),
+    flow.data_schemas.clone(),
+    flow.pools.clone(),
+  )
+  .unwrap()
+}
+
+#[test]
+fn repository_free_admission_replays_exact_inputs_without_vcs_or_repository() {
+  run_ready(async {
+    let project = ProjectId::generate();
+    let configuration_id = FactoryConfigurationId::generate();
+    let store = Arc::new(InMemoryFactoryConfigurationStore::new());
+    store.seed_project(project).unwrap();
+    seed_permitted_configuration(
+      &store,
+      PublishedFactoryConfiguration {
+        configuration: configuration(project, configuration_id),
+        published_at: time(1),
+      },
+    )
+    .unwrap();
+    let resolver = Arc::new(RecordingResolver::default());
+    let handler = FactoryAdmissionHandlers::new(store.clone(), resolver.clone());
+    let mut wire = serde_json::to_value(command(project, configuration_id, RepositoryId::generate())).unwrap();
+    wire.as_object_mut().unwrap().remove("repository_id");
+    wire.as_object_mut().unwrap().remove("repository_version");
+    wire["source"] = serde_json::json!({"kind":"project_input_v1"});
+    let request = serde_json::from_value::<AdmitManualFactoryWorkCommand>(wire);
+    assert!(
+      request.is_ok(),
+      "explicit Project/input admission must not require VCS fields: {request:?}"
+    );
+    let request = request.unwrap();
+    let first = admit(&handler, request.clone()).await.unwrap();
+    let replay = admit(&handler, request.clone()).await.unwrap();
+    assert_eq!(first.disposition, MutationDisposition::Applied);
+    assert_eq!(replay.disposition, MutationDisposition::Replayed);
+    assert_eq!(first.factory_run_id, replay.factory_run_id);
+    assert_eq!(first.work_envelope_id, replay.work_envelope_id);
+    assert_eq!(first.base_revision, None);
+    assert_eq!(resolver.call_count(), 0);
+    let snapshot = store.factory_run_snapshot(first.factory_run_id).await.unwrap();
+    let subject = serde_json::to_value(snapshot.work.subject()).unwrap();
+    assert_eq!(subject["kind"], "project_input_v1");
+    assert!(subject.get("repository_id").is_none());
+    assert!(subject.get("base_revision").is_none());
+    let changed = AdmitManualFactoryWorkCommand {
+      artifacts: WorkArtifacts::new(artifact(92), artifact(93), vec![]).unwrap(),
+      ..request
+    };
+    assert_eq!(
+      admit(&handler, changed).await.unwrap_err().classification(),
+      ApplicationFailure::Conflict
+    );
+    assert_eq!(resolver.call_count(), 0);
+    assert_eq!(store.management_audit_facts().await.len(), 1);
+  });
+}
+
+#[test]
+fn legacy_repository_admission_retains_its_v1_replay_fingerprint() {
+  let mut request = command(
+    "11111111-1111-4111-8111-111111111111".parse().unwrap(),
+    "22222222-2222-4222-8222-222222222222".parse().unwrap(),
+    "33333333-3333-4333-8333-333333333333".parse().unwrap(),
+  );
+  request.external_identity = ExternalWorkIdentity::new("operator.issue-14").unwrap();
+  request.artifacts = WorkArtifacts::new(
+    FactoryArtifactReference::new("44444444-4444-4444-8444-444444444444".parse().unwrap(), digest(0xab), 1).unwrap(),
+    FactoryArtifactReference::new("55555555-5555-4555-8555-555555555555".parse().unwrap(), digest(0xcd), 1).unwrap(),
+    vec![],
+  )
+  .unwrap();
+  request.classification = WorkClassification::new(
+    WorkPriority::new(1).unwrap(),
+    RiskClass::Low,
+    FactoryMetadata::default(),
+  );
+  // Fixed v1 length-framed preimage: repository fields, source expression and
+  // exact Artifact identities; transport key/time are deliberately excluded.
+  assert_eq!(
+    octacity_server_store::factory_admission_intent_digest(&request, "octacity.factory.manual-admission.v1")
+      .to_string(),
+    "c547eb9ca23bb2ccff275b10b377b798b17cbbe769db56da939cfc6c2d9c15e7"
+  );
+  assert_eq!(
+    serde_json::to_value(request.source).unwrap(),
+    serde_json::json!({"kind":"default_reference"})
+  );
+}
+
+#[path = "factory_code_admission_tests.rs"]
+mod code_admission;

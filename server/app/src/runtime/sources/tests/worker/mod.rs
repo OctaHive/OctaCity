@@ -56,7 +56,7 @@ async fn absent_inputs_and_precancelled_workers_never_require_a_provider_or_cred
 }
 
 use std::collections::BTreeSet;
-include!("../../../../../../application/src/factory_admission_test_fixture.rs");
+include!("../../../../../../application/src/factory/admission/tests/factory_admission_test_fixture.rs");
 #[path = "work_reporter_journey_tests.rs"]
 mod reporting;
 

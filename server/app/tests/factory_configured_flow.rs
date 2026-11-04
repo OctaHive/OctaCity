@@ -8,10 +8,10 @@ use octacity_server_store::*;
 use octacity_server_store_postgres::PostgresStore;
 use std::sync::{Arc, Mutex};
 #[allow(dead_code)]
-#[path = "../../application/src/factory_node_test_support.rs"]
+#[path = "../../application/src/factory/execution/tests/factory_node_test_support.rs"]
 mod factory_node_test_support;
 #[allow(dead_code)]
-#[path = "../../application/src/factory_flow_tests.rs"]
+#[path = "../../application/src/factory/execution/tests/factory_flow_tests.rs"]
 mod flow_contract;
 use flow_contract as factory_flow_tests;
 #[path = "support/decision_signal.rs"]
@@ -21,9 +21,9 @@ mod factory_observability;
 #[path = "support/factory_signal_lease_guard.rs"]
 mod factory_signal_lease_guard;
 #[allow(dead_code)]
-#[path = "../../application/src/factory_flow_control_tests.rs"]
+#[path = "../../application/src/factory/execution/tests/factory_flow_control_tests.rs"]
 mod human_contract;
-#[path = "../../application/src/issue_test_support.rs"]
+#[path = "../../application/src/issues/issue_test_support.rs"]
 mod issue_test_support;
 #[allow(dead_code)]
 #[path = "../../infrastructure/octacity-server-store-postgres/tests/support/mod.rs"]
@@ -31,7 +31,7 @@ mod postgres_support;
 #[path = "support/protected_input_transfer.rs"]
 mod protected_input_transfer;
 #[allow(dead_code)]
-#[path = "../../application/src/factory_requirements_tests.rs"]
+#[path = "../../application/src/factory/execution/tests/factory_requirements_tests.rs"]
 mod requirements_contract;
 
 fn key(value: &str) -> FactoryKey {
@@ -433,10 +433,10 @@ async fn human_response_supports_the_admitted_payload_bound_in_postgres() {
 }
 
 #[allow(dead_code)]
-#[path = "../../application/src/factory_node_cancellation_tests.rs"]
+#[path = "../../application/src/factory/execution/tests/factory_node_cancellation_tests.rs"]
 mod cancellation_contract;
 #[allow(dead_code)]
-#[path = "../../application/src/factory_node_failure_tests.rs"]
+#[path = "../../application/src/factory/execution/tests/factory_node_failure_tests.rs"]
 mod failure_contract;
 use failure_contract as factory_node_failure_tests;
 #[tokio::test]
@@ -687,7 +687,7 @@ async fn admit_runs(pool: &sqlx::PgPool, admissions: &[PublishedFactoryAdmission
 }
 
 #[allow(dead_code)]
-#[path = "../../application/src/factory_job_test_support.rs"]
+#[path = "../../application/src/factory/execution/tests/factory_job_test_support.rs"]
 mod factory_job_test_support;
 
 struct NeverDispatch;

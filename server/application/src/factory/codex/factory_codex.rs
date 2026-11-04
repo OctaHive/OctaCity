@@ -1,0 +1,921 @@
+#[path = "factory_codex_flow.rs"]
+mod flow;
+#[path = "factory_codex_role.rs"]
+mod role;
+pub use flow::{
+  FactoryCodexFlowCompilationOptions, FactoryCodexReviewCompilation, codex_flow_task_digest, compile_codex_flow_task,
+  compile_codex_flow_task_with_context, compile_codex_flow_task_with_options,
+};
+pub(crate) use flow::{RolePrompt, render_context, render_role_prompt};
+
+use std::collections::{BTreeMap, BTreeSet};
+
+use octacity_protocol::{FACTORY_OUTPUT_ROOT, FACTORY_SCRATCH_ROOT, FACTORY_SOURCE_ROOT, PROTECTED_INPUT_ROOT};
+use octacity_server_factory::{
+  EvaluationPlan, FactoryCredentialConsumer, FactoryCredentialProfiles, FactoryDigest, FactoryKey, FactoryTaskEnvelope,
+  FactoryTaskMode, FactoryTaskResultSchema, ImmutableReference, MAX_ASSESSMENT_EVIDENCE_REFERENCES,
+  MAX_ASSESSMENT_FINDINGS, MountMode,
+};
+use serde::Serialize;
+use serde_json::{Value, json};
+use thiserror::Error;
+
+use crate::factory::codex::factory_codex_contract::{
+  CODEX_EXECUTABLE_IDENTITY, CODEX_PLUGIN_IDENTITY, CODEX_RUN_PROVENANCE, CODEX_RUN_RESULT, CODEX_RUN_TRACE,
+  MAX_CODEX_PROMPT_BYTES,
+};
+
+const CODEX_AUTH_VARIABLE: &str = "OCTACITY_CODEX_AUTH";
+// Octa overlays ambient variables onto declarations. Keep the child HOME mapping
+// in the compiler-owned namespace rather than shadowing the ambient HOME key.
+const CODEX_HOME_VARIABLE: &str = "OCTACITY_FACTORY_CODEX_HOME";
+const CODEX_AUTH_ENVIRONMENT: &str = "OPENAI_API_KEY";
+const FACTORY_TASK_ENVELOPE_VARIABLE: &str = "OCTACITY_FACTORY_TASK_ENVELOPE_PATH";
+const FACTORY_PROMPT_VARIABLE: &str = "OCTACITY_FACTORY_PROMPT_PATH";
+const FACTORY_RESULT_SCHEMA_VARIABLE: &str = "OCTACITY_FACTORY_RESULT_SCHEMA_PATH";
+const OCTAFILE_DESTINATION: &str = "/octacity/protected/Octafile.yml";
+const PROMPT_DESTINATION: &str = "/octacity/protected/prompt.md";
+const RESULT_SCHEMA_DESTINATION: &str = "/octacity/protected/result-schema.json";
+const TASK_ENVELOPE_DESTINATION: &str = "/octacity/protected/task-envelope.json";
+const CODEX_RUN_RECORDS: &str = ".octa/factory/codex-runs";
+
+/// Explicit installed authentication contract; credentials stay Agent-local.
+/// Native login delegates session handling to the pinned Codex client in its
+/// private per-Job home. Existing installations retain API-key compilation.
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq, serde::Deserialize, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum FactoryCodexAuthentication {
+  /// Existing named private variable mapped to the client's API-key environment.
+  #[default]
+  ApiKey,
+  /// Only the selected native login file, installed below private Job scratch.
+  NativeLoginFile,
+}
+impl FactoryCodexAuthentication {
+  /// Bind a different authentication contract into the immutable task identity.
+  /// Default installations keep their previously published digests unchanged.
+  pub fn task_digest(self, base: FactoryDigest) -> FactoryDigest {
+    match self {
+      Self::ApiKey => base,
+      Self::NativeLoginFile => {
+        FactoryDigest::sha256("octacity.factory.codex.native-login-file.v1", &[&base.as_bytes()])
+      }
+    }
+  }
+}
+
+/// Stable kind of server-owned input emitted by the trusted Codex compiler.
+#[derive(Clone, Copy, Debug, Eq, Ord, PartialEq, PartialOrd)]
+pub enum FactoryProtectedDocumentKind {
+  /// Complete canonical AI-agent execution package.
+  RoleExecutionPackage,
+  /// Minimal generated Octafile executed by the generic runner.
+  Octafile,
+  /// Exact rendered prompt also retained independently from the Octafile.
+  Prompt,
+  /// Strict JSON Schema embedded in the task and retained independently.
+  ResultSchema,
+  /// Canonical immutable Factory Task Envelope.
+  TaskEnvelope,
+}
+
+/// One immutable server-owned document ready for Artifact publication.
+#[derive(Clone, Eq, PartialEq)]
+pub struct FactoryProtectedDocument {
+  kind: FactoryProtectedDocumentKind,
+  logical_name: &'static str,
+  destination: &'static str,
+  media_type: &'static str,
+  bytes: Vec<u8>,
+  content_digest: FactoryDigest,
+}
+
+impl std::fmt::Debug for FactoryProtectedDocument {
+  fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+    formatter
+      .debug_struct("FactoryProtectedDocument")
+      .field("kind", &self.kind)
+      .field("size_bytes", &self.bytes.len())
+      .field("content_digest", &self.content_digest)
+      .finish_non_exhaustive()
+  }
+}
+
+impl FactoryProtectedDocument {
+  /// Returns the compiler-owned document kind.
+  #[must_use]
+  pub const fn kind(&self) -> FactoryProtectedDocumentKind {
+    self.kind
+  }
+
+  /// Returns the stable logical name used when publishing the bytes.
+  #[must_use]
+  pub const fn logical_name(&self) -> &'static str {
+    self.logical_name
+  }
+
+  /// Returns the fixed reserved destination used by JobSpec v3.
+  #[must_use]
+  pub const fn destination(&self) -> &'static str {
+    self.destination
+  }
+
+  /// Returns the exact media type committed with the Artifact.
+  #[must_use]
+  pub const fn media_type(&self) -> &'static str {
+    self.media_type
+  }
+
+  /// Borrows the exact generated bytes.
+  #[must_use]
+  pub fn bytes(&self) -> &[u8] {
+    &self.bytes
+  }
+
+  /// Returns the raw SHA-256 identity of the generated bytes.
+  #[must_use]
+  pub const fn content_digest(&self) -> FactoryDigest {
+    self.content_digest
+  }
+}
+
+/// Complete deterministic output for one selected Codex-backed Factory stage.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct CompiledCodexTask {
+  task_name: &'static str,
+  run_records: &'static str,
+  workspace_root: Option<&'static str>,
+  public_environment: BTreeMap<String, String>,
+  secret_environment: BTreeMap<String, String>,
+  credential_profile: FactoryKey,
+  mcp_credentials: BTreeMap<String, String>,
+  task_envelope_digest: FactoryDigest,
+  tool_control: Option<octacity_protocol::FactoryToolControlV3>,
+  documents: Vec<FactoryProtectedDocument>,
+  additional_inputs: Vec<octacity_protocol::ProtectedInputV3>,
+}
+
+impl CompiledCodexTask {
+  /// Binds a published manifest to these exact generated documents. Publication
+  /// itself is performed by the fenced input publisher, before Build acceptance.
+  pub fn managed_program(
+    &self,
+    manifest: octacity_protocol::ProtectedInputManifestV3,
+  ) -> Result<crate::FactoryManagedJobProgram, CodexCompilationError> {
+    manifest.validate().map_err(|_| CodexCompilationError::NodeBindings)?;
+    if manifest.inputs.len() != self.documents.len() + self.additional_inputs.len()
+      || self
+        .additional_inputs
+        .iter()
+        .any(|input| !manifest.inputs.contains(input))
+    {
+      return Err(CodexCompilationError::NodeBindings);
+    }
+    for document in &self.documents {
+      if !manifest.inputs.iter().any(|input| {
+        input.destination == document.destination
+          && input.sha256 == document.content_digest.to_string()
+          && input.size_bytes == document.bytes.len() as u64
+          && input.media_type == document.media_type
+      }) {
+        return Err(CodexCompilationError::NodeBindings);
+      }
+    }
+    let octafile_input = manifest
+      .inputs
+      .iter()
+      .find(|input| input.destination == OCTAFILE_DESTINATION)
+      .ok_or(CodexCompilationError::NodeBindings)?
+      .artifact_id
+      .clone();
+    Ok(crate::FactoryManagedJobProgram {
+      execution: octacity_protocol::ManagedOctaExecutionV3 {
+        workspace_root: self.workspace_root.map(str::to_owned),
+        octafile_input,
+        tasks: vec![self.task_name.to_owned()],
+        credential_profile: Some(self.credential_profile.as_str().to_owned()),
+        mcp_credentials: self.mcp_credentials.clone(),
+        tool_control: self.tool_control.clone(),
+      },
+      protected_inputs: manifest,
+      required_enforcement: octacity_protocol::FactoryEnforcementCapabilityV3::ALL.to_vec(),
+    })
+  }
+
+  /// Returns the only task name present in the generated Octafile.
+  #[must_use]
+  pub const fn task_name(&self) -> &'static str {
+    self.task_name
+  }
+
+  /// Returns the fixed workspace-relative run-record root.
+  #[must_use]
+  pub const fn run_records(&self) -> &'static str {
+    self.run_records
+  }
+
+  /// Returns explicit non-secret child-environment mappings.
+  #[must_use]
+  pub const fn public_environment(&self) -> &BTreeMap<String, String> {
+    &self.public_environment
+  }
+
+  /// Returns explicit logical secret mappings without materialized values.
+  #[must_use]
+  pub const fn secret_environment(&self) -> &BTreeMap<String, String> {
+    &self.secret_environment
+  }
+
+  /// Returns the only logical credential profile selected for this stage.
+  #[must_use]
+  pub const fn credential_profile(&self) -> &FactoryKey {
+    &self.credential_profile
+  }
+
+  /// Returns the exact canonical Task Envelope digest bound to this output.
+  #[must_use]
+  pub const fn task_envelope_digest(&self) -> FactoryDigest {
+    self.task_envelope_digest
+  }
+
+  /// Exact selected retained dependencies; publication does not copy their existing objects.
+  pub fn additional_inputs(&self) -> &[octacity_protocol::ProtectedInputV3] {
+    &self.additional_inputs
+  }
+
+  /// Returns generated documents in stable kind order.
+  #[must_use]
+  pub fn documents(&self) -> &[FactoryProtectedDocument] {
+    &self.documents
+  }
+
+  /// Finds one emitted document by its stable kind.
+  /// Panics if that kind was not emitted; static tasks omit RoleExecutionPackage.
+  #[must_use]
+  pub fn document(&self, kind: FactoryProtectedDocumentKind) -> &FactoryProtectedDocument {
+    self
+      .documents
+      .iter()
+      .find(|document| document.kind == kind)
+      .expect("the compiler always emits every protected document kind")
+  }
+}
+
+/// Stable secret-safe failures from the trusted Codex compilation boundary.
+#[derive(Clone, Copy, Debug, Eq, Error, PartialEq)]
+pub enum CodexCompilationError {
+  /// Task authority differs from the persisted common node operation.
+  #[error("Factory Codex task does not match its node Build intent")]
+  NodeBindings,
+  /// The rendered prompt is empty, oversized, or contains a NUL byte.
+  #[error("Factory Codex prompt is invalid")]
+  InvalidPrompt,
+  /// The supplied prompt does not match the digest frozen in the envelope.
+  #[error("Factory Codex prompt does not match the Task Envelope")]
+  PromptDigestMismatch,
+  /// The envelope does not select the supported released Codex toolchain.
+  #[error("Factory Task Envelope selects an unsupported Codex toolchain")]
+  UnsupportedToolchain,
+  /// The permission set does not contain the exact selected immutable identity.
+  #[error("Factory Task Envelope lacks required Codex authority")]
+  MissingAuthority,
+  /// Model authentication is absent or ambiguous at the compilation boundary.
+  #[error("Factory Task Envelope must select exactly one model credential profile")]
+  CredentialProfile,
+  /// Evaluation authority permits mutation of the exact candidate source.
+  #[error("Factory task workspace mounts do not match the selected mode")]
+  CandidateWriteAccess,
+  /// Evaluation authority includes an undeclared tool capability.
+  #[error("Factory evaluation cannot invoke arbitrary evidence tools")]
+  EvaluationToolAccess,
+  /// A declared output cannot be represented by the pinned Codex task safely.
+  #[error("Factory Task Envelope contains an unsupported Codex deliverable")]
+  UnsupportedDeliverable,
+  /// Canonical protected input bytes could not be encoded.
+  #[error("Factory Codex protected input serialization failed")]
+  Serialization,
+  /// Reviewer plan, call node, and Task Envelope do not describe one invocation.
+  #[error("Factory Codex reviewer bindings are inconsistent")]
+  ReviewerBindings,
+}
+
+/// Computes the raw SHA-256 digest frozen into a Task Envelope for a rendered prompt.
+#[must_use]
+pub fn codex_prompt_digest(prompt: &str) -> FactoryDigest {
+  content_digest(prompt.as_bytes())
+}
+
+/// Computes the BLAKE3 prompt identity emitted by the pinned Codex plugin.
+#[must_use]
+pub fn codex_prompt_provenance_digest(prompt: &str) -> FactoryDigest {
+  FactoryDigest::content_blake3(prompt.as_bytes())
+}
+
+/// Compiles a capability invocation only after verifying its persisted common node authority.
+/// Installed Factory compilers use this boundary before publishing protected inputs.
+/// The lower-level document compiler grants no Build admission or graph authority.
+/// Tool-using tasks require explicit installed response limits; tool-free tasks
+/// use `None` and retain their existing documents.
+pub fn compile_codex_node_task(
+  intent: &octacity_server_factory::FlowBuildIntent,
+  envelope: &FactoryTaskEnvelope,
+  rendered_prompt: &str,
+  profiles: &FactoryCredentialProfiles,
+  response_limits: Option<octacity_protocol::FactoryToolResponseLimitsV3>,
+) -> Result<CompiledCodexTask, CodexCompilationError> {
+  envelope
+    .verify_build_intent(intent)
+    .map_err(|_| CodexCompilationError::NodeBindings)?;
+  compile_codex_task(envelope, rendered_prompt, profiles, response_limits)
+}
+
+/// Compiles one immutable Task Envelope into exactly one protected Codex task.
+///
+/// Repository input is deliberately absent from this API. Task names, paths,
+/// environment mappings, run records, result schemas, and deliverable
+/// projections are all selected here from typed immutable values.
+/// Reader output authority comes from explicit `response_limits`, independently
+/// of Artifact and report publication quotas. Missing limits refuse tools.
+pub fn compile_codex_task(
+  envelope: &FactoryTaskEnvelope,
+  rendered_prompt: &str,
+  credential_profiles: &FactoryCredentialProfiles,
+  response_limits: Option<octacity_protocol::FactoryToolResponseLimitsV3>,
+) -> Result<CompiledCodexTask, CodexCompilationError> {
+  validate_prompt(envelope, rendered_prompt)?;
+  let credential_profile = validate_authority(envelope, credential_profiles)?;
+  let response_limits =
+    validated_tool_response_limits(envelope.permissions().tools().next().is_some(), response_limits)?;
+
+  let task_name = task_name(envelope.mode());
+  let result_schema = result_schema(envelope.result_schema())?;
+  let public_environment = public_environment();
+  let secret_environment = secret_environment();
+  let task_envelope = envelope
+    .canonical_bytes()
+    .map_err(|_| CodexCompilationError::Serialization)?;
+  let task_envelope_digest = envelope.digest().map_err(|_| CodexCompilationError::Serialization)?;
+  let result_schema_bytes = serde_json::to_vec(&result_schema).map_err(|_| CodexCompilationError::Serialization)?;
+  let octafile = Octafile {
+    version: 1,
+    vars: octafile_variables(&public_environment),
+    tasks: BTreeMap::from([(
+      task_name,
+      OctaTask {
+        dir: None,
+        cmds: vec![OctaCommand {
+          id: CODEX_PLUGIN_IDENTITY,
+          codex: CodexTask {
+            reasoning_effort: None,
+            cli_arguments: vec![],
+            mcp_servers: None,
+            prompt: rendered_prompt,
+            model: envelope.model().identity().as_str(),
+            result_schema: &result_schema,
+            run_records: CODEX_RUN_RECORDS,
+            environment: CodexEnvironment {
+              public: &public_environment,
+              secret: &secret_environment,
+            },
+            source_revision: envelope
+              .subject()
+              .execution_revision()
+              .map(|revision| revision.as_str()),
+            deliverables: codex_deliverables(envelope),
+            tool_authorization: envelope
+              .permissions()
+              .tools()
+              .next()
+              .map(|_| ToolAuthorization::Required),
+          },
+        }],
+      },
+    )]),
+  };
+  // JSON is a strict YAML 1.2 subset, so the runner's Octafile loader accepts
+  // these canonical bytes without another serialization dependency here.
+  let octafile = serde_json::to_vec(&octafile).map_err(|_| CodexCompilationError::Serialization)?;
+
+  compiled_documents(CompiledDocumentsInput {
+    task_name,
+    run_records: CODEX_RUN_RECORDS,
+    workspace_root: None,
+    public_environment,
+    secret_environment,
+    credential_profile,
+    task_envelope_digest,
+    tool_control: response_limits.map(|response_limits| octacity_protocol::FactoryToolControlV3 {
+      plugin: CODEX_PLUGIN_IDENTITY.to_owned(),
+      capability: crate::factory::codex::factory_codex_contract::CODEX_TOOL_AUTHORIZATION_CAPABILITY.to_owned(),
+      mode: octacity_protocol::FactoryToolControlModeV3::Deterministic,
+      response_limits,
+    }),
+    octafile,
+    prompt: rendered_prompt,
+    result_schema_bytes,
+    task_envelope,
+  })
+}
+
+pub(crate) fn codex_response_policy_digest(
+  base: FactoryDigest,
+  limits: Option<octacity_protocol::FactoryToolResponseLimitsV3>,
+) -> FactoryDigest {
+  limits.map_or(base, |limits| {
+    let bytes = serde_json::to_vec(&(base, limits)).expect("typed Codex response policy has a canonical JSON encoding");
+    FactoryDigest::sha256("octacity.factory.codex.tool-response-policy.v1", &[&bytes])
+  })
+}
+
+fn validated_tool_response_limits(
+  has_tools: bool,
+  limits: Option<octacity_protocol::FactoryToolResponseLimitsV3>,
+) -> Result<Option<octacity_protocol::FactoryToolResponseLimitsV3>, CodexCompilationError> {
+  if !has_tools {
+    return Ok(None);
+  }
+  let limits = limits.ok_or(CodexCompilationError::MissingAuthority)?;
+  limits.validate().map_err(|_| CodexCompilationError::MissingAuthority)?;
+  Ok(Some(limits))
+}
+
+struct CompiledDocumentsInput<'a> {
+  task_name: &'static str,
+  run_records: &'static str,
+  workspace_root: Option<&'static str>,
+  public_environment: BTreeMap<String, String>,
+  secret_environment: BTreeMap<String, String>,
+  credential_profile: FactoryKey,
+  task_envelope_digest: FactoryDigest,
+  tool_control: Option<octacity_protocol::FactoryToolControlV3>,
+  octafile: Vec<u8>,
+  prompt: &'a str,
+  result_schema_bytes: Vec<u8>,
+  task_envelope: Vec<u8>,
+}
+fn compiled_documents(input: CompiledDocumentsInput<'_>) -> Result<CompiledCodexTask, CodexCompilationError> {
+  let CompiledDocumentsInput {
+    task_name,
+    run_records,
+    workspace_root,
+    public_environment,
+    secret_environment,
+    credential_profile,
+    task_envelope_digest,
+    tool_control,
+    octafile,
+    prompt,
+    result_schema_bytes,
+    task_envelope,
+  } = input;
+  Ok(CompiledCodexTask {
+    task_name,
+    run_records,
+    workspace_root,
+    public_environment,
+    secret_environment,
+    credential_profile,
+    mcp_credentials: BTreeMap::new(),
+    task_envelope_digest,
+    tool_control,
+    additional_inputs: Vec::new(),
+    documents: vec![
+      document(
+        FactoryProtectedDocumentKind::Octafile,
+        "factory-codex-octafile",
+        OCTAFILE_DESTINATION,
+        "application/yaml",
+        octafile,
+      ),
+      document(
+        FactoryProtectedDocumentKind::Prompt,
+        "factory-codex-prompt",
+        PROMPT_DESTINATION,
+        "text/markdown",
+        prompt.as_bytes().to_vec(),
+      ),
+      document(
+        FactoryProtectedDocumentKind::ResultSchema,
+        "factory-codex-result-schema",
+        RESULT_SCHEMA_DESTINATION,
+        "application/schema+json",
+        result_schema_bytes,
+      ),
+      document(
+        FactoryProtectedDocumentKind::TaskEnvelope,
+        "factory-task-envelope",
+        TASK_ENVELOPE_DESTINATION,
+        "application/json",
+        task_envelope,
+      ),
+    ],
+  })
+}
+
+/// Compiles one plan-selected independent reviewer through the ordinary Codex task path.
+///
+/// This preflight binds the immutable review plan and evaluator branch to one
+/// common Node Attempt through its immutable evaluation Task Envelope before protected
+/// inputs or the evaluation credential can reach an ordinary Factory Build.
+pub fn compile_codex_reviewer(
+  plan: &EvaluationPlan,
+  evaluator: &ImmutableReference,
+  envelope: &FactoryTaskEnvelope,
+  rendered_prompt: &str,
+  credential_profiles: &FactoryCredentialProfiles,
+) -> Result<CompiledCodexTask, CodexCompilationError> {
+  let subject_matches = envelope.subject().candidate() == Some(plan.subject());
+  if envelope.mode() != FactoryTaskMode::Evaluate
+    || !plan.has_evaluator(evaluator)
+    || !subject_matches
+    || !envelope.budget().fits_within(plan.budget())
+  {
+    return Err(CodexCompilationError::ReviewerBindings);
+  }
+  compile_codex_task(envelope, rendered_prompt, credential_profiles, None)
+}
+
+fn validate_prompt(envelope: &FactoryTaskEnvelope, prompt: &str) -> Result<(), CodexCompilationError> {
+  if prompt.trim().is_empty() || prompt.len() > MAX_CODEX_PROMPT_BYTES || prompt.contains('\0') {
+    return Err(CodexCompilationError::InvalidPrompt);
+  }
+  if codex_prompt_digest(prompt) != envelope.digests().prompt
+    || codex_prompt_provenance_digest(prompt) != envelope.digests().prompt_provenance
+  {
+    return Err(CodexCompilationError::PromptDigestMismatch);
+  }
+  Ok(())
+}
+
+fn validate_authority(
+  envelope: &FactoryTaskEnvelope,
+  credential_profiles: &FactoryCredentialProfiles,
+) -> Result<FactoryKey, CodexCompilationError> {
+  if envelope.plugin().identity().as_str() != CODEX_PLUGIN_IDENTITY
+    || envelope.executable().identity().as_str() != CODEX_EXECUTABLE_IDENTITY
+  {
+    return Err(CodexCompilationError::UnsupportedToolchain);
+  }
+  let permissions = envelope.permissions();
+  if !contains_reference(permissions.plugins(), envelope.plugin())
+    || !contains_reference(permissions.executables(), envelope.executable())
+    || !permissions
+      .commands()
+      .any(|command| command.executable() == envelope.executable())
+  {
+    return Err(CodexCompilationError::MissingAuthority);
+  }
+  let mut secret_profiles = permissions.secret_profiles();
+  let selected_profile = secret_profiles.next().ok_or(CodexCompilationError::CredentialProfile)?;
+  if secret_profiles.next().is_some() {
+    return Err(CodexCompilationError::CredentialProfile);
+  }
+  let consumer = match envelope.mode() {
+    FactoryTaskMode::Implement | FactoryTaskMode::Rework => FactoryCredentialConsumer::CodingNode,
+    FactoryTaskMode::Observe | FactoryTaskMode::Evaluate => FactoryCredentialConsumer::ReadOnlyReview,
+  };
+  credential_profiles
+    .authorize(envelope.node_attempt_id(), consumer, selected_profile)
+    .map_err(|_| CodexCompilationError::CredentialProfile)?;
+  validate_source_mount(envelope)?;
+  if envelope.mode() == FactoryTaskMode::Evaluate && envelope.permissions().tools().next().is_some() {
+    return Err(CodexCompilationError::EvaluationToolAccess);
+  }
+
+  let deliverables = envelope.deliverables();
+  if deliverables.iter().any(|deliverable| !deliverable.required())
+    || deliverables
+      .iter()
+      .any(|deliverable| !portable_codex_path(deliverable.path().as_str()))
+  {
+    return Err(CodexCompilationError::UnsupportedDeliverable);
+  }
+  let names = deliverables
+    .iter()
+    .map(|deliverable| deliverable.kind().as_str())
+    .collect::<BTreeSet<_>>();
+  if names.len() != deliverables.len()
+    || names
+      .iter()
+      .any(|name| [CODEX_RUN_TRACE, CODEX_RUN_PROVENANCE, CODEX_RUN_RESULT].contains(name))
+  {
+    return Err(CodexCompilationError::UnsupportedDeliverable);
+  }
+
+  let outputs = permissions.outputs();
+  let allowed = outputs.kinds().map(|kind| kind.as_str()).collect::<BTreeSet<_>>();
+  let required = names
+    .into_iter()
+    .chain([CODEX_RUN_TRACE, CODEX_RUN_PROVENANCE, CODEX_RUN_RESULT])
+    .collect::<BTreeSet<_>>();
+  let artifact_count = u32::try_from(deliverables.len())
+    .map_err(|_| CodexCompilationError::UnsupportedDeliverable)?
+    .saturating_add(2);
+  if required != allowed
+    || outputs.max_artifact_count() < artifact_count
+    || outputs.max_report_count() < 1
+    || outputs.max_artifact_bytes() == 0
+    || outputs.max_report_bytes() == 0
+  {
+    return Err(CodexCompilationError::MissingAuthority);
+  }
+  Ok(selected_profile.clone())
+}
+
+fn validate_source_mount(envelope: &FactoryTaskEnvelope) -> Result<(), CodexCompilationError> {
+  let required_mode = match envelope.mode() {
+    FactoryTaskMode::Observe | FactoryTaskMode::Evaluate => MountMode::ReadOnly,
+    FactoryTaskMode::Implement | FactoryTaskMode::Rework => MountMode::ReadWrite,
+  };
+  let mounts = envelope.permissions().mounts().collect::<Vec<_>>();
+  let source_mounts = mounts
+    .iter()
+    .filter(|mount| mount.root().as_str() == FACTORY_SOURCE_ROOT)
+    .collect::<Vec<_>>();
+  let valid_evaluation_workspace = envelope.mode() != FactoryTaskMode::Evaluate
+    || (mounts.len() == 3 + source_mounts.len()
+      && [
+        (PROTECTED_INPUT_ROOT, MountMode::ReadOnly),
+        (FACTORY_OUTPUT_ROOT, MountMode::ReadWrite),
+        (FACTORY_SCRATCH_ROOT, MountMode::ReadWrite),
+      ]
+      .into_iter()
+      .all(|(root, mode)| {
+        mounts
+          .iter()
+          .filter(|mount| mount.root().as_str() == root && mount.mode() == mode)
+          .count()
+          == 1
+      }));
+  let valid_source = if envelope.mode() == FactoryTaskMode::Evaluate {
+    source_mounts.len() <= 1 && source_mounts.iter().all(|mount| mount.mode() == required_mode)
+  } else {
+    source_mounts.len() == 1 && source_mounts[0].mode() == required_mode
+  };
+  if !valid_source || !valid_evaluation_workspace {
+    return Err(CodexCompilationError::CandidateWriteAccess);
+  }
+  Ok(())
+}
+
+fn contains_reference<'a>(
+  references: impl Iterator<Item = &'a ImmutableReference>,
+  selected: &ImmutableReference,
+) -> bool {
+  references.into_iter().any(|reference| reference == selected)
+}
+
+fn portable_codex_path(path: &str) -> bool {
+  !path.contains(':')
+    && path.split('/').all(|component| {
+      !component.ends_with(['.', ' '])
+        && !component
+          .chars()
+          .any(|character| matches!(character, '<' | '>' | '"' | '|' | '?' | '*'))
+        && !is_windows_device_name(component)
+    })
+}
+
+fn is_windows_device_name(component: &str) -> bool {
+  let stem = component.split('.').next().unwrap_or_default();
+  stem.eq_ignore_ascii_case("con")
+    || stem.eq_ignore_ascii_case("prn")
+    || stem.eq_ignore_ascii_case("aux")
+    || stem.eq_ignore_ascii_case("nul")
+    || numbered_windows_device(stem, "com")
+    || numbered_windows_device(stem, "lpt")
+}
+
+fn numbered_windows_device(value: &str, prefix: &str) -> bool {
+  let value = value.as_bytes();
+  let prefix = prefix.as_bytes();
+  value.len() == prefix.len() + 1
+    && value[..prefix.len()].eq_ignore_ascii_case(prefix)
+    && matches!(value[prefix.len()], b'1'..=b'9')
+}
+
+fn task_name(mode: FactoryTaskMode) -> &'static str {
+  match mode {
+    FactoryTaskMode::Implement => "implement",
+    FactoryTaskMode::Evaluate => "evaluate",
+    FactoryTaskMode::Rework => "rework",
+    FactoryTaskMode::Observe => "observe",
+  }
+}
+
+fn public_environment() -> BTreeMap<String, String> {
+  BTreeMap::from([
+    (FACTORY_PROMPT_VARIABLE.to_owned(), FACTORY_PROMPT_VARIABLE.to_owned()),
+    (
+      FACTORY_RESULT_SCHEMA_VARIABLE.to_owned(),
+      FACTORY_RESULT_SCHEMA_VARIABLE.to_owned(),
+    ),
+    (
+      FACTORY_TASK_ENVELOPE_VARIABLE.to_owned(),
+      FACTORY_TASK_ENVELOPE_VARIABLE.to_owned(),
+    ),
+  ])
+}
+
+fn secret_environment() -> BTreeMap<String, String> {
+  BTreeMap::from([(CODEX_AUTH_ENVIRONMENT.to_owned(), CODEX_AUTH_VARIABLE.to_owned())])
+}
+
+fn octafile_variables(public: &BTreeMap<String, String>) -> BTreeMap<String, Value> {
+  let mut variables = public
+    .values()
+    .map(|variable| {
+      let value = match variable.as_str() {
+        FACTORY_PROMPT_VARIABLE => PROMPT_DESTINATION,
+        FACTORY_RESULT_SCHEMA_VARIABLE => RESULT_SCHEMA_DESTINATION,
+        FACTORY_TASK_ENVELOPE_VARIABLE => TASK_ENVELOPE_DESTINATION,
+        "HOME" | CODEX_HOME_VARIABLE => FACTORY_SCRATCH_ROOT,
+        _ => unreachable!("public mappings are compiler-owned"),
+      };
+      (variable.clone(), Value::String(value.to_owned()))
+    })
+    .collect::<BTreeMap<_, _>>();
+  variables.insert(
+    CODEX_AUTH_VARIABLE.to_owned(),
+    json!({ "required": true, "secret": true }),
+  );
+  variables
+}
+
+fn codex_deliverables(envelope: &FactoryTaskEnvelope) -> Vec<CodexDeliverable<'_>> {
+  envelope
+    .deliverables()
+    .iter()
+    .map(|deliverable| CodexDeliverable {
+      kind: "artifact",
+      name: deliverable.kind().as_str(),
+      path: deliverable.path().as_str(),
+    })
+    .collect()
+}
+
+fn result_schema(schema: FactoryTaskResultSchema) -> Result<Value, CodexCompilationError> {
+  let bounded_text = || json!({ "type": "string", "minLength": 1, "maxLength": 2048 });
+  let bounded_texts = || json!({ "type": "array", "maxItems": 128, "items": bounded_text() });
+  let evidence_keys = || {
+    json!({
+      "type": "array",
+      "minItems": 1,
+      "maxItems": MAX_ASSESSMENT_EVIDENCE_REFERENCES,
+      "uniqueItems": true,
+      "items": {
+        "type": "string",
+        "minLength": 1,
+        "maxLength": 128,
+        "pattern": "^[a-z0-9][a-z0-9._-]*$"
+      }
+    })
+  };
+  Ok(match schema {
+    FactoryTaskResultSchema::FlowV1 => return Err(CodexCompilationError::NodeBindings),
+    FactoryTaskResultSchema::ImplementationV1 => json!({
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "outcome": { "type": "string", "enum": ["succeeded", "failed", "indeterminate"] },
+        "summary": bounded_text(),
+        "decisions": bounded_texts(),
+        "assumptions": bounded_texts(),
+        "unresolved_items": bounded_texts(),
+        "changed_components": {
+          "type": "array",
+          "maxItems": MAX_ASSESSMENT_FINDINGS,
+          "items": { "type": "string", "minLength": 1, "maxLength": 1024 }
+        },
+        "validation_observations": bounded_texts()
+      },
+      "required": [
+        "outcome", "summary", "decisions", "assumptions", "unresolved_items",
+        "changed_components", "validation_observations"
+      ]
+    }),
+    FactoryTaskResultSchema::EvaluationV1 => json!({
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "outcome": { "type": "string", "enum": ["satisfied", "violated", "indeterminate"] },
+        "summary": bounded_text(),
+        "findings": {
+          "type": "array",
+          "maxItems": 128,
+          "items": {
+            "oneOf": [
+              {
+                "type": "object",
+                "additionalProperties": false,
+                "properties": {
+                  "kind": { "const": "violation" },
+                  "severity": { "type": "string", "enum": ["low", "medium", "high", "critical"] },
+                  "summary": bounded_text(),
+                  "evidence": evidence_keys(),
+                  "remediation": bounded_text()
+                },
+                "required": ["kind", "severity", "summary", "evidence", "remediation"]
+              },
+              {
+                "type": "object",
+                "additionalProperties": false,
+                "properties": {
+                  "kind": { "const": "evidence_gap" },
+                  "summary": bounded_text(),
+                  "evidence": evidence_keys(),
+                  "remediation": bounded_text()
+                },
+                "required": ["kind", "summary", "evidence", "remediation"]
+              }
+            ]
+          }
+        }
+      },
+      "required": ["outcome", "summary", "findings"]
+    }),
+  })
+}
+
+fn document(
+  kind: FactoryProtectedDocumentKind,
+  logical_name: &'static str,
+  destination: &'static str,
+  media_type: &'static str,
+  bytes: Vec<u8>,
+) -> FactoryProtectedDocument {
+  let content_digest = content_digest(&bytes);
+  FactoryProtectedDocument {
+    kind,
+    logical_name,
+    destination,
+    media_type,
+    bytes,
+    content_digest,
+  }
+}
+
+fn content_digest(bytes: &[u8]) -> FactoryDigest {
+  FactoryDigest::content_sha256(bytes)
+}
+
+#[derive(Serialize)]
+struct Octafile<'a> {
+  version: u8,
+  vars: BTreeMap<String, Value>,
+  tasks: BTreeMap<&'static str, OctaTask<'a>>,
+}
+
+#[derive(Serialize)]
+struct OctaTask<'a> {
+  #[serde(skip_serializing_if = "Option::is_none")]
+  dir: Option<&'static str>,
+  cmds: Vec<OctaCommand<'a>>,
+}
+
+#[derive(Serialize)]
+struct OctaCommand<'a> {
+  id: &'static str,
+  codex: CodexTask<'a>,
+}
+
+#[derive(Serialize)]
+struct CodexTask<'a> {
+  #[serde(skip_serializing_if = "Option::is_none")]
+  reasoning_effort: Option<&'a str>,
+  #[serde(skip_serializing_if = "Vec::is_empty")]
+  cli_arguments: Vec<String>,
+  #[serde(skip_serializing_if = "Option::is_none")]
+  mcp_servers: Option<BTreeMap<String, crate::FactoryCodexMcpServer>>,
+  prompt: &'a str,
+  model: &'a str,
+  result_schema: &'a Value,
+  run_records: &'static str,
+  environment: CodexEnvironment<'a>,
+  #[serde(skip_serializing_if = "Option::is_none")]
+  source_revision: Option<&'a str>,
+  deliverables: Vec<CodexDeliverable<'a>>,
+  #[serde(skip_serializing_if = "Option::is_none")]
+  tool_authorization: Option<ToolAuthorization>,
+}
+
+#[derive(Serialize)]
+struct CodexEnvironment<'a> {
+  public: &'a BTreeMap<String, String>,
+  secret: &'a BTreeMap<String, String>,
+}
+
+#[derive(Serialize)]
+struct CodexDeliverable<'a> {
+  kind: &'static str,
+  name: &'a str,
+  path: &'a str,
+}
+
+#[derive(Clone, Copy, Serialize)]
+#[serde(rename_all = "snake_case")]
+enum ToolAuthorization {
+  Required,
+}

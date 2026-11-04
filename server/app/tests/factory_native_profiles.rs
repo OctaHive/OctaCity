@@ -6,7 +6,7 @@ use octacity_server_store_postgres::{PostgresAuthoritativeStore, PostgresStore};
 use std::time::Duration;
 
 #[allow(dead_code)]
-#[path = "../../application/src/factory_job_test_support.rs"]
+#[path = "../../application/src/factory/execution/tests/factory_job_test_support.rs"]
 mod managed;
 #[path = "support/factory_native_profiles.rs"]
 mod native_fixture;

@@ -56,7 +56,7 @@ default for that accepted action. GitHub-managed labels must already exist.
 
 ## Validation and qualification limits
 
-[Public application contract tests](../../../server/application/src/factory_source_example_tests.rs)
+[Public application contract tests](../../../server/application/src/factory/sources/tests/factory_source_example_tests.rs)
 read the actual files, bind their unchanged predicates/effects to isolated installed
 connection/Project/Repository fixtures, validate disabled drafts, explicitly activate
 only those in-memory test inputs, publish them and read the retained definitions.

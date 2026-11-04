@@ -54,7 +54,7 @@ use serde_json::json;
 #[path = "support/factory_candidate_context.rs"]
 mod factory_candidate_context_test_support;
 #[allow(dead_code)] // Shared fixture consumers opt into their relevant public contracts.
-#[path = "../src/factory_node_test_support.rs"]
+#[path = "../src/factory/execution/tests/factory_node_test_support.rs"]
 mod factory_node_test_support;
 
 #[path = "support/management_command.rs"]
@@ -810,7 +810,7 @@ mod factory {
 }
 use factory_node_test_support::fixtures as flow_fixture;
 #[allow(dead_code)]
-#[path = "../src/factory_job_test_support.rs"]
+#[path = "../src/factory/execution/tests/factory_job_test_support.rs"]
 mod managed_fixture;
 
 fn factory_materialization_fixture() -> (

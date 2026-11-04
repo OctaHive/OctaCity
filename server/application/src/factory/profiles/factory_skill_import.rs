@@ -1,0 +1,406 @@
+//! Reviewed Project skill-folder import and exact protected-input materialization.
+use crate::*;
+use octacity_artifact_store::{ArtifactBytePublisher, ArtifactByteReader, ArtifactObject};
+use octacity_protocol::{PROTECTED_INPUT_ROOT, ProtectedInputManifestV3, ProtectedInputV3};
+use octacity_server_domain::{ArtifactId, ArtifactUploadId, ProjectId};
+use octacity_server_factory::{
+  FactoryArtifactReference, FactoryDigest, FactoryKey, FactoryRepositoryPath, FactoryRoleSkillBundle,
+};
+use octacity_server_store::{
+  IdempotencyKey, ProjectSkillImportIntent, ProjectSkillImportRecord, ProjectSkillImportStore,
+  PublishProjectSkillImport, PublishedExecutionInput,
+};
+use std::{collections::BTreeMap, sync::Arc};
+use uuid::Uuid;
+
+/// Explicit reviewed entry; never a path for the server to open on its host.
+#[derive(Clone)]
+pub enum ReviewedSkillEntry {
+  /// A detected link is rejected, never dereferenced or uploaded.
+  Symlink {
+    /// Relative link name, excluded from diagnostics.
+    path: String,
+    /// Untrusted target; never opened.
+    target: String,
+  },
+  /// Exact regular-file bytes and the digest the operator reviewed.
+  File {
+    /// Portable path relative to the selected folder.
+    path: String,
+    /// Reviewed expected SHA-256.
+    sha256: FactoryDigest,
+    /// Private content, excluded from Debug and audit.
+    bytes: Vec<u8>,
+  },
+}
+/// One explicit import; no local directory watching or ambient skill discovery.
+#[derive(Clone)]
+pub struct ImportProjectSkill {
+  /// Owning Project.
+  pub project_id: ProjectId,
+  /// Logical skill name; each import creates a separate immutable version.
+  pub identity: FactoryKey,
+  /// Accepted management-scope replay key.
+  pub idempotency_key: IdempotencyKey,
+  /// Complete reviewed folder contents.
+  pub entries: Vec<ReviewedSkillEntry>,
+}
+/// Shared object storage supplies bytes; this owner only publishes their Project metadata.
+pub struct ProjectSkillImport<S, B> {
+  store: Arc<S>,
+  bytes: Arc<B>,
+  policy: Arc<dyn ManagementAuthorizationPolicy>,
+  clock: Arc<dyn FactoryExecutionClock>,
+}
+impl<S: ProjectSkillImportStore, B: ArtifactByteReader> ProjectSkillImport<S, B> {
+  /// Installs ordinary publication metadata, byte ports, authorization and trusted time.
+  pub fn new(
+    store: Arc<S>,
+    bytes: Arc<B>,
+    policy: Arc<dyn ManagementAuthorizationPolicy>,
+    clock: Arc<dyn FactoryExecutionClock>,
+  ) -> Self {
+    Self {
+      store,
+      bytes,
+      policy,
+      clock,
+    }
+  }
+  /// Uses Project visibility before exposing safe exact choices; private files stay out of pages.
+  pub async fn catalog(
+    &self,
+    context: &ManagementRequestContext,
+    project: ProjectId,
+    after: Option<octacity_server_factory::ImmutableReference>,
+    limit: u16,
+  ) -> Result<octacity_server_store::ProjectSkillImportPage, ApplicationError> {
+    let resource = management_security::instance_resource(ManagementResourceKind::Project, project)
+      .map_err(|_| ApplicationError::invalid())?;
+    let grant = self
+      .policy
+      .authorize(context, ManagementAction::View, &resource)
+      .await
+      .map_err(|_| ApplicationError::invalid())?;
+    crate::factory::profiles::factory_role_profiles::require_project_visibility(&grant, project)?;
+    Ok(self.store.list_project_skill_imports(project, after, limit).await?)
+  }
+  /// Publishes one complete immutable tree. Lost responses retry the same original receipt.
+  pub async fn import(
+    &self,
+    context: &ManagementRequestContext,
+    command: ImportProjectSkill,
+  ) -> Result<ProjectSkillImportRecord, ApplicationError>
+  where
+    B: ArtifactBytePublisher,
+  {
+    let resource = management_security::instance_resource(ManagementResourceKind::Project, command.project_id)
+      .map_err(|_| ApplicationError::invalid())?;
+    let grant = self
+      .policy
+      .authorize(context, ManagementAction::Administer, &resource)
+      .await
+      .map_err(|_| ApplicationError::invalid())?;
+    crate::factory::profiles::factory_role_profiles::require_project_visibility(&grant, command.project_id)?;
+    if command.entries.len() > octacity_server_factory::MAX_CONTEXT_MANIFEST_ENTRIES {
+      return Err(ApplicationError::invalid());
+    }
+    let operation = FactoryDigest::sha256(
+      "octacity.project-skill-import.v1",
+      &[
+        command.project_id.as_uuid().as_bytes(),
+        context.security_scope().to_store().as_str().as_bytes(),
+        command.idempotency_key.as_str().as_bytes(),
+      ],
+    );
+    let namespace = Uuid::new_v5(&Uuid::NAMESPACE_OID, &operation.as_bytes());
+    let mut files = BTreeMap::new();
+    let mut uploads = BTreeMap::new();
+    let mut bodies = BTreeMap::new();
+    for entry in command.entries {
+      let ReviewedSkillEntry::File { path, sha256, bytes } = entry else {
+        return Err(ApplicationError::invalid());
+      };
+      if FactoryDigest::content_sha256(&bytes) != sha256 {
+        return Err(ApplicationError::invalid());
+      }
+      let path = FactoryRepositoryPath::new(path).map_err(|_| ApplicationError::invalid())?;
+      let artifact = ArtifactId::from_uuid(Uuid::new_v5(&namespace, path.as_str().as_bytes()))
+        .map_err(|_| ApplicationError::invalid())?;
+      if files
+        .insert(
+          path,
+          FactoryArtifactReference::new(artifact, sha256, bytes.len() as u64)
+            .map_err(|_| ApplicationError::invalid())?,
+        )
+        .is_some()
+      {
+        return Err(ApplicationError::invalid());
+      }
+      uploads.insert(
+        artifact,
+        ArtifactUploadId::from_uuid(Uuid::new_v5(&artifact.as_uuid(), b"retained-input.v1"))
+          .map_err(|_| ApplicationError::invalid())?,
+      );
+      bodies.insert(artifact, bytes);
+    }
+    let bundle = FactoryRoleSkillBundle::new(
+      command.identity,
+      FactoryKey::new(operation.to_string()).map_err(|_| ApplicationError::invalid())?,
+      files,
+    )
+    .map_err(|_| ApplicationError::invalid())?;
+    let intent = ProjectSkillImportIntent {
+      project_id: command.project_id,
+      bundle,
+      uploads,
+      idempotency_key: command.idempotency_key,
+    };
+    let request = |now| {
+      crate::management_security::audited_mutation(
+        context,
+        PublishProjectSkillImport {
+          intent: intent.clone(),
+          now,
+        },
+      )
+    };
+    let record = self
+      .store
+      .reserve_project_skill_import(request(self.clock.now()?)?)
+      .await?;
+    if record.published_at.is_some() {
+      return Ok(record);
+    }
+    for input in record.inputs()? {
+      let object = object(&input)?;
+      self
+        .bytes
+        .publish_verified(
+          &object,
+          bodies
+            .remove(&input.artifact_id)
+            .ok_or_else(ApplicationError::invalid)?,
+        )
+        .await
+        .map_err(|_| ApplicationError::unavailable())?;
+      self.read_verified(&input).await?;
+    }
+    Ok(
+      self
+        .store
+        .publish_project_skill_import(request(self.clock.now()?)?)
+        .await?,
+    )
+  }
+  /// Resolves complete exact bundles to the existing signed transfer contract.
+  /// The trusted compiler supplies the authorized Project and exact selections.
+  /// The Agent's ordinary protected-input materializer writes these destinations.
+  pub async fn materialize(
+    &self,
+    project: ProjectId,
+    selected: BTreeMap<FactoryRepositoryPath, FactoryRoleSkillBundle>,
+  ) -> Result<ProtectedInputManifestV3, ApplicationError> {
+    materialize_project_skills(self.store.as_ref(), self.bytes.as_ref(), project, selected).await
+  }
+
+  async fn read_verified(&self, input: &PublishedExecutionInput) -> Result<(), ApplicationError> {
+    read_verified(self.bytes.as_ref(), input).await.map(|_| ())
+  }
+}
+
+mod read;
+pub use read::*;
+pub(crate) async fn materialize_project_skills<S: ProjectSkillImportStore, B: ArtifactByteReader>(
+  store: &S,
+  bytes: &B,
+  project: ProjectId,
+  selected: BTreeMap<FactoryRepositoryPath, FactoryRoleSkillBundle>,
+) -> Result<ProtectedInputManifestV3, ApplicationError> {
+  let mut count = 0_usize;
+  let mut total = 0_u64;
+  for bundle in selected.values() {
+    count = count
+      .checked_add(bundle.files().len())
+      .ok_or_else(ApplicationError::invalid)?;
+    for file in bundle.files().values() {
+      total = total
+        .checked_add(file.encoded_size())
+        .ok_or_else(ApplicationError::invalid)?;
+    }
+  }
+  if count > octacity_server_factory::MAX_CONTEXT_MANIFEST_ENTRIES
+    || total > octacity_server_factory::MAX_CONTEXT_MANIFEST_BYTES
+  {
+    return Err(ApplicationError::invalid());
+  }
+  let mut inputs = Vec::new();
+  let mut retained = Vec::new();
+  for (destination, bundle) in selected {
+    let record = store
+      .project_skill_import(project, bundle.reference())
+      .await?
+      .ok_or_else(ApplicationError::invalid)?;
+    if record.intent.bundle != bundle {
+      return Err(ApplicationError::invalid());
+    }
+    let objects: BTreeMap<_, _> = record
+      .inputs()?
+      .into_iter()
+      .map(|input| (input.artifact_id, input))
+      .collect();
+    for (path, file) in bundle.files() {
+      let input = objects.get(&file.artifact_id()).ok_or_else(ApplicationError::invalid)?;
+      let relative = FactoryRepositoryPath::new(format!("{}/{}", destination.as_str(), path.as_str()))
+        .map_err(|_| ApplicationError::invalid())?;
+      retained.push(input.clone());
+      inputs.push(ProtectedInputV3 {
+        artifact_id: input.artifact_id.to_string(),
+        size_bytes: input.size_bytes,
+        sha256: input.digest.to_string(),
+        media_type: input.media_type.as_str().into(),
+        destination: format!("{PROTECTED_INPUT_ROOT}/{}", relative.as_str()),
+      });
+    }
+  }
+  inputs.sort_by(|a, b| a.artifact_id.cmp(&b.artifact_id));
+  let manifest = ProtectedInputManifestV3 { inputs };
+  manifest.validate().map_err(|_| ApplicationError::invalid())?;
+  for input in &retained {
+    read_verified(bytes, input).await?;
+  }
+  Ok(manifest)
+}
+async fn read_verified<B: ArtifactByteReader>(
+  bytes: &B,
+  input: &PublishedExecutionInput,
+) -> Result<Vec<u8>, ApplicationError> {
+  let bytes = bytes
+    .read_published(&object(input)?, input.size_bytes)
+    .await
+    .map_err(|_| ApplicationError::unavailable())?;
+  if bytes.len() as u64 != input.size_bytes
+    || FactoryDigest::content_sha256(&bytes).as_bytes() != input.digest.as_bytes()
+  {
+    return Err(ApplicationError::unavailable());
+  }
+  Ok(bytes)
+}
+
+fn object(input: &PublishedExecutionInput) -> Result<ArtifactObject, ApplicationError> {
+  ArtifactObject::new(
+    input.artifact_id,
+    input.upload_id,
+    input.size_bytes,
+    input.digest.to_string(),
+    input.media_type.as_str(),
+  )
+  .map_err(|_| ApplicationError::invalid())
+}
+
+/// Safe original import receipt; private bytes and staging upload bookkeeping are absent.
+#[derive(Clone, Debug, serde::Serialize)]
+pub struct ProjectSkillImportReceipt {
+  /// Exact immutable bundle reference; file inventories remain in retained storage.
+  pub bundle: octacity_server_factory::ImmutableReference,
+  /// Original publication time, preserved on replay.
+  pub published_at: octacity_server_domain::Timestamp,
+}
+impl Command for ImportProjectSkill {
+  type Outcome = ProjectSkillImportReceipt;
+}
+impl ManagementAuthorizationTarget for ImportProjectSkill {
+  const AUTHORIZATION: ManagementAuthorizationMapping = PublishFactoryRoleProfilesCommand::AUTHORIZATION;
+  fn management_resource(&self) -> ManagementResourceResult {
+    management_security::instance_resource(ManagementResourceKind::Project, self.project_id)
+  }
+}
+#[async_trait::async_trait]
+impl<S: ProjectSkillImportStore, B: ArtifactByteReader + ArtifactBytePublisher>
+  ManagementCommandUseCase<ImportProjectSkill> for ProjectSkillImport<S, B>
+{
+  type Error = ApplicationError;
+  async fn execute_management_command(
+    &self,
+    context: &ManagementRequestContext,
+    _: &ManagementAuthorizationGrant,
+    command: ImportProjectSkill,
+  ) -> Result<ProjectSkillImportReceipt, ApplicationError> {
+    let record = self.import(context, command).await?;
+    Ok(ProjectSkillImportReceipt {
+      bundle: record.intent.bundle.reference().clone(),
+      published_at: record.published_at.ok_or_else(ApplicationError::unavailable)?,
+    })
+  }
+}
+/// Authorized Project skill catalog using the same imported/retained identities.
+#[derive(Clone, Debug)]
+pub struct ListProjectSkillsQuery {
+  /// Existing visible Project.
+  pub project_id: ProjectId,
+  /// Exact exclusive bundle continuation.
+  pub after: Option<octacity_server_factory::ImmutableReference>,
+  /// Shared current-definition page bound.
+  pub limit: u16,
+}
+/// Safe skill references and a Project-bound continuation, without file inventories or content.
+#[derive(Clone, Debug, serde::Serialize)]
+pub struct ProjectSkillCatalogPage {
+  /// Visible count before continuation.
+  pub total: u64,
+  /// Exact version/digest choices, without private file paths.
+  pub items: Vec<octacity_server_factory::ImmutableReference>,
+  /// Opaque original Project-bound continuation.
+  pub next_cursor: Option<String>,
+}
+impl Query for ListProjectSkillsQuery {
+  type Outcome = ProjectSkillCatalogPage;
+}
+impl ManagementAuthorizationTarget for ListProjectSkillsQuery {
+  const AUTHORIZATION: ManagementAuthorizationMapping = GetFactoryRoleQuery::AUTHORIZATION;
+  fn management_resource(&self) -> ManagementResourceResult {
+    management_security::instance_resource(ManagementResourceKind::Project, self.project_id)
+  }
+}
+#[async_trait::async_trait]
+impl<S: ProjectSkillImportStore, B: ArtifactByteReader> ManagementQueryUseCase<ListProjectSkillsQuery>
+  for ProjectSkillImport<S, B>
+{
+  type Error = ApplicationError;
+  async fn execute_management_query(
+    &self,
+    context: &ManagementRequestContext,
+    _: &ManagementAuthorizationGrant,
+    query: ListProjectSkillsQuery,
+  ) -> Result<ProjectSkillCatalogPage, ApplicationError> {
+    let page = self
+      .catalog(context, query.project_id, query.after, query.limit)
+      .await?;
+    Ok(ProjectSkillCatalogPage {
+      total: page.total,
+      items: page.items,
+      next_cursor: page
+        .next_cursor
+        .map(|r| format!("1:{}:{}:{}:{}", query.project_id, r.identity(), r.version(), r.digest())),
+    })
+  }
+}
+
+impl<S: octacity_server_store::ProjectSkillImportStore, B: octacity_artifact_store::ArtifactByteReader>
+  crate::ProjectSkillImport<S, B>
+{
+  /// Verifies the selected retained dependencies with the existing Project input reader.
+  pub async fn prepare_invocation(
+    &self,
+    package: octacity_server_factory::FactoryRoleExecutionPackage,
+    secret_variables: BTreeMap<String, octacity_server_secrets::LogicalSecretReference>,
+  ) -> Result<crate::FactoryRoleInvocation, ApplicationError> {
+    crate::factory::profiles::factory_role_invocation::prepare_factory_role_invocation(
+      self.store.as_ref(),
+      self.bytes.as_ref(),
+      package,
+      secret_variables,
+    )
+    .await
+  }
+}

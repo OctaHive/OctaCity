@@ -21,7 +21,7 @@ const TEST_WAIT: Duration = Duration::from_secs(30);
 #[allow(dead_code)]
 mod admission_fixture {
   use super::*;
-  include!("../../application/src/factory_admission_test_fixture.rs");
+  include!("../../application/src/factory/admission/tests/factory_admission_test_fixture.rs");
 }
 
 use admission_fixture::*;
