@@ -295,7 +295,8 @@ impl OciEngine for MicrosandboxEngine {
     let network = network_policy(&request.network)?;
     info!(execution_id = %request.execution_id, sandbox = %plan.name, image = %plan.image, "starting Microsandbox");
     let creation_result = {
-      let creation = with_backend(self.backend.clone(), async {
+      // Keep the SDK creation state out of the deadline and cancellation wrappers.
+      let creation = Box::pin(with_backend(self.backend.clone(), async {
         let mut builder = Sandbox::builder(&plan.name)
           .image(plan.image.clone())
           .root_disk_with(|disk| disk.tmpfs().size(plan.root_tmpfs_mib))
@@ -426,7 +427,7 @@ impl OciEngine for MicrosandboxEngine {
           None => builder.disable_network(),
         };
         builder.create().await
-      });
+      }));
       before_deadline(deadline, &cancellation, "starting Microsandbox", creation)
         .await?
         .map_err(msb_error)
