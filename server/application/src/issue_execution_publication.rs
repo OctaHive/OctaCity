@@ -4,7 +4,8 @@ use octacity_artifact_store::{ArtifactBytePublisher, ArtifactByteReader};
 use octacity_server_domain::{IssueExecutionRequestId, IssueId, ProjectId};
 use octacity_server_factory::{FactoryDigest, FactoryKey, WorkClassification};
 use octacity_server_store::{
-  AssociateIssueWork, IssueExecutionStore, IssueStore, ProjectTextInputStore, ReadFactoryAdmissionContext,
+  AssociateIssueWork, FactoryRunStore, IssueExecutionStore, IssueStore, ProjectTextInputStore,
+  ReadFactoryAdmissionContext,
 };
 use std::sync::Arc;
 /// Processes an already reviewed request with explicit ordinary admission classification.
@@ -55,11 +56,16 @@ impl<S, F: ProjectTextInputStore + 'static, B: ArtifactBytePublisher + ArtifactB
       policy,
     }
   }
+  /// Installs Project Repository resolution on the shared intake.
+  pub fn with_repositories(mut self, repositories: Arc<dyn octacity_server_store::ConfigurationStore>) -> Self {
+    self.intake = self.intake.with_repositories(repositories);
+    self
+  }
 }
 #[async_trait::async_trait]
 impl<
   S: IssueStore + IssueExecutionStore,
-  F: ProjectTextInputStore + 'static,
+  F: ProjectTextInputStore + FactoryRunStore + 'static,
   B: ArtifactBytePublisher + ArtifactByteReader,
 > ManagementCommandUseCase<PublishIssueExecutionCommand> for IssueExecutionPublisher<S, F, B>
 {
@@ -133,6 +139,25 @@ impl<
       // Both completed replay and interrupted linkage use retained metadata after body retirement.
       admission.clone()
     } else {
+      let predecessor = if target.predecessor_run.is_some() {
+        let configuration = self.factory.factory_admission_context(selected).await?;
+        crate::issue_execution::resolve_issue_predecessor(
+          self.issues.as_ref(),
+          self.factory.as_ref(),
+          self.policy.as_ref(),
+          context,
+          &request.intent,
+          configuration.configuration.configuration.flow(),
+        )
+        .await?
+      } else {
+        None
+      };
+      let predecessor_digest = predecessor
+        .as_ref()
+        .map(|handoff| handoff.record.digest())
+        .transpose()
+        .map_err(|_| ApplicationError::invalid())?;
       let documents = if original.is_some() {
         self
           .factory
@@ -152,10 +177,7 @@ impl<
             Some(request.intent.expected_version),
           )
           .await?;
-        ProjectTextDocuments::try_new(
-          String::from_utf8(target.mapping.task_bytes(&revision.content)).map_err(|_| ApplicationError::invalid())?,
-          revision.content.acceptance.ok_or_else(ApplicationError::invalid)?,
-        )?
+        crate::issue_execution::issue_execution_documents(&revision.content, &target.mapping)?
       };
       if FactoryDigest::content_sha256(documents.task()) != request.task_digest
         || documents.task().len() as u64 != request.task_size
@@ -171,10 +193,11 @@ impl<
       }
       self
         .intake
-        .submit(
+        .submit_with_predecessor(
           context,
           ProjectTextSubmission {
             intent: ProjectTextIntent {
+              predecessor_digest,
               target: selected,
               external_identity: request.external_identity(),
               source: target.source.clone(),
@@ -185,6 +208,7 @@ impl<
             },
             documents,
           },
+          predecessor.as_ref().map(|handoff| &handoff.record),
         )
         .await?
         .admission

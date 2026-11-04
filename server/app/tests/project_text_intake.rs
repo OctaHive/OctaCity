@@ -216,6 +216,7 @@ async fn setup_target(
     .unwrap();
   let submission = ProjectTextSubmission {
     intent: ProjectTextIntent {
+      predecessor_digest: None,
       target: ReadFactoryAdmissionContext {
         project_id: project,
         configuration_id: id,
@@ -316,6 +317,7 @@ async fn reviewed_request(
         issue_id: issue.id,
         expected_version: issue.version,
         target: IssueExecutionTarget {
+          predecessor_run: None,
           configuration_id: submission.intent.target.configuration_id,
           configuration_version: submission.intent.target.configuration_version,
           repository_id: submission.intent.target.repository_id.unwrap(),

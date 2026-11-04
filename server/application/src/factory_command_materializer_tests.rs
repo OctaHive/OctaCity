@@ -481,6 +481,20 @@ fn validation_materializer_publishes_the_invocation_contract_and_signs_every_ori
         1
       );
     }
+    let test_files: Vec<_> = managed
+      .protected_inputs()
+      .inputs
+      .iter()
+      .filter(|input| input.destination.starts_with("/octacity/protected/tests/"))
+      .collect();
+    assert_eq!(test_files.len(), 1, "the trusted Job mounts the selected private test");
+    assert!(
+      fixture.intent.input().context().unwrap().entries().iter().all(|entry| {
+        !matches!(entry.source(), FactoryContextReference::Artifact(artifact)
+          if artifact.artifact_id().to_string() == test_files[0].artifact_id)
+      }),
+      "the private test file is a trusted Job input, not a Context selection"
+    );
     assert!(managed.factory().unwrap().change_set_materialization.is_some());
     assert!(managed.factory().unwrap().change_set_capture.is_none());
     assert!(managed.permissions().secret_profiles.is_empty());

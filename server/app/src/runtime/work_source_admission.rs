@@ -2,6 +2,8 @@
 use super::process::execute_source;
 use super::*;
 pub(super) struct SourceCandidateBridge<S, B> {
+  pub(super) predecessors: Option<Arc<dyn FactorySourcePredecessors>>,
+  pub(super) repositories: Option<Arc<dyn ConfigurationStore>>,
   pub(super) managed_connections: Option<ManagedIntegrationConnections>,
   pub(super) store: Arc<S>,
   pub(super) bytes: Arc<B>,
@@ -50,36 +52,44 @@ impl<S: WorkSourceArtifactStore + 'static, B: ArtifactBytePublisher + 'static> F
       return Ok(());
     };
     let authorizer = self.authority(claim.clone(), &input)?;
-    let admission = FactorySourceAdmissionHandlers::new(
-      self.store.clone(),
-      self.revisions.clone(),
-      self.authorization.clone(),
-      authorizer,
-    )
-    .with_clock(self.clock.clone());
-    if admission
-      .recover(RecoverSourceFactoryWorkCommand {
+    let scope = self
+      .admission(authorizer.clone())
+      .source_reservation_scope(RecoverSourceFactoryWorkCommand {
         input_id: input.id(),
         input_version: input.version(),
         item: snapshot.item.clone(),
       })
-      .await?
-      .is_some()
-    {
+      .await?;
+    let Some(scope) = scope else {
       return Ok(());
-    }
+    };
     require_running(&self.cancellation)?;
     let retained = self
       .store
-      .reserve_source_preparation(ReserveWorkSourcePreparation {
-        claim: claim.clone(),
-        input_id: input.id(),
-        item: snapshot.item.clone(),
-        snapshot: serde_json::to_vec(&snapshot).map_err(|_| ApplicationError::invalid())?,
-        now: self.clock.now()?,
-      })
+      .reserve_scoped_source_preparation(
+        ReserveWorkSourcePreparation {
+          claim: claim.clone(),
+          input_id: input.id(),
+          item: snapshot.item.clone(),
+          snapshot: serde_json::to_vec(&snapshot).map_err(|_| ApplicationError::invalid())?,
+          now: self.clock.now()?,
+        },
+        Some((
+          &scope,
+          WorkSourceIssueText {
+            title: &snapshot.title,
+            description: snapshot.body.as_deref().unwrap_or_default(),
+          },
+        )),
+        Some(serde_json::to_vec(&authorizer.profile.preparation).map_err(|_| ApplicationError::invalid())?),
+      )
       .await?;
-    self.finish_preparation(claim, &input, retained).await
+    // The same native item can reappear under a different installed resource reference.
+    // Keep its existing reservation without letting it interrupt this page.
+    if retained.matches_selected_input(&input) && retained.waiting.is_none() {
+      self.settle_preparation(claim, &input, retained).await?;
+    }
+    Ok(())
   }
 }
 impl<S: WorkSourceArtifactStore + 'static, B: ArtifactBytePublisher + 'static> SourceCandidateBridge<S, B> {
@@ -105,11 +115,80 @@ impl<S: WorkSourceArtifactStore + 'static, B: ArtifactBytePublisher + 'static> S
       cancellation: self.cancellation.clone(),
     }))
   }
-  pub(super) async fn finish_preparation(
+
+  fn admission(&self, authorizer: Arc<SourceAuthority<S>>) -> FactorySourceAdmissionHandlers<S> {
+    let mut admission = FactorySourceAdmissionHandlers::new(
+      self.store.clone(),
+      self.revisions.clone(),
+      self.authorization.clone(),
+      authorizer,
+    )
+    .with_clock(self.clock.clone());
+    if let Some(reader) = &self.predecessors {
+      admission = admission.with_predecessors(reader.clone());
+    }
+    if let Some(repositories) = &self.repositories {
+      admission = admission.with_repositories(repositories.clone());
+    }
+    admission
+  }
+
+  /// Returns whether recovery consumed an ordinary preparation slot.
+  pub(super) async fn settle_preparation(
     &self,
     claim: WorkSourceScanClaim,
     input: &WorkSourceInput,
     retained: WorkSourcePreparation,
+  ) -> Result<bool, ApplicationError> {
+    let preparation_id = retained.id;
+    match self.finish_preparation(claim.clone(), input, &retained).await {
+      Ok(()) => Ok(true),
+      Err(error) => {
+        let Some((reason, cursor)) = source_predecessor_wait(&error) else {
+          return Err(error);
+        };
+        let policy = if retained.intent.is_none() && retained.policy.is_none() && retained.initial_policy.is_none() {
+          Some(serde_json::to_vec(self.original_settings(&retained)?).map_err(|_| ApplicationError::invalid())?)
+        } else {
+          None
+        };
+        let wait = self
+          .store
+          .defer_source_preparation(DeferSourcePreparation {
+            claim,
+            preparation_id,
+            now: self.clock.now()?,
+            reason,
+            cursor,
+            policy,
+          })
+          .await?;
+        tracing::info!(project_id = %input.project_id(), %preparation_id, reason = ?wait.reason, "automatic admission awaiting predecessor");
+        Ok(false)
+      }
+    }
+  }
+
+  fn original_settings(
+    &self,
+    retained: &WorkSourcePreparation,
+  ) -> Result<&SourcePreparationSettings, ApplicationError> {
+    self
+      .profiles
+      .iter()
+      .find(|profile| {
+        profile.read.project_id == retained.input.project_id()
+          && profile.read.binding == retained.input.definition().source
+      })
+      .map(|profile| &profile.preparation)
+      .ok_or_else(ApplicationError::capability_unavailable)
+  }
+
+  async fn finish_preparation(
+    &self,
+    claim: WorkSourceScanClaim,
+    input: &WorkSourceInput,
+    retained: &WorkSourcePreparation,
   ) -> Result<(), ApplicationError> {
     require_running(&self.cancellation)?;
     let materialization = self
@@ -132,52 +211,55 @@ impl<S: WorkSourceArtifactStore + 'static, B: ArtifactBytePublisher + 'static> S
       });
     }
     let authorizer = self.authority(claim.clone(), input)?;
-    if retained.intent.is_none() {
+    let admission = self.admission(authorizer.clone());
+    let handoff = if retained.intent.is_none() {
       let authorized = authorizer.authorize(input.id(), input.version()).await?;
-      let original = self
-        .profiles
-        .iter()
-        .find(|p| {
-          p.read.project_id == retained.input.project_id() && p.read.binding == retained.input.definition().source
-        })
-        .ok_or_else(ApplicationError::capability_unavailable)?;
+      let settings = match retained.policy.as_ref().or(retained.initial_policy.as_ref()) {
+        Some(bytes) => serde_json::from_slice(bytes).map_err(|_| ApplicationError::invalid())?,
+        None => self.original_settings(retained)?.clone(),
+      };
+      let handoff = admission
+        .prepared_source_handoff(
+          &authorized,
+          &claim,
+          retained,
+          &settings.source,
+          settings.predecessor_digest,
+        )
+        .await?;
       let mut preparer = FactoryWorkSourcePreparer::new(self.store.clone(), self.bytes.clone(), self.clock.clone())
         .with_authorization(self.authorization.clone(), authorized.context);
       if let Some(reader) = &self.project_inputs {
         preparer = preparer.with_project_inputs(reader.clone());
       }
-      let settings = retained
-        .policy
-        .as_ref()
-        .map(|bytes| serde_json::from_slice(bytes))
-        .transpose()
-        .map_err(|_| ApplicationError::invalid())?
-        .unwrap_or_else(|| original.preparation.clone());
-      if matches!(
-        preparer.prepare(claim.clone(), retained.id, settings).await?,
-        SourcePreparationOutcome::Rejected(_)
-      ) {
+      let prepared = if let Some(handoff) = &handoff {
+        preparer
+          .prepare_handoff(claim.clone(), retained.id, settings, handoff)
+          .await?
+      } else {
+        preparer.prepare(claim.clone(), retained.id, settings).await?
+      };
+      if matches!(prepared, SourcePreparationOutcome::Rejected(_)) {
         return Ok(());
       }
-    }
+      handoff
+    } else {
+      None
+    };
     require_running(&self.cancellation)?;
-    let admission = FactorySourceAdmissionHandlers::new(
-      self.store.clone(),
-      self.revisions.clone(),
-      self.authorization.clone(),
-      authorizer,
-    )
-    .with_clock(self.clock.clone());
     admission
-      .admit_prepared(AdmitPreparedSourceFactoryWorkCommand {
-        input_id: input.id(),
-        input_version: input.version(),
-        guard: AdmitPreparedWorkSource {
-          claim,
-          preparation_id: retained.id,
-          now: self.clock.now()?,
+      .admit_prepared_with_handoff(
+        AdmitPreparedSourceFactoryWorkCommand {
+          input_id: input.id(),
+          input_version: input.version(),
+          guard: AdmitPreparedWorkSource {
+            claim,
+            preparation_id: retained.id,
+            now: self.clock.now()?,
+          },
         },
-      })
+        handoff,
+      )
       .await?;
     Ok(())
   }

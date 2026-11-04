@@ -380,6 +380,44 @@ async fn regrouped_preparation_contract(
       .is_err(),
     "a regrouped pending item must still block uncovered progress"
   );
+  let deferred = |claim, now| octacity_server_store::DeferSourcePreparation {
+    claim,
+    preparation_id: reserved.id,
+    now,
+    reason: octacity_server_store::WorkSourceWaitReason::Missing,
+    cursor: None,
+    policy: None,
+  };
+  assert!(
+    store
+      .defer_source_preparation(deferred(old.claim.clone(), time(3)))
+      .await
+      .is_err(),
+    "a revoked scan cannot mark an observation as waiting"
+  );
+  let wait = store
+    .defer_source_preparation(deferred(current.claim.clone(), time(11)))
+    .await
+    .unwrap();
+  assert_eq!(wait.preparation_id, reserved.id);
+  store
+    .checkpoint_source_scan(current.claim.clone(), time(11), None, progress.clone())
+    .await
+    .unwrap();
+  assert!(
+    store
+      .recoverable_source_preparations(input.project_id(), current.claim.target, time(11), 1)
+      .await
+      .unwrap()
+      .is_empty(),
+    "the same check is not repeated at the same observation time"
+  );
+  let pending = store
+    .recoverable_source_preparations(input.project_id(), current.claim.target, time(12), 1)
+    .await
+    .unwrap();
+  assert_eq!(pending[0].id, reserved.id);
+  assert_eq!(pending[0].waiting, Some(wait));
   let original = admission_from_configuration(
     uuid::Uuid::new_v4().as_u128(),
     uuid::Uuid::new_v4().as_u128(),
@@ -483,7 +521,7 @@ async fn regrouped_preparation_contract(
   assert_eq!(recovered.target, reserved.target);
   assert_eq!(recovered.admission.unwrap().run_id, admitted.admission.run.id());
   store
-    .checkpoint_source_scan(current.claim, time(14), None, progress)
+    .checkpoint_source_scan(current.claim, time(14), Some(progress.clone()), progress)
     .await
     .unwrap();
 }
@@ -494,7 +532,7 @@ async fn retired_group_member_contract(
   repository: &PublishedRepository,
   provider: &str,
 ) {
-  for removed in [false, true] {
+  for (removed, replaced_resource) in [(false, false), (true, false), (false, true)] {
     let original = input(configuration, repository, provider);
     let other = input(configuration, repository, provider);
     let group = WorkSourceGroup::publish(
@@ -548,13 +586,16 @@ async fn retired_group_member_contract(
       .await
       .unwrap();
     let mut draft = original.definition().clone();
-    draft.enabled = false;
+    draft.enabled = replaced_resource;
+    if replaced_resource {
+      draft.source.resource = ImmutableReference::new(draft.source.resource.identity().clone(), key("v2"), digest(72));
+    }
     let capability = WorkSourceCapability {
       project_id: original.project_id(),
       role: WorkSourceCapabilityRole::Source,
       binding: draft.source.clone(),
     };
-    let disabled = original
+    let replacement = original
       .replace(
         WorkSourceInputVersion::new(2).unwrap(),
         draft,
@@ -568,8 +609,10 @@ async fn retired_group_member_contract(
       .unwrap();
     let members = if removed {
       vec![other.clone()]
+    } else if replaced_resource {
+      vec![replacement.clone()]
     } else {
-      vec![disabled.clone(), other.clone()]
+      vec![replacement.clone(), other.clone()]
     };
     let updated = group.replace(WorkSourceGroupVersion::new(2).unwrap(), members).unwrap();
     store
@@ -577,7 +620,7 @@ async fn retired_group_member_contract(
         project_id: original.project_id(),
         inputs: vec![WorkSourceInputChange {
           expected_version: Some(original.version()),
-          input: disabled,
+          input: replacement,
         }],
         group: Some(WorkSourceGroupChange {
           expected_version: Some(group.version()),
@@ -630,7 +673,7 @@ async fn retired_group_member_contract(
         .await
         .unwrap(),
       retained,
-      "disabled or removed preparation remains unchanged until ordinary retention"
+      "retired preparation remains unchanged until ordinary retention"
     );
   }
 }
@@ -2150,6 +2193,7 @@ fn prepared_admission(
   .unwrap();
   let run = FactoryRun::admitted(FactoryRunId::generate(), &work);
   AdmitFactoryWork {
+    incoming: None,
     probe: preparation
       .admission_probe(octacity_server_store::ManagementSecurityScope::trusted_network())
       .unwrap(),

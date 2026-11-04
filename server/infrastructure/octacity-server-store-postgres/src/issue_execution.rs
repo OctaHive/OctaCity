@@ -218,6 +218,30 @@ impl IssueExecutionStore for PostgresStore {
   ) -> Result<Option<IssueWorkAssociation>, StoreError> {
     read_association(&mut *self.pool().acquire().await.map_err(unavailable)?, project, work).await
   }
+  async fn native_issue_work(
+    &self,
+    project: ProjectId,
+    issue: IssueId,
+    after: Option<WorkEnvelopeId>,
+    limit: u16,
+  ) -> Result<Vec<IssueWorkAssociation>, StoreError> {
+    if !(1..=MAX_ISSUE_HISTORY_PAGE_SIZE).contains(&limit) {
+      return Err(conflict());
+    }
+    let rows: Vec<Json<IssueWorkAssociation>> = sqlx::query_scalar(
+      "SELECT document FROM issue_work_associations
+       WHERE project_id=$1 AND issue_id=$2 AND request_id IS NULL AND document->>'requirements_version' IS NOT NULL
+       AND ($3::uuid IS NULL OR work_id>$3) ORDER BY work_id LIMIT $4",
+    )
+    .bind(project.as_uuid())
+    .bind(issue.as_uuid())
+    .bind(after.map(|work| work.as_uuid()))
+    .bind(i64::from(limit))
+    .fetch_all(self.pool())
+    .await
+    .map_err(unavailable)?;
+    Ok(rows.into_iter().map(|Json(link)| link).collect())
+  }
 }
 async fn read(
   pool: &sqlx::PgPool,

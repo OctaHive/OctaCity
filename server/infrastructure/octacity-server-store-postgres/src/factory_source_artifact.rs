@@ -156,7 +156,10 @@ impl WorkSourceArtifactStore for PostgresStore {
     // A scheduled recheck updates only its schedule, never the frozen preparation again.
     if !preparation.snapshot.is_empty() {
       preparation.snapshot.clear();
+      preparation.observed_issue_text = None;
       preparation.policy = None;
+      preparation.initial_policy = None;
+      preparation.predecessor_cursor = None;
       crate::factory_source::save_preparation(&mut tx, &preparation).await?;
       sqlx::query("UPDATE factory_source_preparations SET snapshot_cleaned=TRUE WHERE id=$1")
         .bind(expected.preparation_id.as_bytes().as_slice())

@@ -14,7 +14,7 @@ mod result_reporting;
 #[path = "issue_code_review_delivery_tests.rs"]
 mod review_delivery;
 #[path = "factory_stage_reporting_tests.rs"]
-mod stage_reporting;
+pub(crate) mod stage_reporting;
 
 fn key(value: &str) -> FactoryKey {
   FactoryKey::new(value).unwrap()

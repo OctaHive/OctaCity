@@ -99,6 +99,14 @@ pub(super) struct ProjectedInput {
   pub caller_input_digest: Option<crate::FactoryDigest>,
 }
 impl FlowInputBinding {
+  /// The exact external schemas required to prepare this node's input.
+  pub fn incoming_schemas(&self) -> impl Iterator<Item = &crate::ImmutableReference> {
+    self.sources.values().filter_map(|source| match source {
+      FlowInputSource::Incoming { schema, .. } => Some(schema),
+      _ => None,
+    })
+  }
+
   /// Returns the mapping over a single exact accepted output payload.
   pub fn record_payload_mapping(
     &self,

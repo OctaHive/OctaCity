@@ -980,6 +980,7 @@ fn admission_from_configuration(
   let run = FactoryRun::admitted(run_id(run), &work);
   let flow = octacity_server_factory::AdmittedFlow::from_configuration(configuration, &run).unwrap();
   AdmitFactoryWork {
+    incoming: None,
     probe: FactoryAdmissionProbe {
       source_scope: FactoryWorkSourceScope {
         source: key("manual"),
@@ -2278,6 +2279,7 @@ async fn seed_projection_admission(
   postgres
     .admit_factory_work(management_mutation_with_request(
       AdmitFactoryWork {
+        incoming: None,
         probe: FactoryAdmissionProbe {
           source_scope: FactoryWorkSourceScope {
             source: key("manual"),
@@ -2735,6 +2737,7 @@ async fn assert_project_input_admission(with_code: bool) {
   .unwrap();
   let run = FactoryRun::admitted(FactoryRunId::generate(), &work);
   let request = AdmitFactoryWork {
+    incoming: None,
     probe: FactoryAdmissionProbe {
       source_scope: FactoryWorkSourceScope {
         source: key("manual"),

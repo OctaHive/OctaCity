@@ -28,7 +28,7 @@ use octacity_server_store::{
 use uuid::Uuid;
 
 #[path = "factory_source_admission_tests.rs"]
-mod installed_sources;
+pub(crate) mod installed_sources;
 
 #[path = "factory_source_configuration_tests.rs"]
 mod source_configuration;
@@ -176,6 +176,154 @@ pub(super) async fn admit(
       command,
     )
     .await
+}
+
+pub(super) fn incoming_result_configuration(project: ProjectId, id: FactoryConfigurationId) -> FactoryConfiguration {
+  use octacity_server_factory::*;
+  let ordinary = configuration(project, id);
+  let flow = ordinary.flow();
+  let root = flow.closure.definition(flow.closure.root()).unwrap();
+  let mut nodes = root.nodes().to_vec();
+  let index = nodes.iter().position(|node| node.key() == root.entry()).unwrap();
+  let schema = nodes[index].input_schema().unwrap().clone();
+  nodes[index] = nodes[index]
+    .clone()
+    .with_input_binding(
+      FlowInputBinding::new(
+        std::collections::BTreeMap::from([(
+          key("triage"),
+          FlowInputSource::Incoming {
+            schema,
+            path: String::new(),
+          },
+        )]),
+        FlowDataMapping::new(FlowValueMapping::Pointer { path: "/triage".into() }).unwrap(),
+      )
+      .unwrap(),
+    )
+    .unwrap();
+  let definition = FlowDefinition::new(FlowDefinitionInput {
+    id: root.reference().id(),
+    version: root.reference().version(),
+    input_schema: root.input_schema().cloned(),
+    entry: root.entry().clone(),
+    nodes,
+    transitions: root.transitions().to_vec(),
+    terminals: root.terminals().to_vec(),
+    context_projections: root.context_projections().to_vec(),
+    data_projections: root.data_projections().to_vec(),
+    execution: root.execution().clone(),
+  })
+  .unwrap();
+  let downstream = FactoryFlowConfiguration::new(
+    PinnedFlowDefinitionClosure::new(definition.reference(), vec![definition]).unwrap(),
+    flow.limits.clone(),
+    flow.data_schemas.clone(),
+    flow.pools.clone(),
+  )
+  .unwrap();
+  configuration_with_flow(project, id, Some(downstream))
+}
+
+#[test]
+fn admission_rejects_missing_required_incoming_result_before_publishing_work() {
+  run_ready(async {
+    let project = ProjectId::generate();
+    let id = FactoryConfigurationId::generate();
+    let repository_id = RepositoryId::generate();
+    let store = Arc::new(InMemoryFactoryConfigurationStore::new());
+    store.seed_project(project).unwrap();
+    store
+      .seed_repository_version(repository(
+        project,
+        repository_id,
+        Some("refs/heads/main".parse().unwrap()),
+      ))
+      .unwrap();
+    seed_permitted_configuration(
+      &store,
+      PublishedFactoryConfiguration {
+        configuration: incoming_result_configuration(project, id),
+        published_at: time(1),
+      },
+    )
+    .unwrap();
+    let resolver = Arc::new(RecordingResolver::default());
+    let handlers = FactoryAdmissionHandlers::new(store.clone(), resolver.clone());
+    let Err(crate::ApplicationError::FactoryValidation(report)) =
+      admit(&handlers, command(project, id, repository_id)).await
+    else {
+      panic!("required predecessor data must block admission with a diagnostic");
+    };
+    assert_eq!(report.errors[0].field, "/incoming_result");
+    assert_eq!(report.errors[0].code, "missing_incoming_result");
+    assert_eq!(resolver.call_count(), 0);
+    assert_eq!(store.mutation_evidence_counts().await.idempotency, 0);
+  });
+}
+
+#[test]
+fn admission_retains_the_exact_incoming_data_in_the_original_run() {
+  use octacity_server_factory::{FlowIncomingData, FlowPayload};
+  use octacity_server_store::{FactoryAdmissionStore, ReadFactoryAdmissionContext};
+
+  run_ready(async {
+    let project = ProjectId::generate();
+    let id = FactoryConfigurationId::generate();
+    let repository_id = RepositoryId::generate();
+    let configuration = incoming_result_configuration(project, id);
+    let store = InMemoryFactoryConfigurationStore::new();
+    store.seed_project(project).unwrap();
+    store
+      .seed_repository_version(repository(project, repository_id, None))
+      .unwrap();
+    seed_permitted_configuration(
+      &store,
+      PublishedFactoryConfiguration {
+        configuration: configuration.clone(),
+        published_at: time(1),
+      },
+    )
+    .unwrap();
+    let context = context();
+    let intent = command(project, id, repository_id);
+    let probe = crate::factory_admission::admission_probe(&context, &intent).unwrap();
+    let selected = store
+      .factory_admission_context(ReadFactoryAdmissionContext {
+        project_id: project,
+        configuration_id: id,
+        configuration_version: intent.configuration_version,
+        repository_id: intent.repository_id,
+        repository_version: intent.repository_version,
+      })
+      .await
+      .unwrap();
+    let mut request = crate::factory_admission::materialize_resolved_admission(
+      intent,
+      probe,
+      selected,
+      octacity_server_domain::ImmutableRevision::new("0123456789abcdef").unwrap(),
+    )
+    .unwrap();
+    let payload = FlowPayload::new(&configuration.flow().data_schemas[0], serde_json::json!(true)).unwrap();
+    let data = FlowIncomingData::new(&request.work, &request.flow, payload).unwrap();
+    request.incoming = Some(data.clone());
+    let admitted = store
+      .admit_factory_work(crate::management_security::audited_mutation(&context, request.clone()).unwrap())
+      .await
+      .unwrap();
+    let run = admitted.admission.run.id();
+    let replay = store
+      .admit_factory_work(crate::management_security::audited_mutation(&context, request).unwrap())
+      .await
+      .unwrap();
+    assert_eq!(replay.disposition, octacity_server_store::MutationDisposition::Replayed);
+    assert_eq!(replay.admission.run.id(), run);
+    assert_eq!(
+      store.factory_run_snapshot(run).await.unwrap().flow.data.incoming,
+      [data]
+    );
+  });
 }
 
 #[test]

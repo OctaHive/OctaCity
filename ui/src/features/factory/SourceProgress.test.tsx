@@ -72,6 +72,22 @@ it('shows retained Work/Run correlations and separates pending from applied repo
   ]);
 });
 
+it('shows why a candidate is waiting even when no Work has been admitted', async () => {
+  const data = integrationFixture('WorkSourceDiagnostics');
+  data.scan = Object.assign(
+    { started_at: 123, window: null, reconciliation: false, selection: null, schedule: null },
+    { last_wait: { preparation_id: '4'.repeat(64), checked_at: 456, reason: 'missing' as const } },
+  );
+  data.admissions = [];
+  fixture(data);
+  await userEvent.click(
+    await screen.findByRole('button', { name: 'Source and reporting progress' }),
+  );
+  const panel = await screen.findByRole('region', { name: 'Retained source progress' });
+  expect(await within(panel).findByText('No applicable accepted result found')).toBeTruthy();
+  expect(within(panel).queryByRole('link', { name: 'Open Run' })).toBeNull();
+});
+
 it('identifies ambiguous grouped selection and deferred scans without claiming admission or an empty successful read', async () => {
   const data = integrationFixture('WorkSourceDiagnostics');
   if (data.configuration.kind !== 'input') throw new Error('Expected canonical input');

@@ -118,8 +118,12 @@ pub(super) fn insert(schemas: &mut Map<String, Value>) {
     json!({"native_correlation":digest(),"summary":summary,"disposition":{"type":"string","enum":["filtered","selected","ambiguous"]},"admissions":array(reference("WorkSourceAdmissionDiagnostic"),64),"issue":reference("WorkSourceIssueLink")}),
     &["native_correlation", "summary", "disposition", "admissions"],
   );
+  let wait = object(
+    json!({"preparation_id":digest(),"checked_at":time(),"reason":{"type":"string","enum":["searching","missing","not_accepted","stale","inaccessible","incompatible","wrong_issue","wrong_subject","missing_implementation_acceptance"]}}),
+    &["preparation_id", "checked_at", "reason"],
+  );
   let scan = object(
-    json!({"started_at":time(),"window":nullable(json!({"type":"array","items":time(),"minItems":2,"maxItems":2})),"reconciliation":{"type":"boolean"},"schedule":nullable(object(json!({"retry_at":time(),"attempts":{"type":"integer","minimum":0},"failure":nullable(failure.clone()),"exhausted":{"type":"boolean"}}),&["retry_at","attempts","failure","exhausted"])),"selection":nullable(object(json!({"item":item,"matching_inputs":array(id(),64)}),&["item","matching_inputs"]))}),
+    json!({"started_at":time(),"window":nullable(json!({"type":"array","items":time(),"minItems":2,"maxItems":2})),"reconciliation":{"type":"boolean"},"schedule":nullable(object(json!({"retry_at":time(),"attempts":{"type":"integer","minimum":0},"failure":nullable(failure.clone()),"exhausted":{"type":"boolean"}}),&["retry_at","attempts","failure","exhausted"])),"selection":nullable(object(json!({"item":item,"matching_inputs":array(id(),64)}),&["item","matching_inputs"])),"last_wait":nullable(wait)}),
     &["started_at", "window", "reconciliation", "schedule", "selection"],
   );
   let selectors = array(

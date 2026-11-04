@@ -72,6 +72,9 @@ pub struct FactoryFlowRootDraft {
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
 #[serde(deny_unknown_fields)]
 pub struct FactoryFlowDefinitionDraft {
+  /// Exact successful upstream result required at admission.
+  #[serde(default, skip_serializing_if = "Option::is_none")]
+  pub accepted_predecessor: Option<octacity_server_factory::FlowAcceptedPredecessor>,
   /// Root content without a caller-computed digest.
   pub root: FactoryFlowRootDraft,
   /// Admission ceilings for the entire reachable closure.
@@ -306,6 +309,10 @@ impl<S: FactoryFlowDefinitionStore + octacity_server_store::FactoryConfiguration
       draft.data_schemas,
       draft.pools,
     )
+    .and_then(|flow| match draft.accepted_predecessor {
+      Some(predecessor) => flow.with_accepted_predecessor(predecessor),
+      None => Ok(flow),
+    })
     .map_err(|error| {
       crate::FactoryValidationDiagnostics::flow_validation_error(&error).unwrap_or_else(ApplicationError::invalid)
     })?;

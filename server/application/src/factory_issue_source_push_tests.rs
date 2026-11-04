@@ -117,6 +117,7 @@ fn configured_issue_action_retains_exact_push_review_and_origin_without_provider
             expected_version: issue.version,
             classification: None,
             target: IssueExecutionTarget {
+              predecessor_run: None,
               configuration_id: base.configuration().id(),
               configuration_version: base.configuration().version(),
               repository_id: base.subject().repository().unwrap().repository_id(),

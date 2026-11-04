@@ -365,14 +365,17 @@ pub(super) fn management_application(
     Arc::new(octacity_server_application::SystemFactoryExecutionClock),
     management_policy.clone(),
   ));
-  let execution_publication = Arc::new(octacity_server_application::IssueExecutionPublisher::new(
-    store.clone(),
-    store.clone(),
-    object_storage,
-    revision_resolver,
-    management_policy.clone(),
-    Arc::new(octacity_server_application::SystemFactoryExecutionClock),
-  ));
+  let execution_publication = Arc::new(
+    octacity_server_application::IssueExecutionPublisher::new(
+      store.clone(),
+      store.clone(),
+      object_storage,
+      revision_resolver,
+      management_policy.clone(),
+      Arc::new(octacity_server_application::SystemFactoryExecutionClock),
+    )
+    .with_repositories(store.clone()),
+  );
   let super::IssueRuntimeIntegrations {
     sources: issue_sources,
     code_reviews,

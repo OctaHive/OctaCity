@@ -380,6 +380,7 @@ pub(super) struct PreparationDeclaration {
 impl PreparationDeclaration {
   pub(super) fn settings(&self) -> SourcePreparationSettings {
     SourcePreparationSettings {
+      predecessor_digest: None,
       mapping: self.mapping.clone(),
       source: self.source.clone(),
       classification: self.classification.clone(),

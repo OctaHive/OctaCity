@@ -1,0 +1,1 @@
+ALTER TABLE factory_source_preparations ADD COLUMN wait_checked_at_millis BIGINT;

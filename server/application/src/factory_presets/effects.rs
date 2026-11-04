@@ -44,6 +44,7 @@ pub(super) fn ordinary_draft(
   data_schemas: Vec<FlowDataSchema>,
 ) -> FactoryFlowDefinitionDraft {
   FactoryFlowDefinitionDraft {
+    accepted_predecessor: None,
     root: FactoryFlowRootDraft {
       name: root.name().cloned(),
       code_sources: root.code_sources().cloned(),

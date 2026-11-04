@@ -262,9 +262,9 @@ async fn code_inventory_with_exact_policy(
 fn code_queries(
   repositories: Arc<octacity_server_store::testing::InMemoryConfigurationStore>,
 ) -> AuthorizedQueryHandler<crate::FactoryFlowDefinitionHandlers<super::profile_selection::PublicationChoices>> {
-  let store = Arc::new(super::profile_selection::PublicationChoices(std::sync::Mutex::new(
+  let store = Arc::new(super::profile_selection::PublicationChoices::for_validation(
     FactoryConfigurationChoices::try_new(Default::default()).unwrap(),
-  )));
+  ));
   let policy = Arc::new(TrustedNetworkManagementPolicy);
   AuthorizedQueryHandler::new(
     policy.clone(),

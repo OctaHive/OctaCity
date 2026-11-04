@@ -556,7 +556,9 @@ pub use factory_reconciliation::{
 };
 pub use factory_source_admission::{
   AdmitPreparedSourceFactoryWorkCommand, AdmitSourceFactoryWorkCommand, FactorySourceAdmissionHandlers,
-  FactorySourceAuthorization, FactorySourceAuthorizer, FactorySourceItem, RecoverSourceFactoryWorkCommand,
+  FactorySourceAuthorization, FactorySourceAuthorizer, FactorySourceHandoff, FactorySourceItem,
+  FactorySourcePredecessorTarget, FactorySourcePredecessors, IssueSourcePredecessorReader,
+  RecoverSourceFactoryWorkCommand, source_predecessor_wait,
 };
 pub use factory_tool_action::{
   DeterministicToolActionRule, PreparedToolAction, ProtectedToolActionGate, ToolActionGateError, ToolRiskAssessment,

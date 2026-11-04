@@ -120,6 +120,7 @@ impl FactoryRuntimeResources {
       authorization,
       Arc::new(octacity_server_application::SystemFactoryExecutionClock),
     )
+    .with_repositories(self.runs.clone())
   }
   /// Explicitly installs provider-neutral verified Reporter profiles through the existing outbox.
   /// Construction performs no dependency I/O; manual intake and ordinary Builds require no profiles.
@@ -172,7 +173,7 @@ impl FactoryRuntimeResources {
           self.objects.clone(),
         ))),
         revisions: self.revisions.clone(),
-        authorization,
+        authorization: authorization.clone(),
         registry,
         clock: Arc::new(octacity_server_application::SystemFactoryExecutionClock),
       },
@@ -180,9 +181,18 @@ impl FactoryRuntimeResources {
     )
     .map(|worker| {
       Arc::new(
-        worker.with_managed_connections(octacity_server_application::ManagedIntegrationConnections::new(
-          self.runs.clone(),
-        )),
+        worker
+          .with_repositories(self.runs.clone())
+          .with_predecessors(Arc::new(
+            octacity_server_application::IssueSourcePredecessorReader::new(
+              self.runs.clone(),
+              self.runs.clone(),
+              authorization,
+            ),
+          ))
+          .with_managed_connections(octacity_server_application::ManagedIntegrationConnections::new(
+            self.runs.clone(),
+          )),
       ) as Arc<dyn super::FactorySourceRuntime>
     })
     .map_err(|_| FactoryRuntimeInstallationError::Invalid)

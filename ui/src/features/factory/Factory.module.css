@@ -398,3 +398,7 @@
     padding: 0;
   }
 }
+
+.sourceWaitReference {
+  overflow-wrap: anywhere;
+}

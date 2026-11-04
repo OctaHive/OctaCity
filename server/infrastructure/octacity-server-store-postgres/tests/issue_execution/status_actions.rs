@@ -192,6 +192,7 @@ async fn linked_at_schema(
   let run = FactoryRun::admitted(fixture.admission.run.id(), &work);
   let admitted = store
     .admit_factory_work(management_mutation(AdmitFactoryWork {
+      incoming: None,
       probe: FactoryAdmissionProbe {
         source_scope: FactoryWorkSourceScope {
           source: FactoryKey::new("manual").unwrap(),
@@ -599,6 +600,7 @@ async fn parallel_work(
     .configuration;
   let admitted = store
     .admit_factory_work(management_mutation(AdmitFactoryWork {
+      incoming: None,
       probe: FactoryAdmissionProbe {
         source_scope: FactoryWorkSourceScope {
           source: FactoryKey::new("manual").unwrap(),

@@ -964,7 +964,10 @@ pub(super) fn admit_factory_work_locked(
       entity: EntityKind::FactoryRun,
     });
   }
-  let stored_run = StoredFactoryRun::admitted(&outcome, request.probe.intent_digest, &audit)?;
+  let mut stored_run = StoredFactoryRun::admitted(&outcome, request.probe.intent_digest, &audit)?;
+  if let Some(incoming) = request.incoming {
+    stored_run.insert_initial_incoming(incoming)?;
+  }
   let stored = StoredAdmission {
     source_scope: request.probe.source_scope.clone(),
     external_identity: request.probe.external_identity.clone(),

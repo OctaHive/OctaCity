@@ -22,7 +22,7 @@ pub(super) async fn admit(
     .unwrap();
   let revision = ImmutableRevision::new("original-base").unwrap();
   let retained = store
-    .freeze_project_text(retained.guard(at(20)), revision.clone())
+    .freeze_project_text(retained.guard(at(20)), revision.clone(), vec![])
     .await
     .unwrap();
   let mut retained = store.publish_project_text(retained.guard(at(20))).await.unwrap();
@@ -41,6 +41,7 @@ pub(super) async fn admit(
   let admission = postgres::legacy_factory_admission::seed(
     pool,
     AdmitFactoryWork {
+      incoming: None,
       probe: FactoryAdmissionProbe {
         source_scope: FactoryWorkSourceScope {
           source: "manual".parse().unwrap(),

@@ -720,6 +720,75 @@ async fn a_source_pass_deadline_bounds_revision_resolution_and_leaves_original_i
 }
 
 #[tokio::test]
+async fn retained_preparation_uses_frozen_policy_after_source_profile_replacement() {
+  let mut fixture = Fixture::enabled("jira").await;
+  let project = fixture.input.project_id();
+  let target = WorkSourceScanTarget::Input {
+    id: fixture.input.id(),
+    version: fixture.input.version(),
+  };
+  let claim = fixture
+    .store
+    .claim_source_scan(ClaimWorkSourceScan {
+      project_id: project,
+      target,
+      owner: key("interrupted"),
+      now: time(10),
+      until: time(90),
+    })
+    .await
+    .unwrap()
+    .unwrap()
+    .claim;
+  let snapshot = WorkSourceSnapshot {
+    selection_matches: vec![],
+    item: WorkSourceItem {
+      resource: ExternalWorkIdentity::new("native-container").unwrap(),
+      item: ExternalWorkIdentity::new("retained-ticket").unwrap(),
+    },
+    display_id: "TASK-retained".into(),
+    update_identity: "original".into(),
+    title: "Retained original title".into(),
+    body: Some("Retained original acceptance".into()),
+    fields: Default::default(),
+    labels: vec![],
+    state: "open".into(),
+  };
+  let retained = fixture
+    .store
+    .reserve_source_preparation(ReserveWorkSourcePreparation {
+      claim: claim.clone(),
+      input_id: fixture.input.id(),
+      item: snapshot.item.clone(),
+      snapshot: serde_json::to_vec(&snapshot).unwrap(),
+      now: time(11),
+    })
+    .await
+    .unwrap();
+  fixture
+    .store
+    .freeze_source_preparation_policy(FreezeSourcePreparationPolicy {
+      claim,
+      preparation_id: retained.id,
+      policy: serde_json::to_vec(&fixture.profile.preparation).unwrap(),
+      now: time(12),
+    })
+    .await
+    .unwrap();
+  fixture.replace_source_profile().await;
+  fixture.profile.read.polling.max_items = 1;
+  let result = fixture.worker().run_once(CancellationToken::new()).await.unwrap();
+  assert_eq!(
+    result.completed, 1,
+    "the live profile authorizes recovery using retained policy"
+  );
+  assert_eq!(fixture.runs().await.len(), 1);
+  let recovered = fixture.store.source_preparation(project, retained.id).await.unwrap();
+  assert_eq!(recovered.input.version(), WorkSourceInputVersion::INITIAL);
+  assert!(recovered.admission.is_some());
+}
+
+#[tokio::test]
 async fn installed_source_polling_is_supervised_and_stops_with_the_runtime() {
   let fixture = Fixture::enabled("jira").await;
   let cancellation = CancellationToken::new();
@@ -735,6 +804,58 @@ async fn installed_source_polling_is_supervised_and_stops_with_the_runtime() {
   cancellation.cancel();
   tokio::time::timeout(TEST_WAIT, task).await.unwrap().unwrap();
   assert_eq!(fixture.runs().await.len(), 1);
+}
+
+impl Fixture {
+  async fn replace_source_profile(&mut self) {
+    let mut binding = self.profile.read.binding.clone();
+    binding.configuration = exact("replacement-source-input", 80);
+    self.replace_source_binding(binding).await;
+  }
+
+  async fn replace_source_binding(&mut self, binding: WorkSourceBinding) {
+    let project = self.input.project_id();
+    let mut draft = self.input.definition().clone();
+    draft.source = binding;
+    let config = self
+      .store
+      .factory_configuration_version(draft.target.id(), draft.target.version())
+      .await
+      .unwrap();
+    let capability = WorkSourceCapability {
+      project_id: project,
+      role: WorkSourceCapabilityRole::Source,
+      binding: draft.source.clone(),
+    };
+    let input = self
+      .input
+      .replace(
+        WorkSourceInputVersion::new(2).unwrap(),
+        draft,
+        WorkSourceInputContext {
+          target: &config.configuration,
+          repository: &self.input.definition().repository,
+          source: Some(&capability),
+          reporter: None,
+        },
+      )
+      .unwrap();
+    self
+      .store
+      .publish_work_sources(PublishWorkSources {
+        project_id: project,
+        inputs: vec![WorkSourceInputChange {
+          expected_version: Some(self.input.version()),
+          input: input.clone(),
+        }],
+        group: None,
+      })
+      .await
+      .unwrap();
+    self.profile.read.binding = capability.binding.clone();
+    self.profile.preparation.mapping.source = capability.binding;
+    self.input = input;
+  }
 }
 
 impl Fixture {
@@ -1402,6 +1523,76 @@ async fn disabled_members_pending_work_does_not_block_the_current_group() {
 }
 
 #[tokio::test]
+async fn source_resource_replacement_does_not_recover_the_retired_resource() {
+  let mut fixture = Fixture::enabled("gitlab").await;
+  let retired = fixture
+    .reserve_pending(WorkSourceScanTarget::Input {
+      id: fixture.input.id(),
+      version: fixture.input.version(),
+    })
+    .await;
+  let mut binding = fixture.profile.read.binding.clone();
+  binding.resource = exact("replacement-resource", 81);
+  fixture.replace_source_binding(binding).await;
+  fixture.clock.0.store(100, Ordering::SeqCst);
+
+  let outcome = fixture.worker().run_once(CancellationToken::new()).await.unwrap();
+
+  assert_eq!((outcome.completed, outcome.deferred), (1, 0));
+  assert_eq!(fixture.runs().await.len(), 1);
+  assert_eq!(
+    fixture
+      .store
+      .source_preparation(fixture.input.project_id(), retired.id)
+      .await
+      .unwrap(),
+    retired,
+  );
+}
+
+#[tokio::test]
+async fn resource_replacement_keeps_polling_with_a_changed_native_container_or_reference() {
+  for (reference_name, container, item) in [
+    (None, "replacement-container", "new-ticket"),
+    (Some("renamed-tickets"), "native-container", "original-pending-item"),
+  ] {
+    let mut fixture = Fixture::enabled("gitlab").await;
+    let retired = fixture
+      .reserve_pending(WorkSourceScanTarget::Input {
+        id: fixture.input.id(),
+        version: fixture.input.version(),
+      })
+      .await;
+    let mut binding = fixture.profile.read.binding.clone();
+    let identity = reference_name.map_or_else(|| binding.resource.identity().clone(), key);
+    binding.resource = ImmutableReference::new(identity, key("v2"), FactoryDigest::from_bytes([81; 32]));
+    fixture.replace_source_binding(binding).await;
+    fixture.profile.read.resource.resource_id = container.into();
+    std::fs::write(
+      fixture.root.path().join("gitlab/mode.json"),
+      serde_json::to_vec(&serde_json::json!({
+        "candidates": [
+          {"container_id":container,"item_id":item,"display_id":"TASK-7","update_identity":"new","title":"First task","body":"Acceptance","fields":{},"labels":[],"state":"open"},
+          {"container_id":container,"item_id":"another-ticket","display_id":"TASK-8","update_identity":"new","title":"Second task","body":"Acceptance","fields":{},"labels":[],"state":"open"}
+        ],
+      })).unwrap(),
+    ).unwrap();
+    fixture.clock.0.store(100, Ordering::SeqCst);
+
+    let outcome = fixture.worker().run_once(CancellationToken::new()).await.unwrap();
+
+    assert_eq!((outcome.completed, outcome.deferred), (1, 0), "{container}");
+    assert!(!fixture.runs().await.is_empty(), "{container}");
+    let retained = fixture
+      .store
+      .source_preparation(fixture.input.project_id(), retired.id)
+      .await
+      .unwrap();
+    assert_eq!(retained, retired);
+  }
+}
+
+#[tokio::test]
 async fn pending_work_follows_its_stable_input_into_an_exclusive_group() {
   for mapped in [false, true] {
     let fixture = Fixture::enabled("gitlab").await;
@@ -1876,4 +2067,287 @@ async fn source_launch_policy_blocks_before_candidate_preparation_and_reports_no
       .claimed,
     0
   );
+}
+
+#[tokio::test]
+async fn stale_preparation_does_not_stop_a_restarted_source_worker_from_polling() {
+  struct RejectedCandidates {
+    store: Arc<InMemoryFactoryConfigurationStore>,
+    observations: std::sync::Mutex<Vec<(String, bool)>>,
+  }
+
+  #[async_trait::async_trait]
+  impl FactorySourcePredecessors for RejectedCandidates {
+    async fn resolve(
+      &self,
+      authorized: &FactorySourceAuthorization,
+      item: &FactorySourceItem,
+      _: FactorySourcePredecessorTarget<'_>,
+    ) -> Result<FactorySourceHandoff, ApplicationError> {
+      let frozen = self
+        .store
+        .pending_source_preparations(
+          authorized.input.project_id(),
+          WorkSourceScanTarget::Input {
+            id: authorized.input.id(),
+            version: authorized.input.version(),
+          },
+          None,
+          64,
+        )
+        .await?
+        .iter()
+        .any(|preparation| preparation.item == *item);
+      self
+        .observations
+        .lock()
+        .unwrap()
+        .push((item.item.as_str().to_owned(), frozen));
+      Err(ApplicationError::FactoryValidation(Box::new(
+        FactoryValidationDiagnostics {
+          errors: vec![FactoryValidationIssue {
+            field: "/incoming_result".into(),
+            code: "incoming_result_stale",
+            ..Default::default()
+          }],
+          ..Default::default()
+        },
+      )))
+    }
+  }
+
+  let mut fixture = predecessor_source_fixture().await;
+  fixture.profile.read.polling.max_items = 1;
+  let target = WorkSourceScanTarget::Input {
+    id: fixture.input.id(),
+    version: fixture.input.version(),
+  };
+  let claim = fixture
+    .store
+    .claim_source_scan(ClaimWorkSourceScan {
+      project_id: fixture.input.project_id(),
+      target,
+      owner: key("interrupted"),
+      now: time(10),
+      until: time(90),
+    })
+    .await
+    .unwrap()
+    .unwrap()
+    .claim;
+  for item in ["obsolete-ticket-1", "obsolete-ticket-2"] {
+    fixture
+      .store
+      .reserve_source_preparation(ReserveWorkSourcePreparation {
+        claim: claim.clone(),
+        input_id: fixture.input.id(),
+        item: FactorySourceItem {
+          resource: ExternalWorkIdentity::new("native-container").unwrap(),
+          item: ExternalWorkIdentity::new(item).unwrap(),
+        },
+        snapshot: b"{}".to_vec(),
+        now: time(11),
+      })
+      .await
+      .unwrap();
+  }
+  let candidates = Arc::new(RejectedCandidates {
+    store: fixture.store.clone(),
+    observations: Default::default(),
+  });
+  for at in [100, 110, 120] {
+    fixture.clock.0.store(at, Ordering::SeqCst);
+    let outcome = fixture
+      .worker()
+      .with_predecessors(candidates.clone())
+      .run_once(CancellationToken::new())
+      .await
+      .unwrap();
+    let schedule = fixture
+      .store
+      .source_scan_schedule(fixture.input.project_id(), target)
+      .await
+      .unwrap();
+    assert_eq!((outcome.completed, outcome.deferred), (1, 0), "at {at}: {schedule:?}");
+  }
+  let seen = candidates.observations.lock().unwrap().clone();
+  assert!(
+    seen.iter().all(|(_, frozen)| *frozen),
+    "the worker must freeze each original snapshot before resolving its predecessor: {seen:?}"
+  );
+  let first_two = seen
+    .iter()
+    .take(2)
+    .map(|(item, _)| item.as_str())
+    .collect::<BTreeSet<_>>();
+  assert_eq!(first_two, BTreeSet::from(["obsolete-ticket-1", "obsolete-ticket-2"]));
+  assert!(seen.iter().any(|(item, _)| item == "TASK-native"));
+  let scan = fixture
+    .store
+    .source_scan_diagnostics(fixture.input.project_id(), target)
+    .await
+    .unwrap()
+    .unwrap();
+  let last_wait = scan.last_wait.unwrap();
+  assert_eq!(last_wait.reason, WorkSourceWaitReason::Stale);
+  let waiting = fixture
+    .store
+    .source_preparation(fixture.input.project_id(), last_wait.preparation_id)
+    .await
+    .unwrap();
+  assert_eq!(waiting.item.item.as_str(), "TASK-native");
+  fixture.replace_source_profile().await;
+  fixture.clock.0.store(130, Ordering::SeqCst);
+  let restarted = fixture
+    .worker()
+    .with_predecessors(candidates.clone())
+    .run_once(CancellationToken::new())
+    .await
+    .unwrap();
+  assert_eq!(
+    restarted.completed, 1,
+    "waiting candidates retain their original mapping after replacement"
+  );
+  assert!(candidates.observations.lock().unwrap().len() > seen.len());
+  assert!(fixture.runs().await.is_empty());
+}
+
+async fn predecessor_source_fixture() -> Fixture {
+  let schema = FlowDataSchema::new(key("triage"), key("v1"), FlowValueSchema::Boolean).unwrap();
+  let budget = BudgetLimit::new(4, 1000, 1, 1, 100).unwrap();
+  let permissions = FactoryPermissionSet::deny_all();
+  let step = key("decide");
+  let outcome = key("eligible");
+  let terminal = key("accepted");
+  let node = FlowNodeDefinition::new(FlowNodeDefinitionInput {
+    key: step.clone(),
+    kind: FlowNodeKind::DeterministicGate,
+    input_schema: Some(schema.reference().clone()),
+    outcomes: vec![FlowOutcomeDefinition::new(
+      outcome.clone(),
+      FlowOutcomeKind::Success,
+      schema.reference().clone(),
+    )],
+    budget,
+    permissions: permissions.clone(),
+    required: true,
+    subflow: None,
+  })
+  .unwrap()
+  .with_gate(
+    FlowGateProgram::new(vec![], outcome.clone())
+      .unwrap()
+      .binding()
+      .unwrap(),
+  )
+  .unwrap()
+  .with_input_binding(
+    FlowInputBinding::new(
+      std::collections::BTreeMap::from([(
+        key("triage"),
+        FlowInputSource::Incoming {
+          schema: schema.reference().clone(),
+          path: String::new(),
+        },
+      )]),
+      FlowDataMapping::new(FlowValueMapping::Pointer { path: "/triage".into() }).unwrap(),
+    )
+    .unwrap(),
+  )
+  .unwrap();
+  let root = FlowDefinition::new(FlowDefinitionInput {
+    id: FlowDefinitionId::generate(),
+    version: FlowDefinitionVersion::INITIAL,
+    input_schema: Some(schema.reference().clone()),
+    entry: step.clone(),
+    nodes: vec![node],
+    transitions: vec![FlowTransition::new(
+      step,
+      outcome.clone(),
+      FlowTransitionTarget::Terminal(terminal.clone()),
+    )],
+    terminals: vec![FlowTerminalDefinition::new(
+      terminal.clone(),
+      schema.reference().clone(),
+    )],
+    context_projections: vec![],
+    data_projections: vec![],
+    execution: FlowExecutionPolicy::new(budget, permissions.clone(), 1).unwrap(),
+  })
+  .unwrap();
+  let previous = configuration(ProjectId::generate(), FactoryConfigurationId::generate());
+  let flow = FactoryFlowConfiguration::new(
+    PinnedFlowDefinitionClosure::new(root.reference(), vec![root]).unwrap(),
+    FlowAdmissionLimits::product_defaults(1, budget, permissions).unwrap(),
+    vec![schema],
+    Default::default(),
+  )
+  .unwrap()
+  .with_accepted_predecessor(FlowAcceptedPredecessor {
+    definition: previous.flow().closure.root(),
+    terminal,
+    outcomes: [outcome].into(),
+  })
+  .unwrap();
+  Fixture::enabled_with_flow("github", Some(flow)).await
+}
+
+#[tokio::test]
+async fn source_profile_replacement_recovers_an_observation_interrupted_during_predecessor_lookup() {
+  struct Interrupted(std::sync::atomic::AtomicBool);
+
+  #[async_trait::async_trait]
+  impl FactorySourcePredecessors for Interrupted {
+    async fn resolve(
+      &self,
+      _: &FactorySourceAuthorization,
+      _: &FactorySourceItem,
+      _: FactorySourcePredecessorTarget<'_>,
+    ) -> Result<FactorySourceHandoff, ApplicationError> {
+      if !self.0.swap(true, Ordering::SeqCst) {
+        return Err(ApplicationError::unavailable());
+      }
+      Err(ApplicationError::FactoryValidation(Box::new(
+        FactoryValidationDiagnostics {
+          errors: vec![FactoryValidationIssue {
+            field: "/incoming_result".into(),
+            code: "missing_incoming_result",
+            ..Default::default()
+          }],
+          ..Default::default()
+        },
+      )))
+    }
+  }
+
+  let mut fixture = predecessor_source_fixture().await;
+  let predecessor = Arc::new(Interrupted(false.into()));
+  let first = fixture
+    .worker()
+    .with_predecessors(predecessor.clone())
+    .run_once(CancellationToken::new())
+    .await
+    .unwrap();
+  assert_eq!(first.deferred, 1);
+  assert!(predecessor.0.load(Ordering::SeqCst));
+  fixture.replace_source_profile().await;
+  fixture.clock.0.store(120, Ordering::SeqCst);
+  let restarted = fixture
+    .worker()
+    .with_predecessors(predecessor)
+    .run_once(CancellationToken::new())
+    .await
+    .unwrap();
+  assert_eq!(restarted.completed, 1);
+  let target = WorkSourceScanTarget::Input {
+    id: fixture.input.id(),
+    version: fixture.input.version(),
+  };
+  let scan = fixture
+    .store
+    .source_scan_diagnostics(fixture.input.project_id(), target)
+    .await
+    .unwrap()
+    .unwrap();
+  assert_eq!(scan.last_wait.unwrap().reason, WorkSourceWaitReason::Missing);
 }

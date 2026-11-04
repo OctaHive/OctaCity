@@ -38,10 +38,22 @@ pub(super) fn insert(schemas: &mut Map<String, Value>) {
     ),
   );
   schemas.insert(
+    "FactoryFlowAcceptedPredecessor".to_owned(),
+    object(
+      [
+        ("definition", schema_ref("FactoryFlowDefinitionReference")),
+        ("terminal", key()),
+        ("outcomes", bounded_array(key(), usize::from(bounds.fan_out))),
+      ],
+      &["definition", "terminal", "outcomes"],
+    ),
+  );
+  schemas.insert(
     "FactoryFlowConfiguration".to_owned(),
     object(
       [
         ("closure", schema_ref("FactoryFlowDefinitionClosure")),
+        ("accepted_predecessor", schema_ref("FactoryFlowAcceptedPredecessor")),
         ("limits", schema_ref("FactoryFlowAdmissionLimits")),
         (
           "data_schemas",

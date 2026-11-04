@@ -498,7 +498,13 @@ fn completion_admission_acknowledgement_loss_replays_the_original_work_and_crite
 #[test]
 fn staged_replacement_and_label_churn_keep_the_original_prepared_run_and_manual_intake() {
   run_ready(async {
-    for provider in ["github", "gitlab", "jira", "custom-tracker"] {
+    for (provider, settled) in [
+      ("github", true),
+      ("gitlab", true),
+      ("jira", true),
+      ("custom-tracker", true),
+      ("github", false),
+    ] {
       let (store, preparation, claim) = reserved(provider).await;
       let preparer = FactoryWorkSourcePreparer::new(
         store.clone(),
@@ -510,18 +516,27 @@ fn staged_replacement_and_label_churn_keep_the_original_prepared_run_and_manual_
         .await
         .unwrap();
       let resolver = Arc::new(RecordingResolver::default());
-      let first = FactorySourceAdmissionHandlers::new(
-        store.clone(),
-        resolver.clone(),
-        Arc::new(crate::TrustedNetworkManagementPolicy),
-        Arc::new(InstalledSource(authorization(&preparation))),
-      )
-      .with_clock(Arc::new(Clock(AtomicI64::new(12))))
-      .admit_prepared(prepared_command(&preparation, claim.clone()))
-      .await
-      .unwrap();
-      let original = store.factory_run_snapshot(first.factory_run_id).await.unwrap();
-      let target = crate::factory_admission_tests::configuration(claim.project_id, FactoryConfigurationId::generate());
+      let original = if settled {
+        let first = FactorySourceAdmissionHandlers::new(
+          store.clone(),
+          resolver.clone(),
+          Arc::new(crate::TrustedNetworkManagementPolicy),
+          Arc::new(InstalledSource(authorization(&preparation))),
+        )
+        .with_clock(Arc::new(Clock(AtomicI64::new(12))))
+        .admit_prepared(prepared_command(&preparation, claim.clone()))
+        .await
+        .unwrap();
+        Some(store.factory_run_snapshot(first.factory_run_id).await.unwrap())
+      } else {
+        None
+      };
+      let replacement = FactoryConfigurationId::generate();
+      let target = if settled {
+        configuration(claim.project_id, replacement)
+      } else {
+        incoming_result_configuration(claim.project_id, replacement)
+      };
       crate::factory_admission_tests::seed_permitted_configuration(
         &store,
         octacity_server_store::PublishedFactoryConfiguration {
@@ -592,7 +607,11 @@ fn staged_replacement_and_label_churn_keep_the_original_prepared_run_and_manual_
       authorized.capability = capability;
       let handler = FactorySourceAdmissionHandlers::new(
         store.clone(),
-        Arc::new(crate::factory_admission_tests::UnavailableResolver),
+        if settled {
+          Arc::new(crate::factory_admission_tests::UnavailableResolver)
+        } else {
+          resolver.clone()
+        },
         Arc::new(crate::TrustedNetworkManagementPolicy),
         Arc::new(InstalledSource(authorized)),
       )
@@ -606,13 +625,18 @@ fn staged_replacement_and_label_churn_keep_the_original_prepared_run_and_manual_
           now: time(1012),
         },
       };
-      let replay = handler.admit_prepared(command).await.unwrap();
-      assert_eq!(replay.factory_run_id, first.factory_run_id);
-      assert_eq!(replay.disposition, MutationDisposition::Replayed);
-      assert_eq!(
-        store.factory_run_snapshot(first.factory_run_id).await.unwrap(),
-        original
-      );
+      let accepted = handler.admit_prepared(command.clone()).await.unwrap();
+      let snapshot = store.factory_run_snapshot(accepted.factory_run_id).await.unwrap();
+      assert_eq!(snapshot.work.configuration(), &preparation.input.definition().target);
+      if let Some(original) = original {
+        assert_eq!(accepted.disposition, MutationDisposition::Replayed);
+        assert_eq!(snapshot, original);
+      } else {
+        assert_eq!(accepted.disposition, MutationDisposition::Applied);
+        let replay = handler.admit_prepared(command).await.unwrap();
+        assert_eq!(replay.disposition, MutationDisposition::Replayed);
+        assert_eq!(replay.factory_run_id, accepted.factory_run_id);
+      }
       assert_eq!(
         store
           .source_issue_correlations(claim.project_id, preparation.issue, None, 64)
@@ -627,7 +651,7 @@ fn staged_replacement_and_label_churn_keep_the_original_prepared_run_and_manual_
       manual.external_identity = preparation.item.item.clone();
       let manual_handler = FactoryAdmissionHandlers::new(store.clone(), resolver.clone());
       let entered = admit(&manual_handler, manual.clone()).await.unwrap();
-      assert_ne!(entered.factory_run_id, first.factory_run_id);
+      assert_ne!(entered.factory_run_id, accepted.factory_run_id);
       assert_eq!(
         admit(&manual_handler, manual).await.unwrap().factory_run_id,
         entered.factory_run_id
@@ -1059,5 +1083,80 @@ fn staged_direct_and_prepared_ingress_replay_the_same_original_admission() {
       assert_eq!(resolver.call_count(), 1);
       assert_eq!(store.mutation_evidence_counts().await.idempotency, 1);
     }
+  });
+}
+
+#[test]
+fn resumes_legacy_published_source_preparation_without_policy() {
+  run_ready(async {
+    use octacity_server_store::{
+      PublishSourceArtifacts, PublishSourcePreparationIntent, ReserveSourceArtifacts, SourceArtifactObject,
+    };
+
+    let (store, preparation, claim) = reserved("github").await;
+    let target = preparation.input.definition();
+    let project = preparation.input.project_id();
+    let mut intent = command(project, target.target.id(), target.repository.id);
+    intent.external_identity = preparation
+      .admission_identity(octacity_server_store::ManagementSecurityScope::trusted_network())
+      .external_identity;
+    let mapping_digest = digest(76);
+    store
+      .reserve_source_artifacts(ReserveSourceArtifacts {
+        claim: claim.clone(),
+        preparation_id: preparation.id,
+        mapping_digest,
+        objects: [
+          (FactoryInputRole::Task, intent.artifacts.task()),
+          (FactoryInputRole::Acceptance, intent.artifacts.acceptance()),
+        ]
+        .into_iter()
+        .map(|(role, artifact)| SourceArtifactObject {
+          role,
+          artifact: artifact.clone(),
+          upload_id: octacity_server_domain::ArtifactUploadId::generate(),
+          media_type: octacity_server_store::ArtifactMediaType::new("application/json").unwrap(),
+        })
+        .collect(),
+        retention_millis: 1000,
+        now: time(11),
+      })
+      .await
+      .unwrap();
+    store
+      .publish_source_artifacts(PublishSourceArtifacts {
+        claim: claim.clone(),
+        preparation_id: preparation.id,
+        mapping_digest,
+        now: time(11),
+      })
+      .await
+      .unwrap();
+    intent.admitted_at = time(11);
+    let retained = store
+      .publish_source_preparation_intent(PublishSourcePreparationIntent {
+        claim: claim.clone(),
+        preparation_id: preparation.id,
+        intent,
+        now: time(11),
+      })
+      .await
+      .unwrap();
+    assert!(retained.policy.is_none());
+    let resolver = Arc::new(RecordingResolver::default());
+    let handler = FactorySourceAdmissionHandlers::new(
+      store.clone(),
+      resolver.clone(),
+      Arc::new(crate::TrustedNetworkManagementPolicy),
+      Arc::new(InstalledSource(authorization(&retained))),
+    )
+    .with_clock(Arc::new(Clock(AtomicI64::new(12))));
+    let command = prepared_command(&retained, claim);
+    let admitted = handler.admit_prepared(command.clone()).await.unwrap();
+    assert_eq!(
+      handler.admit_prepared(command).await.unwrap().factory_run_id,
+      admitted.factory_run_id
+    );
+    assert_eq!(resolver.call_count(), 1);
   });
 }

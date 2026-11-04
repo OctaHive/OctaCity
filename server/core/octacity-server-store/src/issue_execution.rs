@@ -29,6 +29,9 @@ pub struct IssueExecutionTarget {
   pub source: RepositorySourceSelection,
   /// Explicit finite versioned requirements selection.
   pub mapping: IssueExecutionMapping,
+  /// Exact producing Run selected for a target that requires an accepted predecessor.
+  #[serde(default, skip_serializing_if = "Option::is_none")]
+  pub predecessor_run: Option<FactoryRunId>,
 }
 /// Caller review; contains neither bodies nor execution-state setters.
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
@@ -66,9 +69,9 @@ pub struct IssueWorkAssociation {
   pub project_id: ProjectId,
   /// Stable owning Issue.
   pub issue_id: IssueId,
-  /// Explicit reviewed request, absent for retained Artifact-only lineage.
+  /// Explicit reviewed request, absent for native Source or historical Work.
   pub request_id: Option<octacity_server_domain::IssueExecutionRequestId>,
-  /// Exact reviewed revision; legacy Artifact lineage never invents one.
+  /// Exact reviewed or natively observed revision. Historical Work cannot invent one.
   pub requirements_version: Option<IssueVersion>,
   /// Original immutable Work.
   pub work_id: WorkEnvelopeId,
@@ -130,6 +133,14 @@ pub trait IssueExecutionStore: Send + Sync {
     project_id: ProjectId,
     work_id: WorkEnvelopeId,
   ) -> Result<Option<IssueWorkAssociation>, StoreError>;
+  /// Reads one bounded page of natively associated Work with a proven Issue revision.
+  async fn native_issue_work(
+    &self,
+    project_id: ProjectId,
+    issue_id: IssueId,
+    after: Option<WorkEnvelopeId>,
+    limit: u16,
+  ) -> Result<Vec<IssueWorkAssociation>, StoreError>;
   /// Scoped original replay, checked before current text or mutable target lookup.
   async fn replay_issue_execution(
     &self,

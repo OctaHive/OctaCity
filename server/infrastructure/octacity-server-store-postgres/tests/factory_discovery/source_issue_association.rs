@@ -4,7 +4,7 @@ use octacity_server_store::testing::management_mutation;
 use octacity_server_store::{
   AssociateIssueWork, ImportIssueSource, IssueContent, IssueExecutionStore, IssueListVisibility,
   IssueSourceObservation, IssueSourceOutcome, IssueSourceSelection, IssueSourceStore, IssueStore,
-  ManagementSecurityScope, MutationDisposition, StoreError,
+  ManagementSecurityScope, MutationDisposition, StoreError, WorkSourceIssueText,
 };
 
 async fn setup() -> (TestDatabase, PostgresStore, FactoryConfiguration, PublishedRepository) {
@@ -71,6 +71,30 @@ async fn prepare_scoped(
   octacity_server_store::WorkSourcePreparation,
   octacity_server_store::PublishedFactoryAdmission,
 ) {
+  prepare_snapshot(
+    store,
+    input,
+    configuration,
+    repository,
+    scope,
+    b"original private native snapshot".to_vec(),
+    None,
+  )
+  .await
+}
+
+async fn prepare_snapshot(
+  store: &PostgresStore,
+  input: &WorkSourceInput,
+  configuration: &FactoryConfiguration,
+  repository: &PublishedRepository,
+  scope: ManagementSecurityScope,
+  snapshot: Vec<u8>,
+  observed: Option<WorkSourceIssueText<'_>>,
+) -> (
+  octacity_server_store::WorkSourcePreparation,
+  octacity_server_store::PublishedFactoryAdmission,
+) {
   store
     .publish_work_sources(PublishWorkSources {
       project_id: input.project_id(),
@@ -97,16 +121,20 @@ async fn prepare_scoped(
     .unwrap()
     .unwrap();
   let pending = store
-    .reserve_source_preparation(ReserveWorkSourcePreparation {
-      claim: scan.claim.clone(),
-      input_id: input.id(),
-      item: WorkSourceItem {
-        resource: ExternalWorkIdentity::new("native-container").unwrap(),
-        item: ExternalWorkIdentity::new("ticket-42").unwrap(),
+    .reserve_scoped_source_preparation(
+      ReserveWorkSourcePreparation {
+        claim: scan.claim.clone(),
+        input_id: input.id(),
+        item: WorkSourceItem {
+          resource: ExternalWorkIdentity::new("native-container").unwrap(),
+          item: ExternalWorkIdentity::new("ticket-42").unwrap(),
+        },
+        snapshot,
+        now: time(32),
       },
-      snapshot: b"original private native snapshot".to_vec(),
-      now: time(32),
-    })
+      observed.map(|text| (&scope, text)),
+      None,
+    )
     .await
     .unwrap();
   let example = admission_from_configuration(900, 901, "source-issue-example", 34, configuration, repository);
@@ -164,6 +192,51 @@ async fn prepare_scoped(
     store.source_preparation(input.project_id(), prepared.id).await.unwrap(),
     outcome.admission,
   )
+}
+
+#[tokio::test]
+#[ignore = "requires an explicitly configured disposable PostgreSQL service"]
+async fn native_source_admission_retains_the_matching_linked_issue_revision() {
+  let (database, store, configuration, repository) = setup().await;
+  let input = input(&configuration, &repository, "installed-tracker");
+  let issue_id = imported(
+    &store,
+    &input,
+    WorkSourceItem {
+      resource: ExternalWorkIdentity::new("native-container").unwrap(),
+      item: ExternalWorkIdentity::new("ticket-42").unwrap(),
+    },
+    "import-before-automatic-triage",
+  )
+  .await;
+  let revision = store.issue(input.project_id(), issue_id, None).await.unwrap();
+  let (_, admission) = prepare_snapshot(
+    &store,
+    &input,
+    &configuration,
+    &repository,
+    ManagementSecurityScope::trusted_network(),
+    b"snapshot owned by the mapper".to_vec(),
+    Some(WorkSourceIssueText {
+      title: &revision.content.title,
+      description: &revision.content.description,
+    }),
+  )
+  .await;
+  let restarted = PostgresStore::new(database.pool.clone());
+  let association = restarted
+    .issue_work_association(input.project_id(), admission.work.id())
+    .await
+    .unwrap();
+  assert_eq!(
+    association
+      .as_ref()
+      .map(|link| (link.issue_id, link.run_id, link.requirements_version)),
+    Some((issue_id, admission.run.id(), Some(revision.version))),
+    "native intake must preserve the exact local Issue revision without inventing a reviewed request",
+  );
+  assert!(association.unwrap().request_id.is_none());
+  database.cleanup().await;
 }
 
 async fn imported(store: &PostgresStore, input: &WorkSourceInput, item: WorkSourceItem, replay: &str) -> IssueId {

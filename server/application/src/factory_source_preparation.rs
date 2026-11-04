@@ -9,6 +9,12 @@ use octacity_server_store::{
   WorkSourceScanClaim,
 };
 use std::sync::Arc;
+
+#[derive(Clone, Copy)]
+enum OriginalSourceInputs<'a> {
+  Artifacts(&'a octacity_server_factory::WorkArtifacts),
+  IssueText(&'a octacity_server_store::ProjectTextDocuments),
+}
 use uuid::Uuid;
 
 /// Exact installed preparation choices; ticket data cannot deserialize these as authority.
@@ -21,6 +27,9 @@ pub struct SourcePreparationSettings {
   pub source: RepositorySourceSelection,
   /// Operator-selected priority, risk and bounded safe metadata.
   pub classification: WorkClassification,
+  /// Digest of the accepted predecessor frozen by the Source worker.
+  #[serde(default, skip_serializing_if = "Option::is_none")]
+  pub predecessor_digest: Option<FactoryDigest>,
 }
 impl SourcePreparationSettings {
   pub(crate) async fn authorize(
@@ -114,6 +123,51 @@ impl<S: WorkSourceArtifactStore, B: ArtifactBytePublisher> FactoryWorkSourcePrep
     id: FactoryDigest,
     settings: SourcePreparationSettings,
   ) -> Result<SourcePreparationOutcome, ApplicationError> {
+    self.prepare_inputs(claim, id, settings, None).await
+  }
+
+  /// Materializes only the implementation inputs of the verified handoff.
+  pub async fn prepare_handoff(
+    &self,
+    claim: WorkSourceScanClaim,
+    id: FactoryDigest,
+    settings: SourcePreparationSettings,
+    handoff: &crate::FactorySourceHandoff,
+  ) -> Result<SourcePreparationOutcome, ApplicationError> {
+    let original = match &handoff.issue_text {
+      Some(text) => OriginalSourceInputs::IssueText(text),
+      None => OriginalSourceInputs::Artifacts(&handoff.artifacts),
+    };
+    self
+      .prepare_original(claim, id, settings, handoff.record_digest()?, original)
+      .await
+  }
+
+  async fn prepare_original(
+    &self,
+    claim: WorkSourceScanClaim,
+    id: FactoryDigest,
+    mut settings: SourcePreparationSettings,
+    predecessor: FactoryDigest,
+    inputs: OriginalSourceInputs<'_>,
+  ) -> Result<SourcePreparationOutcome, ApplicationError> {
+    if settings.predecessor_digest.is_some_and(|digest| digest != predecessor) {
+      return Err(crate::factory_source_admission::stale_source_handoff());
+    }
+    settings.predecessor_digest = Some(predecessor);
+    self.prepare_inputs(claim, id, settings, Some(inputs)).await
+  }
+
+  async fn prepare_inputs(
+    &self,
+    claim: WorkSourceScanClaim,
+    id: FactoryDigest,
+    settings: SourcePreparationSettings,
+    original: Option<OriginalSourceInputs<'_>>,
+  ) -> Result<SourcePreparationOutcome, ApplicationError> {
+    if original.is_some() != settings.predecessor_digest.is_some() {
+      return Err(ApplicationError::invalid());
+    }
     settings.mapping.validate().map_err(|_| ApplicationError::invalid())?;
     let retained = self.store.source_preparation(claim.project_id, id).await?;
     if let Some((policy, context)) = &self.authorization {
@@ -151,46 +205,88 @@ impl<S: WorkSourceArtifactStore, B: ArtifactBytePublisher> FactoryWorkSourcePrep
         now: self.clock.now()?,
       })
       .await?;
-    let resolved = if let crate::SourceAcceptanceMapping::ProcessCompletion(document) = &settings.mapping.acceptance
-      && let crate::SourceCompletionDocument::ProjectInput { artifact, .. } = document
+    let required_until = claim.until.min(preparation.snapshot_expires_at);
+    let mut retained_until = None;
+    let (mapped, media_type) = if let Some(OriginalSourceInputs::IssueText(text)) = original {
+      let maximum = settings.mapping.max_artifact_bytes as usize;
+      let result = if [text.task(), text.acceptance()]
+        .into_iter()
+        .any(|bytes| bytes.len() > maximum)
+      {
+        Err(crate::SourceMappingFailure::TooLarge)
+      } else {
+        Ok(crate::MappedWorkSource {
+          task: text.task().to_vec(),
+          acceptance: text.acceptance().to_vec(),
+        })
+      };
+      (result, "text/plain")
+    } else if let Some(OriginalSourceInputs::Artifacts(inputs)) = original
+      && [inputs.task(), inputs.acceptance()]
+        .iter()
+        .any(|artifact| artifact.encoded_size() > u64::from(settings.mapping.max_artifact_bytes))
     {
-      document
-        .validate(settings.mapping.max_body_bytes)
-        .map_err(|_| ApplicationError::invalid())?;
-      if document.project_id() != preparation.input.project_id() {
-        return Err(ApplicationError::invalid());
-      }
-      // Reading uses the current fenced operation window; the actual Work input
-      // retention is checked against the authoritative reservation before publication.
-      let required_until = claim.until.min(preparation.snapshot_expires_at);
-      Some(
-        self
-          .project_inputs
-          .as_ref()
-          .ok_or_else(ApplicationError::capability_unavailable)?
-          .read(crate::ReadFactoryArtifact {
-            project_id: preparation.input.project_id(),
-            artifact: artifact.clone(),
-            maximum_bytes: u64::from(settings.mapping.max_body_bytes),
-            observed_at: self.clock.now()?,
-            required_until,
-          })
-          .await?,
+      (Err(crate::SourceMappingFailure::TooLarge), "text/plain")
+    } else if let Some(OriginalSourceInputs::Artifacts(inputs)) = original {
+      let task = self
+        .read_original_input(
+          claim.project_id,
+          inputs.task(),
+          settings.mapping.max_artifact_bytes,
+          required_until,
+        )
+        .await?;
+      let acceptance = self
+        .read_original_input(
+          claim.project_id,
+          inputs.acceptance(),
+          settings.mapping.max_artifact_bytes,
+          required_until,
+        )
+        .await?;
+      retained_until = Some(task.retained_until().min(acceptance.retained_until()));
+      (
+        Ok(crate::MappedWorkSource {
+          task: task.bytes().to_vec(),
+          acceptance: acceptance.bytes().to_vec(),
+        }),
+        "text/plain",
       )
     } else {
-      None
+      let resolved = if let crate::SourceAcceptanceMapping::ProcessCompletion(document) = &settings.mapping.acceptance
+        && let crate::SourceCompletionDocument::ProjectInput { artifact, .. } = document
+      {
+        document
+          .validate(settings.mapping.max_body_bytes)
+          .map_err(|_| ApplicationError::invalid())?;
+        let resolved = self
+          .read_input(
+            claim.project_id,
+            artifact,
+            settings.mapping.max_body_bytes,
+            required_until,
+          )
+          .await?;
+        retained_until = Some(resolved.retained_until());
+        Some(resolved)
+      } else {
+        None
+      };
+      (
+        crate::factory_source_mapping::map_work_source_snapshot_with_completion(
+          &preparation,
+          &settings.mapping,
+          resolved.as_ref(),
+        ),
+        "application/json",
+      )
     };
-    // A successful asynchronous read is data, not a continuing authorization grant.
-    if resolved.is_some()
+    if retained_until.is_some()
       && let Some((policy, context)) = &self.authorization
     {
       settings.authorize(policy.as_ref(), context, &preparation).await?;
     }
-    let mapped = match crate::factory_source_mapping::map_work_source_snapshot_with_completion(
-      &preparation,
-      &settings.mapping,
-      resolved.as_ref(),
-    ) {
+    let mapped = match mapped {
       Ok(mapped) => mapped,
       Err(crate::SourceMappingFailure::InvalidMapping) => return Err(ApplicationError::invalid()),
       Err(reason) => {
@@ -236,7 +332,7 @@ impl<S: WorkSourceArtifactStore, B: ArtifactBytePublisher> FactoryWorkSourcePrep
             .map_err(|_| ApplicationError::invalid())?,
           upload_id: ArtifactUploadId::from_uuid(Uuid::new_v5(&artifact.as_uuid(), b"source-input:v1"))
             .map_err(|_| ApplicationError::invalid())?,
-          media_type: octacity_server_store::ArtifactMediaType::new("application/json")
+          media_type: octacity_server_store::ArtifactMediaType::new(media_type)
             .map_err(|_| ApplicationError::invalid())?,
         },
         bytes,
@@ -250,19 +346,16 @@ impl<S: WorkSourceArtifactStore, B: ArtifactBytePublisher> FactoryWorkSourcePrep
       retention_millis: settings.mapping.retention_millis,
       now: self.clock.now()?,
     };
-    if let Some(document) = &resolved {
+    if let Some(retained_until) = retained_until {
       let current = self.store.source_materialization(claim.project_id, id).await?;
       let proposed = request.retain(&preparation, current.as_ref())?;
-      if proposed.expires_at > document.retained_until() {
+      if proposed.expires_at > retained_until {
         return Err(ApplicationError::invalid());
       }
     }
     let reserved = self.store.reserve_source_artifacts(request.clone()).await?;
     // Recheck the authoritative reservation if a concurrent identical owner won first.
-    if resolved
-      .as_ref()
-      .is_some_and(|document| reserved.expires_at > document.retained_until())
-    {
+    if retained_until.is_some_and(|until| reserved.expires_at > until) {
       return Err(ApplicationError::invalid());
     }
     if reserved.published_at.is_none() {
@@ -324,5 +417,53 @@ impl<S: WorkSourceArtifactStore, B: ArtifactBytePublisher> FactoryWorkSourcePrep
     Ok(SourcePreparationOutcome::Prepared(Box::new(
       retained.intent.ok_or_else(ApplicationError::unavailable)?,
     )))
+  }
+  async fn read_original_input(
+    &self,
+    project_id: octacity_server_domain::ProjectId,
+    artifact: &FactoryArtifactReference,
+    maximum_bytes: u32,
+    required_until: octacity_server_domain::Timestamp,
+  ) -> Result<crate::FactoryRetainedInput, ApplicationError> {
+    self.authorize_original_input(artifact).await?;
+    let document = self
+      .read_input(project_id, artifact, maximum_bytes, required_until)
+      .await?;
+    self.authorize_original_input(artifact).await?;
+    Ok(document)
+  }
+
+  async fn authorize_original_input(&self, artifact: &FactoryArtifactReference) -> Result<(), ApplicationError> {
+    if let Some((policy, context)) = &self.authorization {
+      crate::factory_configuration_choices::require_visible_reference(
+        policy.as_ref(),
+        context,
+        crate::ManagementResourceKind::Artifact,
+        artifact.artifact_id(),
+      )
+      .await?;
+    }
+    Ok(())
+  }
+
+  async fn read_input(
+    &self,
+    project_id: octacity_server_domain::ProjectId,
+    artifact: &FactoryArtifactReference,
+    maximum_bytes: u32,
+    required_until: octacity_server_domain::Timestamp,
+  ) -> Result<crate::FactoryRetainedInput, ApplicationError> {
+    self
+      .project_inputs
+      .as_ref()
+      .ok_or_else(ApplicationError::capability_unavailable)?
+      .read(crate::ReadFactoryArtifact {
+        project_id,
+        artifact: artifact.clone(),
+        maximum_bytes: u64::from(maximum_bytes),
+        observed_at: self.clock.now()?,
+        required_until,
+      })
+      .await
   }
 }

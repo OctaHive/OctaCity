@@ -121,7 +121,7 @@ impl FactoryFlowInputPreparer for Inputs {
       .map_err(|_| ApplicationError::invalid())
   }
 }
-struct FakePending;
+pub(crate) struct FakePending;
 #[async_trait]
 impl FactoryNodeExecutor for FakePending {
   async fn cancel(
@@ -405,6 +405,25 @@ pub(crate) fn fixture_capture_or_validation_value(
   }
 }
 impl Execution {
+  pub(crate) fn for_reports(reports: &BTreeMap<FactoryKey, (ImmutableReference, serde_json::Value)>) -> Self {
+    Self {
+      clock: std::sync::atomic::AtomicI64::new(30),
+      seeder: None,
+      builds: Mutex::default(),
+      requirements: reports.keys().map(|node| (node.clone(), vec![])).collect(),
+      result_schemas: reports
+        .iter()
+        .map(|(node, (schema, _))| (node.clone(), schema.clone()))
+        .collect(),
+      reports: reports
+        .iter()
+        .map(|(node, (_, value))| (node.clone(), value.clone()))
+        .collect(),
+      facts: BTreeMap::new(),
+      output_builder: None,
+    }
+  }
+
   fn result_schema(&self, node: FactoryKey) -> ImmutableReference {
     self.result_schemas[&node].clone()
   }

@@ -7,6 +7,7 @@ import { QueryFailureNotice, QueryLoadingNotice } from '../../shared/QueryStateN
 import { formatTimestamp } from '../../shared/display';
 import { SourceAdmissions } from '../../shared/SourceAdmissions';
 import type { FactorySourcesApi, SourceRecord } from './sourceApi';
+import styles from './Factory.module.css';
 
 /** Reads retained facts only; opening this panel never polls a provider or dispatches reporting. */
 export function SourceProgress({ record, api }: { record: SourceRecord; api: FactorySourcesApi }) {
@@ -68,6 +69,22 @@ function Progress({ record, api }: { record: SourceRecord; api: FactorySourcesAp
                       )}
                     </span>{' '}
                     · {scan.selection.matching_inputs.join(', ')}
+                  </dd>
+                </>
+              ) : null}
+              {scan.last_wait ? (
+                <>
+                  <dt>{t('factory.lastPredecessorWait')}</dt>
+                  <dd>
+                    <span>{t(`factory.predecessorWait.${scan.last_wait.reason}`)}</span>
+                    {' · '}
+                    {time(scan.last_wait.checked_at)}
+                    <details>
+                      <summary>{t('factory.routeDetails')}</summary>
+                      <code className={styles.sourceWaitReference}>
+                        {scan.last_wait.preparation_id}
+                      </code>
+                    </details>
                   </dd>
                 </>
               ) : null}

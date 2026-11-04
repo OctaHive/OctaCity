@@ -396,6 +396,7 @@ pub(super) async fn admit_flow(
     .unwrap();
   store
     .admit_factory_work(mutation(AdmitFactoryWork {
+      incoming: None,
       probe: FactoryAdmissionProbe {
         source_scope: FactoryWorkSourceScope {
           source: key("manual"),

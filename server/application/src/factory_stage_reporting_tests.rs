@@ -6,6 +6,71 @@ pub(super) mod support;
 use support::*;
 
 #[test]
+fn downstream_reads_the_result_of_the_exact_completed_terminal() {
+  crate::factory_admission_tests::run_ready(accepted_stage_record());
+}
+
+pub(crate) async fn accepted_stage_record() -> FlowNodeRecord {
+  let definition = stage_definition("approved");
+  let source = definition.reference();
+  let (store, run, claim) = admitted(definition).await;
+  let owner = FactoryFlowRunner::new(
+    store.clone(),
+    Arc::new(FactoryFlowActionAdapter::new(Arc::new(FactoryWorkStatusAction::new(
+      reference("reporter"),
+      reporter(),
+      reported(),
+    )))),
+    Arc::new(crate::factory_flow_tests::Inputs),
+    crate::factory_node_test_support::clock(),
+  );
+  let pending = store.factory_run_snapshot(run).await.unwrap();
+  assert!(
+    pending
+      .accepted_terminal_result(source, &key("done"), &[key("finished")].into())
+      .unwrap()
+      .is_none()
+  );
+  for tick in 11..30 {
+    owner.reconcile_flow(run, claim, at(tick)).await.unwrap();
+    let current = store.factory_run_snapshot(run).await.unwrap();
+    if current.run.state() == FactoryRunState::Completed {
+      let result = current
+        .accepted_terminal_result(source, &key("done"), &[key("finished")].into())
+        .unwrap()
+        .unwrap();
+      assert_eq!(result.input().node(), &key("continue-work"));
+      assert_eq!(result.outcome(), &key("finished"));
+      assert_eq!(result.payload().value(), &serde_json::json!(true));
+      assert!(
+        current
+          .accepted_terminal_result(source, &key("done"), &[key("other-decision")].into())
+          .unwrap()
+          .is_none()
+      );
+      assert!(
+        current
+          .accepted_terminal_result(source, &key("ask-human"), &[key("finished")].into())
+          .unwrap()
+          .is_none()
+      );
+      assert!(
+        current
+          .accepted_terminal_result(
+            stage_definition("approved").reference(),
+            &key("done"),
+            &[key("finished")].into()
+          )
+          .unwrap()
+          .is_none()
+      );
+      return result.clone();
+    }
+  }
+  panic!("the configured producing Flow did not finish");
+}
+
+#[test]
 fn stage_routes_queue_reporting_before_pipeline_completion_for_each_declared_outcome() {
   crate::factory_admission_tests::run_ready(async {
     for (route, _, status) in ROUTES {

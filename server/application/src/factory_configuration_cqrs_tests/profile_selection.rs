@@ -2,6 +2,8 @@ use super::*;
 use octacity_server_factory::*;
 use std::collections::BTreeMap;
 
+mod ticket_delivery;
+
 fn selected_fixture(project: ProjectId) -> Fixture {
   selected_fixture_with_profiles(project, |_, _| {})
 }
@@ -288,6 +290,7 @@ fn standalone_flow_publication_uses_the_same_profile_compatibility_validation() 
     let flow = fixture.draft.flow.unwrap();
     let root = flow.closure.definition(flow.closure.root()).unwrap();
     let draft = crate::FactoryFlowDefinitionDraft {
+      accepted_predecessor: None,
       root: crate::FactoryFlowRootDraft {
         name: None,
         code_sources: None,
@@ -313,7 +316,7 @@ fn standalone_flow_publication_uses_the_same_profile_compatibility_validation() 
           .unwrap();
       }
     }
-    let store = Arc::new(PublicationChoices(std::sync::Mutex::new(choices)));
+    let store = Arc::new(PublicationChoices::for_validation(choices));
     let policy = Arc::new(TrustedNetworkManagementPolicy);
     let handlers = AuthorizedQueryHandler::new(
       policy.clone(),
@@ -329,13 +332,35 @@ fn standalone_flow_publication_uses_the_same_profile_compatibility_validation() 
       "standalone Flow publication must reject an unavailable candidate too"
     );
     *store.0.lock().unwrap() = fixture.choices;
+    assert!(
+      handlers
+        .handle_query(
+          &context(),
+          crate::ValidateFactoryFlowDefinitionQuery {
+            project_id: ProjectId::generate(),
+            ..input.clone()
+          },
+        )
+        .await
+        .is_err(),
+      "installed capability choices do not make another Project's Role and Profiles selectable"
+    );
     assert!(handlers.handle_query(&context(), input).await.is_ok());
   });
 }
 
-// Root validation may read installed choices, but cannot read a subflow or write a publication.
-// Fail immediately if the public handler crosses either boundary in these contracts.
-pub(super) struct PublicationChoices(pub(super) std::sync::Mutex<FactoryConfigurationChoices>);
+// Standalone roots may read installed choices but must never read a subflow.
+// Only command tests opt in to the publication boundary.
+pub(super) struct PublicationChoices(std::sync::Mutex<FactoryConfigurationChoices>, bool);
+impl PublicationChoices {
+  pub(super) fn for_validation(choices: FactoryConfigurationChoices) -> Self {
+    Self(std::sync::Mutex::new(choices), false)
+  }
+
+  fn for_publication(choices: FactoryConfigurationChoices) -> Self {
+    Self(std::sync::Mutex::new(choices), true)
+  }
+}
 
 #[test]
 fn access_constraints_explain_profile_narrowing_and_defer_actual_agent_enforcement() {
@@ -515,13 +540,18 @@ impl FactoryFlowDefinitionStore for PublicationChoices {
     &self,
     _: ManagementMutation<ReplayFactoryFlowDefinition>,
   ) -> Result<Option<FactoryFlowDefinitionMutationOutcome>, StoreError> {
-    unreachable!("validation cannot replay a mutation")
+    assert!(self.1, "validation cannot replay a mutation");
+    Ok(None)
   }
   async fn publish_factory_flow_definition(
     &self,
-    _: ManagementMutation<PublishFactoryFlowDefinition>,
+    request: ManagementMutation<PublishFactoryFlowDefinition>,
   ) -> Result<FactoryFlowDefinitionMutationOutcome, ReplaceFactoryConfigurationError> {
-    unreachable!("validation cannot publish")
+    assert!(self.1, "validation cannot publish");
+    Ok(FactoryFlowDefinitionMutationOutcome {
+      disposition: octacity_server_store::MutationDisposition::Applied,
+      publication: request.into_parts().0.publication,
+    })
   }
   async fn factory_flow_definition(
     &self,
@@ -583,13 +613,14 @@ fn decision_profile_answers_are_checked_before_flow_publication() {
         },
       )
       .unwrap();
-    let store = Arc::new(PublicationChoices(std::sync::Mutex::new(choices)));
+    let store = Arc::new(PublicationChoices::for_validation(choices));
     let policy = Arc::new(TrustedNetworkManagementPolicy);
     let handlers = AuthorizedQueryHandler::new(
       policy.clone(),
       Arc::new(crate::FactoryFlowDefinitionHandlers::new(store, policy)),
     );
     let draft = crate::FactoryFlowDefinitionDraft {
+      accepted_predecessor: None,
       root: crate::FactoryFlowRootDraft {
         name: None,
         code_sources: None,
@@ -788,5 +819,73 @@ fn native_compiler_rejects_missing_task_context_before_publication_and_accepts_e
         );
       }
     }
+  });
+}
+
+#[test]
+fn flow_publication_preserves_the_declared_accepted_predecessor() {
+  run_ready(async {
+    let project = ProjectId::generate();
+    let fixture = selected_fixture(project);
+    let flow = fixture.draft.flow.unwrap();
+    let root = flow.closure.definition(flow.closure.root()).unwrap();
+    let mut nodes = root.nodes().to_vec();
+    let entry = nodes.iter().position(|node| node.key() == root.entry()).unwrap();
+    let schema = nodes[entry].input_schema().unwrap().clone();
+    nodes[entry] = nodes[entry]
+      .clone()
+      .with_input_binding(
+        FlowInputBinding::new(
+          BTreeMap::from([(
+            key("triage"),
+            FlowInputSource::Incoming {
+              schema,
+              path: String::new(),
+            },
+          )]),
+          FlowDataMapping::new(FlowValueMapping::Pointer { path: "/triage".into() }).unwrap(),
+        )
+        .unwrap(),
+      )
+      .unwrap();
+    let predecessor = FlowAcceptedPredecessor {
+      definition: root.reference(),
+      terminal: key("triaged"),
+      outcomes: [key("eligible")].into(),
+    };
+    let draft = serde_json::from_value(serde_json::json!({
+      "root": {
+        "input_schema": root.input_schema(), "entry": root.entry(), "nodes": nodes,
+        "transitions": root.transitions(), "terminals": root.terminals(),
+        "context_projections": root.context_projections(), "data_projections": root.data_projections(),
+        "execution": root.execution(),
+      },
+      "limits": flow.limits, "data_schemas": flow.data_schemas, "pools": flow.pools,
+      "accepted_predecessor": predecessor,
+    }))
+    .expect("the ordinary authoring request accepts a predecessor contract");
+    let policy = Arc::new(TrustedNetworkManagementPolicy);
+    let handlers = AuthorizedCommandHandler::new(
+      policy.clone(),
+      Arc::new(crate::FactoryFlowDefinitionHandlers::new(
+        Arc::new(PublicationChoices::for_publication(fixture.choices)),
+        policy,
+      )),
+    );
+    let published = handlers
+      .handle_command(
+        &context(),
+        crate::CreateFactoryFlowDefinitionCommand {
+          id: FlowDefinitionId::generate(),
+          project_id: project,
+          draft,
+          idempotency_key: idempotency("with-predecessor"),
+          published_at: time(1),
+        },
+      )
+      .await
+      .unwrap()
+      .publication;
+    assert_eq!(published.flow.accepted_predecessor, Some(predecessor));
   });
 }

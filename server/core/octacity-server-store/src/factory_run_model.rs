@@ -699,6 +699,83 @@ pub struct FactoryRunSnapshot {
   pub current: FactoryRunCurrentProjection,
 }
 
+impl FactoryRunSnapshot {
+  /// Returns the record that resolved the exact configured terminal of a completed Run.
+  /// The caller must check visibility and applicability to the downstream Work.
+  pub fn accepted_terminal_result(
+    &self,
+    definition: octacity_server_factory::FlowDefinitionRef,
+    terminal: &FactoryKey,
+    accepted_outcomes: &std::collections::BTreeSet<FactoryKey>,
+  ) -> Result<Option<&octacity_server_factory::FlowNodeRecord>, StoreError> {
+    use octacity_server_factory::{FactoryRunState, FlowInterpreter, FlowOutcomeKind, FlowProgress};
+
+    let root = self.admitted_flow.root_run();
+    if self.run.state() != FactoryRunState::Completed || root.definition() != definition {
+      return Ok(None);
+    }
+    let checkpoint = self
+      .lifecycle_checkpoints
+      .iter()
+      .find(|checkpoint| checkpoint.id == self.current.lifecycle_checkpoint_id)
+      .ok_or(StoreError::Unavailable)?;
+    if !matches!(&checkpoint.progress, FactoryLifecycleProgress::FlowResolved { root: selected, terminal: key }
+      if *selected == root.id() && key == terminal)
+    {
+      return Ok(None);
+    }
+    let cycle = self
+      .flow
+      .cycles
+      .iter()
+      .filter(|cycle| cycle.flow_run_id() == root.id())
+      .max_by_key(|cycle| cycle.number())
+      .ok_or(StoreError::Unavailable)?;
+    let validated = self.admitted_flow.validated().map_err(|_| StoreError::Unavailable)?;
+    let FlowProgress::Terminal { key, source } = FlowInterpreter::new(&validated)
+      .progress(root, cycle, self.flow.runtime())
+      .map_err(|_| StoreError::Unavailable)?
+    else {
+      return Err(StoreError::Unavailable);
+    };
+    if &key != terminal {
+      return Err(StoreError::Unavailable);
+    }
+    let completion = self
+      .flow
+      .completions
+      .iter()
+      .find(|completion| completion.node_attempt_id() == source)
+      .ok_or(StoreError::Unavailable)?;
+    if !accepted_outcomes.contains(completion.outcome()) {
+      return Ok(None);
+    }
+    let flow_definition = self
+      .admitted_flow
+      .closure()
+      .definition(definition)
+      .ok_or(StoreError::Unavailable)?;
+    let outcome = flow_definition
+      .node(completion.node_key())
+      .and_then(|node| node.outcome(completion.outcome()))
+      .ok_or(StoreError::Unavailable)?;
+    if outcome.kind() != FlowOutcomeKind::Success {
+      return Ok(None);
+    }
+    let record = self
+      .flow
+      .data
+      .records
+      .iter()
+      .find(|record| record.node_attempt_id() == source)
+      .ok_or(StoreError::Unavailable)?;
+    if record.digest().ok() != Some(completion.output_digest()) {
+      return Err(StoreError::Unavailable);
+    }
+    Ok(Some(record))
+  }
+}
+
 /// Allowlisted ordinary Build correlation without Job specifications or object locations.
 #[derive(Clone, Debug, Eq, PartialEq, serde::Deserialize, serde::Serialize)]
 #[serde(deny_unknown_fields)]

@@ -81,6 +81,8 @@ pub struct AdmitFactoryWork {
   pub run: FactoryRun,
   /// Exact Flow Definition closure and initial root execution records.
   pub flow: AdmittedFlow,
+  /// Trusted input to retain atomically in the Run's incoming data journal.
+  pub incoming: Option<octacity_server_factory::FlowIncomingData>,
   /// Authoritative admission time.
   pub admitted_at: Timestamp,
 }
@@ -116,7 +118,20 @@ impl AdmitFactoryWork {
     }
     let valid = self.repository_version.is_some() == self.work.subject().repository().is_ok()
       && self.work.external_identity() == &self.probe.external_identity
-      && initial_admission_matches(&self.work, &self.run, &self.flow);
+      && initial_admission_matches(&self.work, &self.run, &self.flow)
+      && self.incoming.as_ref().is_none_or(|incoming| {
+        incoming.verify(&self.work, &self.flow).is_ok()
+          && self.flow.data_schema(incoming.payload().schema()).is_some()
+          && self
+            .flow
+            .closure()
+            .definitions()
+            .iter()
+            .flat_map(|definition| definition.nodes())
+            .filter_map(|node| node.input_binding())
+            .flat_map(|binding| binding.incoming_schemas())
+            .any(|schema| schema == incoming.payload().schema())
+      });
     valid.then_some(()).ok_or_else(|| {
       StoreError::invalid(
         StoreOperation::AdmitFactoryWork,
@@ -153,7 +168,13 @@ impl AdmitFactoryWork {
           StoreInputError::InvalidFactoryAdmission,
         )
       })?;
-    (self.flow == expected).then_some(()).ok_or_else(|| {
+    let predecessor = self.incoming.as_ref().and_then(|value| value.predecessor());
+    let exact_producer = configuration
+      .flow()
+      .accepted_predecessor
+      .as_ref()
+      .is_none_or(|required| predecessor.is_some_and(|source| source.definition() == required.definition));
+    (self.flow == expected && exact_producer).then_some(()).ok_or_else(|| {
       StoreError::invalid(
         StoreOperation::AdmitFactoryWork,
         StoreInputError::InvalidFactoryAdmission,

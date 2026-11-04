@@ -426,6 +426,7 @@ async fn admit_next(
   .unwrap();
   let admission = store
     .admit_factory_work(management_mutation(AdmitFactoryWork {
+      incoming: None,
       probe: FactoryAdmissionProbe {
         source_scope: FactoryWorkSourceScope {
           source: key("manual"),
@@ -463,6 +464,7 @@ async fn associate(
           issue_id: issue.id,
           expected_version: issue.version,
           target: IssueExecutionTarget {
+            predecessor_run: None,
             configuration_id: admission.work.configuration().id(),
             configuration_version: admission.work.configuration().version(),
             repository_id: admission.work.subject().repository().unwrap().repository_id(),
@@ -927,4 +929,618 @@ async fn issue_outcomes_http_distinguishes_advice_committed_classification_and_c
   assert_eq!(store.issue(project, issue.id, None).await.unwrap(), current);
   server.shutdown().await.unwrap();
   database.cleanup().await;
+}
+
+#[tokio::test]
+#[ignore = "requires an explicitly configured disposable PostgreSQL service"]
+async fn admission_rechecks_predecessor_requirements_after_the_issue_changes() {
+  let database = postgres_support::TestDatabase::migrated().await;
+  let fixture = factory_node_test_support::fixtures::work();
+  let project = fixture.subject().project_id();
+  let request = IssueExecutionRequestId::generate();
+  let content = requirements();
+  let reviewed = work_for(&fixture, request, &content);
+  let inputs = reviewed.artifacts();
+  let completion = b"Record a triage decision.";
+  let producer_work = WorkEnvelope::new(
+    reviewed.id(),
+    reviewed.configuration().clone(),
+    reviewed.external_identity().clone(),
+    reviewed.subject().clone(),
+    WorkArtifacts::new(
+      inputs.task().clone(),
+      FactoryArtifactReference::new(
+        ArtifactId::generate(),
+        FactoryDigest::content_sha256(completion),
+        completion.len() as u64,
+      )
+      .unwrap(),
+      vec![],
+    )
+    .unwrap(),
+    WorkClassification::new(reviewed.priority(), reviewed.risk(), Default::default()),
+  )
+  .unwrap();
+  let (producer, execution) = flow_contract::configured_fixture_with_work(summary_flow(None), producer_work);
+  let store = admit(&database.pool, &producer).await;
+  let issue = create_issue(&store, project, IssueId::generate(), content.clone()).await;
+  associate(&store, &issue, None, &producer).await;
+  // The scoped Source reservation contract separately exercises writing this
+  // revision. Here the fixture focuses on selecting and admitting its real Run.
+  sqlx::query("UPDATE issue_work_associations SET document=jsonb_set(document,'{requirements_version}',$1),status_applicability_version=$2 WHERE work_id=$3")
+    .bind(sqlx::types::Json(issue.version)).bind(issue.applicability_version.get() as i64)
+    .bind(producer.work.id().as_uuid()).execute(&database.pool).await.unwrap();
+  finish(&store, &execution, &producer, 30).await;
+
+  let snapshot = store.factory_run_snapshot(producer.run.id()).await.unwrap();
+  let terminal = key("custom");
+  let predecessor = FlowAcceptedPredecessor {
+    definition: producer.flow.closure().root(),
+    terminal: terminal.clone(),
+    outcomes: [terminal.clone()].into(),
+  };
+  let accepted = snapshot
+    .accepted_terminal_result(predecessor.definition, &terminal, &predecessor.outcomes)
+    .unwrap()
+    .unwrap();
+  let schema = accepted.payload().schema().clone();
+  let budget = producer.flow.limits().budget();
+  let entry = key("consume");
+  let node = FlowNodeDefinition::new(FlowNodeDefinitionInput {
+    key: entry.clone(),
+    kind: FlowNodeKind::DeterministicGate,
+    input_schema: Some(schema.clone()),
+    outcomes: vec![FlowOutcomeDefinition::new(
+      terminal.clone(),
+      FlowOutcomeKind::Success,
+      schema.clone(),
+    )],
+    budget,
+    permissions: FactoryPermissionSet::deny_all(),
+    required: true,
+    subflow: None,
+  })
+  .unwrap()
+  .with_input_binding(
+    FlowInputBinding::new(
+      [(
+        key("triage"),
+        FlowInputSource::Incoming {
+          schema: schema.clone(),
+          path: String::new(),
+        },
+      )]
+      .into(),
+      FlowDataMapping::new(FlowValueMapping::Pointer { path: "/triage".into() }).unwrap(),
+    )
+    .unwrap(),
+  )
+  .unwrap()
+  .with_gate(
+    FlowGateProgram::new(vec![], terminal.clone())
+      .unwrap()
+      .binding()
+      .unwrap(),
+  )
+  .unwrap();
+  let definition = FlowDefinition::new(FlowDefinitionInput {
+    id: FlowDefinitionId::generate(),
+    version: FlowDefinitionVersion::INITIAL,
+    input_schema: Some(schema.clone()),
+    entry: entry.clone(),
+    nodes: vec![node],
+    transitions: vec![FlowTransition::new(
+      entry,
+      terminal.clone(),
+      FlowTransitionTarget::Terminal(terminal.clone()),
+    )],
+    terminals: vec![FlowTerminalDefinition::new(terminal, schema)],
+    context_projections: vec![],
+    data_projections: vec![],
+    execution: FlowExecutionPolicy::new(budget, FactoryPermissionSet::deny_all(), 1).unwrap(),
+  })
+  .unwrap();
+  let mut configuration = postgres_support::factory_configuration::fixture(project);
+  configuration.draft.hard_budget = budget;
+  configuration.draft.wip_limits = producer.flow.wip_limits();
+  configuration.draft.flow = Some(
+    FactoryFlowConfiguration::new(
+      PinnedFlowDefinitionClosure::new(definition.reference(), vec![definition]).unwrap(),
+      producer.flow.limits().clone(),
+      producer.flow.data_schemas().to_vec(),
+      Default::default(),
+    )
+    .unwrap()
+    .with_accepted_predecessor(predecessor)
+    .unwrap(),
+  );
+  let policies = octacity_server_store::testing::factory_project_policies_with_access(
+    project,
+    true,
+    true,
+    FactoryPermissionSet::deny_all(),
+  );
+  octacity_server_store::testing::publish_factory_project_policies_fixture(store.as_ref(), &policies).await;
+  configuration.draft.admission_policy = FactoryPolicySelection::Project {
+    project_policy: policies.launch_policy.reference().clone(),
+  };
+  configuration.draft.permission_ceiling = FactoryPolicySelection::Project {
+    project_policy: policies.access_profile.reference().clone(),
+  };
+  let id = FactoryConfigurationId::generate();
+  let digest = FactoryDigest::from_bytes([95; 32]);
+  let published = FactoryConfiguration::publish(
+    id,
+    FactoryConfigurationVersion::INITIAL,
+    project,
+    digest,
+    configuration.draft.clone(),
+    &configuration.choices,
+  )
+  .unwrap();
+  store
+    .create_factory_configuration(management_mutation(CreateFactoryConfiguration {
+      idempotency_key: "delivery-after-triage".parse().unwrap(),
+      published_at: at(60),
+      intent: FactoryConfigurationMutationIntent::Create {
+        id,
+        project_id: project,
+        definition_digest: digest,
+        draft: configuration.draft,
+      },
+      configuration: published.clone(),
+    }))
+    .await
+    .unwrap();
+
+  let make_admission = |key_value: &str| {
+    let work = WorkEnvelope::new(
+      WorkEnvelopeId::generate(),
+      published.reference().clone(),
+      key_value.parse().unwrap(),
+      producer.work.subject().clone(),
+      inputs.clone(),
+      WorkClassification::new(producer.work.priority(), producer.work.risk(), Default::default()),
+    )
+    .unwrap();
+    let run = FactoryRun::admitted(FactoryRunId::generate(), &work);
+    let flow = AdmittedFlow::from_configuration(&published, &run)
+      .unwrap()
+      .with_access_profile(&published, policies.access_profile.clone())
+      .unwrap();
+    let incoming = FlowIncomingData::from_predecessor(&work, &flow, accepted).unwrap();
+    AdmitFactoryWork {
+      incoming: Some(incoming),
+      probe: FactoryAdmissionProbe {
+        source_scope: FactoryWorkSourceScope {
+          source: key("manual"),
+          security_scope: octacity_server_store::ManagementSecurityScope::trusted_network(),
+        },
+        external_identity: work.external_identity().clone(),
+        intent_digest: FactoryDigest::content_sha256(key_value.as_bytes()),
+        idempotency_key: key_value.parse().unwrap(),
+      },
+      repository_version: Some(RepositoryVersion::INITIAL),
+      work,
+      run,
+      flow,
+      admitted_at: at(70),
+    }
+  };
+  let before_edit = make_admission("delivery-while-current");
+  store
+    .admit_factory_work(management_mutation(before_edit))
+    .await
+    .unwrap();
+  let pool = &database.pool;
+  let producer_id = producer.run.id();
+  let set_producer_visibility = |visible| async move {
+    sqlx::query(
+      "UPDATE factory_runs SET visible=$1,hidden_at=CASE WHEN $1 THEN NULL ELSE to_timestamp(0.065) END WHERE id=$2",
+    )
+    .bind(visible)
+    .bind(producer_id.as_uuid())
+    .execute(pool)
+    .await
+    .unwrap();
+  };
+  let in_flight = make_admission("delivery-after-producer-hidden");
+  set_producer_visibility(false).await;
+  assert!(matches!(
+    store.admit_factory_work(management_mutation(in_flight)).await,
+    Err(StoreError::Conflict {
+      entity: EntityKind::Issue
+    })
+  ));
+  set_producer_visibility(true).await;
+  let in_flight = make_admission("delivery-after-edit");
+  let run_id = in_flight.run.id();
+  let corrected_description = "Different requirements in the external ticket.";
+  let waiting = check_native_triage_handoff(
+    &store,
+    &published,
+    &producer,
+    &issue,
+    inputs,
+    &policies.access_profile,
+    corrected_description,
+  )
+  .await;
+  let mut corrected = issue.content.clone();
+  corrected.description = corrected_description.into();
+  let corrected = edit_issue(&store, &issue, corrected, 69).await;
+
+  assert!(matches!(
+    store.admit_factory_work(management_mutation(in_flight)).await,
+    Err(StoreError::Conflict {
+      entity: EntityKind::Issue
+    })
+  ));
+  assert!(matches!(
+    store.factory_run_snapshot(run_id).await,
+    Err(StoreError::NotFound { .. })
+  ));
+  let retriaged = admit_next(&store, &producer, &corrected, 70, true).await;
+  finish(&store, &execution, &retriaged, 71).await;
+  let snapshot = store.factory_run_snapshot(retriaged.run.id()).await.unwrap();
+  let accepted = snapshot
+    .accepted_terminal_result(retriaged.flow.closure().root(), &key("custom"), &[key("custom")].into())
+    .unwrap()
+    .unwrap();
+  let next = waiting
+    .handlers
+    .prepared_source_handoff(
+      &waiting.authority,
+      &waiting.claim,
+      &waiting.preparation,
+      &waiting.selection,
+      None,
+    )
+    .await
+    .unwrap()
+    .unwrap();
+  assert_eq!(next.record_digest().unwrap(), accepted.digest().unwrap());
+  database.cleanup().await;
+}
+
+struct WaitingNativeHandoff {
+  handlers: FactorySourceAdmissionHandlers<PostgresStore>,
+  authority: FactorySourceAuthorization,
+  claim: WorkSourceScanClaim,
+  preparation: WorkSourcePreparation,
+  selection: RepositorySourceSelection,
+}
+
+async fn check_native_triage_handoff(
+  store: &Arc<PostgresStore>,
+  target: &FactoryConfiguration,
+  producer: &PublishedFactoryAdmission,
+  issue: &IssueRevision,
+  implementation_inputs: &WorkArtifacts,
+  access: &FactoryAccessProfile,
+  corrected_description: &str,
+) -> WaitingNativeHandoff {
+  use octacity_server_store::{
+    AdmitPreparedWorkSource, ClaimWorkSourceScan, FactorySourceStore, FactoryWorkAdmissionIntent,
+    ManagementSecurityScope, PublishSourcePreparationIntent, PublishWorkSources, ReserveWorkSourcePreparation,
+    WorkSourceInputChange, WorkSourceScanTarget,
+  };
+  let reference = |name: &str| ImmutableReference::new(key(name), key("v1"), FactoryDigest::from_bytes([7; 32]));
+  let binding = WorkSourceBinding {
+    installation: reference("tracker"),
+    capability: reference("source"),
+    configuration: reference("selector"),
+    resource: reference("container"),
+  };
+  let item = WorkSourceItem {
+    resource: "native-container".parse().unwrap(),
+    item: "native-issue".parse().unwrap(),
+  };
+  let repo = producer.work.subject().repository().unwrap();
+  let published = store
+    .repository_version(repo.repository_id(), RepositoryVersion::INITIAL)
+    .await
+    .unwrap();
+  let repository = WorkSourceRepositoryRef {
+    project_id: issue.project_id,
+    id: published.id,
+    version: published.version,
+    definition_digest: FactoryDigest::content_sha256(&serde_json::to_vec(&published.definition).unwrap()),
+  };
+  let capability = WorkSourceCapability {
+    project_id: issue.project_id,
+    role: WorkSourceCapabilityRole::Source,
+    binding: binding.clone(),
+  };
+  let new_input = || {
+    WorkSourceInput::publish(
+      WorkSourceInputId::generate(),
+      issue.project_id,
+      WorkSourceInputDraft {
+        reporting: None,
+        predicate: None,
+        connection: None,
+        target: target.reference().clone(),
+        repository: repository.clone(),
+        source: binding.clone(),
+        reporter: None,
+        enabled: true,
+      },
+      WorkSourceInputContext {
+        target,
+        repository: &repository,
+        source: Some(&capability),
+        reporter: None,
+      },
+    )
+    .unwrap()
+  };
+  let project_id = issue.project_id;
+  let scope = ManagementSecurityScope::trusted_network();
+  let reserve = async |input: &WorkSourceInput, description: &str| {
+    store
+      .publish_work_sources(PublishWorkSources {
+        project_id,
+        inputs: vec![WorkSourceInputChange {
+          expected_version: None,
+          input: input.clone(),
+        }],
+        group: None,
+      })
+      .await
+      .unwrap();
+    let scan = store
+      .claim_source_scan(ClaimWorkSourceScan {
+        project_id,
+        target: WorkSourceScanTarget::Input {
+          id: input.id(),
+          version: input.version(),
+        },
+        owner: key("delivery-scan"),
+        now: at(60),
+        until: at(100),
+      })
+      .await
+      .unwrap()
+      .unwrap();
+    let retained = store
+      .reserve_scoped_source_preparation(
+        ReserveWorkSourcePreparation {
+          claim: scan.claim.clone(),
+          input_id: input.id(),
+          item: item.clone(),
+          snapshot: b"original observation".to_vec(),
+          now: at(60),
+        },
+        Some((
+          &scope,
+          octacity_server_store::WorkSourceIssueText {
+            title: &issue.content.title,
+            description,
+          },
+        )),
+        None,
+      )
+      .await
+      .unwrap();
+    (scan.claim, retained)
+  };
+  let input = new_input();
+  let (claim, retained) = reserve(&input, &issue.content.description).await;
+  assert!(retained.issue_revision.is_none());
+  store
+    .attach_issue_source(management_mutation(AttachIssueSource {
+      observation: IssueSourceObservation {
+        display_id: None,
+        source: binding.clone(),
+        plugin: reference("plugin"),
+        provider_configuration: FactoryDigest::from_bytes([8; 32]),
+        selection_digest: FactoryDigest::from_bytes([9; 32]),
+        snapshot_digest: FactoryDigest::from_bytes([10; 32]),
+        observed_at: at(60),
+        expires_at: at(90),
+      },
+      intent: AttachIssueSourceIntent {
+        selection: IssueSourceSelection {
+          project_id: issue.project_id,
+          source: binding.clone(),
+          connection: None,
+          item: item.clone(),
+        },
+        issue_id: issue.id,
+        expected_version: issue.version,
+        expected_field_policy: IssueFieldPolicy::default(),
+      },
+      idempotency_key: "link-automatic-triage".parse().unwrap(),
+      attached_at: at(61),
+    }))
+    .await
+    .unwrap();
+  let (mismatched_claim, mismatched) = reserve(&new_input(), corrected_description).await;
+  let (waiting_claim, waiting) = reserve(&new_input(), corrected_description).await;
+  let context = ManagementRequestContext::trusted_network(ManagementRequestId::new(uuid::Uuid::new_v4()).unwrap());
+  let authority = FactorySourceAuthorization {
+    input,
+    capability,
+    resource_identity: item.resource.clone(),
+    context,
+  };
+  struct ExactBase(ImmutableRevision);
+  #[async_trait]
+  impl RevisionResolver for ExactBase {
+    async fn resolve(&self, _: RevisionResolutionRequest) -> Result<ImmutableRevision, RevisionResolutionError> {
+      Ok(self.0.clone())
+    }
+  }
+  #[async_trait]
+  impl FactorySourceAuthorizer for ExactBase {
+    async fn authorize(
+      &self,
+      _: WorkSourceInputId,
+      _: WorkSourceInputVersion,
+    ) -> Result<FactorySourceAuthorization, ApplicationError> {
+      unreachable!("this test supplies the verified authority explicitly")
+    }
+  }
+  let policy = Arc::new(TrustedNetworkManagementPolicy);
+  let reader = Arc::new(IssueSourcePredecessorReader::new(
+    store.clone(),
+    store.clone(),
+    policy.clone(),
+  ));
+  let base = Arc::new(ExactBase(repo.base_revision().clone()));
+  let selection = RepositorySourceSelection::ExactRevision(repo.base_revision().clone());
+  let handoff = reader
+    .resolve(
+      &authority,
+      &item,
+      FactorySourcePredecessorTarget::new(&published, target.flow(), Some(&selection), base.as_ref()),
+    )
+    .await
+    .unwrap();
+  let handlers = FactorySourceAdmissionHandlers::new(store.clone(), base.clone(), policy.clone(), base.clone())
+    .with_predecessors(reader);
+  let waiting_authority = FactorySourceAuthorization {
+    input: waiting.input.clone(),
+    ..authority.clone()
+  };
+  let rejected = handlers
+    .prepared_source_handoff(&waiting_authority, &waiting_claim, &waiting, &selection, None)
+    .await;
+  assert!(
+    matches!(
+      &rejected,
+      Err(ApplicationError::FactoryValidation(diagnostics))
+        if diagnostics.errors.iter().any(|issue| issue.code == "incoming_result_stale")
+    ),
+    "the old triage must be rejected before the preparation can retain it: {:?}",
+    rejected.err()
+  );
+  let snapshot = store.factory_run_snapshot(producer.run.id()).await.unwrap();
+  let accepted = snapshot
+    .accepted_terminal_result(producer.flow.closure().root(), &key("custom"), &[key("custom")].into())
+    .unwrap()
+    .unwrap();
+  struct ExternalPredecessor(FactorySourceHandoff);
+  #[async_trait]
+  impl FactorySourcePredecessors for ExternalPredecessor {
+    async fn resolve(
+      &self,
+      _: &FactorySourceAuthorization,
+      _: &WorkSourceItem,
+      _: FactorySourcePredecessorTarget<'_>,
+    ) -> Result<FactorySourceHandoff, ApplicationError> {
+      Ok(self.0.clone())
+    }
+  }
+  let external = FactorySourceHandoff::new(accepted.clone(), implementation_inputs.clone()).with_issue_text_evidence(
+    WorkSourceIssueText {
+      title: &issue.content.title,
+      description: &issue.content.description,
+    },
+  );
+  let resolved = FactorySourceAdmissionHandlers::new(store.clone(), base.clone(), policy, base)
+    .with_predecessors(Arc::new(ExternalPredecessor(external)))
+    .prepared_source_handoff(&authority, &claim, &retained, &selection, None)
+    .await
+    .unwrap()
+    .unwrap();
+  assert_eq!(resolved.record_digest().unwrap(), accepted.digest().unwrap());
+  assert_eq!(handoff.record_digest().unwrap(), accepted.digest().unwrap());
+  assert!(handoff.matches_artifacts(implementation_inputs));
+  assert!(!handoff.matches_artifacts(producer.work.artifacts()));
+  let classification = WorkClassification::new(producer.work.priority(), producer.work.risk(), Default::default());
+  for (claim, retained, idempotency, matches_observation) in [
+    (
+      mismatched_claim,
+      mismatched,
+      "native-delivery-with-mismatched-text",
+      false,
+    ),
+    (claim, retained, "native-delivery-after-link", true),
+  ] {
+    let identity = retained.admission_identity(scope.clone());
+    let prepared = store
+      .publish_source_preparation_intent(PublishSourcePreparationIntent {
+        claim: claim.clone(),
+        preparation_id: retained.id,
+        intent: FactoryWorkAdmissionIntent {
+          project_id,
+          configuration_id: target.reference().id(),
+          configuration_version: target.reference().version(),
+          repository_id: Some(repository.id),
+          repository_version: Some(repository.version),
+          external_identity: identity.external_identity.clone(),
+          source: selection.clone().into(),
+          artifacts: implementation_inputs.clone(),
+          classification: classification.clone(),
+          idempotency_key: idempotency.parse().unwrap(),
+          admitted_at: at(68),
+          profile_overrides: Default::default(),
+        },
+        now: at(67),
+      })
+      .await
+      .unwrap();
+    let work = WorkEnvelope::new(
+      WorkEnvelopeId::generate(),
+      target.reference().clone(),
+      identity.external_identity,
+      producer.work.subject().clone(),
+      implementation_inputs.clone(),
+      classification.clone(),
+    )
+    .unwrap();
+    let run = FactoryRun::admitted(FactoryRunId::generate(), &work);
+    let flow = AdmittedFlow::from_configuration(target, &run)
+      .unwrap()
+      .with_access_profile(target, access.clone())
+      .unwrap();
+    let run_id = run.id();
+    let outcome = store
+      .admit_prepared_source_work(
+        AdmitPreparedWorkSource {
+          claim,
+          preparation_id: prepared.id,
+          now: at(68),
+        },
+        management_mutation(AdmitFactoryWork {
+          incoming: Some(FlowIncomingData::from_predecessor(&work, &flow, accepted).unwrap()),
+          probe: prepared.admission_probe(scope.clone()).unwrap(),
+          repository_version: Some(repository.version),
+          work: work.clone(),
+          run,
+          flow,
+          admitted_at: at(68),
+        }),
+      )
+      .await;
+    if !matches_observation {
+      assert!(matches!(
+        outcome,
+        Err(StoreError::Conflict {
+          entity: EntityKind::Issue
+        })
+      ));
+      assert!(matches!(
+        store.factory_run_snapshot(run_id).await,
+        Err(StoreError::NotFound { .. })
+      ));
+      continue;
+    }
+    outcome.unwrap();
+    let association = store.issue_work_association(project_id, work.id()).await.unwrap();
+    assert_eq!(
+      association.map(|link| (link.issue_id, link.requirements_version)),
+      Some((issue.id, Some(issue.version))),
+      "automatic delivery retains the linked requirements proven by the accepted producer"
+    );
+  }
+  WaitingNativeHandoff {
+    handlers,
+    authority: waiting_authority,
+    claim: waiting_claim,
+    preparation: waiting,
+    selection,
+  }
 }

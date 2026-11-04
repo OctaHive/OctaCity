@@ -45,6 +45,9 @@ pub enum ApplicationError {
     /// Validated delay in milliseconds, at most one hour for installed Work protocols.
     retry_after_millis: Option<u32>,
   },
+  /// A bounded Source lookup yielded a private continuation for the next worker pass.
+  #[error("source predecessor search has another page")]
+  SourcePredecessorSearchPending(octacity_server_store::WorkSourcePredecessorCursor),
   /// Typed application input violated a command-specific invariant.
   #[error("application input is invalid")]
   InvalidInput,
@@ -103,7 +106,7 @@ impl ApplicationError {
       }
       Self::ReporterRejected(octacity_server_store::FactoryOutboxFailure::Conflict) => ApplicationFailure::Conflict,
       Self::ReporterRejected(_) => ApplicationFailure::Unavailable,
-      Self::SourceDependency { .. } => ApplicationFailure::Unavailable,
+      Self::SourceDependency { .. } | Self::SourcePredecessorSearchPending(_) => ApplicationFailure::Unavailable,
       Self::InvalidInput | Self::FactoryValidation(_) => ApplicationFailure::Invalid,
       Self::CapabilityUnavailable => ApplicationFailure::CapabilityUnavailable,
       Self::PreconditionFailed => ApplicationFailure::PreconditionFailed,

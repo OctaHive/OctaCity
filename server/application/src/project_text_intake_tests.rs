@@ -90,6 +90,7 @@ fn submission(
   let ordinary = crate::factory_admission_tests::command(project, configuration, repository);
   ProjectTextSubmission {
     intent: ProjectTextIntent {
+      predecessor_digest: None,
       target: ReadFactoryAdmissionContext {
         project_id: project,
         configuration_id: configuration,
@@ -549,7 +550,7 @@ fn project_text_intake_fences_resolvers_and_never_renews_preparation_bounds() {
       "an active owner cannot be replaced"
     );
     let frozen = store
-      .freeze_project_text(first.guard(time(22)), "0123456789abcdef".parse().unwrap())
+      .freeze_project_text(first.guard(time(22)), "0123456789abcdef".parse().unwrap(), vec![])
       .await
       .unwrap();
     let next = store.reserve_project_text(reserve(first.lease_until)).await.unwrap();
@@ -560,13 +561,13 @@ fn project_text_intake_fences_resolvers_and_never_renews_preparation_bounds() {
     assert_eq!(next.frozen_revision, frozen.frozen_revision);
     assert!(
       store
-        .freeze_project_text(first.guard(first.lease_until), "different".parse().unwrap())
+        .freeze_project_text(first.guard(first.lease_until), "different".parse().unwrap(), vec![])
         .await
         .is_err()
     );
     assert!(
       store
-        .freeze_project_text(next.guard(next.claimed_at), "different".parse().unwrap())
+        .freeze_project_text(next.guard(next.claimed_at), "different".parse().unwrap(), vec![])
         .await
         .is_err(),
       "the first committed base cannot be overwritten"
@@ -783,6 +784,7 @@ fn project_text_intake_issue_publication_recovers_original_revision_and_associat
             issue_id: original.id,
             expected_version: original.version,
             target: IssueExecutionTarget {
+              predecessor_run: None,
               configuration_id: generic.intent.target.configuration_id,
               configuration_version: generic.intent.target.configuration_version,
               repository_id: generic.intent.target.repository_id.unwrap(),
@@ -1245,7 +1247,7 @@ fn project_document_metadata_visibility_does_not_grant_private_content_download(
 }
 
 #[derive(Default)]
-struct DocumentBytes {
+pub(crate) struct DocumentBytes {
   objects: Mutex<BTreeMap<ArtifactId, (ArtifactObject, Vec<u8>)>>,
   writes: AtomicUsize,
   reads: AtomicUsize,

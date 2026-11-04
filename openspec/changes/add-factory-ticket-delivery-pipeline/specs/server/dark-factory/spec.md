@@ -32,5 +32,5 @@ An implementation, review, or verification node MAY return a typed Requirements 
 - **THEN** the server appends a new requirements cycle and no downstream result from the superseded candidate may satisfy a later gate
 
 #### Scenario: Ticket delivery selects its compact requirements path
-- **WHEN** a pinned ticket-delivery Flow bypasses specifications for `small` and `medium` and authors OpenSpec for `large` without a separate requirements reviewer
+- **WHEN** an ordinary pinned Flow configured for ticket delivery bypasses specifications for `small` and `medium` and authors OpenSpec for `large` without a separate requirements reviewer
 - **THEN** each branch freezes its exact contract and completes any declared human requirements acceptance before test authoring, and implementation still requires the declared independent code review and prepared-test validation

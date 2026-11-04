@@ -1,7 +1,9 @@
 //! Admission freezes only explicitly used source selections, independently of Work correlation.
 use super::*;
 use octacity_server_factory::{FlowDefinition, FlowDefinitionInput, PinnedFlowDefinitionClosure};
-use octacity_server_store::{ConfigurationStore as _, CreateRepository, testing::InMemoryConfigurationStore};
+use octacity_server_store::{
+  ConfigurationStore as _, CreateRepository, ReadFactoryAdmissionContext, testing::InMemoryConfigurationStore,
+};
 
 #[test]
 fn admission_freezes_two_step_sources_and_replay_does_not_resolve_unused_or_mutable_refs() {
@@ -329,3 +331,77 @@ fn restored_admitted_flow_rejects_missing_extra_and_substituted_code_pins() {
 
 #[path = "factory_code_input_tests.rs"]
 mod input_resources;
+
+#[test]
+fn issue_text_and_installed_source_admit_the_same_declared_code_resources() {
+  run_ready(async {
+    let CodeFixture {
+      store,
+      repositories,
+      request,
+      ids,
+      ..
+    } = code_fixture().await;
+    let repo = RepositoryId::generate();
+    store
+      .seed_repository_version(repository(
+        request.project_id,
+        repo,
+        Some("refs/heads/main".parse().unwrap()),
+      ))
+      .unwrap();
+    let resolver = Arc::new(RecordingResolver::default());
+    let policy = Arc::new(crate::TrustedNetworkManagementPolicy);
+    let from_issue = crate::ProjectTextIntake::new(
+      store.clone(),
+      Arc::new(crate::project_text_intake_tests::DocumentBytes::default()),
+      resolver.clone(),
+      policy.clone(),
+      crate::factory_node_test_support::clock(),
+    )
+    .with_repositories(repositories.clone());
+    let manual = from_issue
+      .submit(
+        &context(),
+        crate::ProjectTextSubmission {
+          intent: crate::ProjectTextIntent {
+            predecessor_digest: None,
+            target: ReadFactoryAdmissionContext {
+              project_id: request.project_id,
+              configuration_id: request.configuration_id,
+              configuration_version: request.configuration_version,
+              repository_id: Some(repo),
+              repository_version: Some(RepositoryVersion::INITIAL),
+            },
+            external_identity: ExternalWorkIdentity::new("from-issue").unwrap(),
+            source: RepositorySourceSelection::DefaultReference,
+            classification: request.classification.clone(),
+            mapping: key("test.text.v1"),
+            idempotency_key: "issue-code".parse().unwrap(),
+          },
+          documents: crate::ProjectTextDocuments::try_new("Original ticket", "Implementation acceptance").unwrap(),
+        },
+      )
+      .await
+      .unwrap();
+    let source = command(request.project_id, request.configuration_id, repo);
+    let installed = installed_sources::installed(&store, &source, "github").await;
+    let source = installed_sources::source_command(&installed, source);
+    let automatic = crate::FactorySourceAdmissionHandlers::new(
+      store.clone(),
+      resolver,
+      policy,
+      Arc::new(installed_sources::InstalledSource(installed)),
+    )
+    .with_repositories(repositories)
+    .admit(source)
+    .await
+    .unwrap();
+    let automatic = store.factory_run_snapshot(automatic.factory_run_id).await.unwrap();
+    assert_eq!(automatic.admitted_flow.code_pins(), manual.admission.flow.code_pins());
+    let pins = automatic.admitted_flow.code_pins();
+    assert_eq!(pins.len(), 2);
+    assert_eq!(pins[0].subject.repository_id(), ids[0]);
+    assert_eq!(pins[1].subject.repository_id(), ids[1]);
+  });
+}

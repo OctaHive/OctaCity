@@ -96,6 +96,9 @@ pub struct ProjectTextIntent {
   pub classification: WorkClassification,
   /// Immutable application mapping version, never executable text.
   pub mapping: FactoryKey,
+  /// Exact accepted record verified by the Issue owner before preparation.
+  #[serde(default, skip_serializing_if = "Option::is_none")]
+  pub predecessor_digest: Option<FactoryDigest>,
   /// Project/security-scoped caller replay identity.
   pub idempotency_key: IdempotencyKey,
 }
@@ -139,6 +142,9 @@ pub struct ProjectTextPreparation {
   pub expires_at: Timestamp,
   /// Trusted resolved base, retained before bytes are published.
   pub frozen_revision: Option<ImmutableRevision>,
+  /// Only explicitly used step sources, frozen alongside the base revision.
+  #[serde(default, skip_serializing_if = "Vec::is_empty")]
+  pub frozen_code_pins: Vec<octacity_server_factory::FlowCodePin>,
   /// Visibility point for the complete verified pair.
   pub published_at: Option<Timestamp>,
   /// Original ordinary admission; absent until admission commits.
@@ -190,6 +196,24 @@ impl ProjectTextPreparation {
     }
     Ok(())
   }
+  /// Freezes all trusted source revisions before publication and refuses substitutions on retry.
+  pub fn freeze_sources(
+    &mut self,
+    guard: &ProjectTextGuard,
+    revision: ImmutableRevision,
+    code_pins: Vec<octacity_server_factory::FlowCodePin>,
+  ) -> Result<(), StoreError> {
+    self.require_owner(guard)?;
+    if let Some(original) = &self.frozen_revision {
+      if original != &revision || self.frozen_code_pins != code_pins {
+        return Err(project_text_conflict());
+      }
+    } else {
+      self.frozen_revision = Some(revision);
+      self.frozen_code_pins = code_pins;
+    }
+    Ok(())
+  }
   /// Validates the retained ordinary admission rather than accepting a caller's resolved proof.
   pub fn validate_admission(
     &self,
@@ -203,12 +227,19 @@ impl ProjectTextPreparation {
     let subject = work.subject().repository().map_err(|_| project_text_conflict())?;
     if self.published_at.is_none()
       || self.frozen_revision.as_ref() != Some(subject.base_revision())
+      || self.frozen_code_pins != r.flow.code_pins()
       || request.audit().security_scope() != &self.security_scope
       || r.probe.source_scope.security_scope != self.security_scope
       || r.probe.source_scope.source.as_str() != "manual"
       || r.probe.external_identity != intent.external_identity
       || r.probe.idempotency_key != intent.idempotency_key
       || r.probe.intent_digest != factory_admission_intent_digest(&intent, "octacity.factory.manual-admission.v1")
+      || r
+        .incoming
+        .as_ref()
+        .and_then(|incoming| incoming.predecessor())
+        .map(|source| source.record().digest())
+        != self.intent.predecessor_digest
       || work.external_identity() != &intent.external_identity
       || work.artifacts() != &intent.artifacts
       || work.subject().project_id() != intent.project_id
@@ -334,11 +365,12 @@ pub trait ProjectTextInputStore: FactoryAdmissionStore + ProjectInputQueryStore 
   async fn require_project_text_owner(&self, guard: ProjectTextGuard) -> Result<(), StoreError>;
   /// Releases only the matching owner's lease after a recoverable failure.
   async fn release_project_text(&self, guard: ProjectTextGuard) -> Result<(), StoreError>;
-  /// Freezes one trusted base before any object write.
+  /// Freezes the trusted base and selected step sources before any object write.
   async fn freeze_project_text(
     &self,
     guard: ProjectTextGuard,
     revision: ImmutableRevision,
+    code_pins: Vec<octacity_server_factory::FlowCodePin>,
   ) -> Result<ProjectTextPreparation, StoreError>;
   /// Makes the complete verified pair visible atomically.
   async fn publish_project_text(&self, guard: ProjectTextGuard) -> Result<ProjectTextPreparation, StoreError>;
@@ -394,6 +426,7 @@ impl ProjectTextPreparation {
       reserved_at: now,
       expires_at: lease.expires_at,
       frozen_revision: None,
+      frozen_code_pins: vec![],
       published_at: None,
       admission: None,
     };

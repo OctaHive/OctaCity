@@ -187,14 +187,11 @@ impl ProjectTextInputStore for PostgresStore {
     &self,
     guard: ProjectTextGuard,
     revision: ImmutableRevision,
+    code_pins: Vec<octacity_server_factory::FlowCodePin>,
   ) -> Result<ProjectTextPreparation, StoreError> {
     let mut tx = self.pool().begin().await.map_err(unavailable)?;
     let mut record = load(&mut tx, guard.id).await?;
-    record.require_owner(&guard)?;
-    if record.frozen_revision.as_ref().is_some_and(|r| r != &revision) {
-      return Err(conflict());
-    }
-    record.frozen_revision.get_or_insert(revision);
+    record.freeze_sources(&guard, revision, code_pins)?;
     save(&mut tx, &record).await?;
     tx.commit().await.map_err(unavailable)?;
     Ok(record)

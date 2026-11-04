@@ -61,6 +61,7 @@ fn request(issue: &IssueRevision) -> RequestIssueExecution {
       issue_id: issue.id,
       expected_version: issue.version,
       target: IssueExecutionTarget {
+        predecessor_run: None,
         configuration_id: FactoryConfigurationId::generate(),
         configuration_version: FactoryConfigurationVersion::INITIAL,
         repository_id: RepositoryId::generate(),
@@ -163,6 +164,7 @@ fn submission(issue: &IssueRevision, replay: &str) -> ProjectTextSubmission {
   let r = request(issue);
   ProjectTextSubmission {
     intent: ProjectTextIntent {
+      predecessor_digest: None,
       target: ReadFactoryAdmissionContext {
         project_id: issue.project_id,
         configuration_id: r.intent.target.configuration_id,
@@ -220,7 +222,11 @@ async fn project_text_reservation_survives_restart_and_fences_stale_owners_witho
       .is_err()
   );
   store
-    .freeze_project_text(first.guard(at(12)), ImmutableRevision::new("original-base").unwrap())
+    .freeze_project_text(
+      first.guard(at(12)),
+      ImmutableRevision::new("original-base").unwrap(),
+      vec![],
+    )
     .await
     .unwrap();
   let restarted = PostgresStore::new(database.pool.clone());
@@ -248,7 +254,11 @@ async fn project_text_reservation_survives_restart_and_fences_stale_owners_witho
   assert!(restarted.publish_project_text(first.guard(at(30_011))).await.is_err());
   assert!(
     restarted
-      .freeze_project_text(next.guard(at(30_011)), ImmutableRevision::new("changed-base").unwrap())
+      .freeze_project_text(
+        next.guard(at(30_011)),
+        ImmutableRevision::new("changed-base").unwrap(),
+        vec![]
+      )
       .await
       .is_err()
   );

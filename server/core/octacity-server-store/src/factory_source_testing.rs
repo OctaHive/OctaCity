@@ -204,6 +204,55 @@ impl FactorySourceStore for InMemoryFactoryConfigurationStore {
         .collect(),
     )
   }
+  async fn recoverable_source_preparations(
+    &self,
+    project: ProjectId,
+    target: crate::WorkSourceScanTarget,
+    now: octacity_server_domain::Timestamp,
+    limit: u16,
+  ) -> Result<Vec<crate::WorkSourcePreparation>, StoreError> {
+    if !(1..=64).contains(&limit) {
+      return Err(source_conflict());
+    }
+    let state = self.lock()?;
+    state.sources.require_current(project, target)?;
+    let mut pending = state
+      .sources
+      .pending_preparations(project, target)
+      .filter(|preparation| {
+        preparation
+          .waiting
+          .is_none_or(|wait| wait.checked_at < now && now < preparation.snapshot_expires_at)
+      })
+      .collect::<Vec<_>>();
+    pending.sort_unstable_by_key(|preparation| (preparation.waiting.map(|wait| wait.checked_at), preparation.id));
+    Ok(pending.into_iter().take(usize::from(limit)).cloned().collect())
+  }
+  async fn defer_source_preparation(
+    &self,
+    request: crate::DeferSourcePreparation,
+  ) -> Result<crate::WorkSourceWait, StoreError> {
+    let mut state = self.lock()?;
+    let sources = &mut state.sources;
+    let claim = &request.claim;
+    let target = claim.target.identity();
+    sources.require_current(claim.project_id, claim.target)?;
+    let scan = sources.scans.get(&target).ok_or_else(source_conflict)?;
+    crate::require_source_scan(scan, claim, request.now)?;
+    let preparation = sources
+      .preparations
+      .get(&request.preparation_id)
+      .ok_or_else(source_conflict)?;
+    preparation.require_selected_owner(claim, &sources.selected_input(claim, preparation.input.id())?)?;
+    let preparation = sources
+      .preparations
+      .get_mut(&request.preparation_id)
+      .ok_or_else(source_conflict)?;
+    let wait = preparation.record_wait(request)?;
+    let scan = sources.scans.get_mut(&target).ok_or_else(source_conflict)?;
+    scan.last_wait = Some(wait);
+    Ok(wait)
+  }
   async fn publish_source_preparation_intent(
     &self,
     request: crate::PublishSourcePreparationIntent,
@@ -231,9 +280,11 @@ impl FactorySourceStore for InMemoryFactoryConfigurationStore {
     sources.preparations.insert(retained.id, retained.clone());
     Ok(retained)
   }
-  async fn reserve_source_preparation(
+  async fn reserve_scoped_source_preparation(
     &self,
     request: crate::ReserveWorkSourcePreparation,
+    _lineage: Option<(&crate::ManagementSecurityScope, crate::WorkSourceIssueText<'_>)>,
+    initial_policy: Option<Vec<u8>>,
   ) -> Result<crate::WorkSourcePreparation, StoreError> {
     request.validate()?;
     let mut state = self.lock()?;
@@ -248,7 +299,7 @@ impl FactorySourceStore for InMemoryFactoryConfigurationStore {
       request.now,
     )?;
     let input = sources.selected_input(&request.claim, request.input_id)?;
-    let preparation = request.freeze(input)?;
+    let preparation = request.freeze_with_initial_policy(input, initial_policy)?;
     Ok(
       sources
         .preparations
@@ -453,8 +504,7 @@ impl FactorySourceStore for InMemoryFactoryConfigurationStore {
     if state
       .sources
       .pending_preparations(claim.project_id, claim.target)
-      .next()
-      .is_some()
+      .any(|preparation| preparation.waiting.is_none())
     {
       return Err(source_conflict());
     }
@@ -552,7 +602,7 @@ impl SourceMemoryState {
         _ => None,
       };
       preparation.input.project_id() == project
-        && member.is_some_and(|m| m.definition().enabled)
+        && member.is_some_and(|m| preparation.matches_selected_input(m))
         && preparation.admission.is_none()
         && !preparation.snapshot.is_empty()
         && !self

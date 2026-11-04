@@ -215,6 +215,7 @@ impl Fixture {
         },
       },
       preparation: SourcePreparationSettings {
+        predecessor_digest: None,
         mapping: WorkSourceMapping {
           source: binding,
           acceptance: SourceAcceptanceMapping::Body,

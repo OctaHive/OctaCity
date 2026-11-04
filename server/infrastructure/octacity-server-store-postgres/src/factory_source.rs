@@ -12,7 +12,7 @@ use octacity_server_store::{
 use octacity_server_store::{
   FactorySourceStore, PublishWorkSources, StoreError, source_conflict, validate_source_input_dependencies,
 };
-use octacity_server_store::{ReserveWorkSourcePreparation, WorkSourcePreparation};
+use octacity_server_store::{ReserveWorkSourcePreparation, WorkSourceIssueText, WorkSourcePreparation};
 use sqlx::{Postgres, Transaction, types::Json};
 
 #[async_trait]
@@ -91,9 +91,44 @@ impl FactorySourceStore for PostgresStore {
     let mut tx = self.pool().begin().await.map_err(unavailable)?;
     lock_project(&mut tx, project).await?;
     require_current(&mut tx, project, target).await?;
-    let pending = pending_preparations(&mut tx, project, target, after, limit).await?;
+    let pending = pending_preparations(&mut tx, project, target, limit, PendingView::All { after }).await?;
     tx.commit().await.map_err(unavailable)?;
     Ok(pending)
+  }
+  async fn recoverable_source_preparations(
+    &self,
+    project: ProjectId,
+    target: WorkSourceScanTarget,
+    now: octacity_server_domain::Timestamp,
+    limit: u16,
+  ) -> Result<Vec<WorkSourcePreparation>, StoreError> {
+    if !(1..=64).contains(&limit) {
+      return Err(source_conflict());
+    }
+    let mut tx = self.pool().begin().await.map_err(unavailable)?;
+    lock_project(&mut tx, project).await?;
+    require_current(&mut tx, project, target).await?;
+    let pending = pending_preparations(&mut tx, project, target, limit, PendingView::Recovery { now }).await?;
+    tx.commit().await.map_err(unavailable)?;
+    Ok(pending)
+  }
+  async fn defer_source_preparation(
+    &self,
+    request: octacity_server_store::DeferSourcePreparation,
+  ) -> Result<octacity_server_store::WorkSourceWait, StoreError> {
+    let mut tx = self.pool().begin().await.map_err(unavailable)?;
+    let mut scan = lock_claim(&mut tx, &request.claim, request.now).await?;
+    let mut preparation = load_preparation(&mut tx, request.claim.project_id, request.preparation_id).await?;
+    preparation.require_selected_owner(
+      &request.claim,
+      &selected_input(&mut tx, &request.claim, preparation.input.id()).await?,
+    )?;
+    let wait = preparation.record_wait(request)?;
+    scan.last_wait = Some(wait);
+    save_preparation(&mut tx, &preparation).await?;
+    save_scan(&mut tx, &scan).await?;
+    tx.commit().await.map_err(unavailable)?;
+    Ok(wait)
   }
   async fn publish_source_preparation_intent(
     &self,
@@ -111,22 +146,13 @@ impl FactorySourceStore for PostgresStore {
     tx.commit().await.map_err(unavailable)?;
     Ok(retained)
   }
-  async fn reserve_source_preparation(
+  async fn reserve_scoped_source_preparation(
     &self,
     request: ReserveWorkSourcePreparation,
+    lineage: Option<(&octacity_server_store::ManagementSecurityScope, WorkSourceIssueText<'_>)>,
+    initial_policy: Option<Vec<u8>>,
   ) -> Result<WorkSourcePreparation, StoreError> {
-    request.validate()?;
-    let mut tx = self.pool().begin().await.map_err(unavailable)?;
-    lock_claim(&mut tx, &request.claim, request.now).await?;
-    let input = selected_input(&mut tx, &request.claim, request.input_id).await?;
-    let preparation = request.freeze(input)?;
-    let (kind, id) = preparation.target.identity();
-    sqlx::query("INSERT INTO factory_source_preparations (id,project_id,input_id,input_version,scan_kind,scan_id,document,issue,snapshot_expires_at_millis) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9) ON CONFLICT (id) DO NOTHING")
-      .bind(preparation.id.as_bytes().as_slice()).bind(preparation.input.project_id().as_uuid()).bind(preparation.input.id().as_uuid()).bind(number(preparation.input.version().get())?).bind(kind).bind(id).bind(serde_json::to_vec(&preparation).map_err(|_| StoreError::Unavailable)?)
-      .bind(preparation.issue.as_bytes().as_slice()).bind(preparation.snapshot_expires_at.unix_millis()).execute(&mut *tx).await.map_err(unavailable)?;
-    let retained = load_preparation(&mut tx, preparation.input.project_id(), preparation.id).await?;
-    tx.commit().await.map_err(unavailable)?;
-    Ok(retained)
+    reserve_preparation(self, request, lineage, initial_policy).await
   }
   async fn source_preparation(
     &self,
@@ -259,7 +285,7 @@ impl FactorySourceStore for PostgresStore {
     progress.validate()?;
     let mut tx = self.pool().begin().await.map_err(unavailable)?;
     let mut scan = lock_claim(&mut tx, &claim, now).await?;
-    if !pending_preparations(&mut tx, claim.project_id, claim.target, None, 1)
+    if !pending_preparations(&mut tx, claim.project_id, claim.target, 1, PendingView::Blocking)
       .await?
       .is_empty()
     {
@@ -336,6 +362,57 @@ impl FactorySourceStore for PostgresStore {
   }
 }
 
+async fn reserve_preparation(
+  store: &PostgresStore,
+  request: ReserveWorkSourcePreparation,
+  lineage: Option<(&octacity_server_store::ManagementSecurityScope, WorkSourceIssueText<'_>)>,
+  initial_policy: Option<Vec<u8>>,
+) -> Result<WorkSourcePreparation, StoreError> {
+  request.validate()?;
+  let mut tx = store.pool().begin().await.map_err(unavailable)?;
+  lock_claim(&mut tx, &request.claim, request.now).await?;
+  let input = selected_input(&mut tx, &request.claim, request.input_id).await?;
+  let mut preparation = request.freeze_with_initial_policy(input, initial_policy)?;
+  if let Some((scope, observed)) = lineage {
+    preparation.observed_issue_text = Some(observed.digest());
+    preparation.issue_revision = matching_issue_revision(&mut tx, &preparation, scope, observed).await?;
+  }
+  let (kind, id) = preparation.target.identity();
+  sqlx::query("INSERT INTO factory_source_preparations (id,project_id,input_id,input_version,scan_kind,scan_id,document,issue,snapshot_expires_at_millis) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9) ON CONFLICT (id) DO NOTHING")
+    .bind(preparation.id.as_bytes().as_slice()).bind(preparation.input.project_id().as_uuid()).bind(preparation.input.id().as_uuid()).bind(number(preparation.input.version().get())?).bind(kind).bind(id).bind(serde_json::to_vec(&preparation).map_err(|_| StoreError::Unavailable)?)
+    .bind(preparation.issue.as_bytes().as_slice()).bind(preparation.snapshot_expires_at.unix_millis()).execute(&mut *tx).await.map_err(unavailable)?;
+  let retained = load_preparation(&mut tx, preparation.input.project_id(), preparation.id).await?;
+  tx.commit().await.map_err(unavailable)?;
+  Ok(retained)
+}
+
+async fn matching_issue_revision(
+  connection: &mut sqlx::PgConnection,
+  preparation: &WorkSourcePreparation,
+  scope: &octacity_server_store::ManagementSecurityScope,
+  observed: WorkSourceIssueText<'_>,
+) -> Result<Option<octacity_server_store::WorkSourceIssueRevision>, StoreError> {
+  let project = preparation.input.project_id();
+  let correlation = octacity_server_store::source_native_correlation(
+    preparation.issue,
+    octacity_server_store::source_security_partition(scope),
+  );
+  let Some(link) = crate::issue_source::native_link(connection, project, scope, correlation).await? else {
+    return Ok(None);
+  };
+  let issue = crate::issue::lock(connection, project, link.issue_id).await?;
+  Ok(
+    (issue.content_available
+      && issue.content.title == observed.title
+      && issue.content.description == observed.description)
+      .then_some(octacity_server_store::WorkSourceIssueRevision {
+        correlation,
+        issue_id: issue.id,
+        version: issue.version,
+      }),
+  )
+}
+
 pub(super) async fn lock_project(tx: &mut Transaction<'_, Postgres>, project: ProjectId) -> Result<(), StoreError> {
   let exists: Option<uuid::Uuid> = sqlx::query_scalar("SELECT id FROM projects WHERE id=$1 FOR UPDATE")
     .bind(project.as_uuid())
@@ -373,23 +450,65 @@ async fn scan_members(
   }
 }
 
-// Recovery and checkpointing use the same pending predicate. Retired members remain for retention.
+enum PendingView {
+  All {
+    after: Option<octacity_server_factory::FactoryDigest>,
+  },
+  Recovery {
+    now: octacity_server_domain::Timestamp,
+  },
+  Blocking,
+}
+
+// Retired members remain for retention. Only untouched work can fence a provider checkpoint.
 async fn pending_preparations(
   tx: &mut Transaction<'_, Postgres>,
   project: ProjectId,
   target: WorkSourceScanTarget,
-  after: Option<octacity_server_factory::FactoryDigest>,
   limit: u16,
+  view: PendingView,
 ) -> Result<Vec<WorkSourcePreparation>, StoreError> {
-  let members = scan_members(tx, project, target)
+  let (after, recovery_at, blocking) = match view {
+    PendingView::All { after } => (after, None, false),
+    PendingView::Recovery { now } => (None, Some(now.unix_millis()), false),
+    PendingView::Blocking => (None, None, true),
+  };
+  let (member_ids, member_versions): (Vec<_>, Vec<_>) = scan_members(tx, project, target)
     .await?
     .into_iter()
     .filter(|m| m.definition().enabled)
-    .map(|m| m.id().as_uuid())
-    .collect::<Vec<_>>();
-  let documents: Vec<Vec<u8>> = sqlx::query_scalar("SELECT prep.document FROM factory_source_preparations prep WHERE prep.project_id=$1 AND prep.input_id=ANY($2) AND NOT prep.settled AND NOT prep.snapshot_cleaned AND NOT EXISTS(SELECT 1 FROM factory_source_materializations m WHERE m.preparation_id=prep.id AND (m.document->>'rejection' IS NOT NULL OR m.document->>'cleaned_at' IS NOT NULL)) AND ($3::bytea IS NULL OR prep.id>$3) ORDER BY prep.id LIMIT $4")
-    .bind(project.as_uuid()).bind(members).bind(after.map(|v| v.as_bytes().to_vec())).bind(i64::from(limit))
-    .fetch_all(&mut **tx).await.map_err(unavailable)?;
+    .map(|m| Ok((m.id().as_uuid(), number(m.version().get())?)))
+    .collect::<Result<Vec<_>, StoreError>>()?
+    .into_iter()
+    .unzip();
+  let documents: Vec<Vec<u8>> = sqlx::query_scalar(
+    "SELECT prep.document FROM factory_source_preparations prep
+     JOIN unnest($2::uuid[], $7::bigint[]) AS member(id, version) ON member.id=prep.input_id
+     JOIN factory_source_inputs original ON original.id=prep.input_id AND original.version=prep.input_version
+     JOIN factory_source_inputs current ON current.id=member.id AND current.version=member.version
+     WHERE prep.project_id=$1 AND NOT prep.settled AND NOT prep.snapshot_cleaned
+       AND original.document #>> '{definition,source,installation,identity}' =
+           current.document #>> '{definition,source,installation,identity}'
+       AND original.document #> '{definition,source,resource}' =
+           current.document #> '{definition,source,resource}'
+       AND NOT EXISTS(SELECT 1 FROM factory_source_materializations m WHERE m.preparation_id=prep.id
+                      AND (m.document->>'rejection' IS NOT NULL OR m.document->>'cleaned_at' IS NOT NULL))
+       AND ($3::bytea IS NULL OR prep.id>$3)
+       AND (NOT $5 OR prep.wait_checked_at_millis IS NULL)
+       AND ($6::bigint IS NULL OR prep.wait_checked_at_millis IS NULL
+            OR (prep.wait_checked_at_millis < $6 AND prep.snapshot_expires_at_millis > $6))
+     ORDER BY CASE WHEN $6::bigint IS NOT NULL THEN prep.wait_checked_at_millis END NULLS FIRST, prep.id LIMIT $4",
+  )
+  .bind(project.as_uuid())
+  .bind(member_ids)
+  .bind(after.map(|v| v.as_bytes().to_vec()))
+  .bind(i64::from(limit))
+  .bind(blocking)
+  .bind(recovery_at)
+  .bind(member_versions)
+  .fetch_all(&mut **tx)
+  .await
+  .map_err(unavailable)?;
   documents
     .iter()
     .map(|v| serde_json::from_slice(v).map_err(|_| StoreError::Unavailable))
@@ -517,8 +636,8 @@ pub(super) async fn save_preparation(
   tx: &mut Transaction<'_, Postgres>,
   preparation: &WorkSourcePreparation,
 ) -> Result<(), StoreError> {
-  sqlx::query("UPDATE factory_source_preparations SET document=$1, settled=$2, work_id=$5, run_id=$6 WHERE project_id=$3 AND id=$4")
-    .bind(serde_json::to_vec(preparation).map_err(|_| StoreError::Unavailable)?).bind(preparation.admission.is_some()).bind(preparation.input.project_id().as_uuid()).bind(preparation.id.as_bytes().as_slice()).bind(preparation.admission.as_ref().map(|v| v.work_id.as_uuid())).bind(preparation.admission.as_ref().map(|v| v.run_id.as_uuid())).execute(&mut **tx).await.map_err(unavailable)?;
+  sqlx::query("UPDATE factory_source_preparations SET document=$1, settled=$2, work_id=$5, run_id=$6, wait_checked_at_millis=$7 WHERE project_id=$3 AND id=$4")
+    .bind(serde_json::to_vec(preparation).map_err(|_| StoreError::Unavailable)?).bind(preparation.admission.is_some()).bind(preparation.input.project_id().as_uuid()).bind(preparation.id.as_bytes().as_slice()).bind(preparation.admission.as_ref().map(|v| v.work_id.as_uuid())).bind(preparation.admission.as_ref().map(|v| v.run_id.as_uuid())).bind(preparation.waiting.map(|wait| wait.checked_at.unix_millis())).execute(&mut **tx).await.map_err(unavailable)?;
   Ok(())
 }
 
@@ -540,6 +659,7 @@ pub(crate) async fn correlate(
   tx: &mut Transaction<'_, Postgres>,
   mut preparation: WorkSourcePreparation,
   receipt: &octacity_server_store::PublishedFactoryAdmission,
+  fresh: bool,
 ) -> Result<(), StoreError> {
   preparation.correlate(receipt);
   save_preparation(tx, &preparation).await?;
@@ -552,6 +672,23 @@ pub(crate) async fn correlate(
     .map_err(unavailable)?;
   let partition =
     octacity_server_factory::FactoryDigest::from_bytes(partition.try_into().map_err(|_| StoreError::Unavailable)?);
+  if fresh && let Some(revision) = &preparation.issue_revision {
+    if revision.correlation != octacity_server_store::source_native_correlation(preparation.issue, partition) {
+      return Err(source_conflict());
+    }
+    return crate::issue_execution::insert_association(
+      tx,
+      &octacity_server_store::IssueWorkAssociation {
+        project_id: preparation.input.project_id(),
+        issue_id: revision.issue_id,
+        request_id: None,
+        requirements_version: Some(revision.version),
+        work_id: receipt.work.id(),
+        run_id: receipt.run.id(),
+      },
+    )
+    .await;
+  }
   crate::issue_source::queue_native_work_associations(
     tx,
     preparation.input.project_id(),
@@ -570,7 +707,7 @@ pub(crate) async fn correlate_replay(
 ) -> Result<(), StoreError> {
   let mut tx = pool.begin().await.map_err(unavailable)?;
   let preparation = lock_preparation(&mut tx, guard, request).await?;
-  correlate(&mut tx, preparation, receipt).await?;
+  correlate(&mut tx, preparation, receipt, false).await?;
   tx.commit().await.map_err(unavailable)
 }
 

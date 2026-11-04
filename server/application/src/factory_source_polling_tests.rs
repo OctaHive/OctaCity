@@ -42,6 +42,7 @@ impl FactorySourcePageReader for Reader {
 #[derive(Default)]
 struct Processor {
   fail_item: Mutex<Option<String>>,
+  awaiting_predecessor: Mutex<Option<String>>,
   seen: Mutex<Vec<WorkSourceSnapshot>>,
 }
 #[async_trait]
@@ -52,7 +53,14 @@ impl FactorySourceCandidateProcessor for Processor {
     if fail {
       fail_item.take();
     }
+    let awaiting = self.awaiting_predecessor.lock().unwrap().as_deref() == Some(snapshot.item.item.as_str());
     self.seen.lock().unwrap().push(snapshot);
+    if awaiting {
+      return Err(crate::FactoryValidationDiagnostics::unavailable_with_code(
+        "/incoming_result",
+        "incoming_result_not_accepted",
+      ));
+    }
     if fail {
       return Err(ApplicationError::unavailable());
     }
@@ -697,6 +705,7 @@ impl FactorySourceCandidateProcessor for AdmissionProcessor {
           claim.clone(),
           preparation.id,
           crate::SourcePreparationSettings {
+            predecessor_digest: None,
             mapping: crate::WorkSourceMapping {
               source: input.definition().source.clone(),
               acceptance: crate::SourceAcceptanceMapping::Body,
@@ -1238,6 +1247,55 @@ fn group_selection_is_fenced_durable_and_ambiguous_observations_choose_no_target
         .select_source_input(resumed.claim, time(201), item, vec![second.id()])
         .await
         .is_err()
+    );
+  });
+}
+
+#[test]
+fn polling_retries_a_candidate_without_a_durable_disposition_before_advancing() {
+  run_ready(async {
+    let (store, authorized, scan) = fixture("github").await;
+    let reader = Arc::new(Reader::default());
+    let processor = Arc::new(Processor::default());
+    let clock = Arc::new(Clock(AtomicI64::new(101)));
+    *processor.awaiting_predecessor.lock().unwrap() = Some("pending".into());
+    reader.pages.lock().unwrap().push_back(SourcePollPage {
+      candidates: vec![
+        snapshot(&authorized, "pending", "Awaiting triage"),
+        snapshot(&authorized, "ready", "Already accepted"),
+      ],
+      next_cursor: None,
+    });
+    let mut limits = policy();
+    limits.max_items = 2;
+    limits.max_pages = 1;
+    let poller =
+      FactorySourcePoller::new(store.clone(), reader.clone(), processor.clone(), clock.clone(), limits).unwrap();
+    assert!(poller.run_once(scan.clone()).await.is_err());
+    processor.awaiting_predecessor.lock().unwrap().take();
+    clock.0.store(200, Ordering::SeqCst);
+    let next = store
+      .claim_source_scan(ClaimWorkSourceScan {
+        project_id: scan.claim.project_id,
+        target: scan.claim.target,
+        owner: key("reconcile"),
+        now: time(200),
+        until: time(300),
+      })
+      .await
+      .unwrap()
+      .unwrap();
+    assert_eq!(poller.run_once(next).await.unwrap().items_processed, 2);
+    assert_eq!(reader.requests.lock().unwrap().len(), 1);
+    assert_eq!(
+      processor
+        .seen
+        .lock()
+        .unwrap()
+        .iter()
+        .map(|item| item.item.item.as_str())
+        .collect::<Vec<_>>(),
+      ["pending", "pending", "ready"]
     );
   });
 }

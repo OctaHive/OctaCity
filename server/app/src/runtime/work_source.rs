@@ -103,8 +103,14 @@ pub struct FactorySourceWorker<S, B> {
   dependencies: Arc<FactorySourceWorkerDependencies<S, B>>,
   installation: Arc<FactorySourceInstallation>,
   discovery: tokio::sync::Mutex<(usize, Option<WorkSourceScanTarget>)>,
+  integrations: SourceWorkerIntegrations,
+}
+#[derive(Clone, Default)]
+struct SourceWorkerIntegrations {
   managed_connections: Option<ManagedIntegrationConnections>,
   profile_provider: Option<Arc<dyn FactorySourceProfileProvider>>,
+  predecessors: Option<Arc<dyn FactorySourcePredecessors>>,
+  repositories: Option<Arc<dyn ConfigurationStore>>,
 }
 impl<S: WorkSourceArtifactStore + 'static, B: ArtifactBytePublisher + 'static> FactorySourceWorker<S, B> {
   /// Constructs explicit source support without fetching tokens or contacting a provider.
@@ -151,17 +157,24 @@ impl<S: WorkSourceArtifactStore + 'static, B: ArtifactBytePublisher + 'static> F
       dependencies: Arc::new(dependencies),
       installation: Arc::new(installation),
       discovery: tokio::sync::Mutex::new((0, None)),
-      managed_connections: None,
-      profile_provider: None,
+      integrations: SourceWorkerIntegrations::default(),
     })
   }
   /// Enables current connection resolution for explicitly managed inputs; legacy profiles stay explicit.
   pub fn with_managed_connections(mut self, connections: ManagedIntegrationConnections) -> Self {
-    self.managed_connections = Some(connections);
+    self.integrations.managed_connections = Some(connections);
     self
   }
   pub(super) fn with_profile_provider(mut self, provider: Arc<dyn FactorySourceProfileProvider>) -> Self {
-    self.profile_provider = Some(provider);
+    self.integrations.profile_provider = Some(provider);
+    self
+  }
+  pub(super) fn with_predecessors(mut self, reader: Arc<dyn FactorySourcePredecessors>) -> Self {
+    self.integrations.predecessors = Some(reader);
+    self
+  }
+  pub(super) fn with_repositories(mut self, repositories: Arc<dyn ConfigurationStore>) -> Self {
+    self.integrations.repositories = Some(repositories);
     self
   }
   /// Runs one finite slice; absence or pre-cancellation performs no provider activity.
@@ -174,10 +187,10 @@ impl<S: WorkSourceArtifactStore + 'static, B: ArtifactBytePublisher + 'static> F
       return Ok(outcome);
     }
     let settings = self.installation.settings;
-    if self.profile_provider.is_none() && self.installation.projects.is_empty() {
+    if self.integrations.profile_provider.is_none() && self.installation.projects.is_empty() {
       return Ok(outcome);
     }
-    let targets = if let Some(provider) = &self.profile_provider {
+    let targets = if let Some(provider) = &self.integrations.profile_provider {
       provider.targets(settings.worker.batch_size()).await?
     } else {
       let mut cursor = self.discovery.lock().await;
@@ -206,11 +219,8 @@ impl<S: WorkSourceArtifactStore + 'static, B: ArtifactBytePublisher + 'static> F
         let cancellation = cancellation.clone();
         let project = *project;
         let target = *target;
-        let connections = self.managed_connections.clone();
-        let profiles = self.profile_provider.clone();
-        tasks.spawn(
-          async move { poll_target(d, installation, project, target, cancellation, connections, profiles).await },
-        );
+        let integrations = self.integrations.clone();
+        tasks.spawn(async move { poll_target(d, installation, project, target, cancellation, integrations).await });
       }
       while let Some(result) = tasks.join_next().await {
         let one = result.map_err(|_| ApplicationError::unavailable())??;
@@ -229,9 +239,14 @@ async fn poll_target<S: WorkSourceArtifactStore + 'static, B: ArtifactBytePublis
   project: ProjectId,
   target: WorkSourceScanTarget,
   cancellation: CancellationToken,
-  managed_connections: Option<ManagedIntegrationConnections>,
-  profile_provider: Option<Arc<dyn FactorySourceProfileProvider>>,
+  integrations: SourceWorkerIntegrations,
 ) -> Result<FactorySourceWorkerOutcome, ApplicationError> {
+  let SourceWorkerIntegrations {
+    managed_connections,
+    profile_provider,
+    predecessors,
+    repositories,
+  } = integrations;
   let mut outcome = FactorySourceWorkerOutcome::default();
   let settings = installation.settings;
   if cancellation.is_cancelled() {
@@ -276,6 +291,8 @@ async fn poll_target<S: WorkSourceArtifactStore + 'static, B: ArtifactBytePublis
       cancellation: operation_cancel.clone(),
     });
     let processor = Arc::new(SourceCandidateBridge {
+      predecessors,
+      repositories,
       managed_connections: managed_connections.clone(),
       store: d.store.clone(),
       bytes: d.bytes.clone(),
@@ -291,20 +308,27 @@ async fn poll_target<S: WorkSourceArtifactStore + 'static, B: ArtifactBytePublis
     let pending_limit = polling.max_items.min(64);
     let pending = d
       .store
-      .pending_source_preparations(project, scan.claim.target, None, pending_limit)
+      .recoverable_source_preparations(project, scan.claim.target, d.clock.now()?, pending_limit)
       .await?;
-    for retained in &pending {
+    // Untouched preparations fence provider checkpoints. Drain their next batch first.
+    let full_untouched_page =
+      pending.len() == usize::from(pending_limit) && pending.last().is_some_and(|last| last.waiting.is_none());
+    let mut recovered = 0;
+    for retained in pending {
       let input = members
         .iter()
         .find(|m| m.id() == retained.input.id() && m.definition().enabled)
         .ok_or_else(ApplicationError::capability_unavailable)?;
       retained.require_selected_owner(&scan.claim, input)?;
-      processor
-        .finish_preparation(scan.claim.clone(), input, retained.clone())
-        .await?;
+      if processor
+        .settle_preparation(scan.claim.clone(), input, retained)
+        .await?
+      {
+        recovered += 1;
+      }
     }
-    polling.max_items = polling.max_items.saturating_sub(pending.len() as u16);
-    if pending.len() == usize::from(pending_limit) {
+    polling.max_items -= recovered;
+    if polling.max_items == 0 || full_untouched_page {
       return Ok(());
     }
     let poller = FactorySourcePoller::new(d.store.clone(), reader, processor, d.clock.clone(), polling)?;

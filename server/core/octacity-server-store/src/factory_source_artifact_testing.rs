@@ -121,7 +121,10 @@ impl WorkSourceArtifactStore for InMemoryFactoryConfigurationStore {
       .get_mut(&expected.preparation_id)
       .ok_or_else(source_conflict)?;
     preparation.snapshot.clear();
+    preparation.observed_issue_text = None;
     preparation.policy = None;
+    preparation.initial_policy = None;
+    preparation.predecessor_cursor = None;
     Ok(())
   }
   async fn reserve_source_artifacts(

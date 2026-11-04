@@ -40,7 +40,7 @@ pub use predicate::{
 };
 mod incoming;
 mod input;
-pub use incoming::FlowIncomingData;
+pub use incoming::{FlowIncomingData, FlowIncomingPredecessor};
 mod journal;
 pub use journal::FlowDataHistory;
 mod code;

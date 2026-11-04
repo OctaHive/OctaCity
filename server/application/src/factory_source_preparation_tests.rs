@@ -51,6 +51,7 @@ impl ArtifactByteReader for Bytes {
 }
 fn settings(preparation: &octacity_server_store::WorkSourcePreparation) -> SourcePreparationSettings {
   SourcePreparationSettings {
+    predecessor_digest: None,
     mapping: mapping(preparation),
     source: RepositorySourceSelection::DefaultReference,
     classification: WorkClassification::new(
@@ -354,6 +355,7 @@ fn expired_source_artifacts_cannot_start_a_run_even_with_a_new_valid_scan_owner(
     .unwrap();
     let run = octacity_server_factory::FactoryRun::admitted(octacity_server_factory::FactoryRunId::generate(), &work);
     let request = octacity_server_store::AdmitFactoryWork {
+      incoming: None,
       probe: store
         .source_preparation(claim.project_id, preparation.id)
         .await
@@ -1016,6 +1018,7 @@ fn source_preparation_binds_an_exact_project_completion_document_without_build_p
           &context(),
           crate::ProjectTextSubmission {
             intent: crate::ProjectTextIntent {
+              predecessor_digest: None,
               target: ReadFactoryAdmissionContext {
                 project_id: project,
                 configuration_id: retained.input.definition().target.id(),
@@ -1222,6 +1225,98 @@ fn packaged_triage_completion_prepares_title_only_input_without_a_prior_build_or
           .as_str()
           .unwrap()
           .contains("implementation acceptance")
+      );
+    }
+  });
+}
+
+#[test]
+fn downstream_source_preparation_retains_original_ticket_and_acceptance_across_retry() {
+  run_ready(async {
+    for maximum in [None, Some(16)] {
+      let (store, retained, claim) = reserved_with_snapshot("github", |_| {}).await;
+      let project_id = retained.input.project_id();
+      let bytes = Arc::new(Bytes::default());
+      let clock = Arc::new(Clock(AtomicI64::new(11)));
+      let mut settings = settings(&retained);
+      if let Some(maximum) = maximum {
+        settings.mapping.max_artifact_bytes = maximum;
+      }
+      let original = crate::ProjectTextIntake::new(
+        store.clone(),
+        bytes.clone(),
+        Arc::new(RecordingResolver::default()),
+        Arc::new(crate::TrustedNetworkManagementPolicy),
+        clock.clone(),
+      )
+      .submit(
+        &context(),
+        crate::ProjectTextSubmission {
+          intent: crate::ProjectTextIntent {
+            predecessor_digest: None,
+            target: ReadFactoryAdmissionContext {
+              project_id,
+              configuration_id: retained.input.definition().target.id(),
+              configuration_version: retained.input.definition().target.version(),
+              repository_id: Some(retained.input.definition().repository.id),
+              repository_version: Some(retained.input.definition().repository.version),
+            },
+            external_identity: ExternalWorkIdentity::new("original-ticket").unwrap(),
+            source: settings.source.clone(),
+            classification: settings.classification.clone(),
+            mapping: FactoryKey::new("original-ticket.v1").unwrap(),
+            idempotency_key: IdempotencyKey::new("original-ticket").unwrap(),
+          },
+          documents: crate::ProjectTextDocuments::try_new("Original ticket", "Author's implementation acceptance")
+            .unwrap(),
+        },
+      )
+      .await
+      .unwrap();
+      let inputs = original.admission.work.artifacts();
+      let preparer = || {
+        FactoryWorkSourcePreparer::new(store.clone(), bytes.clone(), clock.clone())
+          .with_project_inputs(crate::FactoryProjectInputReader::new(store.clone(), bytes.clone()))
+      };
+      let handoff = crate::FactorySourceHandoff::new(
+        crate::factory_flow_action_tests::stage_reporting::accepted_stage_record().await,
+        inputs.clone(),
+      );
+      let result = preparer()
+        .prepare_handoff(claim.clone(), retained.id, settings.clone(), &handoff)
+        .await
+        .unwrap();
+      if maximum.is_some() {
+        assert_eq!(
+          result,
+          SourcePreparationOutcome::Rejected(crate::SourceMappingFailure::TooLarge)
+        );
+        continue;
+      }
+      let SourcePreparationOutcome::Prepared(first) = result else {
+        panic!("expected original ticket and acceptance")
+      };
+      assert_eq!(first.artifacts.task().content_digest(), inputs.task().content_digest());
+      assert_eq!(
+        first.artifacts.acceptance().content_digest(),
+        inputs.acceptance().content_digest()
+      );
+      assert_eq!(
+        preparer()
+          .prepare_handoff(claim.clone(), retained.id, settings.clone(), &handoff)
+          .await
+          .unwrap(),
+        SourcePreparationOutcome::Prepared(first)
+      );
+      let other = crate::FactorySourceHandoff::new(
+        crate::factory_flow_action_tests::stage_reporting::accepted_stage_record().await,
+        inputs.clone(),
+      );
+      assert!(
+        preparer()
+          .prepare_handoff(claim, retained.id, settings, &other)
+          .await
+          .is_err()
       );
     }
   });

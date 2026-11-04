@@ -12,7 +12,13 @@ import { projectDocumentsApi } from '../../api/projectDocuments';
 afterEach(cleanup);
 
 it('blocks Flow publication while process text is being edited and restores the unchanged draft after cancellation', async () => {
-  const flow = configurationFixture().configuration.flow;
+  const original = configurationFixture().configuration.flow;
+  const acceptedPredecessor = {
+    definition: { ...original.closure.root, digest: '8'.repeat(64) },
+    terminal: 'triaged',
+    outcomes: ['eligible'],
+  };
+  const flow = { ...original, accepted_predecessor: acceptedPredecessor };
   const projectId = configurationFixture().configuration.reference.project_id;
   vi.spyOn(projectDocumentsApi, 'list').mockResolvedValue({ items: [], next_cursor: null });
   const api = {
@@ -41,6 +47,10 @@ it('blocks Flow publication while process text is being edited and restores the 
   );
   await userEvent.click(await screen.findByRole('button', { name: 'Validate draft' }));
   expect(await screen.findByText('Authoritative validation passed.')).toBeTruthy();
+  expect(api.validateFlow.mock.calls[0]?.[0].definition).toHaveProperty(
+    'accepted_predecessor',
+    acceptedPredecessor,
+  );
   await userEvent.click(screen.getByRole('button', { name: 'Edit completion criteria' }));
   await userEvent.type(
     screen.getByRole('textbox', { name: 'Completion criteria' }),

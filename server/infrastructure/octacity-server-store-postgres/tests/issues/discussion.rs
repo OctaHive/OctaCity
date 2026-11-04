@@ -451,6 +451,7 @@ async fn explicit_content_expiry_keeps_identity_replay_quota_and_hold() {
         expected_version: issue.version,
         classification: None,
         target: IssueExecutionTarget {
+          predecessor_run: None,
           configuration_id: octacity_server_factory::FactoryConfigurationId::generate(),
           configuration_version: octacity_server_factory::FactoryConfigurationVersion::INITIAL,
           repository_id: octacity_server_domain::RepositoryId::generate(),

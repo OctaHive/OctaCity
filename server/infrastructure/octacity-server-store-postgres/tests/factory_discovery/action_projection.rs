@@ -448,6 +448,7 @@ async fn issue_action_queue_keeps_parallel_targets_across_edits_and_competing_re
   };
   store
     .admit_factory_work(testing::management_mutation(AdmitFactoryWork {
+      incoming: None,
       probe: FactoryAdmissionProbe {
         source_scope: FactoryWorkSourceScope {
           source: key("manual"),

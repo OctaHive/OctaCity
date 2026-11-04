@@ -65,6 +65,7 @@ export function FactoryAuthoring({
         data_schemas: flow.data_schemas,
         limits: flow.limits,
         ...(flow.pools ? { pools: flow.pools } : {}),
+        ...(flow.accepted_predecessor ? { accepted_predecessor: flow.accepted_predecessor } : {}),
       });
     },
   );

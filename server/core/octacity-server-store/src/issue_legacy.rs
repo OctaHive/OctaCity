@@ -6,7 +6,7 @@ use octacity_server_factory::{FactoryDigest, WorkEnvelopeId};
 /// Read-only original Artifact lineage, independent of reviewed execution requests.
 #[derive(Clone, Debug)]
 pub struct IssueLegacyWorkPage {
-  /// Exact associations; requirements/request identities remain absent.
+  /// Exact associations outside explicit execution requests. Scoped native Work may retain an Issue revision.
   pub items: Vec<IssueWorkAssociation>,
   /// Membership and Issue revision fence, containing no task body.
   pub observation: FactoryDigest,

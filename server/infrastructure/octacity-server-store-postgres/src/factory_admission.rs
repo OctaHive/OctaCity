@@ -213,7 +213,7 @@ async fn admit_once(
   } else {
     None
   };
-  let preparation = if let Some(guard) = &guard {
+  let mut preparation = if let Some(guard) = &guard {
     let preparation = crate::factory_source::lock_preparation(&mut transaction, guard, &request).await?;
     // A receipt published before correlation (or by another observer) remains the
     // existing authority. Discard the provisional transport row before attaching it.
@@ -232,6 +232,7 @@ async fn admit_once(
   request.validate_configuration(&configuration)?;
   require_access_profile(&mut transaction, &configuration, &request).await?;
   require_repository(&mut transaction, &request).await?;
+  require_current_predecessor_issue(&mut transaction, &request, preparation.as_mut()).await?;
   let active: i64 = sqlx::query_scalar(
     "SELECT COUNT(*) FROM factory_runs \
      WHERE factory_configuration_id = $1 AND factory_configuration_version = $2 \
@@ -314,6 +315,9 @@ async fn admit_once(
   .await
   .map_err(|error| classify(error, EntityKind::FactoryRun))?;
   insert_admitted_flow(&mut transaction, &request).await?;
+  if let Some(incoming) = &request.incoming {
+    crate::factory_run::data::insert_incoming(&mut transaction, request.run.id(), incoming).await?;
+  }
 
   crate::factory_run::insert_artifact_reference(
     &mut transaction,
@@ -374,7 +378,7 @@ async fn admit_once(
     admission,
   };
   if let Some(preparation) = preparation {
-    crate::factory_source::correlate(&mut transaction, preparation, &outcome.admission).await?;
+    crate::factory_source::correlate(&mut transaction, preparation, &outcome.admission, true).await?;
   }
   if let Some(preparation) = &mut project_preparation {
     preparation.admission = Some(outcome.admission.clone());
@@ -401,6 +405,96 @@ async fn admit_once(
   )
   .await?;
   Ok(outcome)
+}
+
+// Hold the Issue lock through admission so a concurrent requirements edit cannot
+// invalidate the producer between the application check and publication.
+async fn require_current_predecessor_issue(
+  connection: &mut sqlx::PgConnection,
+  request: &AdmitFactoryWork,
+  preparation: Option<&mut octacity_server_store::WorkSourcePreparation>,
+) -> Result<(), StoreError> {
+  let Some(predecessor) = request.incoming.as_ref().and_then(|input| input.predecessor()) else {
+    return Ok(());
+  };
+  let project = request.work.subject().project_id();
+  // Keep the same lock order as installed Source admission and native attachment.
+  sqlx::query("SELECT id FROM projects WHERE id=$1 FOR KEY SHARE")
+    .bind(project.as_uuid())
+    .execute(&mut *connection)
+    .await
+    .map_err(unavailable)?;
+  let association: Option<Json<octacity_server_store::IssueWorkAssociation>> =
+    sqlx::query_scalar("SELECT document FROM issue_work_associations WHERE project_id=$1 AND run_id=$2")
+      .bind(project.as_uuid())
+      .bind(predecessor.run_id().as_uuid())
+      .fetch_optional(&mut *connection)
+      .await
+      .map_err(unavailable)?;
+  let stale = || conflict(EntityKind::Issue);
+  let Json(association) = association.ok_or_else(stale)?;
+  let version = association.requirements_version.ok_or_else(stale)?;
+  let current = crate::issue::lock(connection, project, association.issue_id).await?;
+  let original = crate::issue::read(connection, project, association.issue_id, Some(version)).await?;
+  if !current.content_available
+    || !original.content_available
+    || original.applicability_version != current.applicability_version
+  {
+    return Err(stale());
+  }
+  // Cached in-flight lineage cannot survive retirement of the producer.
+  sqlx::query(
+    "SELECT r.id FROM factory_runs r JOIN factory_flow_records record ON record.run_id=r.id
+     WHERE r.id=$1 AND r.visible AND r.state='completed' AND record.node_attempt_id=$2 AND record.id=$3
+     FOR SHARE OF r,record",
+  )
+  .bind(predecessor.run_id().as_uuid())
+  .bind(predecessor.record().node_attempt_id().as_uuid())
+  .bind(predecessor.record().digest().as_bytes().as_slice())
+  .fetch_optional(&mut *connection)
+  .await
+  .map_err(unavailable)?
+  .ok_or_else(stale)?;
+  if let Some(preparation) = preparation {
+    let observed = octacity_server_store::WorkSourceIssueText {
+      title: &original.content.title,
+      description: &original.content.description,
+    };
+    if preparation
+      .observed_issue_text
+      .is_some_and(|digest| digest != observed.digest())
+    {
+      return Err(stale());
+    }
+    let scope = &request.probe.source_scope.security_scope;
+    let correlation = octacity_server_store::source_native_correlation(
+      preparation.issue,
+      octacity_server_store::source_security_partition(scope),
+    );
+    let link = crate::issue_source::native_link(connection, project, scope, correlation)
+      .await?
+      .filter(|link| link.issue_id == association.issue_id)
+      .ok_or_else(stale)?;
+    if let Some(pinned) = &preparation.issue_revision {
+      if pinned.correlation != correlation || pinned.issue_id != link.issue_id {
+        return Err(stale());
+      }
+      if pinned.version != version {
+        let pinned_issue = crate::issue::read(connection, project, pinned.issue_id, Some(pinned.version)).await?;
+        if !pinned_issue.content_available || pinned_issue.applicability_version != original.applicability_version {
+          return Err(stale());
+        }
+      }
+    } else {
+      // A link can appear while the candidate waits. The verified producer pins its requirements.
+      preparation.issue_revision = Some(octacity_server_store::WorkSourceIssueRevision {
+        correlation,
+        issue_id: link.issue_id,
+        version,
+      });
+    }
+  }
+  Ok(())
 }
 
 async fn insert_admitted_flow(

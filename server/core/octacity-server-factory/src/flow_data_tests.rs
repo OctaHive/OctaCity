@@ -423,6 +423,48 @@ fn generic_node_record_rejects_substituted_attempts_schemas_and_retained_bytes()
     FlowNodeRecord::restore(&bytes, &input, &attempt, definition, &schema, &completion).unwrap(),
     record
   );
+  let (foreign_work, foreign, _) = node_fixture();
+  assert!(FlowIncomingData::from_predecessor(&foreign_work, &foreign, &record).is_err());
+  let downstream_work = WorkEnvelope::new(
+    WorkEnvelopeId::generate(),
+    work.configuration().clone(),
+    ExternalWorkIdentity::new("downstream-ticket").unwrap(),
+    work.subject().clone(),
+    work.artifacts().clone(),
+    WorkClassification::new(work.priority(), work.risk(), work.metadata().clone()),
+  )
+  .unwrap();
+  let downstream_run = FactoryRun::admitted(FactoryRunId::generate(), &downstream_work);
+  let root = FlowRun::root(&downstream_run, definition.reference()).unwrap();
+  let cycle = WorkflowCycle::initial(&root).unwrap();
+  let downstream = AdmittedFlow::new(
+    admitted.closure().clone(),
+    admitted.limits().clone(),
+    root,
+    cycle,
+    admitted.wip_limits(),
+  )
+  .unwrap();
+  let handoff = FlowIncomingData::from_predecessor(&downstream_work, &downstream, &record).unwrap();
+  assert_eq!(handoff.payload().value(), &serde_json::json!({"count": 1}));
+  let provenance = handoff.predecessor().unwrap();
+  assert_eq!(provenance.run_id(), admitted.root_run().factory_run_id());
+  assert_eq!(provenance.flow_run_id(), admitted.root_run().id());
+  assert_eq!(provenance.definition(), definition.reference());
+  assert_eq!(provenance.record().node_attempt_id(), attempt.id());
+  assert_eq!(provenance.record().digest(), completion.output_digest());
+  assert_eq!(
+    FlowIncomingData::restore(
+      &serde_json::to_vec(&handoff).unwrap(),
+      &downstream_work,
+      &downstream,
+      &schema,
+      handoff.digest().unwrap(),
+    )
+    .unwrap(),
+    handoff
+  );
+  assert!(FlowIncomingData::from_predecessor(&work, &admitted, &record).is_err());
   assert!(
     FlowNodeRecord::new(
       &input,

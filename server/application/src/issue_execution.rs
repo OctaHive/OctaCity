@@ -1,7 +1,9 @@
 //! Authorized execution reservation, separate from manual Issue creation and ordinary admission.
 use crate::*;
 use octacity_server_domain::{IssueId, ProjectId, Timestamp};
-use octacity_server_store::{FactoryAdmissionStore, IdempotencyKey, IssueExecutionStore, RequestIssueExecution};
+use octacity_server_store::{
+  FactoryAdmissionStore, FactoryRunStore, IdempotencyKey, IssueExecutionStore, RequestIssueExecution,
+};
 pub use octacity_server_store::{
   IssueExecutionMapping, IssueExecutionOutcome, IssueExecutionRequest, IssueExecutionTarget,
   RequestIssueExecutionIntent,
@@ -64,7 +66,7 @@ impl<S, F> IssueExecutionHandlers<S, F> {
   }
 }
 #[async_trait::async_trait]
-impl<S: IssueExecutionStore + octacity_server_store::IssueStore, F: FactoryAdmissionStore>
+impl<S: IssueExecutionStore + octacity_server_store::IssueStore, F: FactoryAdmissionStore + FactoryRunStore>
   ManagementCommandUseCase<RequestIssueExecutionCommand> for IssueExecutionHandlers<S, F>
 {
   type Error = ApplicationError;
@@ -128,6 +130,15 @@ impl<S: IssueExecutionStore + octacity_server_store::IssueStore, F: FactoryAdmis
       &selected,
       octacity_server_factory::FactoryAdmissionOrigin::Manual,
     )?;
+    resolve_issue_predecessor(
+      self.store.as_ref(),
+      self.factory.as_ref(),
+      self.policy.as_ref(),
+      context,
+      intent,
+      selected.configuration.configuration.flow(),
+    )
+    .await?;
     let mut actions =
       crate::factory_issue_status_authoring::flow_issue_status_selections(selected.configuration.configuration.flow())
         .peekable();
@@ -157,6 +168,131 @@ impl<S: IssueExecutionStore + octacity_server_store::IssueStore, F: FactoryAdmis
     .map_err(|_| ApplicationError::InvalidInput)?;
     Ok(self.store.request_issue_execution(request).await?)
   }
+}
+
+pub(super) async fn resolve_issue_predecessor(
+  issues: &(impl IssueExecutionStore + octacity_server_store::IssueStore),
+  runs: &impl FactoryRunStore,
+  policy: &dyn ManagementAuthorizationPolicy,
+  context: &ManagementRequestContext,
+  intent: &RequestIssueExecutionIntent,
+  target_flow: &octacity_server_factory::FactoryFlowConfiguration,
+) -> Result<Option<FactorySourceHandoff>, ApplicationError> {
+  let Some(run_id) = intent.target.predecessor_run else {
+    crate::factory_admission::reject_missing_incoming_result(target_flow)?;
+    return Ok(None);
+  };
+  resolve_associated_issue_predecessor(
+    issues,
+    runs,
+    policy,
+    context,
+    IssuePredecessorRequest {
+      project: intent.project_id,
+      issue: intent.issue_id,
+      expected_version: intent.expected_version,
+      repository: intent.target.repository_id,
+      run: run_id,
+    },
+    target_flow,
+  )
+  .await
+  .map(Some)
+}
+
+pub(super) struct IssuePredecessorRequest {
+  pub project: ProjectId,
+  pub issue: IssueId,
+  pub expected_version: octacity_server_domain::IssueVersion,
+  pub repository: octacity_server_domain::RepositoryId,
+  pub run: octacity_server_factory::FactoryRunId,
+}
+
+pub(super) async fn resolve_associated_issue_predecessor(
+  issues: &(impl IssueExecutionStore + octacity_server_store::IssueStore),
+  runs: &impl FactoryRunStore,
+  policy: &dyn ManagementAuthorizationPolicy,
+  context: &ManagementRequestContext,
+  request: IssuePredecessorRequest,
+  target_flow: &octacity_server_factory::FactoryFlowConfiguration,
+) -> Result<FactorySourceHandoff, ApplicationError> {
+  let diagnostic = |code| FactoryValidationDiagnostics::unavailable_with_code("/incoming_result", code);
+  let predecessor = target_flow
+    .accepted_predecessor
+    .as_ref()
+    .ok_or_else(|| diagnostic("unexpected_incoming_result"))?;
+  crate::factory_configuration_choices::require_visible_reference(
+    policy,
+    context,
+    ManagementResourceKind::FactoryRun,
+    request.run,
+  )
+  .await
+  .map_err(|_| diagnostic("incoming_result_inaccessible"))?;
+  let snapshot = runs
+    .factory_run_snapshot(request.run)
+    .await
+    .map_err(|error| match error {
+      octacity_server_store::StoreError::NotFound { .. } => diagnostic("incoming_result_inaccessible"),
+      other => other.into(),
+    })?;
+  let association = issues
+    .issue_work_association(request.project, snapshot.work.id())
+    .await?
+    .filter(|link| link.issue_id == request.issue && link.run_id == request.run)
+    .ok_or_else(|| diagnostic("incoming_result_wrong_issue"))?;
+  let version = association
+    .requirements_version
+    .ok_or_else(|| diagnostic("incoming_result_stale"))?;
+  let original = issues.issue(request.project, request.issue, Some(version)).await?;
+  let reviewed = issues
+    .issue(request.project, request.issue, Some(request.expected_version))
+    .await?;
+  let current = issues.issue(request.project, request.issue, None).await?;
+  if !original.content_available
+    || !reviewed.content_available
+    || original.applicability_version != reviewed.applicability_version
+    || reviewed.applicability_version != current.applicability_version
+  {
+    return Err(diagnostic("incoming_result_stale"));
+  }
+  if snapshot.work.subject().repository().is_err()
+    || snapshot
+      .work
+      .subject()
+      .repository()
+      .is_ok_and(|subject| subject.repository_id() != request.repository)
+  {
+    return Err(diagnostic("incoming_result_wrong_subject"));
+  }
+  let record = snapshot
+    .accepted_terminal_result(predecessor.definition, &predecessor.terminal, &predecessor.outcomes)?
+    .ok_or_else(|| diagnostic("incoming_result_not_accepted"))?;
+  if target_flow.incoming_schemas().next() != Some(record.payload().schema()) {
+    return Err(diagnostic("incoming_result_incompatible"));
+  }
+  let mut handoff = FactorySourceHandoff::new(record.clone(), snapshot.work.artifacts().clone())
+    .with_issue_text_evidence(octacity_server_store::WorkSourceIssueText {
+      title: &original.content.title,
+      description: &original.content.description,
+    });
+  if association.request_id.is_none() {
+    handoff.issue_text = Some(
+      issue_execution_documents(&original.content, &IssueExecutionMapping::TitleDescriptionAcceptanceV1)
+        .map_err(|_| diagnostic("incoming_result_missing_implementation_acceptance"))?,
+    );
+  }
+  Ok(handoff)
+}
+
+pub(super) fn issue_execution_documents(
+  content: &octacity_server_store::IssueContent,
+  mapping: &IssueExecutionMapping,
+) -> Result<octacity_server_store::ProjectTextDocuments, ApplicationError> {
+  Ok(octacity_server_store::ProjectTextDocuments::try_new(
+    String::from_utf8(mapping.task_bytes(content)).map_err(|_| ApplicationError::invalid())?,
+    content.acceptance.as_deref().ok_or_else(ApplicationError::invalid)?,
+  )?)
 }
 #[async_trait::async_trait]
 impl<S: IssueExecutionStore, F: Send + Sync> ManagementQueryUseCase<GetIssueExecutionQuery>

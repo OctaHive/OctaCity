@@ -238,7 +238,11 @@ fn action_descriptions_offer_only_original_policy_permitted_retries() {
       assert_eq!(serde_json::to_value(&description.kind).unwrap()["kind"], "retry");
       assert_eq!(description.node_attempt_id, attempt.id());
       assert_eq!(description.candidate, Some(candidate));
-      assert_eq!(description.actionable_at, at(12));
+      assert_eq!(
+        description.actionable_at,
+        at(13),
+        "retry starts when the execution failure is retained"
+      );
       assert_eq!(
         description.deadline, None,
         "an expired attempt deadline is not a new retry policy"

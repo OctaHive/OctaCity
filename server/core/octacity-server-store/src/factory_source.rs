@@ -140,6 +140,16 @@ pub trait FactorySourceStore: crate::FactoryAdmissionStore {
     after: Option<FactoryDigest>,
     limit: u16,
   ) -> Result<Vec<WorkSourcePreparation>, StoreError>;
+  /// Takes a bounded recovery batch, with untouched preparations first and waits in oldest-check order.
+  async fn recoverable_source_preparations(
+    &self,
+    project: ProjectId,
+    target: WorkSourceScanTarget,
+    now: octacity_server_domain::Timestamp,
+    limit: u16,
+  ) -> Result<Vec<WorkSourcePreparation>, StoreError>;
+  /// Retains a candidate-local predecessor wait under the current Source fence.
+  async fn defer_source_preparation(&self, request: DeferSourcePreparation) -> Result<WorkSourceWait, StoreError>;
   /// Freezes normalized artifact and source intent exactly once under a current owner.
   async fn publish_source_preparation_intent(
     &self,
@@ -149,6 +159,15 @@ pub trait FactorySourceStore: crate::FactoryAdmissionStore {
   async fn reserve_source_preparation(
     &self,
     request: ReserveWorkSourcePreparation,
+  ) -> Result<WorkSourcePreparation, StoreError> {
+    self.reserve_scoped_source_preparation(request, None, None).await
+  }
+  /// Reserves the candidate with installed settings and optional scoped native Issue evidence.
+  async fn reserve_scoped_source_preparation(
+    &self,
+    request: ReserveWorkSourcePreparation,
+    lineage: Option<(&crate::ManagementSecurityScope, WorkSourceIssueText<'_>)>,
+    initial_policy: Option<Vec<u8>>,
   ) -> Result<WorkSourcePreparation, StoreError>;
   /// Reads original private preparation by exact Project and operation identity.
   async fn source_preparation(
@@ -337,6 +356,9 @@ pub struct WorkSourceScan<T = WorkSourceScanTarget> {
   /// Last bounded classification, retained independently of covered page progress.
   #[serde(default, skip_serializing_if = "Option::is_none")]
   pub last_selection: Option<crate::WorkSourceSelectionRecord>,
+  /// Last candidate checked and deferred while waiting for an applicable predecessor.
+  #[serde(default, skip_serializing_if = "Option::is_none")]
+  pub last_wait: Option<WorkSourceWait>,
   /// Optional durable retry/cadence state; historical rows omit this field.
   #[serde(default, skip_serializing_if = "Option::is_none")]
   pub schedule: Option<crate::WorkSourceSchedule>,
@@ -377,6 +399,9 @@ pub fn next_source_scan<T: Clone + PartialEq>(
     last_selection: current
       .filter(|v| v.claim.target == request.target)
       .and_then(|v| v.last_selection.clone()),
+    last_wait: current
+      .filter(|v| v.claim.target == request.target)
+      .and_then(|v| v.last_wait),
     schedule,
     claim: WorkSourceScanClaim {
       project_id: request.project_id,
@@ -441,6 +466,12 @@ pub struct WorkSourcePreparation {
   pub id: FactoryDigest,
   /// Common native ticket association across distinct input stages.
   pub issue: FactoryDigest,
+  /// Local Issue revision proven by the scoped observation or the accepted predecessor.
+  #[serde(default, skip_serializing_if = "Option::is_none")]
+  pub issue_revision: Option<WorkSourceIssueRevision>,
+  /// Private digest of the original title and description for late native linkage.
+  #[serde(default, skip_serializing_if = "Option::is_none")]
+  pub observed_issue_text: Option<FactoryDigest>,
   /// Exact input/target/reporter definition originally selected.
   pub input: WorkSourceInput,
   /// Original native ticket identities.
@@ -461,8 +492,119 @@ pub struct WorkSourcePreparation {
   pub policy: Option<Vec<u8>>,
   /// Complete normalized original command before mutable VCS resolution.
   pub intent: Option<crate::FactoryWorkAdmissionIntent>,
+  /// Last predecessor wait, recorded independently from covered provider pages.
+  #[serde(default, skip_serializing_if = "Option::is_none")]
+  pub waiting: Option<WorkSourceWait>,
+  /// Installed settings pinned with the observation, before resolving a predecessor.
+  #[serde(default, alias = "waiting_policy", skip_serializing_if = "Option::is_none")]
+  pub initial_policy: Option<Vec<u8>>,
+  /// Private continuation for a bounded lookup across previous Work.
+  #[serde(default, skip_serializing_if = "Option::is_none")]
+  pub predecessor_cursor: Option<WorkSourcePredecessorCursor>,
   /// Original authoritative admission association, once confirmed.
   pub admission: Option<WorkSourceCorrelation>,
+}
+
+/// Safe, bounded reason why a candidate could not start downstream work.
+#[derive(Clone, Copy, Debug, Eq, PartialEq, serde::Deserialize, serde::Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum WorkSourceWaitReason {
+  /// Another bounded page of previously linked Work remains to inspect.
+  Searching,
+  /// No accepted result was found.
+  Missing,
+  /// A result exists but was not accepted.
+  NotAccepted,
+  /// Current Issue requirements differ from the original accepted inputs.
+  Stale,
+  /// The result cannot be read in the current scope.
+  Inaccessible,
+  /// The producer or result does not meet the declared input contract.
+  Incompatible,
+  /// The result belongs to a different Issue.
+  WrongIssue,
+  /// The result was produced against a different source subject.
+  WrongSubject,
+  /// The original Issue has no applicable implementation acceptance.
+  MissingImplementationAcceptance,
+}
+
+/// Private resume point in the history of one linked Issue.
+#[derive(Clone, Copy, Debug, Eq, PartialEq, serde::Deserialize, serde::Serialize)]
+pub struct WorkSourcePredecessorCursor {
+  /// Link identity, checked again before resuming.
+  pub issue: octacity_server_domain::IssueId,
+  /// Original Issue revision and manual request membership boundary.
+  pub observation: crate::IssueExecutionObservation,
+  /// Last inspected history entry.
+  pub position: WorkSourcePredecessorPosition,
+  /// Last classified mismatch, retained when a later page is empty.
+  pub last_reason: WorkSourceWaitReason,
+}
+
+/// The two existing Issue association histories, searched in their retained order.
+#[derive(Clone, Copy, Debug, Eq, PartialEq, serde::Deserialize, serde::Serialize)]
+pub enum WorkSourcePredecessorPosition {
+  /// Manual execution requests precede native associations.
+  Manual(crate::IssueExecutionPosition),
+  /// Native associations are ordered by Work identity.
+  Native(octacity_server_factory::WorkEnvelopeId),
+}
+
+/// Fenced recording of a candidate-local wait, with optional original preparation settings.
+pub struct DeferSourcePreparation {
+  /// Current scan owner and definition.
+  pub claim: WorkSourceScanClaim,
+  /// Exact original reservation.
+  pub preparation_id: FactoryDigest,
+  /// Trusted observation time.
+  pub now: octacity_server_domain::Timestamp,
+  /// Classified outcome of the last check.
+  pub reason: WorkSourceWaitReason,
+  /// Private position when more Issue history remains.
+  pub cursor: Option<WorkSourcePredecessorCursor>,
+  /// Original settings when the handoff has not yet bound a materialization policy.
+  pub policy: Option<Vec<u8>>,
+}
+
+/// Retained operational evidence for one candidate, without native identifiers or private text.
+#[derive(Clone, Copy, Debug, Eq, PartialEq, serde::Deserialize, serde::Serialize)]
+pub struct WorkSourceWait {
+  /// Stable Source preparation correlation.
+  pub preparation_id: FactoryDigest,
+  /// Timestamp of the last checked wait.
+  pub checked_at: octacity_server_domain::Timestamp,
+  /// Why this candidate remained pending at that time.
+  pub reason: WorkSourceWaitReason,
+}
+
+/// Normalized source evidence for comparing a linked Issue at reservation time.
+pub struct WorkSourceIssueText<'a> {
+  /// Observed title, before task artifact mapping.
+  pub title: &'a str,
+  /// Observed description, with a missing body represented as empty text.
+  pub description: &'a str,
+}
+
+impl WorkSourceIssueText<'_> {
+  /// Compares frozen observation text without retaining another copy of the ticket.
+  pub fn digest(&self) -> FactoryDigest {
+    FactoryDigest::sha256(
+      "octacity.factory.source-issue-text.v1",
+      &[self.title.as_bytes(), self.description.as_bytes()],
+    )
+  }
+}
+
+/// Requirements identity retained by the Source preparation under the native Issue link.
+#[derive(Clone, Debug, Eq, PartialEq, serde::Deserialize, serde::Serialize)]
+pub struct WorkSourceIssueRevision {
+  /// Native identity plus installed security partition.
+  pub correlation: FactoryDigest,
+  /// Original linked local Issue.
+  pub issue_id: octacity_server_domain::IssueId,
+  /// Exact Issue revision observed before Work publication.
+  pub version: octacity_server_domain::IssueVersion,
 }
 impl std::fmt::Debug for WorkSourcePreparation {
   fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
@@ -484,7 +626,22 @@ impl ReserveWorkSourcePreparation {
   }
   /// Freezes one authorized selected input. The store separately checks membership and ownership.
   pub fn freeze(self, input: WorkSourceInput) -> Result<WorkSourcePreparation, StoreError> {
+    self.freeze_with_initial_policy(input, None)
+  }
+
+  /// Retains installed settings atomically with the first authorized observation.
+  pub fn freeze_with_initial_policy(
+    self,
+    input: WorkSourceInput,
+    initial_policy: Option<Vec<u8>>,
+  ) -> Result<WorkSourcePreparation, StoreError> {
     self.validate()?;
+    if initial_policy
+      .as_ref()
+      .is_some_and(|policy| policy.is_empty() || policy.len() > MAX_SOURCE_INPUT_BYTES as usize)
+    {
+      return Err(source_conflict());
+    }
     if input.id() != self.input_id || input.project_id() != self.claim.project_id || !input.definition().enabled {
       return Err(source_conflict());
     }
@@ -500,6 +657,8 @@ impl ReserveWorkSourcePreparation {
     Ok(WorkSourcePreparation {
       id,
       issue,
+      issue_revision: None,
+      observed_issue_text: None,
       input,
       item: self.item,
       target: self.claim.target,
@@ -515,6 +674,9 @@ impl ReserveWorkSourcePreparation {
       snapshot: self.snapshot,
       policy: None,
       intent: None,
+      waiting: None,
+      initial_policy,
+      predecessor_cursor: None,
       admission: None,
     })
   }
@@ -574,6 +736,8 @@ impl WorkSourcePreparation {
     }
     let mut retained = self.clone();
     retained.intent = Some(request.intent);
+    retained.waiting = None;
+    retained.predecessor_cursor = None;
     Ok(retained)
   }
 }
@@ -650,6 +814,10 @@ impl WorkSourcePreparation {
   }
   /// Associates a receipt returned by the existing admission authority.
   pub fn correlate(&mut self, receipt: &crate::PublishedFactoryAdmission) {
+    self.waiting = None;
+    self.observed_issue_text = None;
+    self.initial_policy = None;
+    self.predecessor_cursor = None;
     self.admission = Some(WorkSourceCorrelation {
       work_id: receipt.work.id(),
       run_id: receipt.run.id(),
@@ -669,6 +837,33 @@ pub struct WorkSourceIssueAssociation {
 }
 
 impl WorkSourcePreparation {
+  /// Records a wait for live, unadmitted work. Snapshot expiry remains authoritative.
+  pub fn record_wait(&mut self, mut request: DeferSourcePreparation) -> Result<WorkSourceWait, StoreError> {
+    if self.id != request.preparation_id
+      || self.admission.is_some()
+      || self.snapshot.is_empty()
+      || request.now >= self.snapshot_expires_at
+      || (request.reason == WorkSourceWaitReason::Searching) != request.cursor.is_some()
+      || request
+        .policy
+        .as_ref()
+        .is_some_and(|policy| policy.is_empty() || policy.len() > MAX_SOURCE_INPUT_BYTES as usize)
+    {
+      return Err(source_conflict());
+    }
+    if self.policy.is_none() && self.initial_policy.is_none() {
+      self.initial_policy = request.policy.take();
+    }
+    let wait = WorkSourceWait {
+      preparation_id: self.id,
+      checked_at: request.now,
+      reason: request.reason,
+    };
+    self.waiting = Some(wait);
+    self.predecessor_cursor = request.cursor;
+    Ok(wait)
+  }
+
   /// A new scan owner may resume original intent only for the same stable selected
   /// input and installed resource. The old claim itself never regains authority.
   /// The store must resolve `selected` under the current target's live fence first;
@@ -678,18 +873,21 @@ impl WorkSourcePreparation {
     claim: &WorkSourceScanClaim,
     selected: &WorkSourceInput,
   ) -> Result<(), StoreError> {
-    let original = &self.input.definition().source;
-    let current = &selected.definition().source;
-    if self.input.project_id() != claim.project_id
-      || selected.project_id() != claim.project_id
-      || self.input.id() != selected.id()
-      || !selected.definition().enabled
-      || original.installation.identity() != current.installation.identity()
-      || original.resource.identity() != current.resource.identity()
-    {
+    if selected.project_id() != claim.project_id || !self.matches_selected_input(selected) {
       return Err(source_conflict());
     }
     Ok(())
+  }
+
+  /// Whether this current input can resume a retained preparation.
+  pub fn matches_selected_input(&self, selected: &WorkSourceInput) -> bool {
+    let original = &self.input.definition().source;
+    let current = &selected.definition().source;
+    self.input.project_id() == selected.project_id()
+      && self.input.id() == selected.id()
+      && selected.definition().enabled
+      && original.installation.identity() == current.installation.identity()
+      && original.resource == current.resource
   }
 }
 

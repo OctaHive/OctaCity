@@ -131,6 +131,16 @@ impl StoredFactoryRun {
       .ok_or(StoreError::Unavailable)
   }
 
+  pub(super) fn insert_initial_incoming(
+    &mut self,
+    incoming: octacity_server_factory::FlowIncomingData,
+  ) -> Result<(), StoreError> {
+    self
+      .incoming_data
+      .insert(incoming.digest().map_err(|_| StoreError::Unavailable)?, incoming);
+    Ok(())
+  }
+
   pub(super) fn admitted(
     admission: &PublishedFactoryAdmission,
     intent_digest: FactoryDigest,

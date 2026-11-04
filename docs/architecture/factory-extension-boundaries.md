@@ -170,14 +170,27 @@ owning Project row and reuses the transaction connection for dependency/replay
 reads, including with a one-connection pool. No provider or VCS I/O belongs in
 these transactions.
 
-Preparation reserves the first bounded private snapshot and stable operation
-identity before artifact or VCS work. Normalization then freezes the complete
+Preparation reserves the first bounded private snapshot, installed preparation
+settings and stable operation identity before predecessor resolution, artifact
+publication or VCS work. Normalization then freezes the complete
 provider-neutral `FactoryWorkAdmissionIntent`. Worker takeover reuses both;
 changed observations cannot replace them. A new definition's current owner may
 resume the original pinned intent for the same stable selected input and
 installed resource. Group selection must be reevaluated under the new group's
 current revision; an old group claim cannot publish a disposition. Definition
 replacement resets scan progress but retains original preparation provenance.
+
+A candidate waiting for an applicable predecessor records its wait under the
+same preparation fence. It remains recoverable without fencing the provider
+checkpoint. A recovery batch considers untouched work first, then waiting work
+in oldest-check order. A history lookup can yield a private continuation after
+a bounded page. A change to the linked Issue or its revision resets the lookup.
+Source progress shows the last observed wait and its operation reference.
+Source checks the observed title and description against the predecessor’s Issue
+revision before freezing its result. Admission repeats the check in its
+transaction. If the link appeared after reservation, the verified predecessor’s
+Issue revision supplies the new Work association.
+
 
 `admit_prepared_source_work` checks that the submitted Work and probe repeat
 that retained intent, then atomically publishes through existing admission and
@@ -307,14 +320,16 @@ independent retention sweep without spending attempts; cleaned/rejected original
 are settled as retained dispositions, never remapped or renewed from a new poll.
 
 Pending original preparations are settled in bounded pages before new discovery.
-Recovery and checkpointing consider the target's current enabled input identities.
-Disabled or removed members cannot block the remaining members; their original
-preparations stay private until ordinary retention. Joining or leaving a group
+Recovery and checkpointing consider current enabled inputs under the original
+installation identity and exact installed resource reference. Preparations from
+removed, disabled or replaced resources remain private until ordinary retention.
+A repeated native item under a different resource reference keeps its original
+reservation and polling continues with the rest of the page. Joining or leaving a group
 does not change preparation identity or the original scan provenance. Recovery
 requires membership under the current claim and the same installed resource;
 an old owner or an unrelated group cannot resume those preparations.
-A frozen intent is reused across replacement/restart; an unfinished mapping needs
-its original exact installed profile. Each admission/replay checks current input,
+Recovery uses the frozen intent or settings. Historical snapshots without either
+require their original installed profile. Each admission/replay checks current input,
 Project/group fence, verified executable/version/profile and current private read
 grant through Source `authorize`; pending unmapped snapshots receive that check
 before byte publication too. Ordinary admission independently verifies management

@@ -16,7 +16,7 @@ mod polling;
 #[path = "factory_source_replay_tests.rs"]
 mod retained_intent;
 
-struct InstalledSource(FactorySourceAuthorization);
+pub(crate) struct InstalledSource(pub(crate) FactorySourceAuthorization);
 
 #[async_trait]
 impl FactorySourceAuthorizer for InstalledSource {
@@ -29,7 +29,7 @@ impl FactorySourceAuthorizer for InstalledSource {
   }
 }
 
-async fn installed(
+pub(crate) async fn installed(
   store: &InMemoryFactoryConfigurationStore,
   intent: &AdmitManualFactoryWorkCommand,
   provider: &str,
@@ -91,7 +91,7 @@ async fn installed(
   }
 }
 
-fn source_command(
+pub(crate) fn source_command(
   authorization: &FactorySourceAuthorization,
   intent: AdmitManualFactoryWorkCommand,
 ) -> AdmitSourceFactoryWorkCommand {
@@ -233,6 +233,66 @@ fn an_uninstalled_source_is_denied_before_replay_resolution_or_publication() {
     assert_eq!(resolver.call_count(), 1);
     assert_eq!(store.mutation_evidence_counts().await.idempotency, 1);
     assert_eq!(store.management_audit_facts().await.len(), 1);
+  });
+}
+
+#[test]
+fn enabled_automatic_source_cannot_admit_a_required_predecessor_from_labels_or_text() {
+  run_ready(async {
+    let project = ProjectId::generate();
+    let id = FactoryConfigurationId::generate();
+    let repository_id = RepositoryId::generate();
+    let store = Arc::new(InMemoryFactoryConfigurationStore::new());
+    store.seed_project(project).unwrap();
+    store
+      .seed_repository_version(repository(
+        project,
+        repository_id,
+        Some("refs/heads/main".parse().unwrap()),
+      ))
+      .unwrap();
+    seed_permitted_configuration(
+      &store,
+      PublishedFactoryConfiguration {
+        configuration: incoming_result_configuration(project, id),
+        published_at: time(1),
+      },
+    )
+    .unwrap();
+    let mut intent = command(project, id, repository_id);
+    intent.classification = WorkClassification::new(
+      WorkPriority::new(20).unwrap(),
+      RiskClass::Medium,
+      FactoryMetadata::try_new([
+        ("labels".into(), "need reproduce".into()),
+        ("conclusion".into(), "Accepted for delivery".into()),
+      ])
+      .unwrap(),
+    );
+    let authorization = installed(&store, &intent, "github").await;
+    let request = source_command(&authorization, intent);
+    let resolver = Arc::new(RecordingResolver::default());
+    let handlers = FactorySourceAdmissionHandlers::new(
+      store.clone(),
+      resolver.clone(),
+      Arc::new(crate::TrustedNetworkManagementPolicy),
+      Arc::new(InstalledSource(authorization)),
+    );
+    let recovery = RecoverSourceFactoryWorkCommand {
+      input_id: request.input_id,
+      input_version: request.input_version,
+      item: request.item.clone(),
+    };
+    let Err(ApplicationError::FactoryValidation(report)) = handlers.recover(recovery).await else {
+      panic!("a fresh observation without a retained predecessor must stop before preparation");
+    };
+    assert_eq!(report.errors[0].code, "missing_incoming_result");
+    let Err(ApplicationError::FactoryValidation(report)) = handlers.admit(request).await else {
+      panic!("an enabled source must still provide a retained typed predecessor");
+    };
+    assert_eq!(report.errors[0].code, "missing_incoming_result");
+    assert_eq!(resolver.call_count(), 0);
+    assert_eq!(store.mutation_evidence_counts().await.idempotency, 0);
   });
 }
 

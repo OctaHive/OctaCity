@@ -61,6 +61,7 @@ async fn journal_runtime_reads_original_pending_request_after_restart_without_pr
         issue_id,
         expected_version: issue.version,
         target: IssueExecutionTarget {
+          predecessor_run: None,
           configuration_id: FactoryConfigurationId::generate(),
           configuration_version: FactoryConfigurationVersion::INITIAL,
           repository_id: RepositoryId::generate(),

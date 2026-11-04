@@ -493,6 +493,7 @@ pub(super) fn insert_factory_schemas(schemas: &mut Map<String, Value>) {
     object(
       [
         ("root", schema_ref("FactoryFlowRootDraft")),
+        ("accepted_predecessor", schema_ref("FactoryFlowAcceptedPredecessor")),
         ("limits", schema_ref("FactoryFlowAdmissionLimits")),
         (
           "data_schemas",

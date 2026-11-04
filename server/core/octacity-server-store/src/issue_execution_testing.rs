@@ -101,6 +101,35 @@ impl IssueExecutionStore for crate::testing::InMemoryProjectStore {
         .cloned(),
     )
   }
+  async fn native_issue_work(
+    &self,
+    project_id: ProjectId,
+    issue_id: IssueId,
+    after: Option<octacity_server_factory::WorkEnvelopeId>,
+    limit: u16,
+  ) -> Result<Vec<IssueWorkAssociation>, StoreError> {
+    if !(1..=crate::MAX_ISSUE_HISTORY_PAGE_SIZE).contains(&limit) {
+      return Err(conflict());
+    }
+    Ok(
+      self
+        .lock()?
+        .issues
+        .executions
+        .associations
+        .values()
+        .filter(|link| {
+          link.project_id == project_id
+            && link.issue_id == issue_id
+            && link.request_id.is_none()
+            && link.requirements_version.is_some()
+            && after.is_none_or(|after| link.work_id > after)
+        })
+        .take(usize::from(limit))
+        .cloned()
+        .collect(),
+    )
+  }
   async fn associate_issue_work(
     &self,
     request: ManagementMutation<AssociateIssueWork>,

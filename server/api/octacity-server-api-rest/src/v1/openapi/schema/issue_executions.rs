@@ -11,6 +11,7 @@ pub(super) fn insert(schemas: &mut Map<String, Value>) {
         ("repository_version", positive_integer()),
         ("source", schema_ref("ManualSource")),
         ("mapping", string_enum(&["title_description_acceptance_v1"])),
+        ("predecessor_run", identity()),
       ],
       &[
         "configuration_id",

@@ -11,6 +11,7 @@ async fn legacy_backfill_preserves_original_work_and_converges_after_restart() {
   support::legacy_factory_admission::seed(
     &database.pool,
     AdmitFactoryWork {
+      incoming: None,
       probe: FactoryAdmissionProbe {
         source_scope: FactoryWorkSourceScope {
           source: key("manual"),

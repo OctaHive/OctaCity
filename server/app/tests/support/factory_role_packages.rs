@@ -613,6 +613,7 @@ async fn role_quota_postgres_uses_the_same_ordinary_build_contract_after_restart
     catalog
       .admit_factory_work(octacity_server_store::testing::management_mutation_with_request(
         AdmitFactoryWork {
+          incoming: None,
           probe: FactoryAdmissionProbe {
             source_scope: FactoryWorkSourceScope {
               source: key("manual"),

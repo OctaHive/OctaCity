@@ -226,6 +226,7 @@ async fn admit(pool: &sqlx::PgPool, admission: &PublishedFactoryAdmission) -> Ar
     .await
     .unwrap();
   let request = AdmitFactoryWork {
+    incoming: None,
     probe: FactoryAdmissionProbe {
       source_scope: FactoryWorkSourceScope {
         source: key("manual"),
@@ -660,6 +661,7 @@ async fn admit_runs(pool: &sqlx::PgPool, admissions: &[PublishedFactoryAdmission
     store
       .admit_factory_work(octacity_server_store::testing::management_mutation_with_request(
         AdmitFactoryWork {
+          incoming: None,
           probe: FactoryAdmissionProbe {
             source_scope: FactoryWorkSourceScope {
               source: key("manual"),

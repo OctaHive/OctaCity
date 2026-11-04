@@ -45,6 +45,7 @@ impl FreezeSourcePreparationPolicy {
       return Err(source_conflict());
     }
     preparation.policy = Some(self.policy.clone());
+    preparation.initial_policy = None;
     Ok(preparation)
   }
 }
@@ -128,10 +129,11 @@ impl ReserveSourceArtifacts {
     if first.role == second.role
       || first.artifact.artifact_id() == second.artifact.artifact_id()
       || first.upload_id == second.upload_id
+      || first.media_type != second.media_type
       || self.objects.iter().any(|v| {
         v.artifact.encoded_size() == 0
           || v.artifact.encoded_size() > u64::from(MAX_SOURCE_INPUT_BYTES)
-          || v.media_type.as_str() != "application/json"
+          || !matches!(v.media_type.as_str(), "application/json" | "text/plain")
       })
     {
       return Err(source_conflict());

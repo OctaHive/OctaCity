@@ -7,6 +7,22 @@ use octacity_server_store::StoreError;
 use serde::Serialize;
 use sqlx::{Postgres, Transaction, types::Json};
 
+pub(crate) async fn insert_incoming(
+  tx: &mut Transaction<'_, Postgres>,
+  run: FactoryRunId,
+  incoming: &FlowIncomingData,
+) -> Result<(), StoreError> {
+  sqlx::query("INSERT INTO factory_flow_incoming (run_id,id,schema_reference,document) VALUES ($1,$2,$3,$4)")
+    .bind(run.as_uuid())
+    .bind(incoming.digest().map_err(invalid)?.as_bytes().as_slice())
+    .bind(Json(incoming.payload().schema()))
+    .bind(bytes(incoming)?)
+    .execute(&mut **tx)
+    .await
+    .map_err(unavailable)?;
+  Ok(())
+}
+
 pub(super) async fn append(
   tx: &mut Transaction<'_, Postgres>,
   run: FactoryRunId,
@@ -14,14 +30,7 @@ pub(super) async fn append(
   at: Timestamp,
 ) -> Result<(), StoreError> {
   for incoming in &data.incoming {
-    sqlx::query("INSERT INTO factory_flow_incoming (run_id,id,schema_reference,document) VALUES ($1,$2,$3,$4)")
-      .bind(run.as_uuid())
-      .bind(incoming.digest().map_err(invalid)?.as_bytes().as_slice())
-      .bind(Json(incoming.payload().schema()))
-      .bind(bytes(incoming)?)
-      .execute(&mut **tx)
-      .await
-      .map_err(unavailable)?;
+    insert_incoming(tx, run, incoming).await?;
   }
   for input in &data.inputs {
     sqlx::query("INSERT INTO factory_flow_inputs (run_id,id,flow_run_id,cycle_id,generation,schema_reference,document) VALUES ($1,$2,$3,$4,$5,$6,$7)")

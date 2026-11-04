@@ -229,6 +229,7 @@ pub(super) fn request(
       issue_id: issue.id,
       expected_version: issue.version,
       target: IssueExecutionTarget {
+        predecessor_run: None,
         configuration_id,
         configuration_version: FactoryConfigurationVersion::INITIAL,
         repository_id,
@@ -296,6 +297,437 @@ impl ManagementAuthorizationPolicy for ResourcePolicy {
     }
   }
 }
+#[test]
+fn manual_delivery_admits_the_original_issue_and_exact_triage_result() {
+  use crate::factory_admission_tests::{
+    configuration_with_flow, incoming_result_configuration, seed_permitted_configuration,
+  };
+  use octacity_server_factory::*;
+
+  run_ready(async {
+    let (store, factory, issue, original) = fixture().await;
+    let delivery_id = FactoryConfigurationId::generate();
+    let triage_id = FactoryConfigurationId::generate();
+    let delivery = incoming_result_configuration(issue.project_id, delivery_id);
+    let mut triage = delivery.flow().clone();
+    let schema = triage.data_schemas[0].reference().clone();
+    let key = |value: &str| FactoryKey::new(value).unwrap();
+    let gate = key("classify");
+    let accepted = key("eligible");
+    let terminal = key("triaged");
+    let budget = triage.limits.budget();
+    let node = FlowNodeDefinition::new(FlowNodeDefinitionInput {
+      key: gate.clone(),
+      kind: FlowNodeKind::DeterministicGate,
+      input_schema: Some(schema.clone()),
+      outcomes: vec![FlowOutcomeDefinition::new(
+        accepted.clone(),
+        FlowOutcomeKind::Success,
+        schema.clone(),
+      )],
+      budget,
+      permissions: FactoryPermissionSet::deny_all(),
+      required: true,
+      subflow: None,
+    })
+    .unwrap()
+    .with_input_binding(
+      FlowInputBinding::new(
+        Default::default(),
+        FlowDataMapping::new(FlowValueMapping::Constant {
+          value: serde_json::json!(true),
+        })
+        .unwrap(),
+      )
+      .unwrap(),
+    )
+    .unwrap()
+    .with_gate(
+      FlowGateProgram::new(vec![], accepted.clone())
+        .unwrap()
+        .with_default_output_mapping(
+          FlowDataMapping::new(FlowValueMapping::Constant {
+            value: serde_json::json!(true),
+          })
+          .unwrap(),
+        )
+        .unwrap()
+        .binding()
+        .unwrap(),
+    )
+    .unwrap();
+    let definition = FlowDefinition::new(FlowDefinitionInput {
+      id: FlowDefinitionId::generate(),
+      version: FlowDefinitionVersion::INITIAL,
+      input_schema: Some(schema.clone()),
+      entry: gate.clone(),
+      nodes: vec![node],
+      transitions: vec![FlowTransition::new(
+        gate,
+        accepted.clone(),
+        FlowTransitionTarget::Terminal(terminal.clone()),
+      )],
+      terminals: vec![FlowTerminalDefinition::new(terminal.clone(), schema)],
+      context_projections: vec![],
+      data_projections: vec![],
+      execution: FlowExecutionPolicy::new(budget, FactoryPermissionSet::deny_all(), 1).unwrap(),
+    })
+    .unwrap();
+    let producing_flow = definition.reference();
+    triage.closure = PinnedFlowDefinitionClosure::new(producing_flow, vec![definition]).unwrap();
+    let downstream = delivery
+      .flow()
+      .clone()
+      .with_accepted_predecessor(FlowAcceptedPredecessor {
+        definition: producing_flow,
+        terminal,
+        outcomes: [accepted].into(),
+      })
+      .unwrap();
+    for (id, flow) in [(triage_id, triage), (delivery_id, downstream)] {
+      seed_permitted_configuration(
+        &factory,
+        PublishedFactoryConfiguration {
+          configuration: configuration_with_flow(issue.project_id, id, Some(flow)),
+          published_at: at(10),
+        },
+      )
+      .unwrap();
+    }
+    let policy = Arc::new(TrustedNetworkManagementPolicy);
+    let commands = AuthorizedCommandHandler::new(
+      policy.clone(),
+      Arc::new(IssueExecutionHandlers::new(
+        store.clone(),
+        factory.clone(),
+        policy.clone(),
+      )),
+    );
+    #[derive(Default)]
+    struct TriageRevisions {
+      inner: crate::factory_admission_tests::RecordingResolver,
+      alternate: std::sync::atomic::AtomicBool,
+    }
+    #[async_trait::async_trait]
+    impl RevisionResolver for TriageRevisions {
+      async fn resolve(
+        &self,
+        request: RevisionResolutionRequest,
+      ) -> Result<octacity_server_domain::ImmutableRevision, RevisionResolutionError> {
+        let revision = self.inner.resolve(request).await?;
+        if self.alternate.load(std::sync::atomic::Ordering::Relaxed) {
+          Ok(octacity_server_domain::ImmutableRevision::new("1111111111111111").unwrap())
+        } else {
+          Ok(revision)
+        }
+      }
+    }
+    let resolver = Arc::new(TriageRevisions::default());
+    let bytes = Arc::new(crate::project_text_intake_tests::DocumentBytes::default());
+    let publisher = || {
+      AuthorizedCommandHandler::new(
+        policy.clone(),
+        Arc::new(IssueExecutionPublisher::new(
+          store.clone(),
+          factory.clone(),
+          bytes.clone(),
+          resolver.clone(),
+          policy.clone(),
+          crate::factory_node_test_support::clock(),
+        )),
+      )
+    };
+    let repo = original.intent.target.repository_id;
+    let classification = crate::factory_admission_tests::command(issue.project_id, triage_id, repo).classification;
+    let publish = |request_id| PublishIssueExecutionCommand {
+      project_id: issue.project_id,
+      issue_id: issue.id,
+      request_id,
+      classification: classification.clone(),
+    };
+    for index in 0..crate::factory_source_admission::MAX_PREDECESSOR_SEARCH_PAGE {
+      commands
+        .handle_command(
+          &context(),
+          request(&issue, triage_id, repo, &format!("history-{index}")),
+        )
+        .await
+        .unwrap();
+    }
+    let mut matching = request(&issue, triage_id, repo, "triage");
+    matching.requested_at = at(21);
+    let upstream = commands.handle_command(&context(), matching).await.unwrap().request;
+    let source = publisher()
+      .handle_command(&context(), publish(upstream.id))
+      .await
+      .unwrap()
+      .association
+      .unwrap();
+    let superseded = commands
+      .handle_command(&context(), request(&issue, triage_id, repo, "triage-on-old-revision"))
+      .await
+      .unwrap()
+      .request;
+    resolver.alternate.store(true, std::sync::atomic::Ordering::Relaxed);
+    let superseded = publisher()
+      .handle_command(&context(), publish(superseded.id))
+      .await
+      .unwrap()
+      .association
+      .unwrap();
+    resolver.alternate.store(false, std::sync::atomic::Ordering::Relaxed);
+    let mut downstream = request(&issue, delivery_id, repo, "deliver");
+    downstream.intent.target.predecessor_run = Some(source.run_id);
+    let pending = commands
+      .handle_command(&context(), downstream.clone())
+      .await
+      .unwrap_err();
+    let Some(ApplicationError::FactoryValidation(report)) = pending.application() else {
+      panic!("expected a pending triage diagnostic, got {pending:?}");
+    };
+    assert_eq!(report.errors[0].code, "incoming_result_not_accepted");
+    let owner = FactoryFlowRunner::new(
+      factory.clone(),
+      Arc::new(crate::factory_flow_tests::FakePending),
+      Arc::new(crate::factory_flow_tests::Inputs),
+      crate::factory_node_test_support::clock(),
+    );
+    for (run, time) in [(superseded.run_id, 25), (source.run_id, 35)] {
+      let claim = crate::factory_requirements_tests::claim_run(factory.as_ref(), run, time).await;
+      for tick in time + 1..time + 10 {
+        if matches!(
+          owner.reconcile_flow(run, claim.id, at(tick)).await.unwrap(),
+          FactoryFlowStep::Resolved(_)
+        ) {
+          break;
+        }
+      }
+    }
+    let reviewed = commands
+      .handle_command(&context(), downstream.clone())
+      .await
+      .unwrap()
+      .request;
+    let first = publisher()
+      .handle_command(&context(), publish(reviewed.id))
+      .await
+      .unwrap()
+      .association
+      .unwrap();
+    let replay = publisher()
+      .handle_command(&context(), publish(reviewed.id))
+      .await
+      .unwrap()
+      .association
+      .unwrap();
+    assert_eq!(first, replay);
+    assert_ne!(first.run_id, source.run_id);
+    let snapshot = factory.factory_run_snapshot(first.run_id).await.unwrap();
+    assert_eq!(snapshot.work.artifacts().task().content_digest(), upstream.task_digest);
+    assert_eq!(
+      snapshot.work.artifacts().acceptance().content_digest(),
+      upstream.acceptance_digest
+    );
+    let data = &snapshot.flow.data.incoming[0];
+    assert_eq!(data.predecessor().unwrap().run_id(), source.run_id);
+    assert_eq!(data.predecessor().unwrap().definition(), producing_flow);
+    assert_eq!(data.payload().value(), &serde_json::json!(true));
+    let mut automatic_intent = crate::factory_admission_tests::command(issue.project_id, delivery_id, repo);
+    automatic_intent.artifacts = snapshot.work.artifacts().clone();
+    let installed =
+      crate::factory_admission_tests::installed_sources::installed(&factory, &automatic_intent, "github").await;
+    let automatic = crate::factory_admission_tests::installed_sources::source_command(&installed, automatic_intent);
+    let source_binding = installed.capability.binding.clone();
+    let linked = store
+      .attach_issue_source(management_mutation(AttachIssueSource {
+        observation: IssueSourceObservation {
+          display_id: Some("2".into()),
+          plugin: source_binding.installation.clone(),
+          source: source_binding.clone(),
+          provider_configuration: FactoryDigest::from_bytes([51; 32]),
+          selection_digest: FactoryDigest::from_bytes([52; 32]),
+          snapshot_digest: FactoryDigest::from_bytes([53; 32]),
+          observed_at: at(43),
+          expires_at: at(60),
+        },
+        intent: AttachIssueSourceIntent {
+          selection: IssueSourceSelection {
+            project_id: issue.project_id,
+            connection: None,
+            source: source_binding,
+            item: automatic.item.clone(),
+          },
+          issue_id: issue.id,
+          expected_version: issue.version,
+          expected_field_policy: IssueFieldPolicy::default(),
+        },
+        idempotency_key: "link-native-ticket".parse().unwrap(),
+        attached_at: at(43),
+      }))
+      .await
+      .unwrap();
+    assert!(matches!(linked, IssueSourceOutcome::Linked { .. }));
+    let selected = factory
+      .factory_admission_context(ReadFactoryAdmissionContext {
+        project_id: issue.project_id,
+        configuration_id: delivery_id,
+        configuration_version: installed.input.definition().target.version(),
+        repository_id: Some(repo),
+        repository_version: Some(installed.input.definition().repository.version),
+      })
+      .await
+      .unwrap();
+    let repository = selected.repository.unwrap();
+    let source_selection = automatic.intent.source.repository().unwrap();
+    let reader = IssueSourcePredecessorReader::new(store.clone(), factory.clone(), policy.clone());
+    let target = || {
+      FactorySourcePredecessorTarget::new(
+        &repository,
+        selected.configuration.configuration.flow(),
+        Some(source_selection),
+        resolver.as_ref(),
+      )
+    };
+    let Err(ApplicationError::SourcePredecessorSearchPending(cursor)) = reader
+      .resolve(&installed, &automatic.item, target().with_search_cursor(None))
+      .await
+    else {
+      panic!("a source lookup must yield after its first page of unrelated requests");
+    };
+    let resumed = reader
+      .resolve(&installed, &automatic.item, target().with_search_cursor(Some(cursor)))
+      .await
+      .unwrap();
+    assert_eq!(
+      resumed.record.input().factory_run_id(),
+      data.predecessor().unwrap().run_id()
+    );
+    let automatic_handler = |authorization: FactorySourceAuthorization,
+                             lineage_policy: Arc<dyn ManagementAuthorizationPolicy>| {
+      FactorySourceAdmissionHandlers::new(
+        factory.clone(),
+        resolver.clone(),
+        policy.clone(),
+        Arc::new(crate::factory_admission_tests::installed_sources::InstalledSource(
+          authorization,
+        )),
+      )
+      .with_predecessors(Arc::new(IssueSourcePredecessorReader::new(
+        store.clone(),
+        factory.clone(),
+        lineage_policy,
+      )))
+    };
+    let mut disabled = installed.clone();
+    let mut disabled_input = serde_json::to_value(&disabled.input).unwrap();
+    disabled_input["definition"]["enabled"] = serde_json::json!(false);
+    disabled.input = serde_json::from_value(disabled_input).unwrap();
+    let before = resolver.inner.call_count();
+    assert!(matches!(
+      automatic_handler(disabled, policy.clone())
+        .admit(automatic.clone())
+        .await,
+      Err(ApplicationError::InvalidInput)
+    ));
+    let denied = automatic_handler(
+      installed.clone(),
+      Arc::new(ResourcePolicy {
+        blocked: ManagementResourceKind::FactoryRun,
+      }),
+    )
+    .admit(automatic.clone())
+    .await
+    .unwrap_err();
+    let ApplicationError::FactoryValidation(report) = denied else {
+      panic!("expected a hidden predecessor diagnostic, got {denied:?}");
+    };
+    assert_eq!(report.errors[0].code, "incoming_result_inaccessible");
+    assert_eq!(resolver.inner.call_count(), before);
+    let auto = automatic_handler(installed.clone(), policy.clone())
+      .admit(automatic.clone())
+      .await
+      .unwrap();
+    let restarted = automatic_handler(installed, policy.clone())
+      .admit(automatic)
+      .await
+      .unwrap();
+    assert_eq!(auto.factory_run_id, restarted.factory_run_id);
+    let automatic_run = factory.factory_run_snapshot(auto.factory_run_id).await.unwrap();
+    assert_eq!(automatic_run.flow.data.incoming[0].predecessor(), data.predecessor());
+    assert_eq!(automatic_run.work.artifacts(), snapshot.work.artifacts());
+    let edit = AuthorizedCommandHandler::new(
+      policy.clone(),
+      Arc::new(IssueHandlers::new(store.clone(), policy.clone())),
+    );
+    let changed = edit
+      .handle_command(
+        &context(),
+        EditIssueCommand {
+          intent: EditIssueIntent {
+            project_id: issue.project_id,
+            id: issue.id,
+            expected_version: issue.version,
+            content: IssueContent {
+              description: "New requirements".into(),
+              ..issue.content.clone()
+            },
+          },
+          idempotency_key: "edit-after-triage".parse().unwrap(),
+          edited_at: at(50),
+        },
+      )
+      .await
+      .unwrap()
+      .issue;
+    let mut stale = request(&changed, delivery_id, repo, "stale-delivery");
+    stale.intent.target.predecessor_run = Some(source.run_id);
+    let stale = commands.handle_command(&context(), stale).await.unwrap_err();
+    let Some(ApplicationError::FactoryValidation(report)) = stale.application() else {
+      panic!("expected a stale triage diagnostic, got {stale:?}");
+    };
+    assert_eq!(report.errors[0].code, "incoming_result_stale");
+    assert_eq!(
+      commands
+        .handle_command(&context(), downstream)
+        .await
+        .unwrap()
+        .request
+        .id,
+      reviewed.id
+    );
+  });
+}
+
+#[test]
+fn explicit_issue_execution_requires_the_declared_incoming_result_before_reservation() {
+  run_ready(async {
+    let (store, factory, issue, mut command) = fixture().await;
+    let id = FactoryConfigurationId::generate();
+    crate::factory_admission_tests::seed_permitted_configuration(
+      &factory,
+      PublishedFactoryConfiguration {
+        configuration: crate::factory_admission_tests::incoming_result_configuration(issue.project_id, id),
+        published_at: at(11),
+      },
+    )
+    .unwrap();
+    command.intent.target.configuration_id = id;
+    let policy = Arc::new(TrustedNetworkManagementPolicy);
+    let commands = AuthorizedCommandHandler::new(
+      policy.clone(),
+      Arc::new(IssueExecutionHandlers::new(store.clone(), factory, policy)),
+    );
+    let before = store.mutation_evidence_counts().await;
+    let error = commands.handle_command(&context(), command).await.unwrap_err();
+    let Some(ApplicationError::FactoryValidation(report)) = error.application() else {
+      panic!("missing incoming result must be an actionable reservation failure: {error:?}");
+    };
+    assert_eq!(report.errors[0].field, "/incoming_result");
+    assert_eq!(report.errors[0].code, "missing_incoming_result");
+    assert_eq!(store.mutation_evidence_counts().await, before);
+  });
+}
+
 #[test]
 fn issue_execution_checks_admission_authority_visible_exact_targets_and_base_policy() {
   run_ready(async {

@@ -64,6 +64,12 @@ impl ManagedFactorySource {
       },
     )?
     .with_managed_connections(ManagedIntegrationConnections::new(sources.store.clone()))
+    .with_repositories(sources.store.clone())
+    .with_predecessors(Arc::new(IssueSourcePredecessorReader::new(
+      sources.store.clone(),
+      sources.store.clone(),
+      sources.policy.clone(),
+    )))
     .with_profile_provider(Arc::new(Self::new(sources, principal)));
     Ok(Arc::new(worker))
   }

@@ -42,7 +42,8 @@ impl<A: ArtifactRecordStore, S: BuildQueryStore, B: ArtifactByteReader> FactoryF
       .and_then(|definition| definition.node(input.node()))
       .ok_or_else(ApplicationError::invalid)?;
     let Some(binding) = node.context_binding() else {
-      if node.build().is_none() {
+      // Every ordinary Build needs a frozen manifest, including one selected via a Profile.
+      if node.build_bindings().next().is_none() {
         return Ok(input);
       }
       let subject = input.task_subject().map_err(|_| ApplicationError::invalid())?;

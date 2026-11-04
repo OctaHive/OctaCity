@@ -134,6 +134,7 @@ impl ProjectTextInputStore for crate::testing::InMemoryFactoryConfigurationStore
     &self,
     guard: ProjectTextGuard,
     revision: ImmutableRevision,
+    code_pins: Vec<octacity_server_factory::FlowCodePin>,
   ) -> Result<ProjectTextPreparation, StoreError> {
     let mut state = self.lock()?;
     let record = state
@@ -142,11 +143,7 @@ impl ProjectTextInputStore for crate::testing::InMemoryFactoryConfigurationStore
       .get_mut(&guard.id)
       .ok_or_else(project_text_conflict)?
       .work_mut()?;
-    record.require_owner(&guard)?;
-    if record.frozen_revision.as_ref().is_some_and(|r| r != &revision) {
-      return Err(project_text_conflict());
-    }
-    record.frozen_revision.get_or_insert(revision);
+    record.freeze_sources(&guard, revision, code_pins)?;
     Ok(record.clone())
   }
   async fn publish_project_text(&self, guard: ProjectTextGuard) -> Result<ProjectTextPreparation, StoreError> {

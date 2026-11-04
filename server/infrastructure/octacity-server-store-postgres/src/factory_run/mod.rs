@@ -2,7 +2,7 @@
 
 mod claim;
 mod control;
-mod data;
+pub(super) mod data;
 mod diagnostics;
 mod history;
 mod outbox;

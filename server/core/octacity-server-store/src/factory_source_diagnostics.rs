@@ -16,6 +16,8 @@ pub struct WorkSourceScanDiagnostics {
   pub schedule: Option<WorkSourceSchedule>,
   /// Last selection evidence; never an admission promise.
   pub selection: Option<WorkSourceSelectionRecord>,
+  /// Last candidate-specific predecessor wait observed by this exact scan target.
+  pub last_wait: Option<WorkSourceWait>,
 }
 impl WorkSourceScanDiagnostics {
   /// Projects only allowlisted retained facts without renewing a lease.
@@ -26,6 +28,7 @@ impl WorkSourceScanDiagnostics {
       reconciliation: scan.progress.as_ref().is_some_and(|p| p.reconciliation),
       schedule: scan.schedule,
       selection: scan.last_selection,
+      last_wait: scan.last_wait,
     }
   }
 }

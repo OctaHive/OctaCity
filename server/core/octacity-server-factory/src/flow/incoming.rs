@@ -1,8 +1,40 @@
 use crate::{
-  AdmittedFlow, FactoryDigest, FactoryError, FactoryRunId, FlowDataSchema, FlowDefinitionRef, FlowPayload,
-  MAX_FLOW_DATA_BYTES, WorkEnvelope,
+  AdmittedFlow, FactoryDigest, FactoryError, FactoryRunId, FlowDataSchema, FlowDefinitionRef, FlowNodeRecord,
+  FlowPayload, FlowRecordReference, FlowRunId, MAX_FLOW_DATA_BYTES, WorkEnvelope,
 };
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
+
+/// Immutable producer provenance retained separately from projected result data.
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(deny_unknown_fields)]
+pub struct FlowIncomingPredecessor {
+  run_id: FactoryRunId,
+  flow_run_id: FlowRunId,
+  definition: FlowDefinitionRef,
+  record: FlowRecordReference,
+}
+impl FlowIncomingPredecessor {
+  /// Returns the producing Factory Run.
+  #[must_use]
+  pub const fn run_id(&self) -> FactoryRunId {
+    self.run_id
+  }
+  /// Returns the exact root or nested producing Flow execution.
+  #[must_use]
+  pub const fn flow_run_id(&self) -> FlowRunId {
+    self.flow_run_id
+  }
+  /// Returns the producing definition and version.
+  #[must_use]
+  pub const fn definition(&self) -> FlowDefinitionRef {
+    self.definition
+  }
+  /// Returns the exact producing attempt and retained record digest.
+  #[must_use]
+  pub const fn record(&self) -> &FlowRecordReference {
+    &self.record
+  }
+}
 
 /// Immutable externally supplied data selected by configured input mappings.
 ///
@@ -15,6 +47,8 @@ pub struct FlowIncomingData {
   factory_run_id: FactoryRunId,
   root_definition: FlowDefinitionRef,
   payload: FlowPayload,
+  #[serde(skip_serializing_if = "Option::is_none")]
+  predecessor: Option<FlowIncomingPredecessor>,
 }
 impl FlowIncomingData {
   /// Freezes bounded incoming data under the exact Work and admitted definition.
@@ -24,16 +58,47 @@ impl FlowIncomingData {
       factory_run_id: admitted.root_run().factory_run_id(),
       root_definition: admitted.closure().root(),
       payload,
+      predecessor: None,
     };
-    if data.bytes()?.len() > MAX_FLOW_DATA_BYTES {
-      return Err(invalid());
-    }
+    data.validate_size()?;
     Ok(data)
   }
-  pub(super) fn verify(&self, work: &WorkEnvelope, admitted: &AdmittedFlow) -> Result<(), FactoryError> {
+  /// Freezes a result after the admission owner verifies producer acceptance and visibility.
+  pub fn from_predecessor(
+    work: &WorkEnvelope,
+    admitted: &AdmittedFlow,
+    record: &FlowNodeRecord,
+  ) -> Result<Self, FactoryError> {
+    let input = record.input();
+    if input.subject() != work.subject() || input.work_id() == work.id() {
+      return Err(invalid());
+    }
+    let mut data = Self::new(work, admitted, record.payload().clone())?;
+    data.predecessor = Some(FlowIncomingPredecessor {
+      run_id: input.factory_run_id(),
+      flow_run_id: input.flow_run_id(),
+      definition: input.definition(),
+      record: FlowRecordReference::from_record(record)?,
+    });
+    data.verify(work, admitted)?;
+    data.validate_size()?;
+    Ok(data)
+  }
+  fn validate_size(&self) -> Result<(), FactoryError> {
+    if self.bytes()?.len() > MAX_FLOW_DATA_BYTES {
+      return Err(invalid());
+    }
+    Ok(())
+  }
+  /// Checks the immutable Work and destination Run identities before using the payload.
+  pub fn verify(&self, work: &WorkEnvelope, admitted: &AdmittedFlow) -> Result<(), FactoryError> {
     if self.work_digest != super::input::work_digest(work)?
       || self.factory_run_id != admitted.root_run().factory_run_id()
       || self.root_definition != admitted.closure().root()
+      || self
+        .predecessor
+        .as_ref()
+        .is_some_and(|source| source.run_id == self.factory_run_id)
     {
       return Err(invalid());
     }
@@ -55,7 +120,13 @@ impl FlowIncomingData {
       &serde_json::to_vec(wire.get("payload").ok_or_else(invalid)?).map_err(|_| invalid())?,
       schema,
     )?;
-    let data = Self::new(work, admitted, payload)?;
+    let mut data = Self::new(work, admitted, payload)?;
+    data.predecessor = wire
+      .get("predecessor")
+      .map(|source| serde_json::from_value(source.clone()))
+      .transpose()
+      .map_err(|_| invalid())?;
+    data.verify(work, admitted)?;
     if wire != serde_json::to_value(&data).map_err(|_| invalid())? || data.digest()? != expected {
       return Err(invalid());
     }
@@ -65,6 +136,11 @@ impl FlowIncomingData {
   #[must_use]
   pub const fn payload(&self) -> &FlowPayload {
     &self.payload
+  }
+  /// Returns retained producer provenance when this input comes from another Run.
+  #[must_use]
+  pub const fn predecessor(&self) -> Option<&FlowIncomingPredecessor> {
+    self.predecessor.as_ref()
   }
   /// Returns the identity retained in each prepared node input using this source.
   pub fn digest(&self) -> Result<FactoryDigest, FactoryError> {
