@@ -11,7 +11,7 @@ impl TriggerDefinitionStore for PostgresStore {
     kind: TriggerKind,
     target: TriggerTarget,
   ) -> Result<(), StoreError> {
-    crate::trigger_query::require_enabled(&self.pool, trigger, kind, target).await
+    crate::cicd::triggers::trigger_query::require_enabled(&self.pool, trigger, kind, target).await
   }
 }
 
@@ -22,7 +22,7 @@ impl WebhookConfigurationStore for PostgresStore {
     request: ManagementMutation<CreateUnmanagedWebhook>,
   ) -> Result<UnmanagedWebhookMutationOutcome, StoreError> {
     let (request, audit) = request.into_parts();
-    crate::external_trigger::create(&self.pool, request, &audit).await
+    crate::cicd::triggers::external_trigger::create(&self.pool, request, &audit).await
   }
 
   async fn create_managed_webhook(
@@ -30,7 +30,7 @@ impl WebhookConfigurationStore for PostgresStore {
     request: ManagementMutation<CreateManagedWebhook>,
   ) -> Result<ManagedWebhookMutationOutcome, StoreError> {
     let (request, audit) = request.into_parts();
-    crate::external_trigger::create_managed(&self.pool, request, &audit).await
+    crate::cicd::triggers::external_trigger::create_managed(&self.pool, request, &audit).await
   }
 }
 
@@ -40,7 +40,7 @@ impl ManagedWebhookRegistrationStore for PostgresStore {
     &self,
     integration_id: octacity_server_domain::IntegrationId,
   ) -> Result<ManagedWebhookRecord, StoreError> {
-    crate::external_trigger::read_managed(&self.pool, integration_id).await
+    crate::cicd::triggers::external_trigger::read_managed(&self.pool, integration_id).await
   }
 }
 
@@ -51,28 +51,28 @@ impl ManagedWebhookOperationStore for PostgresStore {
     request: ManagementMutation<octacity_server_store::EnqueueManagedWebhookOperation>,
   ) -> Result<MutationDisposition, StoreError> {
     let (request, audit) = request.into_parts();
-    crate::external_trigger::enqueue_managed_operation(&self.pool, request, &audit).await
+    crate::cicd::triggers::external_trigger::enqueue_managed_operation(&self.pool, request, &audit).await
   }
 
   async fn claim_managed_webhook_operations(
     &self,
     request: octacity_server_store::ClaimManagedWebhookOperations,
   ) -> Result<Vec<octacity_server_store::ManagedWebhookOperationClaim>, StoreError> {
-    crate::external_trigger::claim_managed_operations(&self.pool, request).await
+    crate::cicd::triggers::external_trigger::claim_managed_operations(&self.pool, request).await
   }
 
   async fn record_managed_webhook_registration(
     &self,
     request: RecordManagedWebhookRegistration,
   ) -> Result<ManagedWebhookMutationOutcome, StoreError> {
-    crate::external_trigger::record_managed(&self.pool, request).await
+    crate::cicd::triggers::external_trigger::record_managed(&self.pool, request).await
   }
 
   async fn fail_managed_webhook_operation(
     &self,
     request: octacity_server_store::FailManagedWebhookOperation,
   ) -> Result<(), StoreError> {
-    crate::external_trigger::fail_managed_operation(&self.pool, request).await
+    crate::cicd::triggers::external_trigger::fail_managed_operation(&self.pool, request).await
   }
 }
 
@@ -82,7 +82,7 @@ impl WebhookIntegrationReader for PostgresStore {
     &self,
     integration_id: octacity_server_domain::IntegrationId,
   ) -> Result<WebhookIntegrationRecord, StoreError> {
-    crate::external_trigger::read(&self.pool, integration_id).await
+    crate::cicd::triggers::external_trigger::read(&self.pool, integration_id).await
   }
 }
 
@@ -92,7 +92,7 @@ impl WebhookDeliveryAdmissionStore for PostgresStore {
     &self,
     request: octacity_server_store::EnqueueWebhookDelivery,
   ) -> Result<octacity_server_store::MutationDisposition, StoreError> {
-    crate::external_trigger::enqueue_delivery(&self.pool, request).await
+    crate::cicd::triggers::external_trigger::enqueue_delivery(&self.pool, request).await
   }
 }
 
@@ -102,32 +102,32 @@ impl WebhookDeliveryWorkStore for PostgresStore {
     &self,
     request: octacity_server_store::ClaimWebhookDeliveries,
   ) -> Result<Vec<octacity_server_store::WebhookDeliveryClaim>, StoreError> {
-    crate::external_trigger::claim_deliveries(&self.pool, request).await
+    crate::cicd::triggers::external_trigger::claim_deliveries(&self.pool, request).await
   }
 
   async fn record_webhook_event(
     &self,
     request: octacity_server_store::RecordWebhookEvent,
   ) -> Result<octacity_server_store::RecordWebhookEventOutcome, StoreError> {
-    crate::external_trigger::record_event(&self.pool, request).await
+    crate::cicd::triggers::external_trigger::record_event(&self.pool, request).await
   }
 
   async fn fail_webhook_delivery(&self, request: octacity_server_store::FailWebhookDelivery) -> Result<(), StoreError> {
-    crate::external_trigger::fail_delivery(&self.pool, request).await
+    crate::cicd::triggers::external_trigger::fail_delivery(&self.pool, request).await
   }
 
   async fn complete_webhook_delivery(
     &self,
     request: octacity_server_store::CompleteWebhookDelivery,
   ) -> Result<octacity_server_store::MutationDisposition, StoreError> {
-    crate::external_trigger::complete_delivery(&self.pool, request).await
+    crate::cicd::triggers::external_trigger::complete_delivery(&self.pool, request).await
   }
 
   async fn suppress_webhook_delivery(
     &self,
     request: SuppressWebhookDelivery,
   ) -> Result<MutationDisposition, StoreError> {
-    crate::external_trigger::suppress_delivery(&self.pool, request).await
+    crate::cicd::triggers::external_trigger::suppress_delivery(&self.pool, request).await
   }
 }
 
@@ -137,6 +137,6 @@ impl WebhookDeliveryQueryStore for PostgresStore {
     &self,
     delivery_id: octacity_server_store::WebhookDeliveryId,
   ) -> Result<octacity_server_store::WebhookDeliveryDiagnostic, StoreError> {
-    crate::external_trigger::delivery_diagnostic(&self.pool, delivery_id).await
+    crate::cicd::triggers::external_trigger::delivery_diagnostic(&self.pool, delivery_id).await
   }
 }

@@ -467,7 +467,7 @@ fn resources(page: &ResourceSearchPage) -> Vec<ResourceSearchResource> {
 async fn explain_production_search(transaction: &mut sqlx::Transaction<'_, sqlx::Postgres>) -> Value {
   let statement = sqlx::AssertSqlSafe(format!(
     "EXPLAIN (FORMAT JSON, COSTS OFF) {}",
-    include_str!("../src/resource_search.sql")
+    include_str!("../src/operations/resource_search.sql")
   ));
   sqlx::query_scalar::<_, Json<Value>>(statement)
     .bind("alpha")

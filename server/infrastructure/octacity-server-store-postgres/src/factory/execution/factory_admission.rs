@@ -1,0 +1,915 @@
+use octacity_server_domain::{EntityKind, RepositoryVersion, Timestamp};
+use octacity_server_factory::{
+  AdmittedFlow, BudgetUsage, FactoryConfiguration, FactoryDigest, FactoryKey, FactoryLifecycleProgress, FactoryRun,
+  FactoryRunVersion, WorkEnvelope,
+};
+use octacity_server_store::{
+  AdmitFactoryWork, FactoryAdmissionContext, FactoryAdmissionIdentity, FactoryAdmissionMutationOutcome,
+  FactoryAdmissionProbe, FactoryAuditFact, FactoryBudgetRecord, FactoryLifecycleCheckpoint, FactoryOutboxRecord,
+  ManagementMutation, MutationAuditContext, MutationDisposition, PublishedFactoryAdmission,
+  ReadFactoryAdmissionContext, StoreError, StoreInputError, StoreOperation,
+};
+use serde::Serialize;
+use serde_json::{Value, json};
+use sqlx::{FromRow, PgPool, Postgres, Transaction, types::Json};
+
+use crate::{
+  database::{classify, unavailable},
+  discovery::timestamp,
+  mutation::{
+    MutationFacts, MutationIdentity, MutationKind, MutationStart, decode_outcome, encode_outcome, stable_record_id,
+  },
+};
+
+#[derive(Serialize)]
+struct AdmissionFingerprint<'a> {
+  source: &'a FactoryKey,
+  security_scope: &'a str,
+  external_identity: &'a octacity_server_factory::ExternalWorkIdentity,
+  intent_digest: FactoryDigest,
+}
+
+#[derive(FromRow)]
+struct AdmissionRow {
+  envelope: Json<WorkEnvelope>,
+  configuration: Json<FactoryConfiguration>,
+  code_pins: Option<Json<Vec<octacity_server_factory::FlowCodePin>>>,
+  access_profile: Option<Json<octacity_server_factory::FactoryAccessProfile>>,
+  intent_digest: Vec<u8>,
+  run_id: uuid::Uuid,
+  admitted_at_millis: i64,
+}
+
+pub(crate) async fn recover(
+  pool: &PgPool,
+  identity: &FactoryAdmissionIdentity,
+) -> Result<Option<PublishedFactoryAdmission>, StoreError> {
+  let security_digest = FactoryDigest::sha256(
+    "octacity.factory.security-scope.v1",
+    &[identity.source_scope.security_scope.as_str().as_bytes()],
+  );
+  let row = sqlx::query_as::<_, AdmissionRow>(
+    "SELECT work.envelope, configuration.definition AS configuration, work.intent_digest, \
+            run.id AS run_id, run.flow_code_pins AS code_pins, run.flow_access_profile AS access_profile, \
+            FLOOR(EXTRACT(EPOCH FROM run.admitted_at) * 1000)::BIGINT AS admitted_at_millis \
+     FROM factory_work_envelopes AS work \
+     JOIN factory_runs AS run ON run.work_envelope_id = work.id \
+     JOIN factory_configuration_versions AS configuration \
+       ON configuration.factory_configuration_id = run.factory_configuration_id \
+      AND configuration.version = run.factory_configuration_version \
+     WHERE work.source_kind = $1 AND work.security_scope_digest = $2 AND work.external_identity = $3",
+  )
+  .bind(identity.source_scope.source.as_str())
+  .bind(security_digest.as_bytes().as_slice())
+  .bind(identity.external_identity.as_str())
+  .fetch_optional(pool)
+  .await
+  .map_err(unavailable)?;
+  row.map(decode_admission).transpose()
+}
+
+pub(crate) async fn replay(
+  pool: &PgPool,
+  probe: &FactoryAdmissionProbe,
+) -> Result<Option<FactoryAdmissionMutationOutcome>, StoreError> {
+  let identity = replay_identity(probe)?;
+  if let Some((digest, Json(outcome))) = sqlx::query_as::<_, (Vec<u8>, Json<Value>)>(
+    "SELECT request_digest, outcome FROM idempotency_records \
+     WHERE scope = $1 AND security_scope = $2 AND idempotency_key = $3",
+  )
+  .bind(identity.kind.scope())
+  .bind(identity.persisted_security_scope())
+  .bind(&identity.key)
+  .fetch_optional(pool)
+  .await
+  .map_err(unavailable)?
+  {
+    if digest != identity.request_digest {
+      return Err(conflict(EntityKind::FactoryRun));
+    }
+    return Ok(Some(replay_outcome(outcome)?));
+  }
+
+  replay_admission_identity(pool, probe).await
+}
+
+async fn replay_admission_identity<'e>(
+  executor: impl sqlx::PgExecutor<'e>,
+  probe: &FactoryAdmissionProbe,
+) -> Result<Option<FactoryAdmissionMutationOutcome>, StoreError> {
+  let row = sqlx::query_as::<_, AdmissionRow>(
+    "SELECT work.envelope, configuration.definition AS configuration, work.intent_digest, \
+            run.id AS run_id, run.flow_code_pins AS code_pins, run.flow_access_profile AS access_profile, \
+            FLOOR(EXTRACT(EPOCH FROM run.admitted_at) * 1000)::BIGINT AS admitted_at_millis \
+     FROM factory_work_envelopes AS work \
+     JOIN factory_runs AS run ON run.work_envelope_id = work.id \
+     JOIN factory_configuration_versions AS configuration \
+       ON configuration.factory_configuration_id = run.factory_configuration_id \
+      AND configuration.version = run.factory_configuration_version \
+     WHERE work.source_kind = $1 AND work.security_scope_digest = $2 AND work.external_identity = $3",
+  )
+  .bind(probe.source_scope.source.as_str())
+  .bind(security_scope_digest(probe).as_bytes().as_slice())
+  .bind(probe.external_identity.as_str())
+  .fetch_optional(executor)
+  .await
+  .map_err(unavailable)?;
+  let Some(row) = row else {
+    return Ok(None);
+  };
+  if row.intent_digest.as_slice() != probe.intent_digest.as_bytes() {
+    return Err(conflict(EntityKind::FactoryRun));
+  }
+  Ok(Some(FactoryAdmissionMutationOutcome {
+    disposition: MutationDisposition::Replayed,
+    admission: decode_admission(row)?,
+  }))
+}
+
+pub(crate) async fn context(
+  pool: &PgPool,
+  request: ReadFactoryAdmissionContext,
+) -> Result<FactoryAdmissionContext, StoreError> {
+  crate::discovery::require_project(pool, request.project_id).await?;
+  let configuration = crate::factory::authoring::factory_configuration::read(
+    pool,
+    request.configuration_id,
+    request.configuration_version,
+  )
+  .await?;
+  if configuration.configuration.reference().project_id() != request.project_id {
+    return Err(not_found(EntityKind::FactoryConfiguration));
+  }
+  let repository = match (request.repository_id, request.repository_version) {
+    (Some(id), Some(version)) => {
+      let repository = crate::cicd::definitions::configuration_query::repository(pool, id, version).await?;
+      if repository.project_id != request.project_id {
+        return Err(not_found(EntityKind::Repository));
+      }
+      Some(repository)
+    }
+    (None, None) => None,
+    _ => return Err(conflict(EntityKind::FactoryRun)),
+  };
+  Ok(FactoryAdmissionContext {
+    project_policies: octacity_server_store::resolve_factory_configuration_policies(
+      &crate::PostgresStore::new(pool.clone()),
+      &configuration.configuration,
+    )
+    .await?,
+    configuration,
+    repository,
+  })
+}
+
+pub(crate) async fn admit(
+  pool: &PgPool,
+  request: ManagementMutation<AdmitFactoryWork>,
+) -> Result<FactoryAdmissionMutationOutcome, StoreError> {
+  let probe = request.mutation().probe.clone();
+  match admit_once(pool, request, None, None).await {
+    Err(error @ (StoreError::Duplicate { .. } | StoreError::Conflict { .. })) => {
+      // Another observer may have won the existing unique admission identity.
+      // Compare the original intent, never substitute the loser's prepared Work.
+      match replay(pool, &probe).await? {
+        Some(receipt) => Ok(receipt),
+        None => Err(error),
+      }
+    }
+    result => result,
+  }
+}
+
+async fn admit_once(
+  pool: &PgPool,
+  request: ManagementMutation<AdmitFactoryWork>,
+  guard: Option<octacity_server_store::AdmitPreparedWorkSource>,
+  project_guard: Option<octacity_server_store::ProjectTextGuard>,
+) -> Result<FactoryAdmissionMutationOutcome, StoreError> {
+  let (request, audit) = request.into_parts();
+  validate_admission(&request, &audit)?;
+  let identity = mutation_identity(&request.probe, request.admitted_at, &audit)?;
+  let mut transaction = match crate::mutation::begin(pool, &identity).await? {
+    MutationStart::Fresh(transaction) => transaction,
+    MutationStart::Replay(outcome) => {
+      let outcome = replay_outcome(outcome)?;
+      if let Some(guard) = &guard {
+        crate::factory::sources::factory_source::correlate_replay(pool, guard, &request, &outcome.admission).await?;
+      }
+      if let Some(guard) = &project_guard {
+        crate::projects::project_text_input::correlate_replay(pool, guard, &request, &audit, &outcome.admission)
+          .await?;
+      }
+      return Ok(outcome);
+    }
+  };
+  let mut project_preparation = if let Some(guard) = &project_guard {
+    let preparation = crate::projects::project_text_input::load(&mut transaction, guard.id).await?;
+    preparation.validate_admission(
+      guard,
+      &octacity_server_store::ManagementMutation::new(request.clone(), audit.clone()),
+    )?;
+    if let Some(outcome) = replay_admission_identity(&mut *transaction, &request.probe).await? {
+      transaction.rollback().await.map_err(unavailable)?;
+      crate::projects::project_text_input::correlate_replay(pool, guard, &request, &audit, &outcome.admission).await?;
+      return Ok(outcome);
+    }
+    Some(preparation)
+  } else {
+    None
+  };
+  let mut preparation = if let Some(guard) = &guard {
+    let preparation =
+      crate::factory::sources::factory_source::lock_preparation(&mut transaction, guard, &request).await?;
+    // A receipt published before correlation (or by another observer) remains the
+    // existing authority. Discard the provisional transport row before attaching it.
+    if let Some(outcome) = replay_admission_identity(&mut *transaction, &request.probe).await? {
+      transaction.rollback().await.map_err(unavailable)?;
+      crate::factory::sources::factory_source::correlate_replay(pool, guard, &request, &outcome.admission).await?;
+      return Ok(outcome);
+    }
+    crate::factory::sources::factory_source_artifact::require_admission_inputs(
+      &mut transaction,
+      &preparation,
+      &request,
+      guard.now,
+    )
+    .await?;
+    Some(preparation)
+  } else {
+    None
+  };
+  let configuration = lock_configuration(&mut transaction, &request).await?;
+  request.validate_configuration(&configuration)?;
+  require_access_profile(&mut transaction, &configuration, &request).await?;
+  require_repository(&mut transaction, &request).await?;
+  require_current_predecessor_issue(&mut transaction, &request, preparation.as_mut()).await?;
+  let active: i64 = sqlx::query_scalar(
+    "SELECT COUNT(*) FROM factory_runs \
+     WHERE factory_configuration_id = $1 AND factory_configuration_version = $2 \
+       AND visible \
+       AND state NOT IN ('cancelled', 'completed')",
+  )
+  .bind(request.work.configuration().id().as_uuid())
+  .bind(version_number(request.work.configuration().version().get())?)
+  .fetch_one(&mut *transaction)
+  .await
+  .map_err(unavailable)?;
+  if u64::try_from(active).map_err(|_| StoreError::Unavailable)?
+    >= u64::from(configuration.wip_limits().max_active_runs())
+  {
+    return Err(conflict(EntityKind::FactoryRun));
+  }
+
+  let envelope_bytes = serde_json::to_vec(&request.work).map_err(|_| StoreError::Unavailable)?;
+  let envelope_digest = FactoryDigest::sha256("octacity.factory.work-envelope.v1", &[&envelope_bytes]);
+  let subject_digest = subject_digest(&request.work);
+  sqlx::query(
+    "INSERT INTO factory_work_envelopes \
+       (id, project_id, factory_configuration_id, factory_configuration_version, source_kind, \
+        security_scope_digest, external_identity, repository_id, repository_version, exact_revision, \
+        intent_digest, envelope_digest, envelope, admitted_at) \
+     VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, \
+             to_timestamp($14::double precision / 1000.0))",
+  )
+  .bind(request.work.id().as_uuid())
+  .bind(request.work.subject().project_id().as_uuid())
+  .bind(request.work.configuration().id().as_uuid())
+  .bind(version_number(request.work.configuration().version().get())?)
+  .bind(request.probe.source_scope.source.as_str())
+  .bind(security_scope_digest(&request.probe).as_bytes().as_slice())
+  .bind(request.probe.external_identity.as_str())
+  .bind(
+    request
+      .work
+      .subject()
+      .repository()
+      .ok()
+      .map(|subject| subject.repository_id().as_uuid()),
+  )
+  .bind(request.repository_version.map(repository_version_number).transpose()?)
+  .bind(
+    request
+      .work
+      .subject()
+      .repository()
+      .ok()
+      .map(|subject| subject.base_revision().as_str()),
+  )
+  .bind(request.probe.intent_digest.as_bytes().as_slice())
+  .bind(envelope_digest.as_bytes().as_slice())
+  .bind(Json(&request.work))
+  .bind(request.admitted_at.unix_millis())
+  .execute(&mut *transaction)
+  .await
+  .map_err(|error| classify(error, EntityKind::FactoryRun))?;
+  sqlx::query(
+    "INSERT INTO factory_runs \
+       (id, project_id, work_envelope_id, factory_configuration_id, factory_configuration_version, \
+        state, version, subject_digest, flow_admission_limits, flow_code_pins, flow_access_profile, admitted_at, updated_at) \
+     VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $11, $12, \
+             to_timestamp($10::double precision / 1000.0), to_timestamp($10::double precision / 1000.0))",
+  )
+  .bind(request.run.id().as_uuid())
+  .bind(request.work.subject().project_id().as_uuid())
+  .bind(request.work.id().as_uuid())
+  .bind(request.work.configuration().id().as_uuid())
+  .bind(version_number(request.work.configuration().version().get())?)
+  .bind(request.run.state().as_str())
+  .bind(version_number(request.run.version().get())?)
+  .bind(subject_digest.as_bytes().as_slice())
+  .bind(Json(request.flow.limits()))
+  .bind(request.admitted_at.unix_millis())
+  .bind((!request.flow.code_pins().is_empty()).then(|| Json(request.flow.code_pins())))
+  .bind(request.flow.access_profile().map(Json))
+  .execute(&mut *transaction)
+  .await
+  .map_err(|error| classify(error, EntityKind::FactoryRun))?;
+  insert_admitted_flow(&mut transaction, &request).await?;
+  if let Some(incoming) = &request.incoming {
+    crate::factory::execution::factory_run::data::insert_incoming(&mut transaction, request.run.id(), incoming).await?;
+  }
+
+  crate::factory::execution::factory_run::insert_artifact_reference(
+    &mut transaction,
+    request.run.id(),
+    request.work.artifacts().task().artifact_id(),
+    octacity_server_store::FactoryArtifactRole::Task,
+    Some(request.work.artifacts().task().content_digest().as_bytes()),
+    request.admitted_at,
+  )
+  .await?;
+  crate::factory::execution::factory_run::insert_artifact_reference(
+    &mut transaction,
+    request.run.id(),
+    request.work.artifacts().acceptance().artifact_id(),
+    octacity_server_store::FactoryArtifactRole::Acceptance,
+    Some(request.work.artifacts().acceptance().content_digest().as_bytes()),
+    request.admitted_at,
+  )
+  .await?;
+  for artifact in request.work.artifacts().specifications() {
+    crate::factory::execution::factory_run::insert_artifact_reference(
+      &mut transaction,
+      request.run.id(),
+      artifact.artifact_id(),
+      octacity_server_store::FactoryArtifactRole::Specification,
+      Some(artifact.content_digest().as_bytes()),
+      request.admitted_at,
+    )
+    .await?;
+  }
+
+  let budget = FactoryBudgetRecord::new(
+    request.run.id(),
+    FactoryRunVersion::INITIAL,
+    BudgetUsage::default(),
+    request.admitted_at,
+  );
+  let lifecycle = FactoryLifecycleCheckpoint::new(
+    request.run.id(),
+    FactoryRunVersion::INITIAL,
+    FactoryLifecycleProgress::Admitted,
+    false,
+    request.admitted_at,
+  );
+  insert_initial_projection(&mut transaction, &request, &budget, &lifecycle).await?;
+  let outbox = admission_outbox(&request);
+  insert_factory_outbox(&mut transaction, &outbox).await?;
+  insert_audit_link(&mut transaction, &request, &audit, &identity).await?;
+
+  let admission = PublishedFactoryAdmission {
+    work: request.work,
+    run: request.run,
+    flow: request.flow,
+    admitted_at: request.admitted_at,
+  };
+  let outcome = FactoryAdmissionMutationOutcome {
+    disposition: MutationDisposition::Applied,
+    admission,
+  };
+  if let Some(preparation) = preparation {
+    crate::factory::sources::factory_source::correlate(&mut transaction, preparation, &outcome.admission, true).await?;
+  }
+  if let Some(preparation) = &mut project_preparation {
+    preparation.admission = Some(outcome.admission.clone());
+    crate::projects::project_text_input::save(&mut transaction, preparation).await?;
+  }
+  crate::mutation::commit(
+    transaction,
+    &identity,
+    MutationFacts::management(
+      &audit,
+      outcome.admission.run.id().to_string(),
+      json!({
+        "factory_configuration_id": outcome.admission.run.configuration().id(),
+        "project_id": outcome.admission.run.subject().project_id(),
+        "state": outcome.admission.run.state().as_str(),
+      }),
+      json!({
+        "event": MutationKind::AdmitFactoryWork.outbox_topic(),
+        "factory_run_id": outcome.admission.run.id(),
+        "project_id": outcome.admission.run.subject().project_id(),
+      }),
+    ),
+    encode_outcome(&outcome)?,
+  )
+  .await?;
+  Ok(outcome)
+}
+
+// Hold the Issue lock through admission so a concurrent requirements edit cannot
+// invalidate the producer between the application check and publication.
+async fn require_current_predecessor_issue(
+  connection: &mut sqlx::PgConnection,
+  request: &AdmitFactoryWork,
+  preparation: Option<&mut octacity_server_store::WorkSourcePreparation>,
+) -> Result<(), StoreError> {
+  let Some(predecessor) = request.incoming.as_ref().and_then(|input| input.predecessor()) else {
+    return Ok(());
+  };
+  let project = request.work.subject().project_id();
+  // Keep the same lock order as installed Source admission and native attachment.
+  sqlx::query("SELECT id FROM projects WHERE id=$1 FOR KEY SHARE")
+    .bind(project.as_uuid())
+    .execute(&mut *connection)
+    .await
+    .map_err(unavailable)?;
+  let association: Option<Json<octacity_server_store::IssueWorkAssociation>> =
+    sqlx::query_scalar("SELECT document FROM issue_work_associations WHERE project_id=$1 AND run_id=$2")
+      .bind(project.as_uuid())
+      .bind(predecessor.run_id().as_uuid())
+      .fetch_optional(&mut *connection)
+      .await
+      .map_err(unavailable)?;
+  let stale = || conflict(EntityKind::Issue);
+  let Json(association) = association.ok_or_else(stale)?;
+  let version = association.requirements_version.ok_or_else(stale)?;
+  let current = crate::issues::issue::lock(connection, project, association.issue_id).await?;
+  let original = crate::issues::issue::read(connection, project, association.issue_id, Some(version)).await?;
+  if !current.content_available
+    || !original.content_available
+    || original.applicability_version != current.applicability_version
+  {
+    return Err(stale());
+  }
+  // Cached in-flight lineage cannot survive retirement of the producer.
+  sqlx::query(
+    "SELECT r.id FROM factory_runs r JOIN factory_flow_records record ON record.run_id=r.id
+     WHERE r.id=$1 AND r.visible AND r.state='completed' AND record.node_attempt_id=$2 AND record.id=$3
+     FOR SHARE OF r,record",
+  )
+  .bind(predecessor.run_id().as_uuid())
+  .bind(predecessor.record().node_attempt_id().as_uuid())
+  .bind(predecessor.record().digest().as_bytes().as_slice())
+  .fetch_optional(&mut *connection)
+  .await
+  .map_err(unavailable)?
+  .ok_or_else(stale)?;
+  if let Some(preparation) = preparation {
+    let observed = octacity_server_store::WorkSourceIssueText {
+      title: &original.content.title,
+      description: &original.content.description,
+    };
+    if preparation
+      .observed_issue_text
+      .is_some_and(|digest| digest != observed.digest())
+    {
+      return Err(stale());
+    }
+    let scope = &request.probe.source_scope.security_scope;
+    let correlation = octacity_server_store::source_native_correlation(
+      preparation.issue,
+      octacity_server_store::source_security_partition(scope),
+    );
+    let link = crate::issues::issue_source::native_link(connection, project, scope, correlation)
+      .await?
+      .filter(|link| link.issue_id == association.issue_id)
+      .ok_or_else(stale)?;
+    if let Some(pinned) = &preparation.issue_revision {
+      if pinned.correlation != correlation || pinned.issue_id != link.issue_id {
+        return Err(stale());
+      }
+      if pinned.version != version {
+        let pinned_issue =
+          crate::issues::issue::read(connection, project, pinned.issue_id, Some(pinned.version)).await?;
+        if !pinned_issue.content_available || pinned_issue.applicability_version != original.applicability_version {
+          return Err(stale());
+        }
+      }
+    } else {
+      // A link can appear while the candidate waits. The verified producer pins its requirements.
+      preparation.issue_revision = Some(octacity_server_store::WorkSourceIssueRevision {
+        correlation,
+        issue_id: link.issue_id,
+        version,
+      });
+    }
+  }
+  Ok(())
+}
+
+async fn insert_admitted_flow(
+  transaction: &mut Transaction<'_, Postgres>,
+  request: &AdmitFactoryWork,
+) -> Result<(), StoreError> {
+  let root = request.flow.root_run();
+  let definition = root.definition();
+  let cycle = request.flow.initial_cycle();
+  let inserted = sqlx::query(
+    "INSERT INTO factory_flow_runs \
+       (id, factory_run_id, flow_definition_id, flow_definition_version, \
+        parent_flow_run_id, parent_node_attempt_id, created_at) \
+     SELECT $1, $2, $3, $4, NULL, NULL, to_timestamp($5::double precision / 1000.0) \
+     FROM factory_configuration_flow_definitions \
+     WHERE factory_configuration_id = $6 AND factory_configuration_version = $7 \
+       AND flow_definition_id = $3 AND flow_definition_version = $4 AND is_root",
+  )
+  .bind(root.id().as_uuid())
+  .bind(request.run.id().as_uuid())
+  .bind(definition.id().as_uuid())
+  .bind(version_number(definition.version().get())?)
+  .bind(request.admitted_at.unix_millis())
+  .bind(request.run.configuration().id().as_uuid())
+  .bind(version_number(request.run.configuration().version().get())?)
+  .execute(&mut **transaction)
+  .await
+  .map_err(unavailable)?;
+  if inserted.rows_affected() != 1 {
+    return Err(StoreError::Unavailable);
+  }
+  sqlx::query(
+    "INSERT INTO factory_workflow_cycles \
+       (id, factory_run_id, flow_run_id, cycle_number, predecessor_id, created_at) \
+     VALUES ($1, $2, $3, $4, NULL, to_timestamp($5::double precision / 1000.0))",
+  )
+  .bind(cycle.id().as_uuid())
+  .bind(request.run.id().as_uuid())
+  .bind(root.id().as_uuid())
+  .bind(version_number(cycle.number().get())?)
+  .bind(request.admitted_at.unix_millis())
+  .execute(&mut **transaction)
+  .await
+  .map_err(unavailable)?;
+  Ok(())
+}
+
+fn mutation_identity(
+  probe: &FactoryAdmissionProbe,
+  occurred_at: Timestamp,
+  audit: &MutationAuditContext,
+) -> Result<MutationIdentity, StoreError> {
+  let fingerprint = AdmissionFingerprint {
+    source: &probe.source_scope.source,
+    security_scope: probe.source_scope.security_scope.as_str(),
+    external_identity: &probe.external_identity,
+    intent_digest: probe.intent_digest,
+  };
+  MutationIdentity::new_management(
+    audit,
+    MutationKind::AdmitFactoryWork,
+    probe.idempotency_key.to_string(),
+    occurred_at,
+    EntityKind::FactoryRun,
+    &fingerprint,
+  )
+}
+
+fn replay_identity(probe: &FactoryAdmissionProbe) -> Result<MutationIdentity, StoreError> {
+  let fingerprint = AdmissionFingerprint {
+    source: &probe.source_scope.source,
+    security_scope: probe.source_scope.security_scope.as_str(),
+    external_identity: &probe.external_identity,
+    intent_digest: probe.intent_digest,
+  };
+  MutationIdentity::new_management_replay(
+    &probe.source_scope.security_scope,
+    MutationKind::AdmitFactoryWork,
+    probe.idempotency_key.to_string(),
+    Timestamp::from_unix_millis(0).map_err(|_| StoreError::Unavailable)?,
+    EntityKind::FactoryRun,
+    &fingerprint,
+  )
+}
+
+fn validate_admission(request: &AdmitFactoryWork, audit: &MutationAuditContext) -> Result<(), StoreError> {
+  request.validate(audit.security_scope())
+}
+
+// Recheck the exact typed pin or recorded legacy mapping in the admission transaction.
+// The profile type verifies its content digest; no mutable default or second pool lease is needed.
+async fn require_access_profile(
+  transaction: &mut Transaction<'_, Postgres>,
+  configuration: &FactoryConfiguration,
+  request: &AdmitFactoryWork,
+) -> Result<(), StoreError> {
+  use octacity_server_store::{FactoryLegacyPolicyReference, FactoryProjectPolicyRef};
+  if let Some(pin) = configuration.permission_ceiling().project_policy() {
+    return request.validate_access_profile(Some(pin));
+  }
+  let legacy = configuration
+    .permission_ceiling()
+    .legacy()
+    .ok_or(StoreError::Unavailable)?;
+  let mapping = crate::factory::authoring::factory_project_policy_mapping::read(
+    &mut **transaction,
+    configuration.reference().project_id(),
+    &FactoryLegacyPolicyReference::Access(legacy.clone()),
+  )
+  .await?;
+  let expected = match mapping.map(|mapping| mapping.target) {
+    Some(FactoryProjectPolicyRef::Access(pin)) => Some(pin),
+    None => None,
+    _ => return Err(StoreError::Unavailable),
+  };
+  request.validate_access_profile(expected.as_ref())
+}
+
+async fn lock_configuration(
+  transaction: &mut Transaction<'_, Postgres>,
+  request: &AdmitFactoryWork,
+) -> Result<octacity_server_factory::FactoryConfiguration, StoreError> {
+  let row: Option<(Json<octacity_server_factory::FactoryConfiguration>, bool)> = sqlx::query_as(
+    "SELECT definition, enabled FROM factory_configuration_versions \
+     WHERE factory_configuration_id = $1 AND version = $2 FOR KEY SHARE",
+  )
+  .bind(request.work.configuration().id().as_uuid())
+  .bind(version_number(request.work.configuration().version().get())?)
+  .fetch_optional(&mut **transaction)
+  .await
+  .map_err(unavailable)?;
+  let Some((Json(configuration), enabled)) = row else {
+    return Err(not_found(EntityKind::FactoryConfiguration));
+  };
+  if !enabled || !configuration.is_enabled() || configuration.reference() != request.work.configuration() {
+    return Err(StoreError::InvalidInput {
+      operation: StoreOperation::AdmitFactoryWork,
+      source: StoreInputError::InvalidFactoryAdmission,
+    });
+  }
+  Ok(configuration)
+}
+
+async fn require_repository(
+  transaction: &mut Transaction<'_, Postgres>,
+  request: &AdmitFactoryWork,
+) -> Result<(), StoreError> {
+  let Ok(subject) = request.work.subject().repository() else {
+    return if request.repository_version.is_none() {
+      Ok(())
+    } else {
+      Err(conflict(EntityKind::FactoryRun))
+    };
+  };
+  let owner: Option<uuid::Uuid> = sqlx::query_scalar(
+    "SELECT repository.project_id FROM repository_versions AS version \
+     JOIN repositories AS repository ON repository.id = version.repository_id \
+     WHERE version.repository_id = $1 AND version.version = $2 FOR KEY SHARE",
+  )
+  .bind(subject.repository_id().as_uuid())
+  .bind(repository_version_number(
+    request
+      .repository_version
+      .ok_or_else(|| conflict(EntityKind::FactoryRun))?,
+  )?)
+  .fetch_optional(&mut **transaction)
+  .await
+  .map_err(unavailable)?;
+  match owner {
+    Some(project_id) if project_id == request.work.subject().project_id().as_uuid() => Ok(()),
+    _ => Err(not_found(EntityKind::Repository)),
+  }
+}
+
+async fn insert_initial_projection(
+  transaction: &mut Transaction<'_, Postgres>,
+  request: &AdmitFactoryWork,
+  budget: &FactoryBudgetRecord,
+  lifecycle: &FactoryLifecycleCheckpoint,
+) -> Result<(), StoreError> {
+  sqlx::query(
+    "INSERT INTO factory_run_budgets (id, run_id, run_version, usage, recorded_at) \
+     VALUES ($1, $2, $3, $4, to_timestamp($5::double precision / 1000.0))",
+  )
+  .bind(budget.id.as_bytes().as_slice())
+  .bind(request.run.id().as_uuid())
+  .bind(version_number(budget.run_version.get())?)
+  .bind(Json(budget.usage))
+  .bind(budget.recorded_at.unix_millis())
+  .execute(&mut **transaction)
+  .await
+  .map_err(unavailable)?;
+  sqlx::query(
+    "INSERT INTO factory_lifecycle_checkpoints \
+       (id, run_id, run_version, lifecycle, cancellation_requested, recorded_at) \
+     VALUES ($1, $2, $3, $4, $5, to_timestamp($6::double precision / 1000.0))",
+  )
+  .bind(lifecycle.id.as_bytes().as_slice())
+  .bind(request.run.id().as_uuid())
+  .bind(version_number(lifecycle.run_version.get())?)
+  .bind(Json(json!({"progress": lifecycle.progress})))
+  .bind(lifecycle.cancellation_requested)
+  .bind(lifecycle.recorded_at.unix_millis())
+  .execute(&mut **transaction)
+  .await
+  .map_err(unavailable)?;
+  sqlx::query(
+    "INSERT INTO factory_run_current (run_id, run_version, budget_id, lifecycle_checkpoint_id) \
+     VALUES ($1, $2, $3, $4)",
+  )
+  .bind(request.run.id().as_uuid())
+  .bind(version_number(request.run.version().get())?)
+  .bind(budget.id.as_bytes().as_slice())
+  .bind(lifecycle.id.as_bytes().as_slice())
+  .execute(&mut **transaction)
+  .await
+  .map_err(unavailable)?;
+  Ok(())
+}
+
+fn admission_outbox(request: &AdmitFactoryWork) -> FactoryOutboxRecord {
+  let operation_id = FactoryDigest::sha256(
+    "octacity.factory.admission-outbox-operation.v1",
+    &[
+      request.run.id().as_uuid().as_bytes(),
+      &request.probe.intent_digest.as_bytes(),
+    ],
+  );
+  FactoryOutboxRecord::pending(
+    operation_id,
+    request.run.id(),
+    FactoryKey::new("factory.run.admitted").expect("static Factory key is valid"),
+    request.probe.intent_digest,
+    request.admitted_at,
+    request.admitted_at,
+  )
+}
+
+async fn insert_factory_outbox(
+  transaction: &mut Transaction<'_, Postgres>,
+  record: &FactoryOutboxRecord,
+) -> Result<(), StoreError> {
+  sqlx::query(
+    "INSERT INTO factory_outbox_records \
+       (id, operation_id, run_id, kind, input_digest, state, attempt, available_at, recorded_at) \
+     VALUES ($1, $2, $3, $4, $5, 'pending', $6, \
+             to_timestamp($7::double precision / 1000.0), to_timestamp($8::double precision / 1000.0))",
+  )
+  .bind(record.id.as_bytes().as_slice())
+  .bind(record.operation_id.as_bytes().as_slice())
+  .bind(record.subject.run_id().ok_or(StoreError::Unavailable)?.as_uuid())
+  .bind(record.kind.as_str())
+  .bind(record.input_digest.as_bytes().as_slice())
+  .bind(i32::from(record.attempt))
+  .bind(record.available_at.unix_millis())
+  .bind(record.recorded_at.unix_millis())
+  .execute(&mut **transaction)
+  .await
+  .map_err(unavailable)?;
+  Ok(())
+}
+
+async fn insert_audit_link(
+  transaction: &mut Transaction<'_, Postgres>,
+  request: &AdmitFactoryWork,
+  audit: &MutationAuditContext,
+  identity: &MutationIdentity,
+) -> Result<(), StoreError> {
+  let actor_identity_digest = audit
+    .actor()
+    .identity
+    .as_deref()
+    .map(|identity| FactoryDigest::sha256("octacity.factory.audit-actor.v1", &[identity.as_bytes()]));
+  let request_digest = FactoryDigest::sha256(
+    "octacity.factory.audit-request.v1",
+    &[audit.request_identity().as_bytes()],
+  );
+  let fact = FactoryAuditFact::new(
+    request.run.id(),
+    audit.actor().kind,
+    actor_identity_digest,
+    FactoryKey::new("work.admitted").expect("static Factory key is valid"),
+    request_digest,
+    FactoryKey::new("accepted").expect("static Factory key is valid"),
+    request.admitted_at,
+  );
+  sqlx::query(
+    "INSERT INTO factory_audit_links \
+       (id, run_id, audit_fact_id, actor_kind, actor_identity_digest, operation, \
+        request_identity_digest, outcome, recorded_at) \
+     VALUES ($1, $2, $3, $4, $5, $6, $7, $8, to_timestamp($9::double precision / 1000.0))",
+  )
+  .bind(fact.id.as_bytes().as_slice())
+  .bind(request.run.id().as_uuid())
+  .bind(stable_record_id("audit", identity))
+  .bind(fact.actor_kind.as_str())
+  .bind(fact.actor_identity_digest.map(FactoryDigest::as_bytes))
+  .bind(fact.operation.as_str())
+  .bind(fact.request_identity_digest.as_bytes().as_slice())
+  .bind(fact.outcome.as_str())
+  .bind(fact.recorded_at.unix_millis())
+  .execute(&mut **transaction)
+  .await
+  .map_err(unavailable)?;
+  Ok(())
+}
+
+fn decode_admission(row: AdmissionRow) -> Result<PublishedFactoryAdmission, StoreError> {
+  let work = row.envelope.0;
+  let configuration = row.configuration.0;
+  let run = FactoryRun::admitted(
+    octacity_server_factory::FactoryRunId::from_uuid(row.run_id).map_err(|_| StoreError::Unavailable)?,
+    &work,
+  );
+  let flow = AdmittedFlow::from_configuration(&configuration, &run)
+    .and_then(|flow| match row.access_profile {
+      Some(Json(profile)) => flow.with_access_profile(&configuration, profile),
+      None => Ok(flow),
+    })
+    .and_then(|flow| {
+      flow.with_code_pins(
+        row.code_pins.map_or_else(Vec::new, |pins| pins.0),
+        work.subject().project_id(),
+      )
+    })
+    .map_err(|_| StoreError::Unavailable)?;
+  Ok(PublishedFactoryAdmission {
+    work,
+    run,
+    flow,
+    admitted_at: timestamp(row.admitted_at_millis)?,
+  })
+}
+
+fn replay_outcome(value: Value) -> Result<FactoryAdmissionMutationOutcome, StoreError> {
+  let mut outcome: FactoryAdmissionMutationOutcome = decode_outcome(value)?;
+  outcome.disposition = MutationDisposition::Replayed;
+  Ok(outcome)
+}
+
+fn security_scope_digest(probe: &FactoryAdmissionProbe) -> FactoryDigest {
+  FactoryDigest::sha256(
+    "octacity.factory.security-scope.v1",
+    &[probe.source_scope.security_scope.as_str().as_bytes()],
+  )
+}
+
+fn subject_digest(work: &WorkEnvelope) -> FactoryDigest {
+  work.subject().digest()
+}
+
+fn version_number(value: u64) -> Result<i64, StoreError> {
+  i64::try_from(value).map_err(|_| StoreError::Unavailable)
+}
+
+fn repository_version_number(value: RepositoryVersion) -> Result<i64, StoreError> {
+  version_number(value.get())
+}
+
+const fn not_found(entity: EntityKind) -> StoreError {
+  StoreError::NotFound { entity }
+}
+
+const fn conflict(entity: EntityKind) -> StoreError {
+  StoreError::Conflict { entity }
+}
+
+pub(crate) async fn admit_prepared(
+  pool: &PgPool,
+  guard: octacity_server_store::AdmitPreparedWorkSource,
+  request: ManagementMutation<AdmitFactoryWork>,
+) -> Result<FactoryAdmissionMutationOutcome, StoreError> {
+  let original = request.mutation().clone();
+  match admit_once(pool, request, Some(guard.clone()), None).await {
+    Err(error @ (StoreError::Duplicate { .. } | StoreError::Conflict { .. })) => {
+      if let Some(receipt) = replay(pool, &original.probe).await? {
+        crate::factory::sources::factory_source::correlate_replay(pool, &guard, &original, &receipt.admission).await?;
+        Ok(receipt)
+      } else {
+        Err(error)
+      }
+    }
+    result => result,
+  }
+}
+
+pub(crate) async fn admit_project_text(
+  pool: &PgPool,
+  guard: octacity_server_store::ProjectTextGuard,
+  request: ManagementMutation<AdmitFactoryWork>,
+) -> Result<FactoryAdmissionMutationOutcome, StoreError> {
+  let original = request.mutation().clone();
+  let audit = request.audit().clone();
+  match admit_once(pool, request, None, Some(guard.clone())).await {
+    Err(error @ (StoreError::Duplicate { .. } | StoreError::Conflict { .. })) => {
+      if let Some(receipt) = replay(pool, &original.probe).await? {
+        crate::projects::project_text_input::correlate_replay(pool, &guard, &original, &audit, &receipt.admission)
+          .await?;
+        Ok(receipt)
+      } else {
+        Err(error)
+      }
+    }
+    result => result,
+  }
+}

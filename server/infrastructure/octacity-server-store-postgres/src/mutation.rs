@@ -223,7 +223,7 @@ pub(crate) struct MutationFacts {
   target_identity: String,
   safe_metadata: Value,
   outbox_payload: Value,
-  attention: Option<crate::operator_attention::TargetAttentionChange>,
+  attention: Option<crate::operations::operator_attention::TargetAttentionChange>,
 }
 
 #[derive(Debug, Eq, PartialEq)]
@@ -285,7 +285,7 @@ impl MutationFacts {
     }
   }
 
-  pub(crate) fn with_attention(mut self, change: crate::operator_attention::TargetAttentionChange) -> Self {
+  pub(crate) fn with_attention(mut self, change: crate::operations::operator_attention::TargetAttentionChange) -> Self {
     self.attention = Some(change);
     self
   }
@@ -1088,7 +1088,7 @@ pub(crate) async fn commit(
   outcome: Value,
 ) -> Result<(), StoreError> {
   if let Some(change) = facts.attention.as_ref() {
-    crate::operator_attention::apply_change(
+    crate::operations::operator_attention::apply_change(
       &mut transaction,
       stable_record_id("operator-attention", identity),
       identity.occurred_at,

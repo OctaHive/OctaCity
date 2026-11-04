@@ -5,41 +5,6 @@ use octacity_server_store::*;
 use super::{PostgresAuthoritativeStore, PostgresStore};
 
 #[async_trait]
-impl FactoryBuildAcceptanceStore for PostgresAuthoritativeStore {
-  async fn factory_build_for_operation(
-    &self,
-    operation: octacity_server_factory::FactoryDigest,
-  ) -> Result<Option<AcceptedFactoryBuild>, StoreError> {
-    crate::telemetry::observe(
-      Operation::Verify,
-      crate::accept_factory_build::read(&self.store.pool, operation),
-    )
-    .await
-  }
-  async fn accept_factory_build(&self, request: AcceptFactoryBuild) -> Result<AcceptedFactoryBuild, StoreError> {
-    crate::telemetry::observe(
-      Operation::Accept,
-      crate::accept_factory_build::accept(&self.store.pool, &self.job_spec_signer, request),
-    )
-    .await
-  }
-}
-
-#[async_trait]
-impl FactoryBuildCancellationStore for PostgresAuthoritativeStore {
-  async fn cancel_factory_build_execution(
-    &self,
-    request: CancelFactoryBuildExecution,
-  ) -> Result<CancellationDisposition, StoreError> {
-    crate::telemetry::observe(
-      Operation::Cancel,
-      crate::cancel_build::execute_factory(&self.store.pool, request),
-    )
-    .await
-  }
-}
-
-#[async_trait]
 impl TriggerAcceptanceStore for PostgresAuthoritativeStore {
   async fn replay_trigger_acceptance(
     &self,
@@ -47,7 +12,7 @@ impl TriggerAcceptanceStore for PostgresAuthoritativeStore {
   ) -> Result<Option<TriggerEvaluationOutcome>, StoreError> {
     crate::telemetry::observe(
       Operation::Verify,
-      crate::accept_trigger::replay_evaluation(&self.store.pool, request),
+      crate::cicd::triggers::accept_trigger::replay_evaluation(&self.store.pool, request),
     )
     .await
   }
@@ -55,7 +20,7 @@ impl TriggerAcceptanceStore for PostgresAuthoritativeStore {
   async fn accept_trigger(&self, request: AcceptTrigger) -> Result<AcceptTriggerOutcome, StoreError> {
     crate::telemetry::observe(
       Operation::Accept,
-      crate::accept_trigger::execute(&self.store.pool, &self.job_spec_signer, request, None),
+      crate::cicd::triggers::accept_trigger::execute(&self.store.pool, &self.job_spec_signer, request, None),
     )
     .await
   }
@@ -67,7 +32,7 @@ impl TriggerAcceptanceStore for PostgresAuthoritativeStore {
     let (request, audit) = request.into_parts();
     crate::telemetry::observe(
       Operation::Accept,
-      crate::accept_trigger::execute(&self.store.pool, &self.job_spec_signer, request, Some(&audit)),
+      crate::cicd::triggers::accept_trigger::execute(&self.store.pool, &self.job_spec_signer, request, Some(&audit)),
     )
     .await
   }
@@ -75,7 +40,7 @@ impl TriggerAcceptanceStore for PostgresAuthoritativeStore {
   async fn suppress_trigger(&self, request: SuppressTrigger) -> Result<SuppressTriggerOutcome, StoreError> {
     crate::telemetry::observe(
       Operation::Complete,
-      crate::accept_trigger::suppress(&self.store.pool, request, None),
+      crate::cicd::triggers::accept_trigger::suppress(&self.store.pool, request, None),
     )
     .await
   }
@@ -87,7 +52,7 @@ impl TriggerAcceptanceStore for PostgresAuthoritativeStore {
     let (request, audit) = request.into_parts();
     crate::telemetry::observe(
       Operation::Complete,
-      crate::accept_trigger::suppress(&self.store.pool, request, Some(&audit)),
+      crate::cicd::triggers::accept_trigger::suppress(&self.store.pool, request, Some(&audit)),
     )
     .await
   }
@@ -100,40 +65,48 @@ impl TriggerEvaluationWorkStore for PostgresStore {
     request: ManagementMutation<ReserveTriggerEvaluation>,
   ) -> Result<TriggerEvaluationReservation, StoreError> {
     let (request, audit) = request.into_parts();
-    crate::trigger_evaluation::reserve(&self.pool, request, &audit).await
+    crate::cicd::triggers::trigger_evaluation::reserve(&self.pool, request, &audit).await
   }
 
   async fn claim_trigger_evaluations(
     &self,
     request: ClaimTriggerEvaluations,
   ) -> Result<Vec<TriggerEvaluationClaim>, StoreError> {
-    crate::trigger_evaluation::claim(&self.pool, request).await
+    crate::cicd::triggers::trigger_evaluation::claim(&self.pool, request).await
   }
 
   async fn complete_trigger_evaluation(&self, request: CompleteTriggerEvaluation) -> Result<(), StoreError> {
-    crate::trigger_evaluation::complete(&self.pool, request).await
+    crate::cicd::triggers::trigger_evaluation::complete(&self.pool, request).await
   }
 
   async fn record_trigger_evaluation_revision(
     &self,
     request: RecordTriggerEvaluationRevision,
   ) -> Result<(), StoreError> {
-    crate::trigger_evaluation::record_revision(&self.pool, request).await
+    crate::cicd::triggers::trigger_evaluation::record_revision(&self.pool, request).await
   }
 
   async fn fail_trigger_evaluation(&self, request: FailTriggerEvaluation) -> Result<(), StoreError> {
-    crate::trigger_evaluation::fail(&self.pool, request).await
+    crate::cicd::triggers::trigger_evaluation::fail(&self.pool, request).await
   }
 }
 
 #[async_trait]
 impl JobExecutionStore for PostgresAuthoritativeStore {
   async fn claim_ready_job(&self, request: JobClaim) -> Result<JobClaimOutcome, StoreError> {
-    crate::telemetry::observe(Operation::Claim, crate::job_claim::execute(&self.store.pool, request)).await
+    crate::telemetry::observe(
+      Operation::Claim,
+      crate::cicd::builds::job_claim::execute(&self.store.pool, request),
+    )
+    .await
   }
 
   async fn append_job_events(&self, request: AppendJobEvents) -> Result<AppendJobEventsOutcome, StoreError> {
-    crate::telemetry::observe(Operation::Append, crate::job_events::execute(&self.store.pool, request)).await
+    crate::telemetry::observe(
+      Operation::Append,
+      crate::cicd::builds::job_events::execute(&self.store.pool, request),
+    )
+    .await
   }
 
   async fn prepare_job_event_append(
@@ -141,7 +114,7 @@ impl JobExecutionStore for PostgresAuthoritativeStore {
     lease: octacity_server_store::LeaseAccess,
     accepted_at: octacity_server_domain::Timestamp,
   ) -> Result<octacity_server_store::JobEventAppendPreparation, StoreError> {
-    crate::job_events::prepare(&self.store.pool, lease, accepted_at).await
+    crate::cicd::builds::job_events::prepare(&self.store.pool, lease, accepted_at).await
   }
 
   async fn authorize_tool_action_lease(
@@ -151,13 +124,13 @@ impl JobExecutionStore for PostgresAuthoritativeStore {
     attempt: octacity_server_domain::AttemptNumber,
     observed_at: octacity_server_domain::Timestamp,
   ) -> Result<(), StoreError> {
-    crate::lease::authorize_tool_action(&self.store.pool, lease, job_id, attempt, observed_at).await
+    crate::cicd::builds::lease::authorize_tool_action(&self.store.pool, lease, job_id, attempt, observed_at).await
   }
 
   async fn complete_job(&self, request: JobCompletion) -> Result<CompletionDisposition, StoreError> {
     crate::telemetry::observe(
       Operation::Complete,
-      crate::job_completion::execute(&self.store.pool, &self.job_spec_signer, request),
+      crate::cicd::builds::job_completion::execute(&self.store.pool, &self.job_spec_signer, request),
     )
     .await
   }
@@ -165,7 +138,7 @@ impl JobExecutionStore for PostgresAuthoritativeStore {
   async fn fail_lease_assignment(&self, request: JobCompletion) -> Result<CompletionDisposition, StoreError> {
     crate::telemetry::observe(
       Operation::Complete,
-      crate::job_completion::fail_assignment(&self.store.pool, &self.job_spec_signer, request),
+      crate::cicd::builds::job_completion::fail_assignment(&self.store.pool, &self.job_spec_signer, request),
     )
     .await
   }
@@ -174,43 +147,47 @@ impl JobExecutionStore for PostgresAuthoritativeStore {
 #[async_trait]
 impl LogChunkManifestStore for PostgresStore {
   async fn log_chunk_is_committed(&self, chunk_id: octacity_server_domain::LogChunkId) -> Result<bool, StoreError> {
-    crate::job_events::is_chunk_committed(&self.pool, chunk_id).await
+    crate::cicd::builds::job_events::is_chunk_committed(&self.pool, chunk_id).await
   }
 }
 
 #[async_trait]
 impl LogChunkManifestStore for PostgresAuthoritativeStore {
   async fn log_chunk_is_committed(&self, chunk_id: octacity_server_domain::LogChunkId) -> Result<bool, StoreError> {
-    crate::job_events::is_chunk_committed(&self.store.pool, chunk_id).await
+    crate::cicd::builds::job_events::is_chunk_committed(&self.store.pool, chunk_id).await
   }
 }
 
 #[async_trait]
 impl OrphanLogChunkStore for PostgresAuthoritativeStore {
   async fn stage_orphan_log_chunk(&self, request: StageOrphanLogChunk) -> Result<(), StoreError> {
-    crate::retention::stage_orphan(&self.store.pool, request).await
+    crate::operations::retention::stage_orphan(&self.store.pool, request).await
   }
 
   async fn claim_orphan_log_chunks(
     &self,
     request: ClaimOrphanLogChunks,
   ) -> Result<Vec<OrphanLogChunkClaim>, StoreError> {
-    crate::retention::claim_orphans(&self.store.pool, request).await
+    crate::operations::retention::claim_orphans(&self.store.pool, request).await
   }
 
   async fn complete_orphan_log_chunk(&self, request: CompleteOrphanLogChunk) -> Result<(), StoreError> {
-    crate::retention::complete_orphan(&self.store.pool, request).await
+    crate::operations::retention::complete_orphan(&self.store.pool, request).await
   }
 
   async fn fail_orphan_log_chunk(&self, request: FailOrphanLogChunk) -> Result<(), StoreError> {
-    crate::retention::fail_orphan(&self.store.pool, request).await
+    crate::operations::retention::fail_orphan(&self.store.pool, request).await
   }
 }
 
 #[async_trait]
 impl LeaseHeartbeatStore for PostgresStore {
   async fn renew_lease(&self, request: RenewLease) -> Result<LeaseHeartbeatOutcome, StoreError> {
-    crate::telemetry::observe(Operation::Renew, crate::lease_heartbeat::execute(&self.pool, request)).await
+    crate::telemetry::observe(
+      Operation::Renew,
+      crate::cicd::builds::lease_heartbeat::execute(&self.pool, request),
+    )
+    .await
   }
 }
 
@@ -220,7 +197,11 @@ impl InternalTriggerEventStore for PostgresStore {
     &self,
     request: ClaimInternalTriggerEvents,
   ) -> Result<Vec<InternalTriggerEventClaim>, StoreError> {
-    crate::telemetry::observe(Operation::Claim, crate::internal_trigger::claim(&self.pool, request)).await
+    crate::telemetry::observe(
+      Operation::Claim,
+      crate::cicd::triggers::internal_trigger::claim(&self.pool, request),
+    )
+    .await
   }
 
   async fn complete_internal_trigger_event(
@@ -229,7 +210,7 @@ impl InternalTriggerEventStore for PostgresStore {
   ) -> Result<MutationDisposition, StoreError> {
     crate::telemetry::observe(
       Operation::Complete,
-      crate::internal_trigger::complete(&self.pool, request),
+      crate::cicd::triggers::internal_trigger::complete(&self.pool, request),
     )
     .await
   }
@@ -242,7 +223,7 @@ impl InternalTriggerDefinitionStore for PostgresStore {
     request: ManagementMutation<CreateInternalTriggerDefinition>,
   ) -> Result<TriggerDefinitionMutationOutcome, StoreError> {
     let (request, audit) = request.into_parts();
-    crate::internal_trigger_definition::create(&self.pool, request, &audit).await
+    crate::cicd::triggers::internal_trigger_definition::create(&self.pool, request, &audit).await
   }
 
   async fn publish_internal_trigger_version(
@@ -250,7 +231,7 @@ impl InternalTriggerDefinitionStore for PostgresStore {
     request: ManagementMutation<PublishInternalTriggerVersion>,
   ) -> Result<TriggerDefinitionMutationOutcome, StoreError> {
     let (request, audit) = request.into_parts();
-    crate::internal_trigger_definition::publish(&self.pool, request, &audit).await
+    crate::cicd::triggers::internal_trigger_definition::publish(&self.pool, request, &audit).await
   }
 
   async fn internal_trigger_definition(
@@ -258,14 +239,14 @@ impl InternalTriggerDefinitionStore for PostgresStore {
     trigger_id: octacity_server_domain::TriggerId,
     version: octacity_server_domain::TriggerVersion,
   ) -> Result<InternalTriggerDefinitionRecord, StoreError> {
-    crate::internal_trigger_definition::read(&self.pool, trigger_id, version).await
+    crate::cicd::triggers::internal_trigger_definition::read(&self.pool, trigger_id, version).await
   }
 
   async fn list_internal_trigger_definitions(
     &self,
     request: ListInternalTriggerDefinitions,
   ) -> Result<InternalTriggerDefinitionPage, StoreError> {
-    crate::internal_trigger_definition::list(&self.pool, request).await
+    crate::cicd::triggers::internal_trigger_definition::list(&self.pool, request).await
   }
 }
 
@@ -274,7 +255,7 @@ impl LeaseHeartbeatStore for PostgresAuthoritativeStore {
   async fn renew_lease(&self, request: RenewLease) -> Result<LeaseHeartbeatOutcome, StoreError> {
     crate::telemetry::observe(
       Operation::Renew,
-      crate::lease_heartbeat::execute(&self.store.pool, request),
+      crate::cicd::builds::lease_heartbeat::execute(&self.store.pool, request),
     )
     .await
   }
@@ -285,7 +266,7 @@ impl LeaseRecoveryStore for PostgresAuthoritativeStore {
   async fn claim_expired_leases(&self, request: ClaimExpiredLeases) -> Result<Vec<ExpiredLeaseClaim>, StoreError> {
     crate::telemetry::observe(
       Operation::Claim,
-      crate::lease_recovery::claim(&self.store.pool, request),
+      crate::cicd::builds::lease_recovery::claim(&self.store.pool, request),
     )
     .await
   }
@@ -296,7 +277,7 @@ impl LeaseRecoveryStore for PostgresAuthoritativeStore {
   ) -> Result<RecoverExpiredLeaseOutcome, StoreError> {
     crate::telemetry::observe(
       Operation::Retry,
-      crate::lease_recovery::recover(&self.store.pool, &self.job_spec_signer, request),
+      crate::cicd::builds::lease_recovery::recover(&self.store.pool, &self.job_spec_signer, request),
     )
     .await
   }
@@ -305,14 +286,14 @@ impl LeaseRecoveryStore for PostgresAuthoritativeStore {
 #[async_trait]
 impl JobEventReadStore for PostgresStore {
   async fn read_job_events(&self, request: ReadJobEvents) -> Result<JobEventPage, StoreError> {
-    crate::job_event_query::read(&self.pool, request).await
+    crate::cicd::builds::job_event_query::read(&self.pool, request).await
   }
 }
 
 #[async_trait]
 impl JobEventReadStore for PostgresAuthoritativeStore {
   async fn read_job_events(&self, request: ReadJobEvents) -> Result<JobEventPage, StoreError> {
-    crate::job_event_query::read(&self.store.pool, request).await
+    crate::cicd::builds::job_event_query::read(&self.store.pool, request).await
   }
 }
 
@@ -323,19 +304,19 @@ impl BuildControlStore for PostgresAuthoritativeStore {
     request: ManagementMutation<CancelBuild>,
   ) -> Result<CancellationDisposition, StoreError> {
     let (request, audit) = request.into_parts();
-    crate::cancel_build::execute(&self.store.pool, request, &audit).await
+    crate::cicd::builds::cancel_build::execute(&self.store.pool, request, &audit).await
   }
 
   async fn retry_build(&self, request: ManagementMutation<RetryBuild>) -> Result<RetryDisposition, StoreError> {
     let (request, audit) = request.into_parts();
-    crate::retry_build::execute(&self.store.pool, &self.job_spec_signer, request, &audit).await
+    crate::cicd::builds::retry_build::execute(&self.store.pool, &self.job_spec_signer, request, &audit).await
   }
 }
 
 #[async_trait]
 impl BuildDiscoveryStore for PostgresStore {
   async fn list_project_builds(&self, request: ListProjectBuilds) -> Result<ProjectBuildPage, StoreError> {
-    crate::build_discovery::list(&self.pool, request).await
+    crate::cicd::builds::build_discovery::list(&self.pool, request).await
   }
 }
 
@@ -349,25 +330,25 @@ impl BuildDiscoveryStore for PostgresAuthoritativeStore {
 #[async_trait]
 impl BuildQueryStore for PostgresStore {
   async fn build(&self, build_id: octacity_server_domain::BuildId) -> Result<BuildRecord, StoreError> {
-    crate::build_query::build(&self.pool, build_id).await
+    crate::cicd::builds::build_query::build(&self.pool, build_id).await
   }
 
   async fn attempt(
     &self,
     attempt_id: octacity_server_domain::AttemptId,
   ) -> Result<octacity_server_store::AttemptRecord, StoreError> {
-    crate::build_query::attempt(&self.pool, attempt_id).await
+    crate::cicd::builds::build_query::attempt(&self.pool, attempt_id).await
   }
 
   async fn job(&self, job_id: octacity_server_domain::JobId) -> Result<octacity_server_store::JobRecord, StoreError> {
-    crate::build_query::job(&self.pool, job_id).await
+    crate::cicd::builds::build_query::job(&self.pool, job_id).await
   }
 
   async fn latest_attempt(
     &self,
     build_id: octacity_server_domain::BuildId,
   ) -> Result<octacity_server_store::AttemptRecord, StoreError> {
-    crate::build_query::latest_attempt(&self.pool, build_id).await
+    crate::cicd::builds::build_query::latest_attempt(&self.pool, build_id).await
   }
 }
 
@@ -407,7 +388,7 @@ impl AgentResourceStore for PostgresStore {
       .execute(&mut *transaction)
       .await
       .map_err(crate::database::unavailable)?;
-    crate::agent_resources::record(&mut transaction, input).await?;
+    crate::cicd::agents::agent_resources::record(&mut transaction, input).await?;
     transaction.commit().await.map_err(crate::database::unavailable)
   }
 }

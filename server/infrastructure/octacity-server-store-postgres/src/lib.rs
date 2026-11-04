@@ -6,120 +6,29 @@
 #![forbid(unsafe_code)]
 #![deny(missing_docs)]
 
-mod accept_factory_build;
-mod accept_trigger;
-mod agent_credential_auth;
-mod agent_credential_revocation;
-mod agent_enrollment;
-mod agent_mutation;
-mod agent_query;
-mod agent_registration;
-mod agent_resources;
-mod agent_row;
-mod artifact;
-mod artifact_execution_input_scope;
-mod attempt_materialization;
-mod audit_query;
-mod build_configuration_mutation;
-mod build_discovery;
-mod build_materialization;
-mod build_query;
-mod cache;
-mod cancel_build;
-mod configuration_query;
-mod configuration_row;
+mod artifacts;
+mod cicd;
 mod database;
-mod definition_discovery;
-mod definition_mutation;
-mod definition_query;
 mod discovery;
-mod external_trigger;
-mod factory_action_projection;
-mod factory_action_queue;
-mod factory_admission;
-mod factory_configuration;
-mod factory_discovery;
-mod factory_execution_input;
-mod factory_project_policy;
-mod factory_project_policy_mapping;
-mod factory_project_provision;
-mod factory_retention;
-mod factory_role_deletion;
-mod factory_role_package;
-mod factory_role_profiles;
-mod factory_run;
-mod factory_runtime_settings;
-mod factory_signal_receipt;
-mod factory_signal_request;
-mod factory_source;
-mod factory_source_artifact;
-mod factory_source_projection;
-mod integration_administration;
-mod integration_connection;
-mod internal_trigger;
-mod internal_trigger_definition;
-mod issue;
-mod issue_activity;
-mod issue_classification;
-mod issue_code_review;
-mod issue_discussion;
-mod issue_execution;
-mod issue_outcomes;
-mod issue_planning;
-mod issue_reporter;
-mod issue_source;
-mod issue_source_import;
-mod issue_source_mapping;
-mod issue_source_read;
-mod issue_workflow;
-mod job_claim;
-mod job_completion;
-mod job_event_query;
-mod job_events;
-mod lease;
-mod lease_heartbeat;
-mod lease_recovery;
-mod log_index_work;
-mod log_search;
+mod factory;
+mod integrations;
+mod issues;
 mod migration;
 mod mutation;
-mod operator_attention;
-mod pipeline_mutation;
-mod pipeline_query;
-mod pipeline_row;
-mod pool_mutation;
-mod pool_query;
-mod pool_row;
-mod project_input_document;
-mod project_mutation;
-mod project_policy_query;
-mod project_query;
-mod project_row;
-mod project_text_input;
-mod project_text_retention;
+mod operations;
+mod projects;
 mod read_visibility;
-mod ready_queue_notification;
-mod repository_mutation;
-mod resource_search;
-mod restore;
-mod retention;
-mod retention_hold;
-mod retry_build;
-mod schedule;
-mod state;
 mod store;
 mod telemetry;
-mod trigger_evaluation;
-mod trigger_query;
 
 use sqlx::PgPool;
 
-pub use log_search::{LogSearchRebuildSummary, PostgresLogSearchIndex};
+pub use cicd::builds::ready_queue_notification::ready_job_count;
 pub use migration::{
   MIGRATOR, MigrationStatus, PREVIOUS_BINARY_SCHEMA_VERSION, current_schema_version, migrate, migration_status,
   run_migrator,
 };
-pub use ready_queue_notification::ready_job_count;
+pub use operations::log_search::{LogSearchRebuildSummary, PostgresLogSearchIndex};
 pub use store::{FactoryCapabilitySource, PostgresAuthoritativeStore, PostgresStore};
 
 /// PostgreSQL notification channel emitted after a ready-queue transaction commits.
@@ -132,15 +41,3 @@ pub async fn health_check(pool: &PgPool) -> bool {
     .await
     .is_ok_and(|value| value == 1)
 }
-
-mod factory_flow_definition;
-
-mod factory_source_configuration;
-mod factory_source_diagnostics;
-mod integration_project_access;
-
-mod issue_legacy;
-
-mod issue_retention;
-
-mod project_skill_import;

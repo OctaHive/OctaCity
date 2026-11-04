@@ -5,199 +5,13 @@ use octacity_server_store::*;
 use super::PostgresStore;
 
 #[async_trait]
-impl FactoryConfigurationStore for PostgresStore {
-  async fn replay_factory_configuration_mutation(
-    &self,
-    request: ManagementMutation<ReplayFactoryConfigurationMutation>,
-  ) -> Result<Option<FactoryConfigurationMutationOutcome>, StoreError> {
-    crate::factory_configuration::replay_mutation(&self.pool, request).await
-  }
-
-  async fn factory_configuration_availability(
-    &self,
-    project_id: ProjectId,
-  ) -> Result<FactoryConfigurationAvailability, StoreError> {
-    let installed = self.factory_configuration_installation(project_id).await?;
-    crate::factory_runtime_settings::configured_availability(self.pool(), project_id, installed).await
-  }
-
-  async fn factory_configuration_installation(
-    &self,
-    project_id: ProjectId,
-  ) -> Result<FactoryConfigurationAvailability, StoreError> {
-    crate::discovery::require_project(&self.pool, project_id).await?;
-    let mut availability = self.factory_capabilities().availability(project_id).await?;
-    if let FactoryConfigurationAvailability::Available(choices) = &mut availability {
-      let deleted: Vec<uuid::Uuid> = sqlx::query_scalar("SELECT id FROM factory_roles WHERE project_id=$1 AND deleted")
-        .bind(project_id.as_uuid())
-        .fetch_all(&self.pool)
-        .await
-        .map_err(crate::database::unavailable)?;
-      for id in deleted {
-        choices
-          .exclude_role(octacity_server_factory::FactoryRoleId::from_uuid(id).map_err(|_| StoreError::Unavailable)?);
-      }
-    }
-    Ok(availability)
-  }
-
-  async fn refresh_factory_role_models(
-    &self,
-    project: ProjectId,
-    alias: &octacity_server_factory::FactoryKey,
-  ) -> Result<(), StoreError> {
-    crate::discovery::require_project(&self.pool, project).await?;
-    self.factory_capabilities().refresh_role_models(project, alias).await
-  }
-
-  async fn create_factory_configuration(
-    &self,
-    request: ManagementMutation<CreateFactoryConfiguration>,
-  ) -> Result<FactoryConfigurationMutationOutcome, StoreError> {
-    crate::factory_configuration::create(&self.pool, request).await
-  }
-
-  async fn replace_factory_configuration(
-    &self,
-    request: ManagementMutation<ReplaceFactoryConfiguration>,
-  ) -> Result<FactoryConfigurationMutationOutcome, ReplaceFactoryConfigurationError> {
-    crate::factory_configuration::replace(&self.pool, request).await
-  }
-
-  async fn factory_configuration_version(
-    &self,
-    id: octacity_server_factory::FactoryConfigurationId,
-    version: octacity_server_factory::FactoryConfigurationVersion,
-  ) -> Result<PublishedFactoryConfiguration, StoreError> {
-    crate::factory_configuration::read(&self.pool, id, version).await
-  }
-
-  async fn current_factory_configuration(
-    &self,
-    id: octacity_server_factory::FactoryConfigurationId,
-  ) -> Result<PublishedFactoryConfiguration, StoreError> {
-    crate::factory_configuration::read_current(&self.pool, id).await
-  }
-}
-
-#[async_trait]
-impl FactoryAdmissionStore for PostgresStore {
-  async fn recover_factory_admission(
-    &self,
-    identity: &FactoryAdmissionIdentity,
-  ) -> Result<Option<PublishedFactoryAdmission>, StoreError> {
-    crate::factory_admission::recover(&self.pool, identity).await
-  }
-
-  async fn replay_factory_admission(
-    &self,
-    probe: &FactoryAdmissionProbe,
-  ) -> Result<Option<FactoryAdmissionMutationOutcome>, StoreError> {
-    crate::factory_admission::replay(&self.pool, probe).await
-  }
-
-  async fn factory_admission_context(
-    &self,
-    request: ReadFactoryAdmissionContext,
-  ) -> Result<FactoryAdmissionContext, StoreError> {
-    crate::factory_admission::context(&self.pool, request).await
-  }
-
-  async fn admit_factory_work(
-    &self,
-    request: ManagementMutation<AdmitFactoryWork>,
-  ) -> Result<FactoryAdmissionMutationOutcome, StoreError> {
-    crate::factory_admission::admit(&self.pool, request).await
-  }
-}
-
-#[async_trait]
-impl FactoryDiscoveryStore for PostgresStore {
-  async fn list_phase_ready_entries(
-    &self,
-    request: octacity_server_store::ListPhaseReadyEntries,
-  ) -> Result<octacity_server_store::PhaseReadyPage, StoreError> {
-    crate::factory_run::list_phase_ready_entries(&self.pool, request).await
-  }
-
-  async fn list_project_factory_configurations(
-    &self,
-    request: ListProjectFactoryConfigurations,
-  ) -> Result<CurrentFactoryConfigurationPage, StoreError> {
-    crate::factory_discovery::list_configurations(&self.pool, request).await
-  }
-
-  async fn list_factory_runs(&self, request: ListFactoryRuns) -> Result<FactoryRunPage, StoreError> {
-    crate::factory_discovery::list_runs(&self.pool, request).await
-  }
-
-  async fn factory_run_summary(
-    &self,
-    run_id: octacity_server_factory::FactoryRunId,
-    visibility: FactoryRunListVisibility,
-  ) -> Result<FactoryRunSummary, StoreError> {
-    crate::factory_discovery::read_run(&self.pool, run_id, visibility).await
-  }
-}
-
-#[async_trait]
-impl FactoryRunStore for PostgresStore {
-  async fn factory_run_snapshot(
-    &self,
-    run_id: octacity_server_factory::FactoryRunId,
-  ) -> Result<FactoryRunSnapshot, StoreError> {
-    crate::factory_run::read_snapshot(&self.pool, run_id).await
-  }
-
-  async fn list_factory_run_diagnostics(
-    &self,
-    request: octacity_server_store::ListFactoryRunDiagnostics,
-  ) -> Result<octacity_server_store::FactoryRunDiagnosticPage, StoreError> {
-    crate::factory_run::list_diagnostics(&self.pool, request).await
-  }
-
-  async fn claim_factory_run(&self, request: ClaimFactoryRun) -> Result<ClaimFactoryRunOutcome, StoreError> {
-    crate::factory_run::claim(&self.pool, request).await
-  }
-
-  async fn claim_factory_runs(&self, request: ClaimFactoryRuns) -> Result<Vec<ClaimedFactoryRun>, StoreError> {
-    crate::factory_run::claim_batch(&self.pool, request).await
-  }
-
-  async fn commit_factory_run_transition(
-    &self,
-    request: CommitFactoryRunTransition,
-  ) -> Result<CommitFactoryRunTransitionOutcome, StoreError> {
-    crate::factory_run::commit_transition(&self.pool, request).await
-  }
-
-  async fn claim_factory_outbox(&self, request: ClaimFactoryOutbox) -> Result<Vec<ClaimedFactoryOutbox>, StoreError> {
-    crate::factory_run::claim_outbox(&self.pool, request).await
-  }
-
-  async fn settle_factory_outbox(&self, request: SettleFactoryOutbox) -> Result<FactoryOutboxRecord, StoreError> {
-    crate::factory_run::settle_outbox(&self.pool, request).await
-  }
-}
-
-#[async_trait]
-impl FactoryRunControlStore for PostgresStore {
-  async fn apply_factory_run_control(
-    &self,
-    request: ManagementMutation<ApplyFactoryRunControl>,
-  ) -> Result<FactoryRunControlOutcome, StoreError> {
-    crate::factory_run::apply_control(&self.pool, request).await
-  }
-}
-
-#[async_trait]
 impl ProjectStore for PostgresStore {
   async fn create_project(
     &self,
     request: ManagementMutation<CreateProject>,
   ) -> Result<ProjectMutationOutcome, StoreError> {
     let (request, audit) = request.into_parts();
-    crate::project_mutation::create(&self.pool, request, &audit).await
+    crate::projects::project_mutation::create(&self.pool, request, &audit).await
   }
 
   async fn rename_project(
@@ -205,20 +19,20 @@ impl ProjectStore for PostgresStore {
     request: ManagementMutation<RenameProject>,
   ) -> Result<ProjectMutationOutcome, StoreError> {
     let (request, audit) = request.into_parts();
-    crate::project_mutation::rename(&self.pool, request, &audit).await
+    crate::projects::project_mutation::rename(&self.pool, request, &audit).await
   }
 
   async fn move_project(&self, request: ManagementMutation<MoveProject>) -> Result<ProjectMutationOutcome, StoreError> {
     let (request, audit) = request.into_parts();
-    crate::project_mutation::move_project(&self.pool, request, &audit).await
+    crate::projects::project_mutation::move_project(&self.pool, request, &audit).await
   }
 
   async fn project(&self, project_id: ProjectId) -> Result<ProjectDetails, StoreError> {
-    crate::project_query::read(&self.pool, project_id).await
+    crate::projects::project_query::read(&self.pool, project_id).await
   }
 
   async fn list_projects(&self, request: ListProjects) -> Result<ProjectPage, StoreError> {
-    crate::project_query::list(&self.pool, request).await
+    crate::projects::project_query::list(&self.pool, request).await
   }
 
   async fn delete_project(
@@ -226,35 +40,35 @@ impl ProjectStore for PostgresStore {
     request: ManagementMutation<DeleteProject>,
   ) -> Result<DeleteProjectOutcome, StoreError> {
     let (request, audit) = request.into_parts();
-    crate::project_mutation::delete(&self.pool, request, &audit).await
+    crate::projects::project_mutation::delete(&self.pool, request, &audit).await
   }
 }
 
 #[async_trait]
 impl ResourceSearchStore for PostgresStore {
   async fn search_resources(&self, request: SearchResources) -> Result<ResourceSearchPage, StoreError> {
-    crate::resource_search::search(&self.pool, request).await
+    crate::operations::resource_search::search(&self.pool, request).await
   }
 }
 
 #[async_trait]
 impl OperatorAttentionStore for PostgresStore {
   async fn list_operator_attention(&self, request: ListOperatorAttention) -> Result<OperatorAttentionPage, StoreError> {
-    crate::operator_attention::list(&self.pool, request).await
+    crate::operations::operator_attention::list(&self.pool, request).await
   }
 }
 
 #[async_trait]
 impl CriticalSystemConditionStore for PostgresStore {
   async fn record_critical_system_condition(&self, change: CriticalSystemConditionChange) -> Result<(), StoreError> {
-    crate::operator_attention::record_critical_system_condition(&self.pool, change).await
+    crate::operations::operator_attention::record_critical_system_condition(&self.pool, change).await
   }
 }
 
 #[async_trait]
 impl ProjectPolicyStore for PostgresStore {
   async fn project_policy_lineage(&self, project_id: ProjectId) -> Result<Vec<ProjectPolicyDocument>, StoreError> {
-    crate::project_policy_query::lineage(&self.pool, project_id).await
+    crate::projects::project_policy_query::lineage(&self.pool, project_id).await
   }
 }
 
@@ -265,7 +79,7 @@ impl DefinitionStore for PostgresStore {
     request: ManagementMutation<PublishProjectPolicy>,
   ) -> Result<ProjectPolicyMutationOutcome, StoreError> {
     let (request, audit) = request.into_parts();
-    crate::definition_mutation::publish_policy(&self.pool, request, &audit).await
+    crate::cicd::definitions::definition_mutation::publish_policy(&self.pool, request, &audit).await
   }
 
   async fn create_trigger_definition(
@@ -273,7 +87,7 @@ impl DefinitionStore for PostgresStore {
     request: ManagementMutation<CreateTriggerDefinition>,
   ) -> Result<TriggerDefinitionMutationOutcome, StoreError> {
     let (request, audit) = request.into_parts();
-    crate::definition_mutation::create_trigger(&self.pool, request, &audit).await
+    crate::cicd::definitions::definition_mutation::create_trigger(&self.pool, request, &audit).await
   }
 
   async fn manual_trigger_definition(
@@ -281,7 +95,7 @@ impl DefinitionStore for PostgresStore {
     trigger_id: TriggerId,
     version: TriggerVersion,
   ) -> Result<ManualTriggerDefinitionRecord, StoreError> {
-    crate::definition_query::read_manual(&self.pool, trigger_id, version).await
+    crate::cicd::definitions::definition_query::read_manual(&self.pool, trigger_id, version).await
   }
 }
 
@@ -292,7 +106,7 @@ impl ScheduleStore for PostgresStore {
     request: ManagementMutation<CreateSchedule>,
   ) -> Result<TriggerDefinitionMutationOutcome, StoreError> {
     let (request, audit) = request.into_parts();
-    crate::schedule::create(&self.pool, request, &audit).await
+    crate::cicd::triggers::schedule::create(&self.pool, request, &audit).await
   }
 
   async fn schedule(
@@ -300,15 +114,15 @@ impl ScheduleStore for PostgresStore {
     trigger_id: octacity_server_domain::TriggerId,
     version: octacity_server_domain::TriggerVersion,
   ) -> Result<ScheduleRecord, StoreError> {
-    crate::schedule::read(&self.pool, trigger_id, version).await
+    crate::cicd::triggers::schedule::read(&self.pool, trigger_id, version).await
   }
 
   async fn claim_due_schedules(&self, request: ClaimDueSchedules) -> Result<Vec<DueScheduleClaim>, StoreError> {
-    crate::schedule::claim(&self.pool, request).await
+    crate::cicd::triggers::schedule::claim(&self.pool, request).await
   }
 
   async fn complete_schedule_claim(&self, request: CompleteScheduleClaim) -> Result<MutationDisposition, StoreError> {
-    crate::schedule::complete(&self.pool, request).await
+    crate::cicd::triggers::schedule::complete(&self.pool, request).await
   }
 }
 
@@ -319,7 +133,7 @@ impl AgentPoolStore for PostgresStore {
     request: ManagementMutation<CreateAgentPool>,
   ) -> Result<AgentPoolMutationOutcome, StoreError> {
     let (request, audit) = request.into_parts();
-    crate::pool_mutation::create(&self.pool, request, &audit).await
+    crate::cicd::agents::pool_mutation::create(&self.pool, request, &audit).await
   }
 
   async fn publish_agent_pool_version(
@@ -327,19 +141,19 @@ impl AgentPoolStore for PostgresStore {
     request: ManagementMutation<PublishAgentPoolVersion>,
   ) -> Result<AgentPoolMutationOutcome, StoreError> {
     let (request, audit) = request.into_parts();
-    crate::pool_mutation::publish(&self.pool, request, &audit).await
+    crate::cicd::agents::pool_mutation::publish(&self.pool, request, &audit).await
   }
 
   async fn agent_pool_version(&self, pool_id: PoolId, version: PoolVersion) -> Result<PublishedAgentPool, StoreError> {
-    crate::pool_query::read(&self.pool, pool_id, version).await
+    crate::cicd::agents::pool_query::read(&self.pool, pool_id, version).await
   }
 
   async fn current_agent_pool(&self, pool_id: PoolId) -> Result<PublishedAgentPool, StoreError> {
-    crate::pool_query::read_current(&self.pool, pool_id).await
+    crate::cicd::agents::pool_query::read_current(&self.pool, pool_id).await
   }
 
   async fn list_agent_pools(&self, request: ListAgentPools) -> Result<AgentPoolPage, StoreError> {
-    crate::pool_query::list(&self.pool, request).await
+    crate::cicd::agents::pool_query::list(&self.pool, request).await
   }
 
   async fn delete_agent_pool(
@@ -347,7 +161,7 @@ impl AgentPoolStore for PostgresStore {
     request: ManagementMutation<DeleteAgentPool>,
   ) -> Result<DeleteAgentPoolOutcome, StoreError> {
     let (request, audit) = request.into_parts();
-    crate::pool_mutation::delete(&self.pool, request, &audit).await
+    crate::cicd::agents::pool_mutation::delete(&self.pool, request, &audit).await
   }
 }
 
@@ -358,18 +172,18 @@ impl AgentStore for PostgresStore {
     request: ManagementMutation<octacity_server_store::SetAgentEnabled>,
   ) -> Result<octacity_server_store::SetAgentEnabledOutcome, StoreError> {
     let (request, audit) = request.into_parts();
-    crate::agent_mutation::set_enabled(&self.pool, request, &audit).await
+    crate::cicd::agents::agent_mutation::set_enabled(&self.pool, request, &audit).await
   }
 
   async fn agent_detail(
     &self,
     agent_id: octacity_server_domain::AgentId,
   ) -> Result<octacity_server_store::AgentDetail, StoreError> {
-    crate::agent_query::read_detail(&self.pool, agent_id).await
+    crate::cicd::agents::agent_query::read_detail(&self.pool, agent_id).await
   }
 
   async fn list_agents(&self, request: ListAgents) -> Result<AgentPage, StoreError> {
-    crate::agent_query::list(&self.pool, request).await
+    crate::cicd::agents::agent_query::list(&self.pool, request).await
   }
 
   async fn reassign_agent_pool(
@@ -377,12 +191,12 @@ impl AgentStore for PostgresStore {
     request: ManagementMutation<ReassignAgentPool>,
   ) -> Result<ReassignAgentPoolOutcome, StoreError> {
     let (request, audit) = request.into_parts();
-    crate::agent_mutation::reassign(&self.pool, request, &audit).await
+    crate::cicd::agents::agent_mutation::reassign(&self.pool, request, &audit).await
   }
 
   async fn drain_agent(&self, request: ManagementMutation<DrainAgent>) -> Result<DrainAgentOutcome, StoreError> {
     let (request, audit) = request.into_parts();
-    crate::agent_mutation::drain(&self.pool, request, &audit).await
+    crate::cicd::agents::agent_mutation::drain(&self.pool, request, &audit).await
   }
 }
 
@@ -393,7 +207,7 @@ impl PipelineStore for PostgresStore {
     request: ManagementMutation<octacity_server_store::CreatePipeline>,
   ) -> Result<PipelineMutationOutcome, StoreError> {
     let (request, audit) = request.into_parts();
-    crate::pipeline_mutation::create(&self.pool, request, &audit).await
+    crate::cicd::definitions::pipeline_mutation::create(&self.pool, request, &audit).await
   }
 
   async fn publish_pipeline_version(
@@ -401,7 +215,7 @@ impl PipelineStore for PostgresStore {
     request: ManagementMutation<PublishPipelineVersion>,
   ) -> Result<PipelineMutationOutcome, StoreError> {
     let (request, audit) = request.into_parts();
-    crate::pipeline_mutation::publish(&self.pool, request, &audit).await
+    crate::cicd::definitions::pipeline_mutation::publish(&self.pool, request, &audit).await
   }
 
   async fn pipeline_version(
@@ -409,14 +223,14 @@ impl PipelineStore for PostgresStore {
     pipeline_id: PipelineId,
     version: PipelineVersion,
   ) -> Result<PublishedPipeline, StoreError> {
-    crate::pipeline_query::read(&self.pool, pipeline_id, version).await
+    crate::cicd::definitions::pipeline_query::read(&self.pool, pipeline_id, version).await
   }
 }
 
 #[async_trait]
 impl PipelineDiscoveryStore for PostgresStore {
   async fn list_project_pipelines(&self, request: ListProjectPipelines) -> Result<CurrentPipelinePage, StoreError> {
-    crate::definition_discovery::pipelines(&self.pool, request).await
+    crate::cicd::definitions::definition_discovery::pipelines(&self.pool, request).await
   }
 }
 
@@ -427,7 +241,7 @@ impl ConfigurationStore for PostgresStore {
     request: ManagementMutation<CreateRepository>,
   ) -> Result<RepositoryMutationOutcome, StoreError> {
     let (request, audit) = request.into_parts();
-    crate::repository_mutation::create(&self.pool, request, &audit).await
+    crate::projects::repository_mutation::create(&self.pool, request, &audit).await
   }
 
   async fn publish_repository_version(
@@ -435,7 +249,7 @@ impl ConfigurationStore for PostgresStore {
     request: ManagementMutation<PublishRepositoryVersion>,
   ) -> Result<RepositoryMutationOutcome, StoreError> {
     let (request, audit) = request.into_parts();
-    crate::repository_mutation::publish(&self.pool, request, &audit).await
+    crate::projects::repository_mutation::publish(&self.pool, request, &audit).await
   }
 
   async fn repository_version(
@@ -443,7 +257,7 @@ impl ConfigurationStore for PostgresStore {
     repository_id: RepositoryId,
     version: RepositoryVersion,
   ) -> Result<PublishedRepository, StoreError> {
-    crate::configuration_query::repository(&self.pool, repository_id, version).await
+    crate::cicd::definitions::configuration_query::repository(&self.pool, repository_id, version).await
   }
 
   async fn create_build_configuration(
@@ -451,7 +265,7 @@ impl ConfigurationStore for PostgresStore {
     request: ManagementMutation<CreateBuildConfiguration>,
   ) -> Result<BuildConfigurationMutationOutcome, StoreError> {
     let (request, audit) = request.into_parts();
-    crate::build_configuration_mutation::create(&self.pool, request, &audit).await
+    crate::cicd::definitions::build_configuration_mutation::create(&self.pool, request, &audit).await
   }
 
   async fn publish_build_configuration_version(
@@ -459,7 +273,7 @@ impl ConfigurationStore for PostgresStore {
     request: ManagementMutation<PublishBuildConfigurationVersion>,
   ) -> Result<BuildConfigurationMutationOutcome, StoreError> {
     let (request, audit) = request.into_parts();
-    crate::build_configuration_mutation::publish(&self.pool, request, &audit).await
+    crate::cicd::definitions::build_configuration_mutation::publish(&self.pool, request, &audit).await
   }
 
   async fn build_configuration_version(
@@ -467,7 +281,7 @@ impl ConfigurationStore for PostgresStore {
     configuration_id: BuildConfigurationId,
     version: BuildConfigurationVersion,
   ) -> Result<PublishedBuildConfiguration, StoreError> {
-    crate::configuration_query::build_configuration(&self.pool, configuration_id, version).await
+    crate::cicd::definitions::configuration_query::build_configuration(&self.pool, configuration_id, version).await
   }
 }
 
@@ -477,14 +291,14 @@ impl ConfigurationDiscoveryStore for PostgresStore {
     &self,
     request: ListProjectRepositories,
   ) -> Result<CurrentRepositoryPage, StoreError> {
-    crate::definition_discovery::repositories(&self.pool, request).await
+    crate::cicd::definitions::definition_discovery::repositories(&self.pool, request).await
   }
 
   async fn list_project_build_configurations(
     &self,
     request: ListProjectBuildConfigurations,
   ) -> Result<CurrentBuildConfigurationPage, StoreError> {
-    crate::definition_discovery::build_configurations(&self.pool, request).await
+    crate::cicd::definitions::definition_discovery::build_configurations(&self.pool, request).await
   }
 }
 
@@ -494,7 +308,7 @@ impl TriggerDefinitionDiscoveryStore for PostgresStore {
     &self,
     request: ListProjectTriggerDefinitions,
   ) -> Result<CurrentTriggerDefinitionPage, StoreError> {
-    crate::definition_discovery::triggers(&self.pool, request).await
+    crate::cicd::definitions::definition_discovery::triggers(&self.pool, request).await
   }
 }
 
@@ -505,18 +319,18 @@ impl AgentCredentialStore for PostgresStore {
     request: ManagementMutation<IssueAgentEnrollment>,
   ) -> Result<IssueAgentEnrollmentOutcome, StoreError> {
     let (request, audit) = request.into_parts();
-    crate::agent_enrollment::execute(&self.pool, request, &audit).await
+    crate::cicd::agents::agent_enrollment::execute(&self.pool, request, &audit).await
   }
 
   async fn register_agent(&self, request: RegisterAgent) -> Result<AgentRegistrationOutcome, StoreError> {
-    crate::agent_registration::execute(&self.pool, request).await
+    crate::cicd::agents::agent_registration::execute(&self.pool, request).await
   }
 
   async fn authenticate_agent_registration(
     &self,
     request: AuthenticateAgentRegistration,
   ) -> Result<AuthenticatedAgentRegistration, StoreError> {
-    crate::agent_credential_auth::execute(&self.pool, request).await
+    crate::cicd::agents::agent_credential_auth::execute(&self.pool, request).await
   }
 
   async fn revoke_agent_credential(
@@ -524,77 +338,7 @@ impl AgentCredentialStore for PostgresStore {
     request: ManagementMutation<RevokeAgentCredential>,
   ) -> Result<MutationDisposition, StoreError> {
     let (request, audit) = request.into_parts();
-    crate::agent_credential_revocation::execute(&self.pool, request, &audit).await
-  }
-}
-
-#[async_trait]
-impl FactoryPhasePoolStore for PostgresStore {
-  async fn ready_phase_policies(
-    &self,
-    after: Option<octacity_server_factory::FactoryDigest>,
-    limit: u16,
-  ) -> Result<Vec<octacity_server_factory::FactoryDigest>, StoreError> {
-    crate::factory_run::ready_phase_policies(&self.pool, after, limit).await
-  }
-
-  async fn phase_pool_selection_for_claim(
-    &self,
-    run: octacity_server_factory::FactoryRunId,
-    claim: octacity_server_factory::FactoryDigest,
-  ) -> Result<Option<PhasePoolSelection>, StoreError> {
-    let mut connection = self.pool.acquire().await.map_err(crate::database::unavailable)?;
-    crate::factory_run::selection_for_claim(&mut connection, run, claim).await
-  }
-  async fn publish_phase_ready(
-    &self,
-    policy: octacity_server_factory::PhasePoolPolicy,
-    input: PhasePoolInput,
-  ) -> Result<PhasePoolEntry, StoreError> {
-    crate::factory_run::publish_phase_ready(&self.pool, policy, input).await
-  }
-  async fn phase_ready_entries(
-    &self,
-    policy: octacity_server_factory::FactoryDigest,
-    after: Option<octacity_server_factory::FactoryDigest>,
-    limit: u16,
-  ) -> Result<Vec<PhasePoolEntry>, StoreError> {
-    crate::factory_run::phase_ready_entries(&self.pool, policy, after, limit).await
-  }
-  async fn select_phase_ready(&self, request: SelectPhasePool) -> Result<Vec<PhasePoolSelection>, StoreError> {
-    crate::factory_run::select_phase_ready(&self.pool, request).await
-  }
-}
-
-#[async_trait]
-impl octacity_server_store::FactoryFlowDefinitionStore for PostgresStore {
-  async fn replay_factory_flow_definition(
-    &self,
-    request: ManagementMutation<octacity_server_store::ReplayFactoryFlowDefinition>,
-  ) -> Result<Option<octacity_server_store::FactoryFlowDefinitionMutationOutcome>, StoreError> {
-    crate::factory_flow_definition::replay_mutation(&self.pool, request).await
-  }
-  async fn publish_factory_flow_definition(
-    &self,
-    request: ManagementMutation<octacity_server_store::PublishFactoryFlowDefinition>,
-  ) -> Result<octacity_server_store::FactoryFlowDefinitionMutationOutcome, ReplaceFactoryConfigurationError> {
-    crate::factory_flow_definition::publish(&self.pool, request).await
-  }
-  async fn factory_flow_definition(
-    &self,
-    id: octacity_server_factory::FlowDefinitionId,
-    version: Option<octacity_server_factory::FlowDefinitionVersion>,
-  ) -> Result<octacity_server_store::PublishedFactoryFlowDefinition, StoreError> {
-    crate::factory_flow_definition::read(&self.pool, id, version).await
-  }
-  async fn list_factory_flow_definitions(
-    &self,
-    project: ProjectId,
-    after: Option<octacity_server_store::FlowDefinitionPagePosition>,
-    limit: u16,
-    visibility: octacity_server_store::FlowDefinitionListVisibility,
-  ) -> Result<octacity_server_store::FactoryFlowDefinitionPage, StoreError> {
-    crate::factory_flow_definition::list(&self.pool, project, after, limit, visibility).await
+    crate::cicd::agents::agent_credential_revocation::execute(&self.pool, request, &audit).await
   }
 }
 
@@ -604,26 +348,26 @@ impl IntegrationConnectionStore for PostgresStore {
     &self,
     request: ReadIntegrationConnections,
   ) -> Result<IntegrationConnectionPage, StoreError> {
-    crate::integration_connection::list(&self.pool, request).await
+    crate::integrations::integration_connection::list(&self.pool, request).await
   }
   async fn replay_integration_connection(
     &self,
     request: ManagementMutation<ReplayIntegrationConnection>,
   ) -> Result<Option<IntegrationConnectionMutationOutcome>, StoreError> {
-    crate::integration_connection::replay_mutation(&self.pool, request).await
+    crate::integrations::integration_connection::replay_mutation(&self.pool, request).await
   }
   async fn publish_integration_connection(
     &self,
     request: ManagementMutation<PublishIntegrationConnection>,
   ) -> Result<IntegrationConnectionMutationOutcome, StoreError> {
-    crate::integration_connection::publish(&self.pool, request).await
+    crate::integrations::integration_connection::publish(&self.pool, request).await
   }
   async fn integration_connection(
     &self,
     id: IntegrationId,
     version: Option<IntegrationVersion>,
   ) -> Result<PublishedIntegrationConnection, StoreError> {
-    crate::integration_connection::read(&self.pool, id, version).await
+    crate::integrations::integration_connection::read(&self.pool, id, version).await
   }
 }
 
@@ -633,28 +377,28 @@ impl IntegrationAdministrationStore for PostgresStore {
     &self,
     request: ManagementMutation<BeginIntegrationAdministration>,
   ) -> Result<IntegrationAdministrationReceipt, StoreError> {
-    crate::integration_administration::begin(&self.pool, request).await
+    crate::integrations::integration_administration::begin(&self.pool, request).await
   }
   async fn complete_integration_administration(
     &self,
     request: ManagementMutation<IntegrationAdministrationReceipt>,
   ) -> Result<IntegrationAdministrationReceipt, StoreError> {
-    crate::integration_administration::complete(&self.pool, request).await
+    crate::integrations::integration_administration::complete(&self.pool, request).await
   }
   async fn integration_administration(&self, id: IntegrationId) -> Result<IntegrationAdministrationState, StoreError> {
-    crate::integration_administration::read(&self.pool, id).await
+    crate::integrations::integration_administration::read(&self.pool, id).await
   }
   async fn integration_preparation_cleanup(
     &self,
     request: ManagementMutation<IntegrationPreparationCleanup>,
   ) -> Result<Vec<octacity_server_store::CredentialPublication>, StoreError> {
-    crate::integration_administration::cleanup(&self.pool, request).await
+    crate::integrations::integration_administration::cleanup(&self.pool, request).await
   }
   async fn acknowledge_integration_preparation_cleanup(
     &self,
     request: ManagementMutation<octacity_server_store::CredentialPublication>,
   ) -> Result<(), StoreError> {
-    crate::integration_administration::acknowledge(&self.pool, request).await
+    crate::integrations::integration_administration::acknowledge(&self.pool, request).await
   }
 }
 
@@ -664,13 +408,13 @@ impl IntegrationProjectAccessStore for PostgresStore {
     &self,
     request: ManagementMutation<PublishIntegrationProjectAccess>,
   ) -> Result<IntegrationProjectAccessOutcome, StoreError> {
-    crate::integration_project_access::publish(&self.pool, request).await
+    crate::integrations::integration_project_access::publish(&self.pool, request).await
   }
   async fn integration_project_access(
     &self,
     connection_id: IntegrationId,
     project_id: octacity_server_domain::ProjectId,
   ) -> Result<Option<PublishedIntegrationProjectAccess>, StoreError> {
-    crate::integration_project_access::read(&self.pool, connection_id, project_id).await
+    crate::integrations::integration_project_access::read(&self.pool, connection_id, project_id).await
   }
 }

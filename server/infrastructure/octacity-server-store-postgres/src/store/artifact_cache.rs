@@ -7,36 +7,40 @@ use super::PostgresStore;
 #[async_trait]
 impl AuditFactStore for PostgresStore {
   async fn list_audit_facts(&self, request: ListAuditFacts) -> Result<AuditFactPage, StoreError> {
-    crate::audit_query::list(&self.pool, request).await
+    crate::operations::audit_query::list(&self.pool, request).await
   }
 }
 
 #[async_trait]
 impl ArtifactRecordStore for PostgresStore {
   async fn reserve_artifact(&self, request: ReserveArtifact) -> Result<ArtifactRecord, StoreError> {
-    crate::artifact::reserve(&self.pool, request).await
+    crate::artifacts::artifact::reserve(&self.pool, request).await
   }
 
   async fn artifact(&self, artifact_id: octacity_server_domain::ArtifactId) -> Result<ArtifactRecord, StoreError> {
-    crate::artifact::read(&self.pool, artifact_id).await
+    crate::artifacts::artifact::read(&self.pool, artifact_id).await
   }
 
   async fn transition_artifact(&self, request: TransitionArtifact) -> Result<ArtifactRecord, StoreError> {
-    crate::artifact::transition(&self.pool, request).await
+    crate::artifacts::artifact::transition(&self.pool, request).await
   }
 
   async fn begin_artifact_upload(
     &self,
     request: BeginArtifactUpload,
   ) -> Result<BeginArtifactUploadOutcome, StoreError> {
-    crate::telemetry::observe(Operation::Upload, crate::artifact::begin_upload(&self.pool, request)).await
+    crate::telemetry::observe(
+      Operation::Upload,
+      crate::artifacts::artifact::begin_upload(&self.pool, request),
+    )
+    .await
   }
 
   async fn artifact_upload(
     &self,
     upload_id: octacity_server_domain::ArtifactUploadId,
   ) -> Result<ArtifactUploadRecord, StoreError> {
-    crate::artifact::read_upload(&self.pool, upload_id).await
+    crate::artifacts::artifact::read_upload(&self.pool, upload_id).await
   }
 
   async fn begin_artifact_verification(
@@ -45,7 +49,7 @@ impl ArtifactRecordStore for PostgresStore {
   ) -> Result<ArtifactUploadRecord, StoreError> {
     crate::telemetry::observe(
       Operation::Verify,
-      crate::artifact::begin_verification(&self.pool, request),
+      crate::artifacts::artifact::begin_verification(&self.pool, request),
     )
     .await
   }
@@ -57,7 +61,7 @@ impl ArtifactRecordStore for PostgresStore {
   ) -> Result<ArtifactUploadRecord, StoreError> {
     crate::telemetry::observe(
       Operation::Complete,
-      crate::artifact::finish_verification(&self.pool, request, result),
+      crate::artifacts::artifact::finish_verification(&self.pool, request, result),
     )
     .await
   }
@@ -66,23 +70,25 @@ impl ArtifactRecordStore for PostgresStore {
     &self,
     artifact_id: octacity_server_domain::ArtifactId,
   ) -> Result<ArtifactUploadRecord, StoreError> {
-    crate::artifact::published(&self.pool, artifact_id).await
+    crate::artifacts::artifact::published(&self.pool, artifact_id).await
   }
 
   async fn published_execution_input(
     &self,
     artifact_id: octacity_server_domain::ArtifactId,
   ) -> Result<PublishedExecutionInput, StoreError> {
-    if let Some(input) = crate::factory_execution_input::read(&self.pool, artifact_id).await? {
+    if let Some(input) = crate::factory::execution::factory_execution_input::read(&self.pool, artifact_id).await? {
       return Ok(input);
     }
-    if let Some(input) = crate::factory_source_artifact::execution_input(&self.pool, artifact_id).await? {
+    if let Some(input) =
+      crate::factory::sources::factory_source_artifact::execution_input(&self.pool, artifact_id).await?
+    {
       return Ok(input);
     }
-    if let Some(input) = crate::project_text_input::execution_input(&self.pool, artifact_id).await? {
+    if let Some(input) = crate::projects::project_text_input::execution_input(&self.pool, artifact_id).await? {
       return Ok(input);
     }
-    if let Some(input) = crate::project_skill_import::execution_input(&self.pool, artifact_id).await? {
+    if let Some(input) = crate::projects::project_skill_import::execution_input(&self.pool, artifact_id).await? {
       return Ok(input);
     }
     let upload = self.published_artifact(artifact_id).await?;
@@ -94,7 +100,7 @@ impl ArtifactRecordStore for PostgresStore {
     job_id: octacity_server_domain::JobId,
     artifact_id: octacity_server_domain::ArtifactId,
   ) -> Result<PublishedExecutionInput, StoreError> {
-    crate::artifact_execution_input_scope::require_for_job(&self.pool, job_id, artifact_id).await?;
+    crate::artifacts::artifact_execution_input_scope::require_for_job(&self.pool, job_id, artifact_id).await?;
     self.published_execution_input(artifact_id).await
   }
 
@@ -102,39 +108,43 @@ impl ArtifactRecordStore for PostgresStore {
     &self,
     query: ListPublishedArtifacts,
   ) -> Result<Vec<ArtifactUploadRecord>, StoreError> {
-    crate::artifact::list_published(&self.pool, query).await
+    crate::artifacts::artifact::list_published(&self.pool, query).await
   }
 }
 
 #[async_trait]
 impl CacheSessionStore for PostgresStore {
   async fn begin_cache_session(&self, request: BeginCacheSession) -> Result<BeginCacheSessionOutcome, StoreError> {
-    crate::telemetry::observe(Operation::Accept, crate::cache::begin(&self.pool, request)).await
+    crate::telemetry::observe(Operation::Accept, crate::artifacts::cache::begin(&self.pool, request)).await
   }
 
   async fn revoke_cache_session(&self, request: RevokeCacheSession) -> Result<MutationDisposition, StoreError> {
-    crate::telemetry::observe(Operation::Cancel, crate::cache::revoke(&self.pool, request)).await
+    crate::telemetry::observe(Operation::Cancel, crate::artifacts::cache::revoke(&self.pool, request)).await
   }
 
   async fn authorize_cache_session(
     &self,
     request: AuthorizeCacheSession,
   ) -> Result<CacheAuthorizationOutcome, StoreError> {
-    crate::telemetry::observe(Operation::Authenticate, crate::cache::authorize(&self.pool, request)).await
+    crate::telemetry::observe(
+      Operation::Authenticate,
+      crate::artifacts::cache::authorize(&self.pool, request),
+    )
+    .await
   }
 
   async fn cache_session(
     &self,
     session_id: octacity_server_domain::CacheSessionId,
   ) -> Result<CacheSessionRecord, StoreError> {
-    crate::cache::read(&self.pool, session_id).await
+    crate::artifacts::cache::read(&self.pool, session_id).await
   }
 
   async fn list_build_cache_sessions(
     &self,
     request: ListBuildCacheSessions,
   ) -> Result<Vec<CacheSessionRecord>, StoreError> {
-    crate::cache::list(&self.pool, request).await
+    crate::artifacts::cache::list(&self.pool, request).await
   }
 }
 
@@ -145,7 +155,7 @@ impl CacheDataStore for PostgresStore {
     credential_digest: octacity_server_cache::CacheCredentialDigest,
     observed_at: octacity_server_domain::Timestamp,
   ) -> Result<octacity_server_cache::CacheNamespace, StoreError> {
-    crate::cache::resolve_namespace(&self.pool, credential_digest, observed_at).await
+    crate::artifacts::cache::resolve_namespace(&self.pool, credential_digest, observed_at).await
   }
 
   async fn find_missing_cache_blobs(
@@ -153,7 +163,7 @@ impl CacheDataStore for PostgresStore {
     access: CacheDataAccess,
     blobs: Vec<octacity_server_cache::BlobDescriptor>,
   ) -> Result<Vec<octacity_server_cache::BlobDescriptor>, StoreError> {
-    crate::cache::find_missing_blobs(&self.pool, access, blobs).await
+    crate::artifacts::cache::find_missing_blobs(&self.pool, access, blobs).await
   }
 
   async fn cache_blob(
@@ -161,11 +171,15 @@ impl CacheDataStore for PostgresStore {
     access: CacheDataAccess,
     blob: octacity_server_cache::BlobDescriptor,
   ) -> Result<Option<octacity_server_cache::CacheBlobObject>, StoreError> {
-    crate::cache::read_blob(&self.pool, access, blob).await
+    crate::artifacts::cache::read_blob(&self.pool, access, blob).await
   }
 
   async fn publish_cache_blob(&self, request: PublishCacheBlob) -> Result<CachePublicationOutcome, StoreError> {
-    crate::telemetry::observe(Operation::Upload, crate::cache::publish_blob(&self.pool, request)).await
+    crate::telemetry::observe(
+      Operation::Upload,
+      crate::artifacts::cache::publish_blob(&self.pool, request),
+    )
+    .await
   }
 
   async fn prepare_cache_blob(
@@ -173,7 +187,7 @@ impl CacheDataStore for PostgresStore {
     access: CacheDataAccess,
     blob: octacity_server_cache::BlobDescriptor,
   ) -> Result<CacheBlobPreparationOutcome, StoreError> {
-    crate::cache::prepare_blob(&self.pool, access, blob).await
+    crate::artifacts::cache::prepare_blob(&self.pool, access, blob).await
   }
 
   async fn cache_action(
@@ -181,42 +195,46 @@ impl CacheDataStore for PostgresStore {
     access: CacheDataAccess,
     action: octacity_server_cache::Digest,
   ) -> Result<Option<octacity_server_cache::ActionResultV1>, StoreError> {
-    crate::cache::read_action(&self.pool, access, action).await
+    crate::artifacts::cache::read_action(&self.pool, access, action).await
   }
 
   async fn publish_cache_action(&self, request: PublishCacheAction) -> Result<CachePublicationOutcome, StoreError> {
-    crate::telemetry::observe(Operation::Upload, crate::cache::publish_action(&self.pool, request)).await
+    crate::telemetry::observe(
+      Operation::Upload,
+      crate::artifacts::cache::publish_action(&self.pool, request),
+    )
+    .await
   }
 
   async fn prune_cache(&self, access: CacheDataAccess) -> Result<CacheRetentionOutcome, StoreError> {
-    crate::cache::prune(&self.pool, access).await
+    crate::artifacts::cache::prune(&self.pool, access).await
   }
 }
 
 #[async_trait]
 impl BuildRetentionStore for PostgresStore {
   async fn claim_retention_work(&self, request: ClaimRetentionWork) -> Result<Vec<RetentionWorkClaim>, StoreError> {
-    crate::retention::claim(&self.pool, request).await
+    crate::operations::retention::claim(&self.pool, request).await
   }
 
   async fn prepare_retention_work(&self, request: PrepareRetentionWork) -> Result<RetentionPreparation, StoreError> {
-    crate::retention::prepare(&self.pool, request).await
+    crate::operations::retention::prepare(&self.pool, request).await
   }
 
   async fn complete_retention_search(&self, request: CompleteRetentionSearch) -> Result<(), StoreError> {
-    crate::retention::complete_search(&self.pool, request).await
+    crate::operations::retention::complete_search(&self.pool, request).await
   }
 
   async fn complete_retention_object(&self, request: CompleteRetentionObject) -> Result<(), StoreError> {
-    crate::retention::complete_object(&self.pool, request).await
+    crate::operations::retention::complete_object(&self.pool, request).await
   }
 
   async fn finish_retention_pass(&self, request: FinishRetentionPass) -> Result<RetentionPassOutcome, StoreError> {
-    crate::retention::finish_pass(&self.pool, request).await
+    crate::operations::retention::finish_pass(&self.pool, request).await
   }
 
   async fn fail_retention_work(&self, request: FailRetentionWork) -> Result<(), StoreError> {
-    crate::retention::fail(&self.pool, request).await
+    crate::operations::retention::fail(&self.pool, request).await
   }
 }
 
@@ -226,7 +244,7 @@ impl BuildResultRetentionHoldStore for PostgresStore {
     &self,
     query: GetBuildResultRetention,
   ) -> Result<BuildResultRetentionState, StoreError> {
-    crate::retention_hold::read(&self.pool, query).await
+    crate::operations::retention_hold::read(&self.pool, query).await
   }
 
   async fn place_build_result_hold(
@@ -234,7 +252,7 @@ impl BuildResultRetentionHoldStore for PostgresStore {
     request: ManagementMutation<PlaceBuildResultHold>,
   ) -> Result<RetentionHoldMutationOutcome, StoreError> {
     let (request, audit) = request.into_parts();
-    crate::retention_hold::place(&self.pool, request, &audit).await
+    crate::operations::retention_hold::place(&self.pool, request, &audit).await
   }
 
   async fn release_build_result_hold(
@@ -242,28 +260,28 @@ impl BuildResultRetentionHoldStore for PostgresStore {
     request: ManagementMutation<ReleaseBuildResultHold>,
   ) -> Result<RetentionHoldMutationOutcome, ReleaseBuildResultHoldError> {
     let (request, audit) = request.into_parts();
-    crate::retention_hold::release(&self.pool, request, &audit).await
+    crate::operations::retention_hold::release(&self.pool, request, &audit).await
   }
 }
 
 #[async_trait]
 impl OrphanLogChunkStore for PostgresStore {
   async fn stage_orphan_log_chunk(&self, request: StageOrphanLogChunk) -> Result<(), StoreError> {
-    crate::retention::stage_orphan(&self.pool, request).await
+    crate::operations::retention::stage_orphan(&self.pool, request).await
   }
 
   async fn claim_orphan_log_chunks(
     &self,
     request: ClaimOrphanLogChunks,
   ) -> Result<Vec<OrphanLogChunkClaim>, StoreError> {
-    crate::retention::claim_orphans(&self.pool, request).await
+    crate::operations::retention::claim_orphans(&self.pool, request).await
   }
 
   async fn complete_orphan_log_chunk(&self, request: CompleteOrphanLogChunk) -> Result<(), StoreError> {
-    crate::retention::complete_orphan(&self.pool, request).await
+    crate::operations::retention::complete_orphan(&self.pool, request).await
   }
 
   async fn fail_orphan_log_chunk(&self, request: FailOrphanLogChunk) -> Result<(), StoreError> {
-    crate::retention::fail_orphan(&self.pool, request).await
+    crate::operations::retention::fail_orphan(&self.pool, request).await
   }
 }

@@ -8,6 +8,7 @@ use sqlx::PgPool;
 
 mod artifact_cache;
 mod execution;
+mod factory;
 mod management;
 mod trigger_webhook;
 

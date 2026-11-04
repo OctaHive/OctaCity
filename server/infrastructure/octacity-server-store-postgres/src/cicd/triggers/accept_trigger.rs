@@ -1,0 +1,697 @@
+use octacity_server_domain::{AttemptId, BuildId, EntityKind, JobId, TriggerOccurrenceId};
+use octacity_server_job::JobSpecSigner;
+use octacity_server_store::{
+  AcceptTrigger, AcceptTriggerOutcome, MutationAuditContext, MutationDisposition, StoreError, StoreOperation,
+  SuppressTrigger, SuppressTriggerOutcome, TriggerAcceptanceProbe, TriggerEvaluationOutcome,
+};
+use serde::{Deserialize, Serialize};
+use serde_json::{Value, json};
+use sqlx::{PgPool, Postgres, Transaction, types::Json};
+use uuid::Uuid;
+
+use crate::{
+  database::{classify, number, unavailable},
+  mutation::{
+    MutationFacts, MutationIdentity, MutationKind, MutationStart, NonManagementActor, decode_outcome, encode_outcome,
+    trigger_replay_security_scope,
+  },
+};
+
+pub(crate) async fn execute(
+  pool: &PgPool,
+  signer: &JobSpecSigner,
+  request: AcceptTrigger,
+  management_audit: Option<&MutationAuditContext>,
+) -> Result<AcceptTriggerOutcome, StoreError> {
+  request.validate()?;
+  let identity = match management_audit {
+    Some(audit) => MutationIdentity::with_management_digest(
+      audit,
+      MutationKind::AcceptTrigger,
+      request.trigger.id.to_string(),
+      request.accepted_at,
+      EntityKind::Trigger,
+      request.intent_digest.as_bytes(),
+    ),
+    None => MutationIdentity::with_non_management_digest(
+      MutationKind::AcceptTrigger,
+      request.trigger.id.to_string(),
+      request.accepted_at,
+      EntityKind::Trigger,
+      request.intent_digest.as_bytes(),
+    ),
+  };
+  let trigger_version = number(request.trigger.trigger.version.get(), StoreOperation::AcceptTrigger)?;
+  let configuration_version = number(request.build.configuration_version.get(), StoreOperation::AcceptTrigger)?;
+  let pipeline_version = number(request.build.pipeline_version.get(), StoreOperation::AcceptTrigger)?;
+  let repository_version = request
+    .build
+    .repository_version
+    .map(|version| number(version.get(), StoreOperation::AcceptTrigger))
+    .transpose()?;
+  let attempt_number = number(request.attempt_number.get(), StoreOperation::AcceptTrigger)?;
+  let mut transaction = match crate::mutation::begin(pool, &identity).await? {
+    MutationStart::Fresh(transaction) => transaction,
+    MutationStart::Replay(outcome) => return replay_accepted(outcome),
+  };
+
+  if let Some(existing) = occurrence_replay(
+    &mut transaction,
+    &request.trigger,
+    trigger_version,
+    identity.persisted_security_scope(),
+  )
+  .await?
+  {
+    if existing.digest == identity.request_digest && existing.state == "accepted" {
+      let outcome = replay_accepted(existing.outcome)?;
+      if outcome.trigger_occurrence_id != existing.occurrence_id {
+        return Err(StoreError::Unavailable);
+      }
+      crate::mutation::commit(
+        transaction,
+        &identity,
+        accepted_facts(management_audit, &request, &outcome),
+        encode_outcome(&StoredOutcome::from(&outcome))?,
+      )
+      .await?;
+      return Ok(outcome);
+    }
+    return Err(StoreError::Conflict {
+      entity: EntityKind::Trigger,
+    });
+  }
+
+  require_references(
+    &mut transaction,
+    &request,
+    trigger_version,
+    configuration_version,
+    pipeline_version,
+    repository_version,
+  )
+  .await?;
+  insert_occurrence(
+    &mut transaction,
+    &request,
+    trigger_version,
+    configuration_version,
+    &identity.request_digest,
+    identity.persisted_security_scope(),
+  )
+  .await?;
+  insert_build(
+    &mut transaction,
+    &request,
+    configuration_version,
+    pipeline_version,
+    repository_version,
+  )
+  .await?;
+  crate::cicd::builds::attempt_materialization::insert_attempt(
+    &mut transaction,
+    request.attempt_id,
+    request.build.id,
+    attempt_number,
+    None,
+    octacity_server_orchestrator::AttemptState::Running,
+    request.accepted_at,
+  )
+  .await?;
+  crate::cicd::builds::attempt_materialization::insert_jobs(
+    &mut transaction,
+    request.attempt_id,
+    &request.jobs,
+    request.accepted_at,
+  )
+  .await?;
+  crate::cicd::builds::attempt_materialization::insert_dependencies(
+    &mut transaction,
+    request.attempt_id,
+    &request.jobs,
+  )
+  .await?;
+  crate::cicd::builds::attempt_materialization::enqueue_roots(
+    &mut transaction,
+    signer,
+    request.attempt_id,
+    &request.jobs,
+    request.accepted_at,
+  )
+  .await?;
+
+  let outcome = outcome(&request, MutationDisposition::Applied);
+  crate::mutation::commit(
+    transaction,
+    &identity,
+    accepted_facts(management_audit, &request, &outcome),
+    encode_outcome(&StoredOutcome::from(&outcome))?,
+  )
+  .await?;
+  Ok(outcome)
+}
+
+pub(crate) async fn replay_evaluation(
+  pool: &PgPool,
+  request: TriggerAcceptanceProbe,
+) -> Result<Option<TriggerEvaluationOutcome>, StoreError> {
+  let trigger_version = number(request.trigger.trigger.version.get(), StoreOperation::AcceptTrigger)?;
+  let security_scope = trigger_replay_security_scope(&request.namespace);
+  let record: Option<(Uuid, String, Vec<u8>, Json<Value>)> = sqlx::query_as(
+    "SELECT occurrence.id, occurrence.state, record.request_digest, record.outcome \
+     FROM trigger_occurrences AS occurrence \
+     JOIN idempotency_records AS record \
+       ON record.scope = CASE occurrence.state \
+            WHEN 'accepted' THEN $1 WHEN 'suppressed' THEN $2 ELSE '' END \
+      AND record.idempotency_key = occurrence.id::text \
+      AND record.security_scope = occurrence.security_scope \
+     WHERE occurrence.security_scope = $3 \
+       AND (occurrence.id = $4 \
+        OR (occurrence.trigger_id = $5 AND occurrence.trigger_version = $6 \
+            AND occurrence.deduplication_identity = $7)) \
+     ORDER BY (occurrence.id = $4) DESC \
+     LIMIT 1",
+  )
+  .bind(MutationKind::AcceptTrigger.scope())
+  .bind(MutationKind::SuppressTrigger.scope())
+  .bind(security_scope)
+  .bind(request.trigger.id.as_uuid())
+  .bind(request.trigger.trigger.id.as_uuid())
+  .bind(trigger_version)
+  .bind(request.trigger.deduplication_identity.as_str())
+  .fetch_optional(pool)
+  .await
+  .map_err(unavailable)?;
+  let Some((occurrence_id, state, digest, Json(outcome))) = record else {
+    return Ok(None);
+  };
+  if digest != request.intent_digest.as_bytes() {
+    return Err(StoreError::Conflict {
+      entity: EntityKind::Trigger,
+    });
+  }
+  let occurrence_id = TriggerOccurrenceId::from_uuid(occurrence_id).map_err(|_| StoreError::Unavailable)?;
+  match state.as_str() {
+    "accepted" => replay_accepted(outcome).and_then(|outcome| {
+      (outcome.trigger_occurrence_id == occurrence_id)
+        .then_some(TriggerEvaluationOutcome::Accepted(outcome))
+        .ok_or(StoreError::Unavailable)
+    }),
+    "suppressed" => replay_suppressed(outcome).and_then(|outcome| {
+      (outcome.trigger_occurrence_id == occurrence_id)
+        .then_some(TriggerEvaluationOutcome::Suppressed(outcome))
+        .ok_or(StoreError::Unavailable)
+    }),
+    _ => Err(StoreError::Unavailable),
+  }
+  .map(Some)
+}
+
+pub(crate) async fn suppress(
+  pool: &PgPool,
+  request: SuppressTrigger,
+  management_audit: Option<&MutationAuditContext>,
+) -> Result<SuppressTriggerOutcome, StoreError> {
+  request.validate()?;
+  let identity = match management_audit {
+    Some(audit) => MutationIdentity::with_management_digest(
+      audit,
+      MutationKind::SuppressTrigger,
+      request.trigger.id.to_string(),
+      request.suppressed_at,
+      EntityKind::Trigger,
+      request.intent_digest.as_bytes(),
+    ),
+    None => MutationIdentity::with_non_management_digest(
+      MutationKind::SuppressTrigger,
+      request.trigger.id.to_string(),
+      request.suppressed_at,
+      EntityKind::Trigger,
+      request.intent_digest.as_bytes(),
+    ),
+  };
+  let trigger_version = number(request.trigger.trigger.version.get(), StoreOperation::SuppressTrigger)?;
+  let configuration_version = number(
+    request.trigger.target.configuration_version.get(),
+    StoreOperation::SuppressTrigger,
+  )?;
+  let mut transaction = match crate::mutation::begin(pool, &identity).await? {
+    MutationStart::Fresh(transaction) => transaction,
+    MutationStart::Replay(outcome) => return replay_suppressed(outcome),
+  };
+  if let Some(existing) = occurrence_replay(
+    &mut transaction,
+    &request.trigger,
+    trigger_version,
+    identity.persisted_security_scope(),
+  )
+  .await?
+  {
+    if existing.digest == identity.request_digest && existing.state == "suppressed" {
+      let outcome = replay_suppressed(existing.outcome)?;
+      if outcome.trigger_occurrence_id != existing.occurrence_id {
+        return Err(StoreError::Unavailable);
+      }
+      crate::mutation::commit(
+        transaction,
+        &identity,
+        suppressed_facts(management_audit, &request, outcome.trigger_occurrence_id),
+        encode_outcome(&StoredSuppressedOutcome::from(outcome))?,
+      )
+      .await?;
+      return Ok(outcome);
+    }
+    return Err(StoreError::Conflict {
+      entity: EntityKind::Trigger,
+    });
+  }
+  require_trigger_reference(&mut transaction, &request, trigger_version, configuration_version).await?;
+  insert_suppressed_occurrence(
+    &mut transaction,
+    &request,
+    trigger_version,
+    configuration_version,
+    &identity.request_digest,
+    identity.persisted_security_scope(),
+  )
+  .await?;
+  let outcome = SuppressTriggerOutcome {
+    disposition: MutationDisposition::Applied,
+    trigger_occurrence_id: request.trigger.id,
+  };
+  crate::mutation::commit(
+    transaction,
+    &identity,
+    suppressed_facts(management_audit, &request, request.trigger.id),
+    encode_outcome(&StoredSuppressedOutcome::from(outcome))?,
+  )
+  .await?;
+  Ok(outcome)
+}
+
+async fn require_references(
+  transaction: &mut Transaction<'_, Postgres>,
+  request: &AcceptTrigger,
+  trigger_version: i64,
+  configuration_version: i64,
+  pipeline_version: i64,
+  repository_version: Option<i64>,
+) -> Result<(), StoreError> {
+  let references_exist: bool = sqlx::query_scalar(
+    "SELECT EXISTS (\
+       SELECT 1 \
+       FROM triggers AS trigger \
+       JOIN build_configuration_versions AS version \
+         ON version.build_configuration_id = trigger.build_configuration_id \
+        AND version.version = trigger.build_configuration_version \
+       JOIN build_configurations AS configuration ON configuration.id = version.build_configuration_id \
+       WHERE trigger.id = $1 AND trigger.version = $2 \
+         AND configuration.id = $3 AND version.version = $4 \
+         AND configuration.project_id = $5 \
+         AND version.pipeline_id = $6 AND version.pipeline_version = $7 \
+         AND version.repository_id IS NOT DISTINCT FROM $8 AND version.repository_version IS NOT DISTINCT FROM $9 \
+         AND trigger.kind = $10 AND trigger.enabled AND version.enabled \
+         AND version.configuration_snapshot->'source' IS NOT DISTINCT FROM $11::jsonb\
+     )",
+  )
+  .bind(request.trigger.trigger.id.as_uuid())
+  .bind(trigger_version)
+  .bind(request.build.configuration_id.as_uuid())
+  .bind(configuration_version)
+  .bind(request.build.project_id.as_uuid())
+  .bind(request.build.pipeline_id.as_uuid())
+  .bind(pipeline_version)
+  .bind(request.build.repository_id.map(|id| id.as_uuid()))
+  .bind(repository_version)
+  .bind(request.trigger.cause.kind().as_str())
+  .bind(request.build.source.map(Json))
+  .fetch_one(&mut **transaction)
+  .await
+  .map_err(unavailable)?;
+  if !references_exist {
+    return Err(StoreError::NotFound {
+      entity: EntityKind::Trigger,
+    });
+  }
+
+  crate::cicd::builds::build_materialization::require_pools(transaction, &request.jobs).await
+}
+
+async fn insert_occurrence(
+  transaction: &mut Transaction<'_, Postgres>,
+  request: &AcceptTrigger,
+  trigger_version: i64,
+  configuration_version: i64,
+  request_digest: &[u8; 32],
+  security_scope: &str,
+) -> Result<(), StoreError> {
+  let inserted = sqlx::query(
+    "INSERT INTO trigger_occurrences \
+       (id, trigger_id, trigger_version, build_configuration_id, build_configuration_version, kind, security_scope, \
+        deduplication_identity, cause, causality, provider_metadata, source_time, state, build_id, request_digest, \
+        created_at, updated_at) \
+     VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, to_timestamp($12::double precision / 1000.0), \
+             'accepted', NULL, $13, to_timestamp($14::double precision / 1000.0), \
+             to_timestamp($14::double precision / 1000.0)) \
+     ON CONFLICT DO NOTHING",
+  )
+  .bind(request.trigger.id.as_uuid())
+  .bind(request.trigger.trigger.id.as_uuid())
+  .bind(trigger_version)
+  .bind(request.trigger.target.configuration_id.as_uuid())
+  .bind(configuration_version)
+  .bind(request.trigger.cause.kind().as_str())
+  .bind(security_scope)
+  .bind(request.trigger.deduplication_identity.as_str())
+  .bind(Json(request.trigger.cause.clone()))
+  .bind(Json(request.trigger.causality))
+  .bind(Json(request.trigger.provider_metadata.clone()))
+  .bind(request.trigger.source_time.unix_millis())
+  .bind(request_digest.as_slice())
+  .bind(request.accepted_at.unix_millis())
+  .execute(&mut **transaction)
+  .await
+  .map_err(|error| classify(error, EntityKind::Trigger))?;
+  if inserted.rows_affected() == 1 {
+    return Ok(());
+  }
+  Err(StoreError::Conflict {
+    entity: EntityKind::Trigger,
+  })
+}
+
+async fn require_trigger_reference(
+  transaction: &mut Transaction<'_, Postgres>,
+  request: &SuppressTrigger,
+  trigger_version: i64,
+  configuration_version: i64,
+) -> Result<(), StoreError> {
+  let exists: bool = sqlx::query_scalar(
+    "SELECT EXISTS (\
+       SELECT 1 FROM triggers \
+       WHERE id = $1 AND version = $2 AND enabled AND kind = $3 \
+         AND build_configuration_id = $4 AND build_configuration_version = $5\
+     )",
+  )
+  .bind(request.trigger.trigger.id.as_uuid())
+  .bind(trigger_version)
+  .bind(request.trigger.cause.kind().as_str())
+  .bind(request.trigger.target.configuration_id.as_uuid())
+  .bind(configuration_version)
+  .fetch_one(&mut **transaction)
+  .await
+  .map_err(unavailable)?;
+  if exists {
+    Ok(())
+  } else {
+    Err(StoreError::NotFound {
+      entity: EntityKind::Trigger,
+    })
+  }
+}
+
+async fn insert_suppressed_occurrence(
+  transaction: &mut Transaction<'_, Postgres>,
+  request: &SuppressTrigger,
+  trigger_version: i64,
+  configuration_version: i64,
+  request_digest: &[u8; 32],
+  security_scope: &str,
+) -> Result<(), StoreError> {
+  let inserted = sqlx::query(
+    "INSERT INTO trigger_occurrences \
+       (id, trigger_id, trigger_version, build_configuration_id, build_configuration_version, kind, security_scope, \
+        deduplication_identity, cause, causality, provider_metadata, source_time, state, build_id, request_digest, \
+        created_at, updated_at) \
+     VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, to_timestamp($12::double precision / 1000.0), \
+             'suppressed', NULL, $13, to_timestamp($14::double precision / 1000.0), \
+             to_timestamp($14::double precision / 1000.0)) \
+     ON CONFLICT DO NOTHING",
+  )
+  .bind(request.trigger.id.as_uuid())
+  .bind(request.trigger.trigger.id.as_uuid())
+  .bind(trigger_version)
+  .bind(request.trigger.target.configuration_id.as_uuid())
+  .bind(configuration_version)
+  .bind(request.trigger.cause.kind().as_str())
+  .bind(security_scope)
+  .bind(request.trigger.deduplication_identity.as_str())
+  .bind(Json(request.trigger.cause.clone()))
+  .bind(Json(request.trigger.causality))
+  .bind(Json(request.trigger.provider_metadata.clone()))
+  .bind(request.trigger.source_time.unix_millis())
+  .bind(request_digest.as_slice())
+  .bind(request.suppressed_at.unix_millis())
+  .execute(&mut **transaction)
+  .await
+  .map_err(|error| classify(error, EntityKind::Trigger))?;
+  if inserted.rows_affected() == 1 {
+    Ok(())
+  } else {
+    Err(StoreError::Conflict {
+      entity: EntityKind::Trigger,
+    })
+  }
+}
+
+async fn insert_build(
+  transaction: &mut Transaction<'_, Postgres>,
+  request: &AcceptTrigger,
+  configuration_version: i64,
+  pipeline_version: i64,
+  repository_version: Option<i64>,
+) -> Result<(), StoreError> {
+  crate::cicd::builds::build_materialization::insert_build(
+    transaction,
+    &request.build,
+    crate::cicd::builds::build_materialization::BuildInsertionOrigin::Trigger(request.trigger.id),
+    request.accepted_at,
+    configuration_version,
+    pipeline_version,
+    repository_version,
+  )
+  .await?;
+  sqlx::query(
+    "UPDATE trigger_occurrences SET build_id = $1, \
+       updated_at = to_timestamp($2::double precision / 1000.0) WHERE id = $3",
+  )
+  .bind(request.build.id.as_uuid())
+  .bind(request.accepted_at.unix_millis())
+  .bind(request.trigger.id.as_uuid())
+  .execute(&mut **transaction)
+  .await
+  .map_err(|error| classify(error, EntityKind::Trigger))?;
+  Ok(())
+}
+
+struct ExistingEvaluation {
+  occurrence_id: TriggerOccurrenceId,
+  state: String,
+  digest: Vec<u8>,
+  outcome: Value,
+}
+
+async fn occurrence_replay(
+  transaction: &mut Transaction<'_, Postgres>,
+  trigger: &octacity_server_store::NormalizedTriggerOccurrence,
+  trigger_version: i64,
+  security_scope: &str,
+) -> Result<Option<ExistingEvaluation>, StoreError> {
+  let record: Option<(Uuid, String, Vec<u8>, Json<Value>)> = sqlx::query_as(
+    "SELECT occurrence.id, occurrence.state, record.request_digest, record.outcome \
+     FROM trigger_occurrences AS occurrence \
+     JOIN idempotency_records AS record \
+       ON record.scope = CASE occurrence.state \
+            WHEN 'accepted' THEN $1 WHEN 'suppressed' THEN $2 ELSE '' END \
+      AND record.idempotency_key = occurrence.id::text \
+      AND record.security_scope = occurrence.security_scope \
+     WHERE occurrence.security_scope = $3 \
+       AND (occurrence.id = $4 \
+        OR (occurrence.trigger_id = $5 AND occurrence.trigger_version = $6 \
+            AND occurrence.deduplication_identity = $7)) \
+     ORDER BY CASE WHEN occurrence.id = $4 THEN 0 ELSE 1 END \
+     LIMIT 1 \
+     FOR UPDATE OF occurrence, record",
+  )
+  .bind(MutationKind::AcceptTrigger.scope())
+  .bind(MutationKind::SuppressTrigger.scope())
+  .bind(security_scope)
+  .bind(trigger.id.as_uuid())
+  .bind(trigger.trigger.id.as_uuid())
+  .bind(trigger_version)
+  .bind(trigger.deduplication_identity.as_str())
+  .fetch_optional(&mut **transaction)
+  .await
+  .map_err(unavailable)?;
+  record
+    .map(|(occurrence_id, state, digest, Json(outcome))| {
+      Ok(ExistingEvaluation {
+        occurrence_id: TriggerOccurrenceId::from_uuid(occurrence_id).map_err(|_| StoreError::Unavailable)?,
+        state,
+        digest,
+        outcome,
+      })
+    })
+    .transpose()
+}
+
+#[derive(Deserialize, Serialize)]
+struct StoredOutcome {
+  trigger_occurrence_id: TriggerOccurrenceId,
+  build_id: BuildId,
+  attempt_id: AttemptId,
+  ready_jobs: Vec<JobId>,
+}
+
+impl From<&AcceptTriggerOutcome> for StoredOutcome {
+  fn from(outcome: &AcceptTriggerOutcome) -> Self {
+    Self {
+      trigger_occurrence_id: outcome.trigger_occurrence_id,
+      build_id: outcome.build_id,
+      attempt_id: outcome.attempt_id,
+      ready_jobs: outcome.ready_jobs.clone(),
+    }
+  }
+}
+
+fn replay_accepted(value: Value) -> Result<AcceptTriggerOutcome, StoreError> {
+  let stored: StoredOutcome = decode_outcome(value)?;
+  Ok(AcceptTriggerOutcome {
+    disposition: MutationDisposition::Replayed,
+    trigger_occurrence_id: stored.trigger_occurrence_id,
+    build_id: stored.build_id,
+    attempt_id: stored.attempt_id,
+    ready_jobs: stored.ready_jobs,
+  })
+}
+
+fn outcome(request: &AcceptTrigger, disposition: MutationDisposition) -> AcceptTriggerOutcome {
+  AcceptTriggerOutcome {
+    disposition,
+    trigger_occurrence_id: request.trigger.id,
+    build_id: request.build.id,
+    attempt_id: request.attempt_id,
+    ready_jobs: request
+      .jobs
+      .iter()
+      .filter(|job| job.dependencies.is_empty())
+      .map(|job| job.id)
+      .collect(),
+  }
+}
+
+#[derive(Deserialize, Serialize)]
+struct StoredSuppressedOutcome {
+  trigger_occurrence_id: TriggerOccurrenceId,
+}
+
+impl From<SuppressTriggerOutcome> for StoredSuppressedOutcome {
+  fn from(outcome: SuppressTriggerOutcome) -> Self {
+    Self {
+      trigger_occurrence_id: outcome.trigger_occurrence_id,
+    }
+  }
+}
+
+fn replay_suppressed(value: Value) -> Result<SuppressTriggerOutcome, StoreError> {
+  let stored: StoredSuppressedOutcome = decode_outcome(value)?;
+  Ok(SuppressTriggerOutcome {
+    disposition: MutationDisposition::Replayed,
+    trigger_occurrence_id: stored.trigger_occurrence_id,
+  })
+}
+
+fn accepted_facts(
+  management_audit: Option<&MutationAuditContext>,
+  request: &AcceptTrigger,
+  outcome: &AcceptTriggerOutcome,
+) -> MutationFacts {
+  let safe_metadata = json!({
+    "attempt_id": outcome.attempt_id,
+    "ready_job_count": outcome.ready_jobs.len(),
+    "trigger_occurrence_id": outcome.trigger_occurrence_id,
+  });
+  let outbox_payload = json!({
+    "attempt_id": outcome.attempt_id,
+    "build_id": outcome.build_id,
+    "schema_version": 1,
+    "trigger_occurrence_id": outcome.trigger_occurrence_id,
+  });
+  if let Some(audit) = management_audit {
+    return MutationFacts::management(audit, outcome.build_id.to_string(), safe_metadata, outbox_payload);
+  }
+  MutationFacts::non_management(
+    trigger_actor(&request.trigger),
+    outcome.build_id.to_string(),
+    safe_metadata,
+    outbox_payload,
+  )
+}
+
+fn suppressed_facts(
+  management_audit: Option<&MutationAuditContext>,
+  request: &SuppressTrigger,
+  occurrence_id: TriggerOccurrenceId,
+) -> MutationFacts {
+  let safe_metadata = json!({
+    "reason": "configuration_disabled",
+    "trigger_occurrence_id": occurrence_id,
+  });
+  let outbox_payload = json!({
+    "reason": "configuration_disabled",
+    "schema_version": 1,
+    "trigger_occurrence_id": occurrence_id,
+  });
+  if let Some(audit) = management_audit {
+    return MutationFacts::management(audit, occurrence_id.to_string(), safe_metadata, outbox_payload);
+  }
+  MutationFacts::non_management(
+    trigger_actor(&request.trigger),
+    occurrence_id.to_string(),
+    safe_metadata,
+    outbox_payload,
+  )
+}
+
+fn trigger_actor(trigger: &octacity_server_store::NormalizedTriggerOccurrence) -> NonManagementActor {
+  NonManagementActor::Trigger(trigger.trigger.id.to_string())
+}
+
+#[cfg(test)]
+mod tests {
+  use octacity_server_domain::{
+    BuildConfigurationId, Timestamp, TriggerId, TriggerIdentity, TriggerOccurrenceId, TriggerVersion,
+  };
+  use octacity_server_store::{
+    NormalizedTriggerOccurrence, TriggerCause, TriggerDefinitionRef, TriggerMetadata, TriggerTarget,
+  };
+
+  use crate::mutation::NonManagementActor;
+
+  use super::trigger_actor;
+
+  #[test]
+  fn raw_manual_trigger_is_audited_as_a_trigger() {
+    let trigger = NormalizedTriggerOccurrence::root(
+      TriggerOccurrenceId::from_uuid(uuid::Uuid::from_u128(1)).unwrap(),
+      TriggerDefinitionRef {
+        id: TriggerId::from_uuid(uuid::Uuid::from_u128(2)).unwrap(),
+        version: TriggerVersion::INITIAL,
+      },
+      TriggerTarget {
+        configuration_id: BuildConfigurationId::from_uuid(uuid::Uuid::from_u128(3)).unwrap(),
+        configuration_version: octacity_server_domain::BuildConfigurationVersion::INITIAL,
+      },
+      TriggerIdentity::new("manual:audit").unwrap(),
+      TriggerCause::Manual {},
+      TriggerMetadata::default(),
+      Timestamp::from_unix_millis(1).unwrap(),
+    )
+    .unwrap();
+
+    assert_eq!(
+      trigger_actor(&trigger),
+      NonManagementActor::Trigger(trigger.trigger.id.to_string())
+    );
+  }
+}

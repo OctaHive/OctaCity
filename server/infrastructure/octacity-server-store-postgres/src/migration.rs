@@ -26,11 +26,13 @@ pub fn current_schema_version() -> i64 {
 /// Applies every pending forward migration to one PostgreSQL database.
 pub async fn migrate(pool: &PgPool) -> Result<(), MigrateError> {
   run_migrator(pool, &MIGRATOR).await?;
-  crate::issue_reporter::recover_publications(pool).await.map_err(|_| {
-    MigrateError::Execute(sqlx::Error::Protocol(
-      "Issue Reporter publication recovery failed".into(),
-    ))
-  })
+  crate::issues::issue_reporter::recover_publications(pool)
+    .await
+    .map_err(|_| {
+      MigrateError::Execute(sqlx::Error::Protocol(
+        "Issue Reporter publication recovery failed".into(),
+      ))
+    })
 }
 
 /// Runs an explicit migration set and discards a failed database session.
@@ -98,7 +100,7 @@ pub async fn migration_status(pool: &PgPool) -> Result<MigrationStatus, sqlx::Er
   }
 
   Ok(
-    if applied.len() == expected.len() && !crate::issue_reporter::has_pending_publications(pool).await? {
+    if applied.len() == expected.len() && !crate::issues::issue_reporter::has_pending_publications(pool).await? {
       MigrationStatus::Current
     } else {
       MigrationStatus::Pending
