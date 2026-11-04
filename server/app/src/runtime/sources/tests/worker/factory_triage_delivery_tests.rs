@@ -27,7 +27,7 @@ async fn accepted_reporting_fixture(
   let database = TestDatabase::migrated().await;
   let policy = WorkSourceReportingPolicy {
     ownership: None,
-    labels: vec!["triage:reviewed".into(), "triage:raw".into()],
+    labels: vec!["need reproduce".into()],
     states: vec![],
   };
   let (memory, _) = fixture_with_reporting_policy("triage-delivery", None, None).await;
@@ -47,21 +47,35 @@ async fn accepted_reporting_fixture(
     .unwrap()
     .execution()
     .clone();
-  let summary = serde_json::json!({"accepted":true,"priority_assessment":75});
+  let summary = serde_json::json!({"accepted":true,"assessment":{"reproducibility":"unknown"}});
   let shape = FlowValueSchema::Object {
     fields: BTreeMap::from([
       (key("accepted"), FlowFieldSchema::required(FlowValueSchema::Boolean)),
       (
-        key("priority_assessment"),
-        FlowFieldSchema::required(FlowValueSchema::Integer {
-          minimum: 0,
-          maximum: 100,
+        key("assessment"),
+        FlowFieldSchema::required(FlowValueSchema::Object {
+          fields: BTreeMap::from([(
+            key("reproducibility"),
+            FlowFieldSchema::required(FlowValueSchema::Enum {
+              values: [
+                "not_reproduced",
+                "unknown",
+                "needs_research",
+                "reproduced",
+                "needs_input",
+                "not_applicable",
+              ]
+              .into_iter()
+              .map(serde_json::Value::from)
+              .collect(),
+            }),
+          )]),
         }),
       ),
     ]),
   };
   let result = FlowDataSchema::new(key("triage.accepted-summary"), key("v1"), shape.clone()).unwrap();
-  let gate = FlowGateProgram::new(vec![], key("triaged"))
+  let gate = FlowGateProgram::new(vec![], key("defect_research"))
     .unwrap()
     .with_default_output_mapping(FlowDataMapping::new(FlowValueMapping::Constant { value: summary.clone() }).unwrap())
     .unwrap();
@@ -72,17 +86,22 @@ async fn accepted_reporting_fixture(
       "decision":{"identity":result.reference().identity(),"version":"v1","shape":shape}
     },
     "nodes":[{"key":"accepted-decision","kind":"deterministic_gate","input_schema":"input",
-      "outcomes":[{"key":"triaged","kind":"success","schema":"decision","public_result":true}],
+      "outcomes":[{"key":"defect_research","kind":"success","schema":"decision","public_result":true}],
       "budget":BudgetLimit::new(1,1000,0,0,1000).unwrap(),"required":true,"gate":gate,
       "input_binding":FlowInputBinding::new(BTreeMap::new(),FlowDataMapping::new(FlowValueMapping::Constant {value:serde_json::json!(true)}).unwrap()).unwrap()
     }],
-    "transitions":[FlowTransition::new(key("accepted-decision"),key("triaged"),FlowTransitionTarget::Terminal(key("done")))],
+    "transitions":[FlowTransition::new(key("accepted-decision"),key("defect_research"),FlowTransitionTarget::Terminal(key("done")))],
     "terminals":{"done":"decision"},"execution":execution,
   })).unwrap();
+  let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+    .join("../../config/factory/presets/triage/reproduction-reporting-v1.json");
+  let mut dimension: FactoryReportingDimension = serde_json::from_slice(&std::fs::read(path).unwrap()).unwrap();
+  // This fixture exercises a single accepted outcome and no downstream delivery input.
+  dimension.outcomes = [key("defect_research")].into();
   let reviewed = WorkSourceStatusEffects {
-    status: "report-accepted".into(),
-    add: vec!["triage:reviewed".into()],
-    remove: vec!["triage:raw".into()],
+    status: "reproduction-needed".into(),
+    add: vec!["need reproduce".into()],
+    remove: vec![],
     state: None,
   };
   let reporting = FactoryResultReportingDraft {
@@ -92,8 +111,8 @@ async fn accepted_reporting_fixture(
       connection: original.connection.clone().unwrap(),
       policy: policy.clone(),
     },
-    outcomes: BTreeMap::from([(key("triaged"), with_effect.then_some(reviewed.clone()))]),
-    dimensions: vec![],
+    outcomes: BTreeMap::from([(key("defect_research"), None)]),
+    dimensions: with_effect.then_some(dimension).into_iter().collect(),
     receipt: receipt_schema(),
     action_outcome: key("done"),
     budget: BudgetLimit::new(1, 1000, 0, 0, 10000).unwrap(),
@@ -111,7 +130,7 @@ async fn accepted_reporting_fixture(
   let child = reporting
     .compile(
       &result,
-      &[key("triaged")].into(),
+      &[key("defect_research")].into(),
       FlowDefinitionId::generate(),
       FlowDefinitionVersion::INITIAL,
     )
@@ -142,17 +161,38 @@ async fn accepted_reporting_fixture(
     BTreeMap::new(),
   )
   .unwrap();
+  let policies = fixture
+    .store
+    .factory_admission_context(ReadFactoryAdmissionContext {
+      project_id: fixture.input.project_id(),
+      configuration_id: original.target.id(),
+      configuration_version: original.target.version(),
+      repository_id: Some(original.repository.id),
+      repository_version: Some(original.repository.version),
+    })
+    .await
+    .unwrap()
+    .project_policies
+    .unwrap();
+  let launch = policies.launch_policy.reference();
+  let access = policies.access_profile.reference();
   let target = configuration_with_flow(
     fixture.input.project_id(),
     FactoryConfigurationId::generate(),
     Some(configured),
-  );
+  )
+  .with_project_policies(launch.clone(), access.clone())
+  .unwrap();
   let draft = FactoryConfigurationDraft {
     flow: Some(target.flow().clone()),
-    admission_policy: key("admission").into(),
+    admission_policy: FactoryPolicySelection::Project {
+      project_policy: launch.clone(),
+    },
     wip_limits: target.wip_limits(),
     hard_budget: target.hard_budget(),
-    permission_ceiling: key("permissions").into(),
+    permission_ceiling: FactoryPolicySelection::Project {
+      project_policy: access.clone(),
+    },
     enabled: true,
   };
   fixture
@@ -316,6 +356,7 @@ async fn reviewed_result_delivery_keeps_original_decision_and_operation_through_
     assert_eq!(intermediate, ending != "unconfigured");
     let accepted = fixture.store.factory_run_snapshot(run).await.unwrap();
     assert_eq!(accepted.run.state(), FactoryRunState::Completed);
+    let directory = fixture.root.path().join("triage-delivery");
     let decision = accepted
       .flow
       .data
@@ -332,7 +373,6 @@ async fn reviewed_result_delivery_keeps_original_decision_and_operation_through_
       .find(|input| input.node() == &key("report-selection-0"))
       .unwrap();
     assert_eq!(call.sources()[0].digest(), decision.digest().unwrap());
-    let directory = fixture.root.path().join("triage-delivery");
     if ending == "unconfigured" {
       assert!(
         accepted
@@ -360,7 +400,7 @@ async fn reviewed_result_delivery_keeps_original_decision_and_operation_through_
       .data
       .records
       .iter()
-      .find(|record| record.input().node() == &key("effect-0"))
+      .find(|record| record.outcome() == &key("done") && record.payload().value().get("receipt").is_some())
       .unwrap();
     assert_eq!(effect.input().caller_input_digest(), Some(call.digest().unwrap()));
     assert_eq!(effect.input().payload().value()["result"], summary);
@@ -390,7 +430,7 @@ async fn reviewed_result_delivery_keeps_original_decision_and_operation_through_
     assert!(captured_requests(&directory).is_empty());
     std::fs::write(
       directory.join("reporter-mode.json"),
-      br#"{"lose_project_response":true}"#,
+      br#"{"lose_project_response":true,"source_effects":true}"#,
     )
     .unwrap();
     fixture.clock.0.store(300, Ordering::SeqCst);
@@ -463,7 +503,7 @@ async fn reviewed_result_delivery_keeps_original_decision_and_operation_through_
       assert_eq!(original_intent(call)["item_id"], "TASK-native");
       assert_eq!(
         original_intent(call)["effects"],
-        serde_json::json!({"add":["triage:reviewed"],"remove":["triage:raw"],"state":null})
+        serde_json::json!({"add":["need reproduce"],"remove":[],"state":null})
       );
     }
     if ending != "forbidden" {
@@ -501,6 +541,23 @@ async fn reviewed_result_delivery_keeps_original_decision_and_operation_through_
         .all(|row| row.operation_id == original.operation_id && row.input_digest == original.input_digest)
     );
     assert_eq!(fixture.runs().await.len(), 1);
+    if ending == "confirmed" {
+      // The next Source scan sees the actual Reporter mutation on the same ticket.
+      let provider: serde_json::Value =
+        serde_json::from_slice(&std::fs::read(directory.join("mode.json")).unwrap()).unwrap();
+      assert!(provider["candidates"][0]["labels"].as_array().unwrap().contains(&serde_json::json!("need reproduce")));
+      let source_requests = directory.join("requests.jsonl");
+      let before_repoll = std::fs::read_to_string(&source_requests).unwrap();
+      fixture.clock.0.store(500, Ordering::SeqCst);
+      assert_eq!(admit_managed(&fixture).await, run);
+      let repoll = std::fs::read_to_string(source_requests).unwrap();
+      assert!(repoll.strip_prefix(&before_repoll).unwrap().lines().any(|line| {
+        serde_json::from_str::<serde_json::Value>(line).unwrap()["message"]["command"]["operation"] == "scan"
+      }));
+      assert_eq!(fixture.runs().await.len(), 1);
+      assert_eq!(fixture.store.factory_run_snapshot(run).await.unwrap(), after);
+      assert_eq!(restarted.run_once(time(501)).await.unwrap().claimed, 0);
+    }
     if ending != "confirmed" {
       assert!(
         after.outbox.iter().any(|row| row.failure

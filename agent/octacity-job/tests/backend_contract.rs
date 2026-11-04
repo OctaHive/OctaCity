@@ -370,19 +370,7 @@ async fn managed_source_contract(case: SourceContract) {
   let work_root = required_path("OCTACITY_CONTRACT_MICROSANDBOX_WORK_ROOT");
   let bytes = required_u64("OCTACITY_CONTRACT_WORKSPACE_BYTES");
   let runner = RunnerInstallation::load(&required_path("OCTACITY_CONTRACT_OCTA_RELEASE_ROOT")).unwrap();
-  let engine: Arc<dyn OciEngine> = Arc::new(
-    MicrosandboxEngine::new(MicrosandboxEngineConfig {
-      agent_id: "source-free-contract".to_owned(),
-      state_root: required_path("OCTACITY_CONTRACT_MICROSANDBOX_STATE_ROOT"),
-      work_root: work_root.clone(),
-      runner_platform: expected_microsandbox_runner_platform().to_owned(),
-      executable: required_absolute_path("OCTACITY_CONTRACT_MICROSANDBOX_EXECUTABLE"),
-      libkrunfw: required_absolute_path("OCTACITY_CONTRACT_MICROSANDBOX_LIBKRUNFW"),
-      cleanup_timeout: Duration::from_secs(10),
-      metrics_sample_interval: Duration::from_secs(1),
-    })
-    .unwrap(),
-  );
+  let engine = managed_microsandbox_engine(&work_root, "source-free-contract");
   let ordinary = oci_v2_specification(
     ExecutionMode::Virtualization,
     host_platform(),
@@ -436,7 +424,7 @@ tasks:
       .unwrap()
       .replace(
         "printf selected-input",
-        "test \"$(/workspace/source/docs/public/check.sh)\" = selected-script\n      test -d /workspace/source/docs/public/empty/nested\n      test ! -e /workspace/source/docs/private-empty\n      printf selected-input",
+        "test \"$(/workspace/source/docs/public/check.sh)\" = selected-script\n      test -d /workspace/source/docs/public/empty/nested\n      test ! -e /workspace/source/docs/private-empty\n      if rm /workspace/source/docs/public/readme 2>/dev/null; then exit 1; fi\n      test \"$(cat /workspace/source/docs/public/readme)\" = selected-guidance\n      printf selected-input",
       )
       .into_bytes()
   } else if matches!(case, SourceContract::WritableEmptyDirectory) {
@@ -511,21 +499,11 @@ tasks:
       .unwrap()
       .into()
   };
-  let (permissions, issued_at) = match &spec {
-    VerifiedJobSpec::V3(spec) => (spec.permissions.clone(), spec.issued_at),
-    VerifiedJobSpec::V4(spec) => (spec.permissions.clone(), spec.issued_at),
+  let permissions = match &spec {
+    VerifiedJobSpec::V3(spec) => spec.permissions.clone(),
+    VerifiedJobSpec::V4(spec) => spec.permissions.clone(),
     _ => unreachable!(),
   };
-  let binding = octacity_protocol::JobBinding {
-    job_id: spec.job_id(),
-    attempt: 1,
-    now: issued_at,
-  };
-  match &spec {
-    VerifiedJobSpec::V3(spec) => spec.validate(&binding).unwrap(),
-    VerifiedJobSpec::V4(spec) => spec.validate(&binding).unwrap(),
-    _ => unreachable!(),
-  }
   let mut configuration = executor_config(work_root, bytes, false, vec![]);
   configuration.factory_permissions = Some(permissions);
   let capability = ExecutionCapabilityV2 {
@@ -572,14 +550,7 @@ tasks:
   executor.cleanup_orphans().await.unwrap();
   for attempt in 1..=3 {
     let (origin, server) = protected_input_server(body.clone()).await;
-    let stager = ProtectedInputStager::new(ProtectedInputStagerConfig {
-      root_certificates: vec![],
-      allowed_origins: vec![origin.clone()],
-      download_timeout: Duration::from_secs(10),
-    })
-    .unwrap();
-    // Each fresh executor view uses the same private-workspace and cleanup owner.
-    executor = executor.with_protected_input_stager(stager);
+    executor = executor.with_protected_input_stager(protected_stager(vec![origin.clone()]));
     let mut next = spec.clone();
     let cancelling = attempt == 3;
     let (job, number, execution) = match &mut next {
@@ -592,6 +563,7 @@ tasks:
     if cancelling {
       execution.tasks = vec!["wait".to_owned()];
     }
+    validate_contract_job(&next);
     let cancellation = CancellationToken::new();
     let (sender, mut receiver) = mpsc::channel(128);
     let execute = executor.execute(
@@ -662,6 +634,52 @@ tasks:
     assert!(!root.exists());
   }
 }
+
+fn managed_microsandbox_engine(work_root: &Path, agent_id: &str) -> Arc<dyn OciEngine> {
+  Arc::new(
+    MicrosandboxEngine::new(MicrosandboxEngineConfig {
+      agent_id: agent_id.to_owned(),
+      state_root: required_path("OCTACITY_CONTRACT_MICROSANDBOX_STATE_ROOT"),
+      work_root: work_root.to_owned(),
+      runner_platform: expected_microsandbox_runner_platform().to_owned(),
+      executable: required_absolute_path("OCTACITY_CONTRACT_MICROSANDBOX_EXECUTABLE"),
+      libkrunfw: required_absolute_path("OCTACITY_CONTRACT_MICROSANDBOX_LIBKRUNFW"),
+      cleanup_timeout: Duration::from_secs(10),
+      metrics_sample_interval: Duration::from_secs(1),
+    })
+    .unwrap(),
+  )
+}
+
+fn validate_contract_job(spec: &VerifiedJobSpec) {
+  let binding = octacity_protocol::JobBinding {
+    job_id: spec.job_id(),
+    attempt: match spec {
+      VerifiedJobSpec::V3(spec) => spec.attempt,
+      VerifiedJobSpec::V4(spec) => spec.attempt,
+      _ => unreachable!(),
+    },
+    now: unix_now(),
+  };
+  match spec {
+    VerifiedJobSpec::V3(spec) => spec.validate(&binding).unwrap(),
+    VerifiedJobSpec::V4(spec) => spec.validate(&binding).unwrap(),
+    _ => unreachable!(),
+  }
+}
+
+fn protected_stager(allowed_origins: Vec<String>) -> ProtectedInputStager {
+  ProtectedInputStager::new(ProtectedInputStagerConfig {
+    root_certificates: vec![],
+    allowed_origins,
+    download_timeout: Duration::from_secs(10),
+  })
+  .unwrap()
+}
+
+#[cfg(unix)]
+#[path = "backend_contract/stage_isolation.rs"]
+mod stage_isolation;
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 #[ignore = "requires Linux containerd, runc/crun, cgroup v2, and a quota-mounted work root; see docs/testing/backend-contracts.md"]

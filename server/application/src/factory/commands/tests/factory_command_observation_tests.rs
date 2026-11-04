@@ -12,6 +12,7 @@ fn reference(name: &str) -> ImmutableReference {
 }
 pub(crate) fn contract() -> FactoryCommandObservationContract {
   FactoryCommandObservationContract {
+    stop_on_indeterminate: false,
     environment: reference("reviewed-probe-environment"),
     criterion: reference("http-status-symptom"),
     observations: FlowDataSchema::new(key("http-probe-observations"), key("v1"),
@@ -192,6 +193,20 @@ fn command_report_schema_preserves_the_selected_observation_shape_and_common_bou
   assert!(
     too_deep.validate().is_err(),
     "the complete report must fit the common schema depth ceiling"
+  );
+}
+
+#[test]
+fn plain_command_cannot_bind_an_observation_report_without_a_criterion() {
+  let schema = contract().report_schema().unwrap();
+  let (intent, admitted, profile) =
+    crate::factory::commands::tests::factory_command_tests::command_fixture_with_observation_and_schema(
+      None,
+      Some(schema),
+    );
+  assert!(
+    compile_factory_command_task(&intent, &admitted, &profile).is_err(),
+    "an ordinary report declaration cannot attest to independently verified observations"
   );
 }
 

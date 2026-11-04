@@ -199,6 +199,9 @@ impl<R: FactoryRunStore, Q: BuildQueryStore, A: ArtifactRecordStore, B: Artifact
       return Err(Invalid);
     }
     let profile = self.catalog.profile(&intent)?;
+    if profile.observation_contract.is_none() {
+      profile.observation_bindings()?;
+    }
     let job = &attempt.jobs[0];
     let terminal = job.terminal.as_ref().ok_or(Unavailable)?;
     if job.attempt_id != attempt_id
@@ -450,6 +453,7 @@ impl<R: FactoryRunStore, Q: BuildQueryStore, A: ArtifactRecordStore, B: Artifact
       return Err(Invalid);
     }
     let mut documents = Vec::with_capacity(uploads.len());
+    let mut inconclusive = false;
     for upload in &uploads {
       let identity = upload.artifact.identity();
       let installed = profile
@@ -506,7 +510,8 @@ impl<R: FactoryRunStore, Q: BuildQueryStore, A: ArtifactRecordStore, B: Artifact
         && let Some(contract) = &profile.observation_contract
       {
         let report = data.as_ref().ok_or(Invalid)?;
-        verify_factory_command_observation(contract, &intent, report.payload().value())?;
+        let finding = verify_factory_command_observation(contract, &intent, report.payload().value())?;
+        inconclusive = contract.stop_on_indeterminate && finding == FactoryCommandFinding::Indeterminate;
       }
       documents.push(FactoryNodeBuildOutputDocument {
         record: retained.record().clone(),
@@ -541,6 +546,9 @@ impl<R: FactoryRunStore, Q: BuildQueryStore, A: ArtifactRecordStore, B: Artifact
       })
     {
       return Err(Invalid);
+    }
+    if inconclusive {
+      return Ok(FactoryNodeBuildOutputObservation::ExecutionStopped { usage });
     }
     Ok(FactoryNodeBuildOutputObservation::Verified(Box::new(
       FactoryNodeBuildOutputs {

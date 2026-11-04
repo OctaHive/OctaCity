@@ -10,6 +10,16 @@ use uuid::Uuid;
 
 // Distinct from ordinary runner tasks and the reserved Agent ChangeSet producer.
 const INVENTORY_PRODUCER_ID: u64 = u64::MAX - 1;
+const INVENTORY_UPLOAD_PREFIX: &str = "factory.inventory:";
+
+pub(crate) async fn has_protected_test_inventory(
+  artifacts: &impl ArtifactRecordStore,
+  job: octacity_server_domain::JobId,
+) -> Result<bool, StoreError> {
+  artifacts.has_published_artifact_from_producer(
+    job, INVENTORY_PRODUCER_ID, INVENTORY_PRODUCER_ID, INVENTORY_UPLOAD_PREFIX,
+  ).await
+}
 
 /// Installed mapping from a private logical output to its protected test role.
 /// These parameters come from the pinned author profile, never model output.
@@ -269,9 +279,9 @@ impl<A: ArtifactRecordStore, B: ArtifactBytePublisher> FactoryProtectedTestInven
     identity: FactoryDigest,
   ) -> Result<FactoryArtifactReference, ApplicationError> {
     let (upload_domain, idempotency_prefix): (&[u8], &str) = if artifact_type == ArtifactType::Artifact {
-      (b"private-inventory:v1", "factory.inventory")
+      (b"private-inventory:v1", INVENTORY_UPLOAD_PREFIX)
     } else {
-      (b"public-handoff:v1", "factory.test-handoff")
+      (b"public-handoff:v1", "factory.test-handoff:")
     };
     let invalid = ApplicationError::invalid;
     let intent = request.intent;
@@ -335,7 +345,7 @@ impl<A: ArtifactRecordStore, B: ArtifactBytePublisher> FactoryProtectedTestInven
       .begin_artifact_upload(BeginArtifactUpload {
         artifact_id,
         upload_id,
-        idempotency_key: IdempotencyKey::new(format!("{idempotency_prefix}:{identity}")).map_err(|_| invalid())?,
+        idempotency_key: IdempotencyKey::new(format!("{idempotency_prefix}{identity}")).map_err(|_| invalid())?,
         lease: completion.lease,
         job_id: completion.job_id,
         attempt: completion.attempt,

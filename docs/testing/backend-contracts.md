@@ -419,7 +419,7 @@ Git-metadata and protected-input writes. This qualifies the mount boundary, not
 a remote model, installed author profile or complete Factory pilot. Octa and its
 released plugin binaries are unchanged.
 
-### Signed author Job on the released plugin
+### Signed author and review Jobs
 
 ```shell
 cargo test -p octacity-release-harness --test factory_author_job -- --ignored
@@ -448,6 +448,26 @@ guest starts. The other credential is also created and checked on the host;
 neither its bytes nor its private path may enter public output or diagnostics.
 The admitted source edit and its trusted Git capture must still succeed.
 
+The review fixture verifies a separate signed Job that reconstructs the exact
+captured candidate through the ordinary Agent materializer. It reads the
+candidate, attempts to modify it, and writes its review marker to the separate
+output mount. The contract checks the original candidate bytes and the marker.
+The Git bundle and manifest are available to the trusted materializer only.
+
+The stage isolation Microsandbox contract executes two validated JobSpecs under the
+same Agent installation. Only the first receives the protected test Artifact
+and the fixture executable. The second attempts to read the Artifact at its
+guest mount and through the first Job's retained workspace. It also attempts
+to invoke the executable and reach the same network host as the first Job.
+The first Job exercises all three grants before the second checks their absence.
+The executable is a verified fixture independent of the installed Codex version.
+
+```shell
+cargo test -p octacity-job --test backend_contract selected_source_job_hides_unselected_paths_and_lines_on_microsandbox -- --ignored --exact
+cargo test -p octacity-job --test backend_contract stage_isolation::selected_stage_isolation_denies_ungranted_artifact_tool_and_network -- --ignored --exact
+cargo test -p octacity-job --lib rejects_an_incomplete_factory_backend_before_source_or_spawn
+```
+
 The portable CLI fixture contract deliberately runs the same probes without a
 sandbox and requires the writable/readable attacks to report `allowed`. It also
 checks that repository shell substitutions never execute. This sensitivity
@@ -467,7 +487,7 @@ claiming that a remote model resists natural-language prompt injection.
 | Private candidate/context files | `candidate_input_projection`, `guest_candidate_capture` | Real guest projection with known host canaries |
 | Private variable crossing or task replacement | Runner `private_variables`; Job `execution_v2::installed_private_credentials` and `missing_installed_factory_credentials` | Portable binding, digest revalidation, refusal ordering and redaction |
 | Executable/platform/root substitution | Runner `standalone_installation` and installation tests | Portable exact identity and filesystem ownership checks |
-| Unqualified execution or Host fallback | Job `execution_v2::reports_an_unqualified_mode_without_falling_back_to_a_legacy_backend` and `never_falls_back_to_host_for_a_factory_job` | Portable exact route refusal before execution |
+| Unqualified execution or Host fallback | Job `execution_v2::reports_an_unqualified_mode_without_falling_back_to_a_legacy_backend`, `never_falls_back_to_host_for_a_factory_job` and `rejects_an_incomplete_factory_backend_before_source_or_spawn` | Portable exact route refusal before execution |
 
 Passing one row does not qualify the other boundaries or a complete Factory
 pilot. The portable refusal tests do not require a privileged runtime; the

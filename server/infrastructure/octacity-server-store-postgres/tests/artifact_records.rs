@@ -7,8 +7,9 @@ use authoritative_fixture::seed_authoritative_prerequisites;
 use octacity_server_domain::{ArtifactName, Timestamp};
 use octacity_server_store::{
   ArtifactContentDigest, ArtifactIdentity, ArtifactListVisibility, ArtifactMediaType, ArtifactRecordStore as _,
-  ArtifactRetentionPolicy, ArtifactType, JobClaim, JobClaimOutcome, JobExecutionStore as _, LeaseAccess, LeaseFence,
-  LeaseWindow, ListPublishedArtifacts, RestoreInventoryStore as _, TriggerAcceptanceStore as _,
+  ArtifactRetentionPolicy, ArtifactType, ArtifactVerificationResult, BeginArtifactUpload, IdempotencyKey, JobClaim,
+  JobClaimOutcome, JobExecutionStore as _, LeaseAccess, LeaseFence, LeaseWindow, ListPublishedArtifacts,
+  RestoreInventoryStore as _, TriggerAcceptanceStore as _, VerifyArtifactUpload,
   testing::{
     ArtifactRecordStoreContractFixture, ArtifactUploadStoreContractFixture, authoritative_store_contract_fixture,
     compatible_snapshot, verify_artifact_record_store_contract, verify_artifact_upload_store_contract,
@@ -148,6 +149,58 @@ async fn verify_artifact_records(database: &support::TestDatabase) -> Result<(),
   assert_eq!(restored.items.len(), 1);
   assert_eq!(restored.items[0].artifact.identity().artifact_id, id(953));
   assert_eq!(restored.next_after, None);
+  let media_type = ArtifactMediaType::new("application/octet-stream")?;
+  let upload = store
+    .begin_artifact_upload(BeginArtifactUpload {
+      artifact_id: id(960),
+      upload_id: id(961),
+      idempotency_key: IdempotencyKey::new("protected-inventory:payload")?,
+      lease: access,
+      job_id: grant.job_id,
+      attempt: grant.attempt,
+      logical_name: ArtifactName::new("inventory.json")?,
+      producer_run_id: 17,
+      producer_task_id: 23,
+      artifact_type: ArtifactType::Artifact,
+      media_type: media_type.clone(),
+      transport_media_type: media_type,
+      size_bytes: 42,
+      digest: ArtifactContentDigest::from_bytes([0x43; 32]),
+      reserved_at: time(2_000),
+      capability_expires_at: time(3_000),
+    })
+    .await?;
+  let verification = VerifyArtifactUpload {
+    upload_id: upload.upload.upload_id,
+    lease: access,
+    job_id: grant.job_id,
+    attempt: grant.attempt,
+    observed_at: time(2_100),
+  };
+  assert!(
+    !store
+      .has_published_artifact_from_producer(grant.job_id, 17, 23, "protected-inventory:")
+      .await?
+  );
+  store.begin_artifact_verification(verification).await?;
+  store
+    .finish_artifact_verification(verification, ArtifactVerificationResult::Verified)
+    .await?;
+  assert!(
+    store
+      .has_published_artifact_from_producer(grant.job_id, 17, 23, "protected-inventory:")
+      .await?
+  );
+  assert!(
+    !store
+      .has_published_artifact_from_producer(grant.job_id, 17, 24, "protected-inventory:")
+      .await?
+  );
+  assert!(
+    !store
+      .has_published_artifact_from_producer(grant.job_id, 17, 23, "output:")
+      .await?
+  );
   Ok(())
 }
 

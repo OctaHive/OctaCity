@@ -426,6 +426,7 @@ mod observation_contract_tests {
     }))
     .unwrap();
     profile.observation_contract = Some(octacity_server_application::FactoryCommandObservationContract {
+      stop_on_indeterminate: false,
       environment: profile.identity.clone(),
       criterion: profile.identity.clone(),
       observations: FlowDataSchema::new(

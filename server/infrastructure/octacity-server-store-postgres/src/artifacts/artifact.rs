@@ -497,6 +497,29 @@ pub(crate) async fn list_published(
   .collect()
 }
 
+pub(crate) async fn has_published_from_producer(
+  pool: &PgPool,
+  job_id: JobId,
+  producer_run_id: u64,
+  producer_task_id: u64,
+  upload_key_prefix: &str,
+) -> Result<bool, StoreError> {
+  sqlx::query_scalar(
+    "SELECT EXISTS (SELECT 1 FROM artifact_uploads upload
+     JOIN artifacts artifact ON artifact.id = upload.artifact_id AND artifact.job_id = upload.job_id
+     WHERE artifact.job_id = $1 AND upload.producer_run_id = $2 AND upload.producer_task_id = $3
+       AND starts_with(upload.idempotency_key, $4)
+       AND artifact.artifact_type = 'artifact' AND artifact.state = 'published')",
+  )
+  .bind(job_id.as_uuid())
+  .bind(producer_run_id.to_string())
+  .bind(producer_task_id.to_string())
+  .bind(upload_key_prefix)
+  .fetch_one(pool)
+  .await
+  .map_err(unavailable)
+}
+
 pub(crate) async fn restore_page(
   pool: &PgPool,
   after: Option<ArtifactId>,

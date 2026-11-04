@@ -8,6 +8,9 @@ use octacity_server_factory::*;
 use serde::{Deserialize, Serialize};
 use std::collections::BTreeMap;
 
+/// Schema family reserved for reports backed by an installed observation criterion.
+pub(super) const OBSERVATION_SCHEMA_ID: &str = "factory.command-observation";
+
 /// Operator-selected observation vocabulary and criterion, frozen with the command installation.
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
 #[serde(deny_unknown_fields)]
@@ -22,6 +25,9 @@ pub struct FactoryCommandObservationContract {
   pub completion: FlowPredicate,
   /// Configured criterion evaluated only over structured observations.
   pub symptom: FlowPredicate,
+  /// Require a conclusive finding before accepting a Flow result.
+  #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+  pub stop_on_indeterminate: bool,
 }
 
 impl FactoryCommandObservationContract {
@@ -79,7 +85,7 @@ impl FactoryCommandObservationContract {
       FlowFieldSchema::optional(self.observations.shape().clone()),
     );
     FlowDataSchema::new(
-      FactoryKey::new("factory.command-observation").map_err(|_| invalid())?,
+      FactoryKey::new(OBSERVATION_SCHEMA_ID).map_err(|_| invalid())?,
       FactoryKey::new("v1").map_err(|_| invalid())?,
       FlowValueSchema::Object { fields },
     )

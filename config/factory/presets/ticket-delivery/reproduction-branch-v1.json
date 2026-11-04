@@ -1,0 +1,134 @@
+{
+  "schemas": {
+    "reproduction_route": {
+      "identity": "factory.ticket-delivery.reproduction-route",
+      "version": "v1",
+      "shape": {
+        "type": "object",
+        "fields": {
+          "work_kind": {"required": true, "value": {"type": "enum", "values": ["defect", "feature_request"]}},
+          "reproducibility": {"required": true, "value": {"type": "enum", "values": [
+            "reproduced", "not_reproduced", "unknown", "needs_research", "needs_input", "not_applicable"
+          ]}}
+        }
+      }
+    },
+    "reproduction_task": {
+      "identity": "factory.ticket-delivery.reproduction-task",
+      "version": "v1",
+      "shape": {"type": "reference", "schema": "artifact_reference"}
+    },
+    "reproduction_attention": {
+      "identity": "factory.ticket-delivery.reproduction-attention",
+      "version": "v1",
+      "shape": {"type": "enum", "values": ["needs_input", "inconclusive", "dismissed"]}
+    }
+  },
+  "nodes": [
+    {
+      "key": "reproduction-needed",
+      "kind": "deterministic_gate",
+      "input_schema": "reproduction_route",
+      "outcomes": [
+        {"key": "check", "kind": "success", "schema": "reproduction_route"},
+        {"key": "bypass", "kind": "success", "schema": "reproduction_route"},
+        {"key": "needs_input", "kind": "failure", "schema": "reproduction_route"}
+      ],
+      "budget": {"max_attempts": 1, "max_elapsed_millis": 1000, "max_tokens": 0, "max_cost_micro_units": 0, "max_output_bytes": 1024},
+      "required": true,
+      "input_binding": {
+        "sources": {"triage": {"source": "caller_input", "path": ""}},
+        "mapping": {"value": {"mapping": "pointer", "path": "/triage"}}
+      },
+      "gate": {
+        "rules": [
+          {"outcome": "bypass", "when": {"operation": "any", "predicates": [
+            {"operation": "compare", "left": {"source": "path", "path": "/work_kind"}, "comparison": "equal", "right": {"source": "literal", "value": "feature_request"}},
+            {"operation": "compare", "left": {"source": "path", "path": "/reproducibility"}, "comparison": "equal", "right": {"source": "literal", "value": "reproduced"}}
+          ]}},
+          {"outcome": "check", "when": {"operation": "any", "predicates": [
+            {"operation": "compare", "left": {"source": "path", "path": "/reproducibility"}, "comparison": "equal", "right": {"source": "literal", "value": "unknown"}},
+            {"operation": "compare", "left": {"source": "path", "path": "/reproducibility"}, "comparison": "equal", "right": {"source": "literal", "value": "not_reproduced"}},
+            {"operation": "compare", "left": {"source": "path", "path": "/reproducibility"}, "comparison": "equal", "right": {"source": "literal", "value": "needs_research"}}
+          ]}}
+        ],
+        "fallback": "needs_input",
+        "default_output": {"value": {"mapping": "pointer", "path": ""}}
+      }
+    },
+    {
+      "key": "reproduction",
+      "kind": "build_command",
+      "input_schema": "reproduction_task",
+      "outcomes": [{"key": "observed", "kind": "success", "schema": "reproduction_report"}],
+      "budget": {"max_attempts": 1, "max_elapsed_millis": 60000, "max_tokens": 0, "max_cost_micro_units": 0, "max_output_bytes": 1048576},
+      "required": true,
+      "max_execution_retries": 1,
+      "build_profile": "reproduction",
+      "input_binding": {
+        "sources": {"task": {"source": "work", "path": "/artifacts/task"}},
+        "mapping": {"value": {"mapping": "pointer", "path": "/task"}}
+      },
+      "context_binding": {
+        "entries": {},
+        "work_task": "task"
+      }
+    },
+    {
+      "key": "reproduction-result",
+      "kind": "deterministic_gate",
+      "input_schema": "reproduction_report",
+      "outcomes": [
+        {"key": "reproduced", "kind": "success", "schema": "reproduction_report"},
+        {"key": "cannot_reproduce", "kind": "success", "schema": "reproduction_report"},
+        {"key": "unresolved", "kind": "failure", "schema": "reproduction_report"}
+      ],
+      "budget": {"max_attempts": 1, "max_elapsed_millis": 1000, "max_tokens": 0, "max_cost_micro_units": 0, "max_output_bytes": 1048576},
+      "required": true,
+      "input_binding": {
+        "sources": {"report": {"source": "record", "node": "reproduction", "outcome": "observed", "path": ""}},
+        "mapping": {"value": {"mapping": "pointer", "path": "/report"}}
+      },
+      "gate": {
+        "precondition": {"operation": "compare", "left": {"source": "path", "path": "/status"}, "comparison": "equal", "right": {"source": "literal", "value": "completed"}},
+        "rules": [
+          {"outcome": "reproduced", "when": {"operation": "compare", "left": {"source": "path", "path": "/finding"}, "comparison": "equal", "right": {"source": "literal", "value": "matched"}}},
+          {"outcome": "cannot_reproduce", "when": {"operation": "compare", "left": {"source": "path", "path": "/finding"}, "comparison": "equal", "right": {"source": "literal", "value": "not_matched"}}}
+        ],
+        "fallback": "unresolved",
+        "default_output": {"value": {"mapping": "pointer", "path": ""}}
+      }
+    },
+    {
+      "key": "review-reproduction",
+      "kind": "human_gate",
+      "input_schema": "reproduction_attention",
+      "outcomes": [{"key": "dismissed", "kind": "failure", "schema": "reproduction_attention"}],
+      "budget": {"max_attempts": 1, "max_elapsed_millis": 1000, "max_tokens": 0, "max_cost_micro_units": 0, "max_output_bytes": 1024},
+      "required": true,
+      "input_binding": {
+        "sources": {"prior": {"source": "predecessor", "view": "payload", "path": ""}},
+        "mapping": {"value": {"mapping": "if_present", "path": "/prior/status",
+          "then": {"mapping": "constant", "value": "inconclusive"},
+          "otherwise": {"mapping": "constant", "value": "needs_input"}
+        }}
+      }
+    }
+  ],
+  "transitions": [
+    {"predecessor": "reproduction-needed", "outcome": "check", "target": {"kind": "node", "key": "reproduction"}, "max_repeats": 0, "exhausted_terminal": null},
+    {"predecessor": "reproduction-needed", "outcome": "bypass", "target": {"kind": "terminal", "key": "bypass"}, "max_repeats": 0, "exhausted_terminal": null},
+    {"predecessor": "reproduction-needed", "outcome": "needs_input", "target": {"kind": "node", "key": "review-reproduction"}, "max_repeats": 0, "exhausted_terminal": null},
+    {"predecessor": "reproduction", "outcome": "observed", "target": {"kind": "node", "key": "reproduction-result"}, "max_repeats": 0, "exhausted_terminal": null},
+    {"predecessor": "reproduction-result", "outcome": "reproduced", "target": {"kind": "terminal", "key": "reproduced"}, "max_repeats": 0, "exhausted_terminal": null},
+    {"predecessor": "reproduction-result", "outcome": "cannot_reproduce", "target": {"kind": "terminal", "key": "cannot_reproduce"}, "max_repeats": 0, "exhausted_terminal": null},
+    {"predecessor": "reproduction-result", "outcome": "unresolved", "target": {"kind": "node", "key": "review-reproduction"}, "max_repeats": 0, "exhausted_terminal": null},
+    {"predecessor": "review-reproduction", "outcome": "dismissed", "target": {"kind": "terminal", "key": "unresolved"}, "max_repeats": 0, "exhausted_terminal": null}
+  ],
+  "terminals": {
+    "bypass": "reproduction_route",
+    "reproduced": "reproduction_report",
+    "cannot_reproduce": "reproduction_report",
+    "unresolved": "reproduction_attention"
+  }
+}

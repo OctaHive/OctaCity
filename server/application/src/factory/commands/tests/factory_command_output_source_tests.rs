@@ -123,8 +123,18 @@ struct Fixture {
 }
 
 async fn observed_command_fixture(primary: PrimaryReport) -> Fixture {
+  observed_command_fixture_with_contract(
+    crate::factory::commands::tests::factory_command_observation_tests::contract(),
+    primary,
+  )
+  .await
+}
+
+async fn observed_command_fixture_with_contract(
+  contract: FactoryCommandObservationContract,
+  primary: PrimaryReport,
+) -> Fixture {
   let (_, _, mut profile) = crate::factory::commands::tests::factory_command_tests::command_fixture();
-  let contract = crate::factory::commands::tests::factory_command_observation_tests::contract();
   let schema = contract.report_schema().unwrap();
   let original = &profile.outputs[0];
   profile.outputs[0] = EvidenceRequirement::new(
@@ -136,6 +146,73 @@ async fn observed_command_fixture(primary: PrimaryReport) -> Fixture {
   );
   profile.observation_contract = Some(contract);
   prepared_with_report(profile, "application/json", Some(schema), primary, |_| {}).await
+}
+
+#[test]
+fn configured_reproduction_stops_on_indeterminate_observation() {
+  crate::factory::admission::tests::factory_admission_tests::run_ready(async {
+    let mut policy =
+      serde_json::to_value(crate::factory::commands::tests::factory_command_observation_tests::contract()).unwrap();
+    policy["stop_on_indeterminate"] = serde_json::json!(true);
+    let contract: FactoryCommandObservationContract =
+      serde_json::from_value(policy).expect("a qualified command can require a conclusive result");
+    let fixture = observed_command_fixture_with_contract(contract, |intent, profile| {
+      let mut report = crate::factory::commands::tests::factory_command_observation_tests::report(
+        intent,
+        profile.observation_contract.as_ref().unwrap(),
+      );
+      report["status"] = serde_json::json!("environment_unavailable");
+      report["finding"] = serde_json::json!("indeterminate");
+      report.as_object_mut().unwrap().remove("observations");
+      Some(report)
+    })
+    .await;
+    let outcome = fixture
+      .source(fixture.query.clone())
+      .published_outputs(fixture.query.build.build.id, fixture.query.attempt.id, 4000)
+      .await
+      .unwrap();
+    let FactoryNodeBuildOutputObservation::ExecutionStopped { usage } = outcome else {
+      panic!("an unavailable environment must stop the stage without an accepted result");
+    };
+    assert!(usage.output_bytes > 0, "the Build retains the actual report");
+
+    let run = fixture.intent.input().factory_run_id();
+    let before = fixture.runs.factory_run_snapshot(run).await.unwrap();
+    let claim = before.current_claim.unwrap().id;
+    let (executor, builds) = fixture.executor();
+    let executors = FactoryNodeExecutorRegistry::new(vec![(
+      FlowNodeKind::BuildCommand,
+      NodeExecutionIdentity::External(fixture.profile.executor.clone()),
+      executor,
+    )])
+    .unwrap();
+    let flow = FactoryFlowRunner::new(
+      fixture.runs.clone(),
+      Arc::new(executors),
+      Arc::new(crate::factory_flow_tests::Inputs),
+      fixture.clock.clone(),
+    );
+    for tick in [32, 33, 34] {
+      assert_eq!(
+        flow.reconcile_flow(run, claim, at(tick)).await.unwrap(),
+        FactoryFlowStep::Waiting
+      );
+    }
+    let stopped = fixture.runs.factory_run_snapshot(run).await.unwrap();
+    assert_eq!(stopped.flow.data.stops.len(), 1);
+    assert_eq!(stopped.flow.data.stops[0].reason(), FlowNodeStopReason::ExecutionFailed);
+    assert_eq!(stopped.flow.data.build_intents.len(), 1);
+    assert_eq!(stopped.flow.data.build_executions.len(), 1);
+    assert!(stopped.flow.data.records.is_empty());
+    assert!(
+      !stopped
+        .outbox
+        .iter()
+        .any(|row| row.kind == fixtures::key("work.status.projection"))
+    );
+    assert_eq!(builds.requests.lock().unwrap().len(), 1);
+  });
 }
 
 #[test]
@@ -392,6 +469,31 @@ fn retained_command_json_uses_installed_schema_and_charges_server_wall_time() {
   });
 }
 impl Fixture {
+  fn executor(
+    &self,
+  ) -> (
+    Arc<dyn FactoryNodeExecutor>,
+    Arc<crate::factory_node_test_support::Builds>,
+  ) {
+    let mut builds = crate::factory_node_test_support::Builds::new_at(self.query.build.created_at);
+    builds.acceptance = FactoryBuildAcceptance {
+      build_id: self.query.build.build.id,
+      attempt_id: self.query.attempt.id,
+      job_ids: self.query.attempt.jobs.iter().map(JobRecord::id).collect(),
+      effective_policy_digest: self.intent.permissions().digest(),
+    };
+    *builds.state.lock().unwrap() = BuildState::Succeeded;
+    *builds.latest.lock().unwrap() = Some(self.query.attempt.clone());
+    let builds = Arc::new(builds);
+    (
+      Arc::new(FactoryNodeBuildAdapter::new(
+        builds.clone(),
+        Arc::new(self.source(self.query.clone())),
+      )),
+      builds,
+    )
+  }
+
   fn source(
     &self,
     query: Queries,
@@ -597,6 +699,21 @@ async fn finish_prepared(
 ) -> Fixture {
   finish_prepared_with_primary(profile, runs, admitted, intent, source, media_type, count_report).await
 }
+pub(crate) async fn retained_command_executor(
+  profile: FactoryCommandBuildProfile,
+  runs: Arc<InMemoryFactoryConfigurationStore>,
+  admitted: AdmittedFlow,
+  intent: FlowBuildIntent,
+  report: serde_json::Value,
+) -> Arc<dyn FactoryNodeExecutor> {
+  finish_prepared_with_primary(profile, runs, admitted, intent, None, "application/json", |_, _| {
+    Some(report)
+  })
+  .await
+  .executor()
+  .0
+}
+
 async fn finish_prepared_with_primary(
   profile: FactoryCommandBuildProfile,
   runs: Arc<InMemoryFactoryConfigurationStore>,
@@ -604,7 +721,7 @@ async fn finish_prepared_with_primary(
   intent: FlowBuildIntent,
   source: Option<FixtureSource>,
   media_type: &str,
-  primary: PrimaryReport,
+  primary: impl FnOnce(&FlowBuildIntent, &FactoryCommandBuildProfile) -> Option<serde_json::Value>,
 ) -> Fixture {
   let offset = intent.node().started_at().unix_millis() - 6;
   let mut compiled = match &source {
@@ -641,6 +758,25 @@ async fn finish_prepared_with_primary(
   )
   .await
   .unwrap();
+  if let Some(task) = intent.input().work_task() {
+    let publication = PublishedExecutionInput {
+      artifact_id: task.artifact_id(),
+      upload_id: ArtifactUploadId::generate(),
+      digest: ArtifactContentDigest::from_lower_hex(&task.content_digest().to_string()).unwrap(),
+      size_bytes: task.encoded_size(),
+      media_type: ArtifactMediaType::new("text/plain").unwrap(),
+      expires_at: None,
+    };
+    assert!(
+      compiled.managed_program(manifest.clone()).is_ok(),
+      "reconstruction must also accept the original signed document set of older Jobs"
+    );
+    manifest.inputs.push(
+      compiled
+        .work_task_input(&publication, intent.node().deadline())
+        .unwrap(),
+    );
+  }
   manifest.inputs.extend_from_slice(compiled.additional_inputs());
   manifest.inputs.sort_by(|a, b| a.artifact_id.cmp(&b.artifact_id));
   let program = compiled.managed_program(manifest).unwrap();

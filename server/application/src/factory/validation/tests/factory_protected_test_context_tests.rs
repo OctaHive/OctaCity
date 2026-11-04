@@ -43,19 +43,26 @@ async fn publish(
   artifacts: &InMemoryArtifactRecordStore,
   document: &FactoryNodeBuildOutputDocument,
   lease: LeaseAccess,
+  inventory: bool,
 ) {
   let id = document.record.identity();
+  let upload_key = if inventory {
+    format!("factory.inventory:{}", FactoryDigest::content_sha256(&document.bytes))
+  } else {
+    id.logical_name.as_str().to_owned()
+  };
+  let producer = if inventory { u64::MAX - 1 } else { 1 };
   let upload = artifacts
     .begin_artifact_upload(BeginArtifactUpload {
       artifact_id: id.artifact_id,
       upload_id: ArtifactUploadId::generate(),
-      idempotency_key: IdempotencyKey::new(id.logical_name.as_str()).unwrap(),
+      idempotency_key: IdempotencyKey::new(upload_key).unwrap(),
       lease,
       job_id: id.job_id,
       attempt: AttemptNumber::FIRST,
       logical_name: id.logical_name.clone(),
-      producer_run_id: 1,
-      producer_task_id: 1,
+      producer_run_id: producer,
+      producer_task_id: producer,
       artifact_type: id.artifact_type.clone(),
       media_type: id.media_type.clone(),
       transport_media_type: id.media_type.clone(),
@@ -79,6 +86,65 @@ async fn publish(
     .await
     .unwrap();
 }
+
+#[test]
+fn model_context_reads_public_artifact_even_when_the_attempt_fills_an_artifact_page() {
+  let fixture = crate::factory::validation::tests::factory_protected_test_tests::retained_author_fixture();
+  crate::factory::admission::tests::factory_admission_tests::run_ready(async {
+    let document = fixture.manifest;
+    let identity = document.record.identity();
+    let lease = LeaseAccess {
+      lease_id: identity.lease_id,
+      fence: LeaseFence::from_bytes([1; 32]),
+      agent_id: AgentId::generate(),
+      registration_epoch: RegistrationEpoch::new(1).unwrap(),
+    };
+    let artifacts = Arc::new(InMemoryArtifactRecordStore::new(ArtifactLeaseFixture {
+      access: lease,
+      build_id: identity.build_id,
+      attempt_id: identity.attempt_id,
+      attempt: AttemptNumber::FIRST,
+      job_id: identity.job_id,
+      expires_at: at(1000),
+    }));
+    publish(&artifacts, &document, lease, false).await;
+    for index in 1..MAX_ARTIFACT_PAGE_SIZE {
+      let mut extra = identity.clone();
+      extra.artifact_id = ArtifactId::generate();
+      extra.logical_name = ArtifactName::new(format!("public-result-{index}")).unwrap();
+      let mut publication = document.clone();
+      publication.record = ArtifactRecord::pending(extra, at(30)).unwrap();
+      publish(&artifacts, &publication, lease, false).await;
+    }
+    let prior = fixture.intent.input().context().unwrap();
+    let reference = fixture.bundle.artifact().clone();
+    let context = ContextManifest::new(
+      ContextManifestId::generate(),
+      prior.subject().clone(),
+      prior.construction_policy_digest(),
+      vec![ContextManifestEntry::new(
+        ContextSourceKind::Evidence,
+        key("public-result"),
+        prior.subject().clone(),
+        FactoryContextReference::Artifact(reference.clone()),
+        reference.content_digest(),
+        reference.encoded_size(),
+        FactorySafeText::new("Explicitly selected ordinary output").unwrap(),
+        FactoryDigest::from_bytes([3; 32]),
+      ).unwrap()],
+    ).unwrap();
+    let input = fixture.intent.input().clone().with_context(context, vec![]).unwrap();
+    let bytes = Arc::new(InventoryBytes {
+      id: identity.artifact_id,
+      bytes: document.bytes.clone(),
+      reads: AtomicUsize::new(0),
+    });
+    let reader = FactoryArtifactReader::new(artifacts, fixture.builds, bytes);
+    let selected = reader.read_context(&input, at(32), at(899)).await.unwrap();
+    assert_eq!(selected.get(&identity.artifact_id), Some(&document.bytes));
+  });
+}
+
 #[test]
 fn retained_protected_tests_restore_exact_selected_inventory_and_file_identities_after_restart() {
   let fixture = crate::factory::validation::tests::factory_protected_test_tests::retained_author_fixture();
@@ -163,8 +229,8 @@ fn retained_protected_tests_restore_exact_selected_inventory_and_file_identities
       job_id: id.job_id,
       expires_at: at(1000),
     }));
-    publish(&artifacts, &fixture.manifest, lease).await;
-    publish(&artifacts, &fixture.file, lease).await;
+    publish(&artifacts, &fixture.manifest, lease, true).await;
+    publish(&artifacts, &fixture.file, lease, false).await;
     let bytes = Arc::new(InventoryBytes {
       id: id.artifact_id,
       bytes: fixture.manifest.bytes.clone(),
@@ -192,6 +258,35 @@ fn retained_protected_tests_restore_exact_selected_inventory_and_file_identities
     .unwrap();
     let input = fixture.intent.input().clone().with_context(context, vec![]).unwrap();
     let reader = Arc::new(FactoryArtifactReader::new(artifacts, fixture.builds, bytes.clone()));
+    for (alias, reference) in [
+      ("private-inventory", fixture.bundle.artifact()),
+      ("private-file", &fixture.bundle.files()[0].artifact),
+    ] {
+      let context = ContextManifest::new(
+        ContextManifestId::generate(),
+        prior.subject().clone(),
+        prior.construction_policy_digest(),
+        vec![
+          ContextManifestEntry::new(
+            ContextSourceKind::Evidence,
+            key(alias),
+            prior.subject().clone(),
+            FactoryContextReference::Artifact(reference.clone()),
+            reference.content_digest(),
+            reference.encoded_size(),
+            FactorySafeText::new("Explicit model context selection").unwrap(),
+            FactoryDigest::from_bytes([3; 32]),
+          )
+          .unwrap(),
+        ],
+      )
+      .unwrap();
+      let model = fixture.intent.input().clone().with_context(context, vec![]).unwrap();
+      assert!(
+        reader.read_context(&model, at(32), at(899)).await.is_err(),
+        "an exact protected test reference must not confer model context access"
+      );
+    }
     let source = FactoryStoredProtectedTestContextSource::new(
       store.clone(),
       reader.clone(),

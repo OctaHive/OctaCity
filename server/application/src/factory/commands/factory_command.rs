@@ -1,6 +1,8 @@
 //! Compilation of operator-installed command programs, independent of Flow names.
 use crate::{ApplicationError, FactoryExecutionDocument, FactoryManagedJobProgram, OrdinaryBuildApplicationError};
-use octacity_protocol::{FactoryEnforcementCapabilityV3, ManagedOctaExecutionV3, ProtectedInputManifestV3};
+use octacity_protocol::{
+  FactoryEnforcementCapabilityV3, ManagedOctaExecutionV3, ProtectedInputManifestV3, ProtectedInputV3,
+};
 use octacity_server_domain::PipelineNodeId;
 use octacity_server_factory::{
   AdmittedFlow, BuildConfigurationRef, EvidenceRequirement, FactoryDigest, FactoryKey, FactoryPermissionSet,
@@ -10,6 +12,7 @@ use serde::{Deserialize, Serialize};
 use std::collections::BTreeMap;
 
 const OCTAFILE_DESTINATION: &str = "/octacity/protected/command-Octafile.yml";
+const WORK_TASK_DESTINATION: &str = "/octacity/protected/work-task";
 
 /// Maximum UTF-8 bytes in one operator-installed command Octafile.
 /// This source bound is separate from human-readable Factory summaries and
@@ -106,12 +109,19 @@ impl FactoryCommandBuildProfile {
   }
 
   /// Returns finite primary reports compatible with this explicitly installed observation contract.
-  /// No program/credential values or I/O are involved; plain reports advertise no such capability.
+  /// Plain commands may publish their own reports. The observation schema is reserved for this contract.
   pub fn observation_bindings(
     &self,
   ) -> Result<Vec<crate::FactoryCommandObservationBinding>, OrdinaryBuildApplicationError> {
     let invalid = || OrdinaryBuildApplicationError::Invalid;
     let Some(contract) = &self.observation_contract else {
+      if self
+        .outputs
+        .iter()
+        .any(|output| output.schema().identity().as_str() == super::factory_command_observation::OBSERVATION_SCHEMA_ID)
+      {
+        return Err(invalid());
+      }
       return Ok(vec![]);
     };
     contract.validate()?;
@@ -275,6 +285,33 @@ enum StaticCommandAuthority {
   Deployment,
 }
 impl CompiledFactoryCommandTask {
+  pub(super) fn work_task_input(
+    &self,
+    publication: &octacity_server_store::PublishedExecutionInput,
+    deadline: octacity_server_domain::Timestamp,
+  ) -> Result<ProtectedInputV3, OrdinaryBuildApplicationError> {
+    let input = ProtectedInputV3 {
+      artifact_id: publication.artifact_id.to_string(),
+      size_bytes: publication.size_bytes,
+      sha256: publication.digest.to_string(),
+      media_type: publication.media_type.as_str().to_owned(),
+      destination: WORK_TASK_DESTINATION.into(),
+    };
+    if !self.matches_work_task(&input) || publication.expires_at.is_some_and(|expiry| expiry < deadline) {
+      return Err(OrdinaryBuildApplicationError::Invalid);
+    }
+    Ok(input)
+  }
+
+  fn matches_work_task(&self, input: &ProtectedInputV3) -> bool {
+    self.input.work_task().is_some_and(|task| {
+      input.destination == WORK_TASK_DESTINATION
+        && input.artifact_id == task.artifact_id().to_string()
+        && input.size_bytes == task.encoded_size()
+        && input.sha256 == task.content_digest().to_string()
+    })
+  }
+
   pub(crate) fn with_deployment_authority(
     mut self,
     authority: &crate::FactoryDeploymentCommandAuthority,
@@ -411,24 +448,28 @@ impl CompiledFactoryCommandTask {
         .inputs
         .iter()
         .filter(|input| {
-          self
-            .expected
-            .iter()
-            .any(|(destination, _, _)| input.destination == *destination)
+          input.destination == WORK_TASK_DESTINATION
+            || self
+              .expected
+              .iter()
+              .any(|(destination, _, _)| input.destination == *destination)
         })
         .cloned()
         .collect(),
     };
     self.managed_program(generated)
   }
-  /// Accepts only the exact published document set, including executable bytes.
+  /// Reconstructs the exact published document set, including executable bytes.
+  /// New Jobs receive the selected Work task at dispatch. A retained Job may
+  /// predate that mount, but any included task must match the frozen selection.
   pub fn managed_program(
     &self,
     manifest: ProtectedInputManifestV3,
   ) -> Result<FactoryManagedJobProgram, OrdinaryBuildApplicationError> {
     let invalid = || OrdinaryBuildApplicationError::Invalid;
     manifest.validate().map_err(|_| invalid())?;
-    if manifest.inputs.len() != self.expected.len() + self.additional_inputs.len()
+    let task_mounted = manifest.inputs.iter().any(|input| self.matches_work_task(input));
+    if manifest.inputs.len() != self.expected.len() + self.additional_inputs.len() + usize::from(task_mounted)
       || self
         .additional_inputs
         .iter()
@@ -509,9 +550,9 @@ pub fn compile_factory_command_task(
   {
     return Err(invalid());
   }
-  if profile.observation_contract.is_some()
-    && !profile
-      .observation_bindings()?
+  let observations = profile.observation_bindings()?;
+  if !observations.is_empty()
+    && !observations
       .iter()
       .any(|binding| binding.result_output == intent.profile().result_output)
   {

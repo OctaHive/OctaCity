@@ -324,7 +324,9 @@ impl FactoryRuntimeResources {
         .map_err(|_| Invalid)?,
       ),
     };
-    let mut compiler = compiler.with_candidate_context_source(candidates.clone());
+    let mut compiler = compiler
+      .with_candidate_context_source(candidates.clone())
+      .with_work_input_store(self.runs.clone());
     let mut outputs = outputs.with_retained_candidate_context_source(candidates);
     match installation {
       CommandInstallation::Author(authors) => {

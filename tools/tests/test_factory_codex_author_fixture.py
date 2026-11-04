@@ -11,6 +11,20 @@ import unittest
 FIXTURE = Path(__file__).resolve().parents[2] / "server/tests/octacity-release-harness/fixtures/factory/codex-author-cli.sh"
 
 
+def run_author(root, schema, *, prompt="bounded public instruction",
+               api_key="private-author-credential-canary", extra=()):
+    environment = {"PATH": os.defpath}
+    if api_key is not None:
+        environment["OPENAI_API_KEY"] = api_key
+    return subprocess.run(
+        ["/bin/sh", str(FIXTURE), "--ask-for-approval=never", "exec", "--json",
+         "--sandbox=workspace-write", "--model=operator-selected-exact-model",
+         f"--output-schema={schema}", *extra, "-"],
+        input=prompt, text=True, capture_output=True, check=False, timeout=5,
+        cwd=root, env=environment,
+    )
+
+
 @unittest.skipUnless(os.name == "posix", "the author fixture requires a Unix shell and filesystem")
 class FactoryCodexAuthorFixtureTests(unittest.TestCase):
     def test_adversarial_probe_records_real_outcomes_without_executing_repository_instructions(self):
@@ -35,14 +49,7 @@ class FactoryCodexAuthorFixtureTests(unittest.TestCase):
             (root / "source2").mkdir()
             (root / "source2/private.txt").write_text("source2-private-canary")
             (source / "host-credential-location.txt").write_text(str(credential))
-            result = subprocess.run(
-                ["/bin/sh", str(FIXTURE), "exec", "--json", "--sandbox=workspace-write",
-                 "--ask-for-approval=never", "--model=operator-selected-exact-model",
-                 f"--output-schema={schema}", "-"],
-                input="bounded public instruction", text=True, capture_output=True,
-                check=False, timeout=5, cwd=root,
-                env={"PATH": os.defpath, "OPENAI_API_KEY": "author-private-canary"},
-            )
+            result = run_author(root, schema, api_key="author-private-canary")
             self.assertEqual(result.returncode, 0, "the finite fixture must complete without private diagnostics")
             report = root / "output/security-probes.json"
             self.assertTrue(report.is_file(), "every adversarial probe needs an explicit retained outcome")
@@ -79,13 +86,7 @@ class FactoryCodexAuthorFixtureTests(unittest.TestCase):
                     target.write_text("unchanged\n")
                     schema = root / "schema.json"
                     schema.write_text(schema_body)
-                    result = subprocess.run(
-                        ["/bin/sh", str(FIXTURE), "exec", "--json", "--sandbox=workspace-write",
-                         "--ask-for-approval=never", "--model=operator-selected-exact-model",
-                         f"--output-schema={schema}", *extra, "-"],
-                        input=prompt, text=True, capture_output=True, check=False, timeout=5,
-                        cwd=root, env={"PATH": os.defpath, "OPENAI_API_KEY": "private-author-credential-canary"},
-                    )
+                    result = run_author(root, schema, prompt=prompt, extra=extra)
                     self.assertEqual(result.returncode, 64)
                     self.assertEqual(result.stdout, "")
                     self.assertEqual(result.stderr, "hermetic Codex fixture rejected its invocation\n")
@@ -99,13 +100,7 @@ class FactoryCodexAuthorFixtureTests(unittest.TestCase):
             target.write_text("original\n")
             schema = root / "schema.json"
             schema.write_text('{"type":"boolean"}\n')
-            result = subprocess.run(
-                ["/bin/sh", str(FIXTURE), "exec", "--json", "--sandbox=workspace-write",
-                 "--ask-for-approval=never", "--model=operator-selected-exact-model",
-                 f"--output-schema={schema}", "-"],
-                input="bounded public instruction", text=True, capture_output=True,
-                check=False, timeout=5, cwd=root, env={"PATH": os.defpath},
-            )
+            result = run_author(root, schema, api_key=None)
             self.assertEqual(result.returncode, 64)
             self.assertEqual(target.read_text(), "original\n")
             self.assertEqual(result.stdout, "")
@@ -131,14 +126,7 @@ class FactoryCodexAuthorFixtureTests(unittest.TestCase):
             outside.write_text("outside-canary\n")
             schema = root / "output/schema.json"
             schema.write_text('{"type":"boolean"}\n')
-            result = subprocess.run(
-                ["/bin/sh", str(FIXTURE), "exec", "--json", "--sandbox=workspace-write",
-                 "--ask-for-approval=never", "--model=operator-selected-exact-model",
-                 f"--output-schema={schema}", "-"],
-                input="bounded public instruction", text=True, capture_output=True,
-                check=False, timeout=5, cwd=root,
-                env={"PATH": os.defpath, "OPENAI_API_KEY": "private-author-credential-canary"},
-            )
+            result = run_author(root, schema)
             self.assertEqual(result.returncode, 0, result.stderr)
             self.assertEqual(target.read_text(), "qualified-author-change\n")
             self.assertEqual(outside.read_text(), "outside-canary\n")
@@ -153,14 +141,7 @@ class FactoryCodexAuthorFixtureTests(unittest.TestCase):
             schema.write_text('{"type":"boolean"}\n')
             outside = root / "outside.txt"
             outside.write_text("outside-canary\n")
-            result = subprocess.run(
-                ["/bin/sh", str(FIXTURE), "exec", "--json", "--sandbox=workspace-write",
-                 "--ask-for-approval=never", "--model=operator-selected-exact-model",
-                 f"--output-schema={schema}", "-"],
-                input="private-author-prompt-canary", text=True, capture_output=True, check=False,
-                timeout=5, cwd=root,
-                env={"PATH": os.defpath, "OPENAI_API_KEY": "private-author-credential-canary"},
-            )
+            result = run_author(root, schema, prompt="private-author-prompt-canary")
             self.assertEqual(result.returncode, 0, result.stderr)
             self.assertEqual((root / "public/approved/contract.txt").read_text(), "qualified-author-change\n")
             self.assertEqual(outside.read_text(), "outside-canary\n")

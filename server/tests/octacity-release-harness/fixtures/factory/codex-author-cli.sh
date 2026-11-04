@@ -11,8 +11,8 @@ if [ "$#" -eq 1 ] && [ "$1" = --version ]; then
 fi
 [ -n "${OPENAI_API_KEY:-}" ] || fail
 [ "$#" -eq 7 ] || fail
-[ "$1" = exec ] && [ "$2" = --json ] && [ "$3" = --sandbox=workspace-write ] \
-  && [ "$4" = --ask-for-approval=never ] && [ "$7" = - ] || fail
+[ "$1" = --ask-for-approval=never ] && [ "$2" = exec ] && [ "$3" = --json ] \
+  && [ "$4" = --sandbox=workspace-write ] && [ "$7" = - ] || fail
 case "$5" in --model=?*) ;; *) fail ;; esac
 case "$6" in --output-schema=?*) schema=${6#--output-schema=} ;; *) fail ;; esac
 [ -f "$schema" ] && [ ! -L "$schema" ] || fail

@@ -110,6 +110,18 @@ impl ArtifactRecordStore for PostgresStore {
   ) -> Result<Vec<ArtifactUploadRecord>, StoreError> {
     crate::artifacts::artifact::list_published(&self.pool, query).await
   }
+
+  async fn has_published_artifact_from_producer(
+    &self,
+    job_id: octacity_server_domain::JobId,
+    producer_run_id: u64,
+    producer_task_id: u64,
+    upload_key_prefix: &str,
+  ) -> Result<bool, StoreError> {
+    crate::artifacts::artifact::has_published_from_producer(
+      &self.pool, job_id, producer_run_id, producer_task_id, upload_key_prefix,
+    ).await
+  }
 }
 
 #[async_trait]

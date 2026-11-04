@@ -203,10 +203,26 @@ pub(crate) async fn admitted_closure_with_schemas(
   FactoryRunId,
   FactoryDigest,
 ) {
+  admitted_closure_with_work(
+    definitions,
+    schemas,
+    store_testing::factory_node_journal_contract_fixture().admission.work,
+  )
+  .await
+}
+
+pub(crate) async fn admitted_closure_with_work(
+  definitions: Vec<FlowDefinition>,
+  schemas: Vec<FlowDataSchema>,
+  work: WorkEnvelope,
+) -> (
+  Arc<store_testing::InMemoryFactoryConfigurationStore>,
+  FactoryRunId,
+  FactoryDigest,
+) {
   let definition = &definitions[0];
   let budget = definition.execution().budget();
   let grants = definition.execution().permissions().clone();
-  let work = store_testing::factory_node_journal_contract_fixture().admission.work;
   let run = FactoryRun::admitted(FactoryRunId::generate(), &work);
   let flow = FlowRun::root(&run, definition.reference()).unwrap();
   let cycle = WorkflowCycle::initial(&flow).unwrap();

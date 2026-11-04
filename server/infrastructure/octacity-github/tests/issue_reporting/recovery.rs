@@ -183,6 +183,13 @@ async fn stage_effect_presets_apply_distinct_arbitrary_values_without_changing_u
     ("ready / review", vec!["human-owned", "ready / review"], "open", 2),
     ("context requested", vec!["human-owned"], "open", 1),
     ("repair needed", vec!["human-owned", "ready / review"], "closed", 3),
+    ("cannot-reproduce", vec!["human-owned", "ready / review"], "open", 2),
+    (
+      "reproduction-needed",
+      vec!["human-owned", "needs context", "ready / review"],
+      "open",
+      1,
+    ),
   ] {
     let forge = Forge::start().await;
     *forge.reporting.lock().await = Some(reporting::Issue::new(&["needs context", "human-owned"]));
@@ -192,7 +199,9 @@ async fn stage_effect_presets_apply_distinct_arbitrary_values_without_changing_u
       "statuses":{
         "ready / review":{"add":["ready / review"],"remove":["needs context"]},
         "context requested":{"add":[],"remove":["needs context"]},
-        "repair needed":{"add":["ready / review"],"remove":["needs context"],"state":"closed"}
+        "repair needed":{"add":["ready / review"],"remove":["needs context"],"state":"closed"},
+        "cannot-reproduce":{"add":["ready / review"],"remove":["needs context"],"state":"open"},
+        "reproduction-needed":{"add":["ready / review"],"remove":[]}
       }
     });
     let (installation, original) = install(&forge, effects);

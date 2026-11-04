@@ -181,7 +181,7 @@ impl FactoryResultReportingDraft {
         input_schema: input_key.clone(),
         outcomes: vec![FlowTemplateOutcome {
           key: key("reported")?,
-          kind: FlowOutcomeKind::Success,
+          kind: outcome.kind,
           schema: outcome.schema.clone(),
           public_result: false,
           issue_presentation: None,

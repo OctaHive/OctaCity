@@ -85,6 +85,23 @@ impl<A: ArtifactRecordStore, S: BuildQueryStore, B: ArtifactByteReader> FactoryC
     &self,
     request: ReadFactoryCandidateContext<'_>,
   ) -> Result<FactoryCandidateContext, ApplicationError> {
+    self.read_selected(request, true).await
+  }
+
+  // Trusted commands consume the candidate as source. Their private inputs
+  // are recovered by their own typed readers, outside model Context.
+  pub(super) async fn read_source(
+    &self,
+    request: ReadFactoryCandidateContext<'_>,
+  ) -> Result<FactoryCandidateContext, ApplicationError> {
+    self.read_selected(request, false).await
+  }
+
+  async fn read_selected(
+    &self,
+    request: ReadFactoryCandidateContext<'_>,
+    include_model_context: bool,
+  ) -> Result<FactoryCandidateContext, ApplicationError> {
     let invalid = ApplicationError::invalid;
     let context = request.input.context().ok_or_else(invalid)?;
     if context.subject().candidate().is_none() {
@@ -158,12 +175,13 @@ impl<A: ArtifactRecordStore, S: BuildQueryStore, B: ArtifactByteReader> FactoryC
       .min();
     let mut remaining = MAX_CONTEXT_MANIFEST_BYTES;
     for artifact in selected.into_values().filter(|artifact| {
-      artifact.artifact_id() != bundle_output.artifact.artifact_id()
+      include_model_context
+        && artifact.artifact_id() != bundle_output.artifact.artifact_id()
         && artifact.artifact_id() != manifest_output.artifact.artifact_id()
     }) {
       let retained = self
         .reader
-        .read(read(artifact.clone(), remaining.min(MAX_ARTIFACT_READ_BYTES)))
+        .read_model_artifact(read(artifact.clone(), remaining.min(MAX_ARTIFACT_READ_BYTES)))
         .await?;
       std::str::from_utf8(retained.bytes()).map_err(|_| invalid())?;
       retained_until = retained_until

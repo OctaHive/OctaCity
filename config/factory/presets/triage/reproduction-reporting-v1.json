@@ -1,0 +1,22 @@
+{
+  "key": "reproduction",
+  "path": ["assessment", "reproducibility"],
+  "outcomes": ["rejection", "already_fixed", "verification_only", "defect_research", "feature_research", "requirements"],
+  "cases": [
+    {
+      "selection": {"selection": "literal", "value": "not_reproduced"},
+      "effects": {"status": "reproduction-needed", "add": ["need reproduce"], "remove": [], "state": null}
+    },
+    {
+      "selection": {"selection": "literal", "value": "unknown"},
+      "effects": {"status": "reproduction-needed", "add": ["need reproduce"], "remove": [], "state": null}
+    },
+    {
+      "selection": {"selection": "literal", "value": "needs_research"},
+      "effects": {"status": "reproduction-needed", "add": ["need reproduce"], "remove": [], "state": null}
+    },
+    {"selection": {"selection": "literal", "value": "reproduced"}, "effects": null},
+    {"selection": {"selection": "literal", "value": "needs_input"}, "effects": null},
+    {"selection": {"selection": "literal", "value": "not_applicable"}, "effects": null}
+  ]
+}

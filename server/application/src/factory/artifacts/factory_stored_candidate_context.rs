@@ -7,7 +7,9 @@ use async_trait::async_trait;
 use octacity_artifact_store::ArtifactByteReader;
 use octacity_protocol::{CHANGE_SET_BUNDLE_OUTPUT, CHANGE_SET_MANIFEST_OUTPUT};
 use octacity_server_domain::Timestamp;
-use octacity_server_factory::{FactoryClaimOwnership, FactoryContextReference, FlowBuildIntent, ImmutableReference};
+use octacity_server_factory::{
+  FactoryClaimOwnership, FactoryContextReference, FlowBuildIntent, FlowNodeKind, ImmutableReference,
+};
 use octacity_server_store::{ArtifactRecordStore, BuildQueryStore, FactoryRunSnapshot, FactoryRunStore};
 use std::{collections::BTreeSet, sync::Arc};
 
@@ -195,18 +197,19 @@ impl<R, A: ArtifactRecordStore, Q: BuildQueryStore, B: ArtifactByteReader>
     if executions.next().is_some() {
       return Err(invalid());
     }
-    self
-      .source
-      .read(ReadFactoryCandidateContext {
-        input: intent.input(),
-        producer_record: record,
-        producer_intent,
-        producer_execution: execution,
-        capture_tool: &self.capture_tool,
-        observed_at,
-        required_until,
-      })
-      .await
+    let request = ReadFactoryCandidateContext {
+      input: intent.input(),
+      producer_record: record,
+      producer_intent,
+      producer_execution: execution,
+      capture_tool: &self.capture_tool,
+      observed_at,
+      required_until,
+    };
+    if intent.node().node_kind() == FlowNodeKind::BuildCommand {
+      return self.source.read_source(request).await;
+    }
+    self.source.read(request).await
   }
 }
 fn verify_current_consumer(

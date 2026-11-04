@@ -115,6 +115,21 @@ or label names. Only labels and optional states already present in the installed
 editing policy are accepted; unsupported combinations, missing labels and
 incomplete partitions block composition. No label is created or scope refreshed.
 
+For opt-in reproduction reporting with the released v3 triage Flow, add
+`reproduction-reporting-v1.json` to the `dimensions` array under
+`effects.classification_gate.definition` in the existing preset resolution
+request. Review the exact Source, Reporter and writer policy as for any other
+effect. Replace `need reproduce` in the three add-only rows if the installation
+uses a different existing label. Leave the dimension out to keep this effect
+disabled.
+
+The classification gate accepts these reproduction values only for defects.
+It routes review to `escalation`, which this mapping excludes. The mapping adds
+the label for accepted `not_reproduced`, `unknown` and `needs_research`
+assessments and preserves all other labels and native state. The downstream
+delivery pipeline consumes the accepted classification independently of the
+outbox and does not include this addition.
+
 For each accepted source outcome, simultaneously applicable groups must own
 different labels and at most one group may own native state. Alternative cases
 within a dimension and mutually exclusive source outcomes can share these fields.

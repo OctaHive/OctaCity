@@ -1019,6 +1019,8 @@ async fn admission_rechecks_predecessor_requirements_after_the_issue_changes() {
   .with_gate(
     FlowGateProgram::new(vec![], terminal.clone())
       .unwrap()
+      .with_default_output_mapping(FlowDataMapping::new(FlowValueMapping::Pointer { path: String::new() }).unwrap())
+      .unwrap()
       .binding()
       .unwrap(),
   )
@@ -1128,10 +1130,28 @@ async fn admission_rechecks_predecessor_requirements_after_the_issue_changes() {
     }
   };
   let before_edit = make_admission("delivery-while-current");
-  store
+  assert!(
+    snapshot
+      .outbox
+      .iter()
+      .all(|row| row.kind.as_str() != "work.status.projection"),
+    "accepted triage is sufficient even without an external update request"
+  );
+  let delivery = store
     .admit_factory_work(management_mutation(before_edit))
     .await
-    .unwrap();
+    .unwrap()
+    .admission;
+  finish(&store, &execution, &delivery, 70).await;
+  let delivered = store.factory_run_snapshot(delivery.run.id()).await.unwrap();
+  assert_eq!(delivered.run.state(), FactoryRunState::Completed);
+  assert!(
+    delivered
+      .outbox
+      .iter()
+      .all(|row| row.kind.as_str() != "work.status.projection"),
+    "consuming triage must not inherit its Reporter effects"
+  );
   let pool = &database.pool;
   let producer_id = producer.run.id();
   let set_producer_visibility = |visible| async move {

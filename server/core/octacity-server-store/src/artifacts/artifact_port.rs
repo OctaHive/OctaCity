@@ -71,4 +71,16 @@ pub trait ArtifactRecordStore: Send + Sync {
     &self,
     query: ListPublishedArtifacts,
   ) -> Result<Vec<ArtifactUploadRecord>, StoreError>;
+
+  /// Checks for a published raw Artifact from one exact Job and producer.
+  /// The upload-key prefix includes any namespace delimiter selected by the caller.
+  async fn has_published_artifact_from_producer(
+    &self,
+    _job_id: JobId,
+    _producer_run_id: u64,
+    _producer_task_id: u64,
+    _upload_key_prefix: &str,
+  ) -> Result<bool, StoreError> {
+    Err(StoreError::Unavailable)
+  }
 }

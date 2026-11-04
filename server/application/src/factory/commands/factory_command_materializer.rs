@@ -4,7 +4,7 @@ use async_trait::async_trait;
 use octacity_artifact_store::ArtifactBytePublisher;
 use octacity_server_domain::Timestamp;
 use octacity_server_factory::{AdmittedFlow, FactoryClaimOwnership, FlowBuildIntent, resolve_factory_permissions};
-use octacity_server_store::{AcceptFactoryBuild, FactoryExecutionInputStore};
+use octacity_server_store::{AcceptFactoryBuild, ArtifactRecordStore, FactoryExecutionInputStore};
 use std::{collections::BTreeMap, sync::Arc};
 
 /// Uses the ordinary owner fence, Artifact publication and signed Build boundary.
@@ -14,6 +14,7 @@ pub struct FactoryCommandBuildMaterializer<C, S, B> {
   catalog: crate::factory::commands::factory_command_catalog::FactoryCommandCatalog,
   candidate_context: Option<Arc<dyn FactoryNodeCandidateContextSource>>,
   validation: Option<Arc<dyn FactoryProtectedValidationInputSource>>,
+  work_inputs: Option<Arc<dyn ArtifactRecordStore>>,
   clock: Arc<dyn FactoryExecutionClock>,
 }
 impl<C, S, B> FactoryCommandBuildMaterializer<C, S, B> {
@@ -40,6 +41,7 @@ impl<C, S, B> FactoryCommandBuildMaterializer<C, S, B> {
       catalog: crate::factory::commands::factory_command_catalog::FactoryCommandCatalog::builtin(profiles)?,
       candidate_context: None,
       validation: None,
+      work_inputs: None,
       clock,
     })
   }
@@ -60,6 +62,7 @@ impl<C, S, B> FactoryCommandBuildMaterializer<C, S, B> {
       )?,
       candidate_context: None,
       validation: None,
+      work_inputs: None,
       clock,
     })
   }
@@ -76,6 +79,12 @@ impl<C, S, B> FactoryCommandBuildMaterializer<C, S, B> {
     source: Arc<dyn FactoryProtectedValidationInputSource>,
   ) -> Self {
     self.validation = Some(source);
+    self
+  }
+  /// Resolves the publication selected by an explicit original Work task binding.
+  #[must_use]
+  pub fn with_work_input_store(mut self, store: Arc<dyn ArtifactRecordStore>) -> Self {
+    self.work_inputs = Some(store);
     self
   }
   /// Selects the installed promotion role. Ordinary commands never infer it
@@ -186,12 +195,25 @@ impl<C: BuildExecutionContextSource, S: FactoryExecutionInputStore, B: ArtifactB
       let validation = source.materialization(intent).await.map_err(|_| Invalid)?;
       compiled = compiled.with_protected_validation(&validation)?;
     }
+    let work_task = if let Some(task) = intent.input().work_task() {
+      let published = self
+        .work_inputs
+        .as_ref()
+        .ok_or(Invalid)?
+        .published_execution_input(task.artifact_id())
+        .await
+        .map_err(|_| Unavailable)?;
+      Some(compiled.work_task_input(&published, intent.node().deadline())?)
+    } else {
+      None
+    };
     let mut manifest = self
       .publisher
       .publish(intent, &ownership, compiled.documents().to_vec())
       .await
       .map_err(|_| Unavailable)?;
     manifest.inputs.extend_from_slice(compiled.additional_inputs());
+    manifest.inputs.extend(work_task);
     manifest
       .inputs
       .sort_by(|left, right| left.artifact_id.cmp(&right.artifact_id));

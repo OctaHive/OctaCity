@@ -5,7 +5,7 @@
 use base64::{Engine as _, engine::general_purpose::STANDARD};
 use ed25519_dalek::{Signer as _, SigningKey};
 use factory::*;
-use octacity_changeset::{GitCaptureTool, GitChangeSetCapturer};
+use octacity_changeset::{GitCaptureTool, GitChangeSetCapturer, GitChangeSetMaterializer};
 use octacity_execution_microsandbox::{MicrosandboxEngine, MicrosandboxEngineConfig};
 use octacity_execution_oci::OciBackend;
 use octacity_identity::FileWorkloadIdentityProvider;
@@ -197,7 +197,8 @@ async fn signed_compiled_author_job_captures_only_its_declared_change() {
   std::fs::write(repository.join("outside.txt"), b"outside-must-remain\n").unwrap();
   std::os::unix::fs::symlink("../../outside.txt", repository.join("public/approved/escape.txt")).unwrap();
   let other_credential = fixture.path().join("other-profile.token");
-  std::fs::write(&other_credential, b"other-profile-private-canary").unwrap();
+  let other_credential_contents = br#"{"OCTACITY_CODEX_AUTH":"other-profile-private-canary"}"#;
+  std::fs::write(&other_credential, other_credential_contents).unwrap();
   std::fs::set_permissions(&other_credential, std::fs::Permissions::from_mode(0o600)).unwrap();
   std::fs::write(
     repository.join("host-credential-location.txt"),
@@ -320,39 +321,7 @@ async fn signed_compiled_author_job_captures_only_its_declared_change() {
       (input, doc.bytes().to_vec())
     })
     .collect::<Vec<_>>();
-  let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
-  let origin = format!("http://{}", listener.local_addr().unwrap());
-  let http_bodies = Arc::new(
-    bodies
-      .iter()
-      .map(|(input, bytes)| (input.artifact_id.clone(), (input.media_type.clone(), bytes.clone())))
-      .collect::<BTreeMap<_, _>>(),
-  );
-  let server = tokio_util::task::AbortOnDropHandle::new(tokio::spawn(async move {
-    let app = axum::Router::new().route(
-      "/{id}",
-      axum::routing::get(move |axum::extract::Path(id): axum::extract::Path<String>| {
-        let bodies = http_bodies.clone();
-        async move {
-          let (media, bytes) = bodies.get(&id).unwrap();
-          ([(axum::http::header::CONTENT_TYPE, media.clone())], bytes.clone())
-        }
-      }),
-    );
-    axum::serve(listener, app).await.unwrap();
-  }));
-  let mut transfers = bodies
-    .iter()
-    .map(|(input, _)| ProtectedInputTransferV3 {
-      input: input.clone(),
-      capability: ArtifactTransferCapability {
-        url: format!("{origin}/{}", input.artifact_id),
-        required_headers: BTreeMap::new(),
-        expires_at_unix_ms: u64::MAX,
-      },
-    })
-    .collect::<Vec<_>>();
-  transfers.sort_by(|a, b| a.input.artifact_id.cmp(&b.input.artifact_id));
+  let (origin, transfers, _server) = serve_inputs(bodies).await;
   let manifest = ProtectedInputManifestV3 {
     inputs: transfers.iter().map(|transfer| transfer.input.clone()).collect(),
   };
@@ -436,24 +405,7 @@ async fn signed_compiled_author_job_captures_only_its_declared_change() {
       change_set_materialization: None,
     }),
   };
-  let signing = SigningKey::from_bytes(&[37; 32]);
-  let payload = serde_json::to_vec(&spec).unwrap();
-  let envelope = SignedEnvelope {
-    key_id: "qualification-key".to_owned(),
-    algorithm: SIGNATURE_ALGORITHM.to_owned(),
-    payload: STANDARD.encode(&payload),
-    signature: STANDARD.encode(signing.sign(&payload).to_bytes()),
-  };
-  let verified = verify_compatible_job_spec(
-    &envelope,
-    &BTreeMap::from([("qualification-key".to_owned(), signing.verifying_key())]),
-    JobBinding {
-      job_id: &spec.job_id,
-      attempt: 1,
-      now,
-    },
-  )
-  .unwrap();
+  let verified = signed_job(&spec, now);
   let engine = MicrosandboxEngine::new(MicrosandboxEngineConfig {
     agent_id: "signed-author-contract".to_owned(),
     state_root: PathBuf::from(required("OCTACITY_CONTRACT_MICROSANDBOX_STATE_ROOT")),
@@ -514,14 +466,22 @@ async fn signed_compiled_author_job_captures_only_its_declared_change() {
     .unwrap(),
   )
   .with_change_set_capturer(Arc::new(GitChangeSetCapturer::new(capture_tool.clone()).unwrap()))
-  .with_factory_credential_profiles([FactoryCredentialProfile::new(
-    "author-private-profile".to_owned(),
-    BTreeMap::from([(
-      "OCTACITY_CODEX_AUTH".to_owned(),
-      "hermetic-private-auth-canary".to_owned(),
-    )]),
-  )
-  .unwrap()])
+  .with_change_set_materializer(Arc::new(GitChangeSetMaterializer::new(capture_tool.clone()).unwrap()))
+  .with_factory_credential_profiles([
+    FactoryCredentialProfile::new(
+      "author-private-profile".to_owned(),
+      BTreeMap::from([(
+        "OCTACITY_CODEX_AUTH".to_owned(),
+        "hermetic-private-auth-canary".to_owned(),
+      )]),
+    )
+    .unwrap(),
+    FactoryCredentialProfile::from_private_file(
+      "review-private-profile".to_owned(),
+      other_credential.canonicalize().unwrap(),
+    )
+    .unwrap(),
+  ])
   .unwrap();
   let (events, mut receiver) = tokio::sync::mpsc::channel(128);
   let drain = tokio_util::task::AbortOnDropHandle::new(tokio::spawn(async move {
@@ -546,8 +506,6 @@ async fn signed_compiled_author_job_captures_only_its_declared_change() {
       &events,
     )
     .await;
-  server.abort();
-  let _ = server.await;
   drop(events);
   let observed = tokio::time::timeout(Duration::from_secs(5), drain).await;
   let completion = match result {
@@ -563,7 +521,13 @@ async fn signed_compiled_author_job_captures_only_its_declared_change() {
   let runner_result = completion.runner().clone();
   let outside = std::fs::read(completion.workspace().join("outside.txt"));
   let changed = std::fs::read(completion.workspace().join("public/approved/contract.txt"));
-  let captured = completion.change_set().map(|candidate| candidate.manifest.clone());
+  let candidate = completion.change_set().map(|capture| {
+    (
+      capture.manifest.clone(),
+      std::fs::read(capture.root.join(CHANGE_SET_BUNDLE_OUTPUT)).unwrap(),
+      std::fs::read(capture.root.join(CHANGE_SET_MANIFEST_OUTPUT)).unwrap(),
+    )
+  });
   let retained_outputs = read_retained_output_files(completion.publication_workspace());
   let probe_report = std::fs::read(completion.publication_workspace().join("security-probes.json"));
   let instruction_executed = completion
@@ -576,6 +540,11 @@ async fn signed_compiled_author_job_captures_only_its_declared_change() {
   let observed = observed.unwrap().unwrap();
   assert_eq!(publication_workspace, expected_publication_workspace);
   assert_eq!(publication_prefix.as_deref(), Some(Path::new("output")));
+  assert_eq!(
+    runner_result.status,
+    RunStatus::Succeeded,
+    "released author must complete the bounded security probes"
+  );
   let retained_outputs = retained_outputs.unwrap();
   assert!(
     !retained_outputs.is_empty(),
@@ -613,14 +582,9 @@ async fn signed_compiled_author_job_captures_only_its_declared_change() {
     host_source2_intact,
     "private Source2 must exist unchanged outside the guest projection"
   );
-  assert_eq!(
-    runner_result.status,
-    RunStatus::Succeeded,
-    "released author must complete the bounded security probes"
-  );
   assert_eq!(outside.unwrap(), b"outside-must-remain\n");
   assert_eq!(changed.unwrap(), b"qualified-author-change\n");
-  let captured = captured.expect("trusted Agent capture follows the real released plugin");
+  let (captured, bundle, manifest) = candidate.expect("trusted Agent capture follows the real released plugin");
   assert_eq!(captured.base_revision, base);
   assert_eq!(captured.capture_tool, capture_tool.identity);
   assert_eq!(captured.changed_paths.len(), 1);
@@ -634,9 +598,193 @@ async fn signed_compiled_author_job_captures_only_its_declared_change() {
   assert!(!format!("{runner_result:?} {observed:?}").contains(std::str::from_utf8(SOURCE2_CANARY).unwrap()));
   assert!(!format!("{runner_result:?} {observed:?}").contains(other_credential.to_str().unwrap()));
   assert!(
-    std::fs::read(&other_credential).is_ok_and(|bytes| bytes == b"other-profile-private-canary"),
+    std::fs::read(&other_credential).is_ok_and(|bytes| bytes == other_credential_contents),
     "host credential must remain unchanged"
   );
+  Box::pin(review_candidate(
+    executor,
+    spec,
+    captured.candidate_revision,
+    bundle,
+    manifest,
+  ))
+  .await;
+}
+
+fn signed_job(spec: &JobSpecV3, now: u64) -> VerifiedJobSpec {
+  let signing = SigningKey::from_bytes(&[37; 32]);
+  let payload = serde_json::to_vec(spec).unwrap();
+  let envelope = SignedEnvelope {
+    key_id: "qualification-key".to_owned(),
+    algorithm: SIGNATURE_ALGORITHM.to_owned(),
+    payload: STANDARD.encode(&payload),
+    signature: STANDARD.encode(signing.sign(&payload).to_bytes()),
+  };
+  verify_compatible_job_spec(
+    &envelope,
+    &BTreeMap::from([("qualification-key".to_owned(), signing.verifying_key())]),
+    JobBinding {
+      job_id: &spec.job_id,
+      attempt: spec.attempt,
+      now,
+    },
+  )
+  .unwrap()
+}
+
+async fn serve_inputs(
+  bodies: Vec<(ProtectedInputV3, Vec<u8>)>,
+) -> (
+  String,
+  Vec<ProtectedInputTransferV3>,
+  tokio_util::task::AbortOnDropHandle<()>,
+) {
+  let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+  let origin = format!("http://{}", listener.local_addr().unwrap());
+  let http_bodies = Arc::new(
+    bodies
+      .iter()
+      .map(|(input, bytes)| (input.artifact_id.clone(), (input.media_type.clone(), bytes.clone())))
+      .collect::<BTreeMap<_, _>>(),
+  );
+  let server = tokio_util::task::AbortOnDropHandle::new(tokio::spawn(async move {
+    let app = axum::Router::new().route(
+      "/{id}",
+      axum::routing::get(move |axum::extract::Path(id): axum::extract::Path<String>| {
+        let bodies = http_bodies.clone();
+        async move {
+          let (media, bytes) = bodies.get(&id).unwrap();
+          ([(axum::http::header::CONTENT_TYPE, media.clone())], bytes.clone())
+        }
+      }),
+    );
+    axum::serve(listener, app).await.unwrap();
+  }));
+  let mut transfers = bodies
+    .iter()
+    .map(|(input, _)| ProtectedInputTransferV3 {
+      input: input.clone(),
+      capability: ArtifactTransferCapability {
+        url: format!("{origin}/{}", input.artifact_id),
+        required_headers: BTreeMap::new(),
+        expires_at_unix_ms: u64::MAX,
+      },
+    })
+    .collect::<Vec<_>>();
+  transfers.sort_by(|a, b| a.input.artifact_id.cmp(&b.input.artifact_id));
+  (origin, transfers, server)
+}
+
+async fn review_candidate(
+  executor: JobExecutor,
+  mut spec: JobSpecV3,
+  candidate_revision: String,
+  bundle: Vec<u8>,
+  manifest: Vec<u8>,
+) {
+  let octafile = br#"version: 1
+tasks:
+  review:
+    shell: |
+      set -eu
+      candidate=/workspace/source/public/approved/contract.txt
+      test "$(cat "$candidate")" = qualified-author-change
+      if (printf tamper >> "$candidate") 2>/dev/null; then
+        printf candidate-mutation > /workspace/output/review
+        exit 0
+      fi
+      test "$(cat "$candidate")" = qualified-author-change
+      test ! -e /octacity/protected/change-set.bundle
+      test ! -e /octacity/protected/change-set-manifest.json
+      printf candidate-readonly > /workspace/output/review
+"#;
+  let input = |destination: &str, media_type: &str, bytes: Vec<u8>| {
+    (
+      ProtectedInputV3 {
+        artifact_id: ArtifactId::generate().to_string(),
+        destination: destination.to_owned(),
+        media_type: media_type.to_owned(),
+        sha256: digest(&bytes),
+        size_bytes: bytes.len() as u64,
+      },
+      bytes,
+    )
+  };
+  let octafile = input(
+    "/octacity/protected/Octafile.yml",
+    "application/yaml",
+    octafile.to_vec(),
+  );
+  spec.execution = ManagedOctaExecutionV3 {
+    workspace_root: Some(FACTORY_WORKSPACE_ROOT.to_owned()),
+    octafile_input: octafile.0.artifact_id.clone(),
+    tasks: vec!["review".to_owned()],
+    credential_profile: None,
+    mcp_credentials: BTreeMap::new(),
+    tool_control: None,
+  };
+  let bundle = input(CHANGE_SET_BUNDLE_INPUT, CHANGE_SET_BUNDLE_MEDIA_TYPE, bundle);
+  let manifest = input(CHANGE_SET_MANIFEST_INPUT, CHANGE_SET_MANIFEST_MEDIA_TYPE, manifest);
+  let factory = spec.factory.as_mut().unwrap();
+  factory.node_attempt_id = uuid::Uuid::new_v4().to_string();
+  factory.input_digest = digest(&octafile.1);
+  factory.source_write_paths = None;
+  factory.change_set_capture = None;
+  factory.change_set_materialization = Some(ChangeSetMaterializationV3 {
+    bundle_input: bundle.0.artifact_id.clone(),
+    manifest_input: manifest.0.artifact_id.clone(),
+    candidate_revision,
+  });
+  let (origin, protected_inputs, _server) = serve_inputs(vec![octafile, bundle, manifest]).await;
+  spec.protected_inputs.inputs = protected_inputs.iter().map(|transfer| transfer.input.clone()).collect();
+  spec.permissions.executables.clear();
+  spec.permissions.commands.clear();
+  spec.permissions.secret_profiles.clear();
+  spec
+    .permissions
+    .mounts
+    .iter_mut()
+    .find(|mount| mount.root == FACTORY_SOURCE_ROOT)
+    .unwrap()
+    .mode = FactoryMountModeV3::ReadOnly;
+  let now = SystemTime::now().duration_since(UNIX_EPOCH).unwrap().as_secs();
+  spec.job_id = uuid::Uuid::new_v4().to_string();
+  spec.issued_at = now.saturating_sub(1);
+  spec.expires_at = now + 120;
+  spec.execution_deadline_unix_ms = spec.expires_at * 1000;
+  let executor = executor.with_protected_input_stager(
+    ProtectedInputStager::new(ProtectedInputStagerConfig {
+      root_certificates: Vec::new(),
+      allowed_origins: vec![origin],
+      download_timeout: Duration::from_secs(10),
+    })
+    .unwrap(),
+  );
+  let (events, _receiver) = tokio::sync::mpsc::channel(128);
+  let completion = executor
+    .execute(
+      ExecuteJobRequest {
+        spec: signed_job(&spec, now),
+        source_credentials: BTreeMap::new(),
+        cache_grant: None,
+        protected_inputs,
+      },
+      CancellationToken::new(),
+      &events,
+    )
+    .await
+    .expect("review Job must reach the ordinary runner");
+  let status = completion.runner().status;
+  let report = std::fs::read(completion.publication_workspace().join("review"));
+  let candidate = std::fs::read(completion.workspace().join("public/approved/contract.txt"));
+  completion.cleanup().await.unwrap();
+  assert_eq!(status, RunStatus::Succeeded);
+  assert_eq!(
+    String::from_utf8(report.unwrap()).unwrap(),
+    "candidate-readonly",
+    "the reviewer must be able to publish its report without modifying the candidate"
+  );
+  assert_eq!(candidate.unwrap(), b"qualified-author-change\n");
 }
 
 fn read_retained_output_files(root: &Path) -> std::io::Result<Vec<Vec<u8>>> {
@@ -702,13 +850,13 @@ fn compile_author(
       CommandPermission::try_new(
         executable.clone(),
         vec![
+          exact("--ask-for-approval=never"),
           exact("exec"),
           exact("--json"),
           exact("--sandbox=workspace-write"),
-          exact("--ask-for-approval=never"),
           exact("--model=hermetic-model"),
           exact(&format!(
-            "--output-schema=/workspace/source/.octa/factory/codex-runs/run-{}/.records.tmp/.result-schema.json",
+            "--output-schema=/workspace/output/codex-runs/run-{}/.records.tmp/.result-schema.json",
             blake3::hash(b"codex").to_hex(),
           )),
           exact("-"),

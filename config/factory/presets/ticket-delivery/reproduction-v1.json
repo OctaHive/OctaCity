@@ -1,0 +1,40 @@
+{
+  "input_schema": "reproduction_route",
+  "entry": "reproduction-needed",
+  "execution": {
+    "budget": {
+      "max_attempts": 12, "max_elapsed_millis": 150000, "max_tokens": 0,
+      "max_cost_micro_units": 0, "max_output_bytes": 4194304
+    },
+    "permissions": {
+      "plugins": [],
+      "executables": [],
+      "tools": [],
+      "commands": [],
+      "max_descendants": 0,
+      "mounts": [],
+      "network_hosts": [],
+      "secret_profiles": [],
+      "workload_identity_profiles": [],
+      "resources": {
+        "cpu_millis": 0,
+        "memory_bytes": 0,
+        "disk_bytes": 0,
+        "process_count": 0,
+        "elapsed_millis": 0
+      },
+      "outputs": {
+        "kinds": [],
+        "max_artifact_count": 0,
+        "max_artifact_bytes": 0,
+        "max_report_count": 0,
+        "max_report_bytes": 0
+      }
+    },
+    "max_active_nodes": 1
+  },
+  "parts": [
+    "flows/base-flow/schemas/artifact_reference.json",
+    "presets/ticket-delivery/reproduction-branch-v1.json"
+  ]
+}

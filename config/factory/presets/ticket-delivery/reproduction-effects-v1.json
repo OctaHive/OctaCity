@@ -1,0 +1,5 @@
+{
+  "reproduced": {"status": "reproduced", "add": [], "remove": ["need reproduce"], "state": null},
+  "cannot_reproduce": {"status": "cannot-reproduce", "add": ["can't reproduce"], "remove": ["need reproduce"], "state": "open"},
+  "unresolved": null
+}

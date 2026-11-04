@@ -67,6 +67,7 @@ pub(super) async fn install(
   )
   .unwrap();
   let contract = FactoryCommandObservationContract {
+    stop_on_indeterminate: false,
     environment: reference("node-health-environment", &serde_json::to_vec(&execution.backend.immutable_image()).unwrap()),
     criterion: reference("health-status-500", b"one HTTP GET /health returns status 500"),
     observations,

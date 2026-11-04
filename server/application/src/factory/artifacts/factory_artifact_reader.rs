@@ -4,7 +4,7 @@ use octacity_artifact_store::{ArtifactByteReader, ArtifactObject, MAX_ARTIFACT_R
 use octacity_server_domain::{ProjectId, Timestamp};
 use octacity_server_factory::{FactoryArtifactReference, FactoryDigest};
 use octacity_server_store::{
-  ArtifactRecord, ArtifactRecordStore, ArtifactUploadRecord, BuildQueryStore, SourceArtifactQueryStore,
+  ArtifactRecord, ArtifactRecordStore, ArtifactUploadRecord, BuildOrigin, BuildQueryStore, SourceArtifactQueryStore,
 };
 use std::sync::Arc;
 
@@ -88,6 +88,14 @@ impl<A: ArtifactRecordStore, S: BuildQueryStore, B: ArtifactByteReader> FactoryA
   }
   /// Reads explicit context data from its authoritative publication owner.
   pub async fn read_input(&self, request: ReadFactoryArtifact) -> Result<FactoryRetainedInput, ApplicationError> {
+    self.read_input_with_audience(request, ArtifactAudience::Trusted).await
+  }
+
+  async fn read_input_with_audience(
+    &self,
+    request: ReadFactoryArtifact,
+    audience: ArtifactAudience,
+  ) -> Result<FactoryRetainedInput, ApplicationError> {
     if let Some(store) = &self.source_inputs
       && let Some(source) = store
         .source_artifact(request.project_id, request.artifact.artifact_id())
@@ -114,7 +122,7 @@ impl<A: ArtifactRecordStore, S: BuildQueryStore, B: ArtifactByteReader> FactoryA
       return read_project_input_object(self.bytes.as_ref(), &request, input).await;
     }
     let retained_until = request.required_until;
-    let retained = self.read(request).await?;
+    let retained = self.read_with_audience(request, audience).await?;
     let provenance = serde_json::to_vec(retained.record().identity()).map_err(|_| ApplicationError::invalid())?;
     Ok(FactoryRetainedInput {
       bytes: retained.bytes().to_vec(),
@@ -124,7 +132,23 @@ impl<A: ArtifactRecordStore, S: BuildQueryStore, B: ArtifactByteReader> FactoryA
   }
   /// Verifies selection and retention before any protected bytes are read.
   pub async fn read(&self, request: ReadFactoryArtifact) -> Result<FactoryRetainedArtifact, ApplicationError> {
-    let upload = self.retained_upload(&request).await?;
+    self.read_with_audience(request, ArtifactAudience::Trusted).await
+  }
+
+  /// Reads a Build Artifact that can be rendered as model Context.
+  pub(super) async fn read_model_artifact(
+    &self,
+    request: ReadFactoryArtifact,
+  ) -> Result<FactoryRetainedArtifact, ApplicationError> {
+    self.read_with_audience(request, ArtifactAudience::Model).await
+  }
+
+  async fn read_with_audience(
+    &self,
+    request: ReadFactoryArtifact,
+    audience: ArtifactAudience,
+  ) -> Result<FactoryRetainedArtifact, ApplicationError> {
+    let upload = self.retained_upload(&request, audience).await?;
     let record = upload.artifact;
     let identity = record.identity();
     let object = ArtifactObject::new(
@@ -149,7 +173,12 @@ impl<A: ArtifactRecordStore, S: BuildQueryStore, B: ArtifactByteReader> FactoryA
   /// Candidate bundles are transferred to the Agent using their signed immutable
   /// identity; their binary contents do not belong in model-context rendering.
   pub async fn read_record(&self, request: ReadFactoryArtifact) -> Result<ArtifactRecord, ApplicationError> {
-    Ok(self.retained_upload(&request).await?.artifact)
+    Ok(
+      self
+        .retained_upload(&request, ArtifactAudience::Trusted)
+        .await?
+        .artifact,
+    )
   }
 
   // Metadata may retain expired records, while content requires a live upload.
@@ -158,7 +187,7 @@ impl<A: ArtifactRecordStore, S: BuildQueryStore, B: ArtifactByteReader> FactoryA
     &self,
     request: &ReadFactoryArtifact,
     record: &ArtifactRecord,
-  ) -> Result<(), ApplicationError> {
+  ) -> Result<octacity_server_store::BuildRecord, ApplicationError> {
     let identity = record.identity();
     if identity.artifact_id != request.artifact.artifact_id()
       || identity.size_bytes != request.artifact.encoded_size()
@@ -166,13 +195,18 @@ impl<A: ArtifactRecordStore, S: BuildQueryStore, B: ArtifactByteReader> FactoryA
     {
       return Err(ApplicationError::invalid());
     }
-    if self.builds.build(identity.build_id).await?.build.project_id != request.project_id {
+    let build = self.builds.build(identity.build_id).await?;
+    if build.build.project_id != request.project_id {
       return Err(ApplicationError::invalid());
     }
-    Ok(())
+    Ok(build)
   }
 
-  async fn retained_upload(&self, request: &ReadFactoryArtifact) -> Result<ArtifactUploadRecord, ApplicationError> {
+  async fn retained_upload(
+    &self,
+    request: &ReadFactoryArtifact,
+    audience: ArtifactAudience,
+  ) -> Result<ArtifactUploadRecord, ApplicationError> {
     if request.artifact.encoded_size() > request.maximum_bytes
       || request.maximum_bytes > MAX_ARTIFACT_READ_BYTES
       || request.required_until <= request.observed_at
@@ -201,9 +235,32 @@ impl<A: ArtifactRecordStore, S: BuildQueryStore, B: ArtifactByteReader> FactoryA
     {
       return Err(ApplicationError::invalid());
     }
-    self.verify_record_reference(request, record).await?;
+    let build = self.verify_record_reference(request, record).await?;
+    if audience == ArtifactAudience::Model
+      && identity.artifact_type == octacity_server_artifacts::ArtifactType::Artifact
+      && matches!(build.origin, BuildOrigin::Factory(_))
+    {
+      // A successful author Job publishes its inventory before terminal success.
+      // An unfinished or failed Job cannot establish that its raw files are public.
+      // The inventory and raw files share the Build's Artifact retention policy.
+      let job = self.builds.job(identity.job_id).await?;
+      if job.attempt_id != identity.attempt_id || job.state != octacity_server_job::JobState::Succeeded {
+        return Err(ApplicationError::invalid());
+      }
+      if crate::factory::validation::factory_protected_test_publication::has_protected_test_inventory(
+        self.artifacts.as_ref(), identity.job_id,
+      ).await? {
+        return Err(ApplicationError::invalid());
+      }
+    }
     Ok(upload)
   }
+}
+
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum ArtifactAudience {
+  Trusted,
+  Model,
 }
 
 /// Reads exactly the selected common input context with Project and retention checks.
@@ -241,13 +298,16 @@ impl<A: ArtifactRecordStore, S: BuildQueryStore, B: ArtifactByteReader> FactoryN
           continue;
         }
         let retained = self
-          .read_input(ReadFactoryArtifact {
-            project_id: input.subject().project_id(),
-            artifact: artifact.clone(),
-            maximum_bytes: remaining.min(MAX_ARTIFACT_READ_BYTES),
-            observed_at,
-            required_until: deadline,
-          })
+          .read_input_with_audience(
+            ReadFactoryArtifact {
+              project_id: input.subject().project_id(),
+              artifact: artifact.clone(),
+              maximum_bytes: remaining.min(MAX_ARTIFACT_READ_BYTES),
+              observed_at,
+              required_until: deadline,
+            },
+            ArtifactAudience::Model,
+          )
           .await
           .map_err(|error| ApplicationError::context_input(entry.logical_identity().clone(), &error))?;
         remaining = remaining

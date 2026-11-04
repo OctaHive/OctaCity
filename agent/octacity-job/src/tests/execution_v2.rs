@@ -847,6 +847,7 @@ async fn rejects_an_incomplete_factory_backend_before_source_or_spawn() {
   let work_root = tempfile::tempdir().unwrap();
   let source_calls = Arc::new(AtomicUsize::new(0));
   let starts = Arc::new(AtomicUsize::new(0));
+  let fallback_starts = Arc::new(AtomicUsize::new(0));
   let spec = factory_spec();
   let enforcement = FactoryEnforcementCapabilityV3::ALL
     .into_iter()
@@ -859,6 +860,13 @@ async fn rejects_an_incomplete_factory_backend_before_source_or_spawn() {
     enforcement,
   );
   executor.factory_permissions = Some(spec.permissions.clone());
+  executor.backends.insert(
+    RuntimeMode::Native,
+    Arc::new(FakeBackend {
+      starts: fallback_starts.clone(),
+      destroyed: Arc::new(AtomicBool::new(false)),
+    }),
+  );
   let (events, _receiver) = mpsc::channel(1);
 
   let failure = executor
@@ -881,6 +889,7 @@ async fn rejects_an_incomplete_factory_backend_before_source_or_spawn() {
   ));
   assert_eq!(source_calls.load(Ordering::SeqCst), 0);
   assert_eq!(starts.load(Ordering::SeqCst), 0);
+  assert_eq!(fallback_starts.load(Ordering::SeqCst), 0);
   assert!(fs::read_dir(work_root.path()).unwrap().next().is_none());
 }
 
