@@ -14,6 +14,7 @@ pub struct FactoryCommandBuildMaterializer<C, S, B> {
   catalog: crate::factory::commands::factory_command_catalog::FactoryCommandCatalog,
   candidate_context: Option<Arc<dyn FactoryNodeCandidateContextSource>>,
   validation: Option<Arc<dyn FactoryProtectedValidationInputSource>>,
+  test_observation: Option<Arc<dyn FactoryProtectedTestObservationInputSource>>,
   work_inputs: Option<Arc<dyn ArtifactRecordStore>>,
   clock: Arc<dyn FactoryExecutionClock>,
 }
@@ -41,6 +42,7 @@ impl<C, S, B> FactoryCommandBuildMaterializer<C, S, B> {
       catalog: crate::factory::commands::factory_command_catalog::FactoryCommandCatalog::builtin(profiles)?,
       candidate_context: None,
       validation: None,
+      test_observation: None,
       work_inputs: None,
       clock,
     })
@@ -62,6 +64,7 @@ impl<C, S, B> FactoryCommandBuildMaterializer<C, S, B> {
       )?,
       candidate_context: None,
       validation: None,
+      test_observation: None,
       work_inputs: None,
       clock,
     })
@@ -79,6 +82,15 @@ impl<C, S, B> FactoryCommandBuildMaterializer<C, S, B> {
     source: Arc<dyn FactoryProtectedValidationInputSource>,
   ) -> Self {
     self.validation = Some(source);
+    self
+  }
+  /// Installs protected inputs for qualified observations on the original Work revision.
+  #[must_use]
+  pub fn with_protected_test_observation_input_source(
+    mut self,
+    source: Arc<dyn FactoryProtectedTestObservationInputSource>,
+  ) -> Self {
+    self.test_observation = Some(source);
     self
   }
   /// Resolves the publication selected by an explicit original Work task binding.
@@ -133,6 +145,9 @@ impl<C: BuildExecutionContextSource, S: FactoryExecutionInputStore, B: ArtifactB
       return Err(Invalid);
     }
     let profile = self.catalog.profile(intent)?;
+    if profile.requires_protected_tests() != self.test_observation.is_some() {
+      return Err(Invalid);
+    }
     let effective = resolve_factory_permissions(
       &profile.project_permissions,
       admitted.limits().permissions(),
@@ -195,25 +210,39 @@ impl<C: BuildExecutionContextSource, S: FactoryExecutionInputStore, B: ArtifactB
       let validation = source.materialization(intent).await.map_err(|_| Invalid)?;
       compiled = compiled.with_protected_validation(&validation)?;
     }
-    let work_task = if let Some(task) = intent.input().work_task() {
+    if let Some(source) = &self.test_observation {
+      if candidate_selected || self.validation.is_some() {
+        return Err(Invalid);
+      }
+      let proof = source
+        .observation_inputs(intent)
+        .await
+        .map_err(super::factory_command::command_input_error)?;
+      compiled = compiled.with_test_observation_inputs(&proof)?;
+    }
+    let mut task_inputs = Vec::new();
+    for (destination, document) in compiled.work_documents() {
       let published = self
         .work_inputs
         .as_ref()
         .ok_or(Invalid)?
-        .published_execution_input(task.artifact_id())
+        .published_execution_input(document.artifact_id())
         .await
-        .map_err(|_| Unavailable)?;
-      Some(compiled.work_task_input(&published, intent.node().deadline())?)
-    } else {
-      None
-    };
+        .map_err(|error| super::factory_command::command_input_error(error.into()))?;
+      task_inputs.push(crate::CompiledFactoryCommandTask::task_document_input(
+        destination.to_owned(),
+        document,
+        &published,
+        intent.node().deadline(),
+      )?);
+    }
     let mut manifest = self
       .publisher
       .publish(intent, &ownership, compiled.documents().to_vec())
       .await
       .map_err(|_| Unavailable)?;
     manifest.inputs.extend_from_slice(compiled.additional_inputs());
-    manifest.inputs.extend(work_task);
+    manifest.inputs.extend(task_inputs);
     manifest
       .inputs
       .sort_by(|left, right| left.artifact_id.cmp(&right.artifact_id));

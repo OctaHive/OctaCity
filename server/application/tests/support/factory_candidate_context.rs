@@ -257,6 +257,17 @@ pub(crate) async fn candidate_context_fixture_with_preparation(
   };
   use octacity_server_store::*;
   use std::sync::{Arc, Mutex};
+  struct SelectedProjectInput(PublishedProjectInput);
+  #[async_trait]
+  impl ProjectInputQueryStore for SelectedProjectInput {
+    async fn project_input_artifact(
+      &self,
+      project: octacity_server_domain::ProjectId,
+      artifact: octacity_server_domain::ArtifactId,
+    ) -> Result<Option<PublishedProjectInput>, StoreError> {
+      Ok((self.0.project_id == project && self.0.object.artifact.artifact_id() == artifact).then(|| self.0.clone()))
+    }
+  }
   fn replace_bytes(doc: &mut FactoryNodeBuildOutputDocument, bytes: Vec<u8>) {
     doc.bytes = bytes;
     let mut identity = doc.record.identity().clone();
@@ -542,6 +553,9 @@ pub(crate) async fn candidate_context_fixture_with_preparation(
     expires_at: time(10000),
   }));
   for (index, doc) in docs.iter().enumerate() {
+    if policy_selected && index == 2 {
+      continue;
+    }
     let identity = doc.record.identity();
     let begun = artifacts
       .begin_artifact_upload(BeginArtifactUpload {
@@ -584,7 +598,28 @@ pub(crate) async fn candidate_context_fixture_with_preparation(
       .collect(),
     calls: Mutex::new(vec![]),
   });
-  let reader = Arc::new(FactoryArtifactReader::new(artifacts, builds, bytes.clone()));
+  let mut reader = FactoryArtifactReader::new(artifacts, builds, bytes.clone());
+  if policy_selected {
+    reader = reader.with_project_inputs(Arc::new(SelectedProjectInput(PublishedProjectInput {
+      project_id: selected.subject().project_id(),
+      preparation_id: FactoryDigest::from_bytes([23; 32]),
+      mapping: key("selected-document"),
+      object: FactoryInputObject {
+        role: FactoryInputRole::Document,
+        artifact: FactoryArtifactReference::new(
+          identity.artifact_id,
+          FactoryDigest::from_bytes(identity.digest.as_bytes()),
+          identity.size_bytes,
+        )
+        .unwrap(),
+        upload_id: octacity_server_domain::ArtifactUploadId::generate(),
+        media_type: ArtifactMediaType::new("text/plain").unwrap(),
+      },
+      published_at: time(30),
+      expires_at: time(10000),
+    })));
+  }
+  let reader = Arc::new(reader);
   let source = Arc::new(FactoryCandidateContextSource::new(reader));
   let result = source
     .read(ReadFactoryCandidateContext {

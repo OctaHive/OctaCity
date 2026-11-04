@@ -7,8 +7,9 @@ use crate::{ApplicationError, FactoryNodeBuildOutputDocument, FactoryNodeBuildOu
 use octacity_server_artifacts::{ArtifactRecord, ArtifactState, ArtifactType};
 use octacity_server_domain::Timestamp;
 use octacity_server_factory::{
-  EvidenceOutputKind, EvidenceRequirement, FactoryContextReference, FactoryDigest, FlowBuildExecution, FlowBuildIntent,
-  FlowNodeInput, FlowNodeRecord, NodeAttemptId, ProtectedTestBundle, ProtectedTestFile, ProtectedTestPlan,
+  EvidenceOutputKind, EvidenceRequirement, FactoryArtifactReference, FactoryContextReference, FactoryDigest,
+  FlowBuildExecution, FlowBuildIntent, FlowNodeInput, FlowNodeRecord, NodeAttemptId, ProtectedTestBundle,
+  ProtectedTestFile, ProtectedTestPlan,
 };
 use serde::{Deserialize, Serialize};
 
@@ -24,6 +25,34 @@ pub struct FactoryProtectedTestInventory {
   pub node_attempt_id: NodeAttemptId,
   /// Individually retained protected source Artifacts.
   pub files: Vec<ProtectedTestFile>,
+  /// Private author transcript. It is never a test-class input.
+  #[serde(default, skip_serializing_if = "Option::is_none")]
+  pub transcript: Option<FactoryArtifactReference>,
+}
+
+impl FactoryProtectedTestInventory {
+  fn verified(
+    manifest: &FactoryNodeBuildOutputDocument,
+    intent: &FlowBuildIntent,
+    plan: &ProtectedTestPlan,
+  ) -> Result<Self, ApplicationError> {
+    let invalid = ApplicationError::invalid;
+    let inventory: Self = serde_json::from_slice(&manifest.bytes).map_err(|_| invalid())?;
+    if inventory.plan_digest != plan.digest().map_err(|_| invalid())?
+      || inventory.input_digest != intent.input().digest().map_err(|_| invalid())?
+      || inventory.node_attempt_id != intent.node().id()
+      || inventory.transcript.as_ref().is_some_and(|transcript| {
+        transcript.artifact_id() == manifest.record.identity().artifact_id
+          || inventory
+            .files
+            .iter()
+            .any(|file| file.artifact.artifact_id() == transcript.artifact_id())
+      })
+    {
+      return Err(invalid());
+    }
+    Ok(inventory)
+  }
 }
 
 /// Expands one already-verified bundle selected explicitly by frozen Context.
@@ -154,27 +183,26 @@ pub fn verify_factory_protected_test_bundle(
     requirement.tool(),
     requirement.plugin(),
   )?;
-  let inventory: FactoryProtectedTestInventory = serde_json::from_slice(&manifest.bytes).map_err(|_| invalid())?;
-  if inventory.plan_digest != plan.digest().map_err(|_| invalid())?
-    || inventory.input_digest != intent.input().digest().map_err(|_| invalid())?
-    || inventory.node_attempt_id != intent.node().id()
-  {
-    return Err(invalid());
-  }
+  let inventory = FactoryProtectedTestInventory::verified(manifest, intent, plan)?;
   let mut retention = manifest
     .record
     .identity()
     .retention
     .delete_after()
     .unwrap_or(plan.retain_until());
-  for file in &inventory.files {
+  for artifact in inventory
+    .files
+    .iter()
+    .map(|file| &file.artifact)
+    .chain(inventory.transcript.as_ref())
+  {
     let document = outputs
       .documents
       .iter()
-      .find(|doc| doc.record.identity().artifact_id == file.artifact.artifact_id())
+      .find(|doc| doc.record.identity().artifact_id == artifact.artifact_id())
       .ok_or_else(invalid)?;
     let identity = document.record.identity();
-    if artifact_reference(document)? != file.artifact
+    if &artifact_reference(document)? != artifact
       || identity.artifact_type != ArtifactType::Artifact
       || document.tool != *requirement.tool()
       || document.plugin != *requirement.plugin()
@@ -259,13 +287,7 @@ pub fn restore_factory_protected_test_bundle(
   {
     return Err(invalid());
   }
-  let inventory: FactoryProtectedTestInventory = serde_json::from_slice(&manifest.bytes).map_err(|_| invalid())?;
-  if inventory.input_digest != intent.input().digest().map_err(|_| invalid())?
-    || inventory.node_attempt_id != intent.node().id()
-    || inventory.plan_digest != plan.digest().map_err(|_| invalid())?
-  {
-    return Err(invalid());
-  }
+  let inventory = FactoryProtectedTestInventory::verified(manifest, intent, plan)?;
   let bundle = ProtectedTestBundle::new(
     plan.clone(),
     proof.artifact.clone(),

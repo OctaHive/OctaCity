@@ -1,0 +1,65 @@
+{
+  "nodes": [
+    {
+      "key": "tests_on_base",
+      "kind": "build_command",
+      "input_schema": "artifact_reference",
+      "outcomes": [{"key": "observed", "kind": "success", "schema": "baseline_report"}],
+      "budget": {"max_attempts": 1, "max_elapsed_millis": 60000, "max_tokens": 0, "max_cost_micro_units": 0, "max_output_bytes": 1048576},
+      "required": true,
+      "build_profile": "tests_on_base",
+      "input_binding": {
+        "sources": {"inventory": {"source": "predecessor", "view": "metadata", "path": "/build/outputs/protected_inventory/artifact"}},
+        "mapping": {"value": {"mapping": "pointer", "path": "/inventory"}}
+      },
+      "context_binding": {
+        "entries": {
+          "protected_inventory": {
+            "source_kind": "evidence",
+            "source": {"value": {"mapping": "object", "fields": {
+              "kind": {"mapping": "constant", "value": "artifact"},
+              "value": {"mapping": "pointer", "path": ""}
+            }}}
+          }
+        }
+      }
+    },
+    {
+      "key": "baseline_result",
+      "kind": "deterministic_gate",
+      "input_schema": "baseline_report",
+      "outcomes": [
+        {"key": "expected_failure", "kind": "success", "schema": "baseline_report"},
+        {"key": "already_satisfied", "kind": "success", "schema": "baseline_report"},
+        {"key": "blocked", "kind": "failure", "schema": "baseline_report"}
+      ],
+      "budget": {"max_attempts": 1, "max_elapsed_millis": 1000, "max_tokens": 0, "max_cost_micro_units": 0, "max_output_bytes": 1048576},
+      "required": true,
+      "input_binding": {
+        "sources": {"report": {"source": "predecessor", "view": "payload", "path": ""}},
+        "mapping": {"value": {"mapping": "pointer", "path": "/report"}}
+      },
+      "gate": {
+        "precondition": {"operation": "compare", "comparison": "equal",
+          "left": {"source": "path", "path": "/status"}, "right": {"source": "literal", "value": "completed"}},
+        "rules": [
+          {"outcome": "expected_failure", "when": {"operation": "compare", "comparison": "equal",
+            "left": {"source": "path", "path": "/finding"}, "right": {"source": "literal", "value": "matched"}}},
+          {"outcome": "already_satisfied", "when": {"operation": "compare", "comparison": "equal",
+            "left": {"source": "path", "path": "/finding"}, "right": {"source": "literal", "value": "not_matched"}}}
+        ],
+        "fallback": "blocked",
+        "default_output": {"value": {"mapping": "pointer", "path": ""}}
+      }
+    }
+  ],
+  "transitions": [
+    {"predecessor": "protected_tests", "outcome": "observed", "target": {"kind": "node", "key": "tests_on_base"}, "max_repeats": 0, "exhausted_terminal": null},
+    {"predecessor": "tests_on_base", "outcome": "observed", "target": {"kind": "node", "key": "baseline_result"}, "max_repeats": 0, "exhausted_terminal": null},
+    {"predecessor": "baseline_result", "outcome": "expected_failure", "target": {"kind": "node", "key": "implementation_entry"}, "max_repeats": 0, "exhausted_terminal": null},
+    {"predecessor": "baseline_result", "outcome": "already_satisfied", "target": {"kind": "terminal", "key": "already_satisfied"}, "max_repeats": 0, "exhausted_terminal": null},
+    {"predecessor": "baseline_result", "outcome": "blocked", "target": {"kind": "terminal", "key": "test_preparation_blocked"}, "max_repeats": 0, "exhausted_terminal": null},
+    {"predecessor": "implementation_entry", "outcome": "ready", "target": {"kind": "node", "key": "implementation"}, "max_repeats": 0, "exhausted_terminal": null}
+  ],
+  "terminals": {"already_satisfied": "baseline_report", "test_preparation_blocked": "baseline_report"}
+}

@@ -29,6 +29,10 @@
           "task": {
             "source": "work",
             "path": "/artifacts/task"
+          },
+          "acceptance": {
+            "source": "work",
+            "path": "/artifacts/acceptance"
           }
         },
         "mapping": {
@@ -49,6 +53,10 @@
                 "correction": {
                   "mapping": "pointer",
                   "path": "/previous/correction"
+                },
+                "original_acceptance": {
+                  "mapping": "pointer",
+                  "path": "/acceptance"
                 }
               }
             },
@@ -62,6 +70,10 @@
                 "task": {
                   "mapping": "pointer",
                   "path": "/task"
+                },
+                "original_acceptance": {
+                  "mapping": "pointer",
+                  "path": "/acceptance"
                 }
               }
             }
@@ -79,24 +91,6 @@
         },
         "candidate_when_present": "/accepted/specification",
         "entries": {
-          "task": {
-            "source_kind": "task",
-            "source": {
-              "value": {
-                "mapping": "object",
-                "fields": {
-                  "kind": {
-                    "mapping": "constant",
-                    "value": "artifact"
-                  },
-                  "value": {
-                    "mapping": "pointer",
-                    "path": "/task"
-                  }
-                }
-              }
-            }
-          },
           "manifest": {
             "source_kind": "specification",
             "source": {
@@ -134,8 +128,28 @@
               }
             },
             "when_present": "/accepted/specification"
+          },
+          "original_acceptance": {
+            "source_kind": "task",
+            "source": {
+              "value": {
+                "mapping": "object",
+                "fields": {
+                  "kind": {
+                    "mapping": "constant",
+                    "value": "artifact"
+                  },
+                  "value": {
+                    "mapping": "pointer",
+                    "path": "/original_acceptance"
+                  }
+                }
+              }
+            },
+            "when_present": "/original_acceptance"
           }
-        }
+        },
+        "work_task": "task"
       }
     }
   ]

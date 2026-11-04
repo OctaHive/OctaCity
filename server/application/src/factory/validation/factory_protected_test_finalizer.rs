@@ -209,6 +209,7 @@ impl<R: FactoryRunStore, Q: BuildQueryStore, A: ArtifactRecordStore, B: Artifact
         plan: &plan,
         inventory: author.inventory(),
         files: author.files(),
+        transcript: author.transcript(),
         completion,
       })
       .await

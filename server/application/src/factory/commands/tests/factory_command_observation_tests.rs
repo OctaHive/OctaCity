@@ -1,4 +1,5 @@
 //! Criteria are fixed by installation; reports cannot choose their own verdict.
+use crate::factory_node_test_support::probe_observation_contract as contract;
 use crate::*;
 use octacity_server_factory::*;
 use serde_json::json;
@@ -10,22 +11,6 @@ fn key(value: &str) -> FactoryKey {
 fn reference(name: &str) -> ImmutableReference {
   ImmutableReference::new(key(name), key("v1"), FactoryDigest::from_bytes([91; 32]))
 }
-pub(crate) fn contract() -> FactoryCommandObservationContract {
-  FactoryCommandObservationContract {
-    stop_on_indeterminate: false,
-    environment: reference("reviewed-probe-environment"),
-    criterion: reference("http-status-symptom"),
-    observations: FlowDataSchema::new(key("http-probe-observations"), key("v1"),
-      FlowValueSchema::Object { fields: BTreeMap::from([
-        (key("probe"), FlowFieldSchema::required(FlowValueSchema::Enum { values: vec![json!("GET /health")] })),
-        (key("requests"), FlowFieldSchema::required(FlowValueSchema::Integer { minimum:0, maximum:1 })),
-        (key("unexpected_statuses"), FlowFieldSchema::required(FlowValueSchema::Integer { minimum:0, maximum:1 })),
-      ]) }).unwrap(),
-    completion: serde_json::from_value(json!({"operation":"compare","left":{"source":"path","path":"/requests"},"comparison":"equal","right":{"source":"literal","value":1}})).unwrap(),
-    symptom: serde_json::from_value(json!({"operation":"compare","left":{"source":"path","path":"/unexpected_statuses"},"comparison":"equal","right":{"source":"literal","value":1}})).unwrap(),
-  }
-}
-
 pub(crate) fn report(intent: &FlowBuildIntent, contract: &FactoryCommandObservationContract) -> serde_json::Value {
   json!({"input_digest":intent.input().digest().unwrap(), "subject":intent.input().subject(),
     "command":intent.profile().model_or_tool,"environment":contract.environment,"criterion":contract.criterion,

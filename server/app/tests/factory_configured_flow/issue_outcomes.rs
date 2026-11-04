@@ -934,6 +934,16 @@ async fn issue_outcomes_http_distinguishes_advice_committed_classification_and_c
 #[tokio::test]
 #[ignore = "requires an explicitly configured disposable PostgreSQL service"]
 async fn admission_rechecks_predecessor_requirements_after_the_issue_changes() {
+  verify_native_triage_predecessor(true).await;
+}
+
+#[tokio::test]
+#[ignore = "requires an explicitly configured disposable PostgreSQL service"]
+async fn accepted_triage_process_completion_does_not_supply_implementation_acceptance() {
+  verify_native_triage_predecessor(false).await;
+}
+
+async fn verify_native_triage_predecessor(has_implementation_acceptance: bool) {
   let database = postgres_support::TestDatabase::migrated().await;
   let fixture = factory_node_test_support::fixtures::work();
   let project = fixture.subject().project_id();
@@ -963,7 +973,11 @@ async fn admission_rechecks_predecessor_requirements_after_the_issue_changes() {
   .unwrap();
   let (producer, execution) = flow_contract::configured_fixture_with_work(summary_flow(None), producer_work);
   let store = admit(&database.pool, &producer).await;
-  let issue = create_issue(&store, project, IssueId::generate(), content.clone()).await;
+  let mut issue_content = content.clone();
+  if !has_implementation_acceptance {
+    issue_content.acceptance = None;
+  }
+  let issue = create_issue(&store, project, IssueId::generate(), issue_content).await;
   associate(&store, &issue, None, &producer).await;
   // The scoped Source reservation contract separately exercises writing this
   // revision. Here the fixture focuses on selecting and admitting its real Run.
@@ -1095,6 +1109,25 @@ async fn admission_rechecks_predecessor_requirements_after_the_issue_changes() {
     .await
     .unwrap();
 
+  if !has_implementation_acceptance {
+    assert!(
+      check_native_triage_handoff(
+        &store,
+        &published,
+        &producer,
+        &issue,
+        inputs,
+        &policies.access_profile,
+        ""
+      )
+      .await
+      .is_none(),
+      "accepted triage with only a process-completion document must wait for implementation acceptance"
+    );
+    database.cleanup().await;
+    return;
+  }
+
   let make_admission = |key_value: &str| {
     let work = WorkEnvelope::new(
       WorkEnvelopeId::generate(),
@@ -1185,7 +1218,8 @@ async fn admission_rechecks_predecessor_requirements_after_the_issue_changes() {
     &policies.access_profile,
     corrected_description,
   )
-  .await;
+  .await
+  .unwrap();
   let mut corrected = issue.content.clone();
   corrected.description = corrected_description.into();
   let corrected = edit_issue(&store, &issue, corrected, 69).await;
@@ -1239,7 +1273,7 @@ async fn check_native_triage_handoff(
   implementation_inputs: &WorkArtifacts,
   access: &FactoryAccessProfile,
   corrected_description: &str,
-) -> WaitingNativeHandoff {
+) -> Option<WaitingNativeHandoff> {
   use octacity_server_store::{
     AdmitPreparedWorkSource, ClaimWorkSourceScan, FactorySourceStore, FactoryWorkAdmissionIntent,
     ManagementSecurityScope, PublishSourcePreparationIntent, PublishWorkSources, ReserveWorkSourcePreparation,
@@ -1410,14 +1444,25 @@ async fn check_native_triage_handoff(
   ));
   let base = Arc::new(ExactBase(repo.base_revision().clone()));
   let selection = RepositorySourceSelection::ExactRevision(repo.base_revision().clone());
-  let handoff = reader
+  let resolved = reader
     .resolve(
       &authority,
       &item,
       FactorySourcePredecessorTarget::new(&published, target.flow(), Some(&selection), base.as_ref()),
     )
-    .await
-    .unwrap();
+    .await;
+  if issue.content.acceptance.is_none() {
+    assert_eq!(
+      octacity_server_application::source_predecessor_wait(&resolved.err().expect("delivery must wait")),
+      Some((
+        octacity_server_store::WorkSourceWaitReason::MissingImplementationAcceptance,
+        None
+      ))
+    );
+    return None;
+  }
+  let handoff = resolved.unwrap();
+
   let handlers = FactorySourceAdmissionHandlers::new(store.clone(), base.clone(), policy.clone(), base.clone())
     .with_predecessors(reader);
   let waiting_authority = FactorySourceAuthorization {
@@ -1556,11 +1601,11 @@ async fn check_native_triage_handoff(
       "automatic delivery retains the linked requirements proven by the accepted producer"
     );
   }
-  WaitingNativeHandoff {
+  Some(WaitingNativeHandoff {
     handlers,
     authority: waiting_authority,
     claim: waiting_claim,
     preparation: waiting,
     selection,
-  }
+  })
 }

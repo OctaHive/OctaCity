@@ -20,6 +20,25 @@ pub struct FlowRuntimeHistory<'a> {
   pub completions: &'a [NodeAttemptCompletion],
 }
 
+// Count only traversals at or before the producer, even when the journal
+// already contains completions from other ready branches.
+pub(super) fn traversals_through(
+  completions: &[NodeAttemptCompletion],
+  completion: &NodeAttemptCompletion,
+  producer: &NodeAttempt,
+  number: impl Fn(NodeAttemptId) -> Option<crate::NodeAttemptNumber>,
+) -> usize {
+  completions
+    .iter()
+    .filter(|row| {
+      row.flow_run_id() == completion.flow_run_id()
+        && row.node_key() == completion.node_key()
+        && row.outcome() == completion.outcome()
+        && number(row.node_attempt_id()).is_some_and(|number| number <= producer.number())
+    })
+    .count()
+}
+
 impl<'a> FlowRuntimeHistory<'a> {
   /// Validates journal consumption, including verified overruns from stopped
   /// operations. This is retention authority only: all new dispatches must
@@ -421,8 +440,16 @@ fn validate_attempts(
           .iter()
           .find(|completion| completion.node_attempt_id() == predecessor.id())
           .is_some_and(|completion| {
-            crate::FlowInterpreter::declared_successor_keys(definition, predecessor.node_key(), completion.outcome())
-              .contains(attempt.node_key())
+            let traversals = traversals_through(completions, completion, predecessor, |id| {
+              attempts.get(&id).map(|attempt| attempt.number())
+            });
+            crate::FlowInterpreter::declared_successor_keys(
+              definition,
+              predecessor.node_key(),
+              completion.outcome(),
+              traversals,
+            )
+            .contains(attempt.node_key())
           })
       });
       if !declared {

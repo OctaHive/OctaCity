@@ -146,12 +146,23 @@ export function FlowRouteFields({
       </label>
       <SelectMenu
         ariaLabel={t('factory.exhaustion')}
-        value={edge.exhausted_terminal ?? ''}
+        value={
+          edge.exhausted_node ? `node:${edge.exhausted_node}` : (edge.exhausted_terminal ?? '')
+        }
         options={[
           { value: '', label: t('factory.none') },
           ...value.terminals.map((terminal) => ({ value: terminal.key, label: terminal.key })),
+          ...value.nodes
+            .filter((node) => node.kind === 'human_gate' && node.operator_requests)
+            .map((node) => ({ value: `node:${node.key}`, label: node.key })),
         ]}
-        onValueChange={(selected) => update({ exhausted_terminal: selected || null })}
+        onValueChange={(selected) =>
+          update(
+            selected.startsWith('node:')
+              ? { exhausted_node: selected.slice(5), exhausted_terminal: null }
+              : { exhausted_node: null, exhausted_terminal: selected || null },
+          )
+        }
       />
       <label>
         <input

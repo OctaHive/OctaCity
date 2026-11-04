@@ -99,6 +99,25 @@
               }
             },
             "when_present": "/parent"
+          },
+          "original_acceptance": {
+            "source_kind": "specification",
+            "source": {
+              "value": {
+                "mapping": "object",
+                "fields": {
+                  "kind": {
+                    "mapping": "constant",
+                    "value": "artifact"
+                  },
+                  "value": {
+                    "mapping": "pointer",
+                    "path": "/original_acceptance"
+                  }
+                }
+              }
+            },
+            "when_present": "/original_acceptance"
           }
         }
       },

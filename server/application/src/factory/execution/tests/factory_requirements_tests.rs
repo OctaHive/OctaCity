@@ -7,9 +7,9 @@ use crate::factory_node_test_support::{
 use crate::{
   ApplicationError, CreateFactoryBuild, FactoryCandidatePublication, FactoryCandidatePublicationAction,
   FactoryCandidatePublicationRequest, FactoryCandidatePublisher, FactoryControlHandlers, FactoryFlowActionAdapter,
-  FactoryFlowRunner, FactoryFlowStep, FactoryNodeBuildAdapter, FactoryNodeBuildExecutionFacts, FactoryNodeBuildOutputs,
-  FactoryNodeExecutorRegistry, ManagementAuthorizationGrant, ManagementCommandUseCase, ManagementRequestContext,
-  ManagementRequestId, ManagementVisibility, ResolveFactoryNodeCommand,
+  FactoryFlowCoordinator, FactoryFlowRunner, FactoryFlowStep, FactoryNodeBuildAdapter, FactoryNodeBuildExecutionFacts,
+  FactoryNodeBuildOutputs, FactoryNodeExecutorRegistry, ManagementAuthorizationGrant, ManagementCommandUseCase,
+  ManagementRequestContext, ManagementRequestId, ManagementVisibility, ResolveFactoryNodeCommand,
 };
 use async_trait::async_trait;
 use octacity_server_factory::*;
@@ -39,12 +39,26 @@ impl FactoryTestOutputBuilder for QualifiedOutputs {
     schema: &ImmutableReference,
     requirements: &[EvidenceRequirement],
   ) -> Option<FactoryNodeBuildOutputs> {
+    self.outputs_with_report(request, builds, schema, requirements, None)
+  }
+}
+impl QualifiedOutputs {
+  fn outputs_with_report(
+    &self,
+    request: &CreateFactoryBuild,
+    builds: &Builds,
+    schema: &ImmutableReference,
+    requirements: &[EvidenceRequirement],
+    report: Option<Value>,
+  ) -> Option<FactoryNodeBuildOutputs> {
     let c = request.causality.as_ref();
     let p = &c.profile;
     let wire: Value = serde_json::from_slice(&c.input).unwrap();
     let input = &wire["payload"]["value"];
     let mut extra = BTreeMap::new();
-    let report = if let Some(case) = self
+    let report = if let Some(report) = report {
+      report
+    } else if let Some(case) = self
       .validation
       .as_ref()
       .filter(|_| schema.identity().as_str() == "factory.base.protected_validation_report")
@@ -98,9 +112,17 @@ impl FactoryTestOutputBuilder for QualifiedOutputs {
       } else {
         "A"
       };
+      let changed_paths = [
+        "openspec/changes/api/design.md",
+        "openspec/changes/api/proposal.md",
+        "openspec/changes/api/specs/api/spec.md",
+        "openspec/changes/api/tasks.md",
+        "openspec/specs/api/spec.md",
+      ]
+      .map(|path| json!({"status":status,"path":path,"old_mode":"100644","new_mode":"100644"}));
       let manifest = json!({"format_version":1,"base_revision":predecessor,"candidate_revision":candidate,"node_attempt_id":c.node_attempt_id,
         "capture_tool":{"identity":p.result_tool().identity(),"version":p.result_tool().version(),"sha256":p.result_tool().digest()},
-        "changed_paths":[{"status":status,"path":"openspec/specs/api/spec.md","old_mode":"100644","new_mode":"100644"},{"status":status,"path":"openspec/changes/api/proposal.md","old_mode":"100644","new_mode":"100644"}],
+        "changed_paths":changed_paths,
         "bundle":{"name":"change-set.bundle","size_bytes":size,"sha256":digest}});
       let handoff = json!({"work_id":wire["work_id"],"original_base":request.subject.exact().unwrap().base_revision(),"predecessor_revision":predecessor,"candidate_revision":candidate,"input_digest":c.input_digest,
         "work_kind":input["accepted_input"]["work_kind"],"contract_path":"openspec/specs/api/spec.md","change_path":"openspec/changes/api/proposal.md",
@@ -650,8 +672,8 @@ pub(crate) async fn verify_specified_owner<
           );
           assert_eq!(
             context.entries().len(),
-            3,
-            "only task and the accepted specification artifacts are granted"
+            4,
+            "only the task, acceptance and accepted specification artifacts are granted"
           );
           for artifact_name in ["manifest", "bundle"] {
             let expected: FactoryArtifactReference =
@@ -663,9 +685,14 @@ pub(crate) async fn verify_specified_owner<
                 .any(|entry| entry.source() == &FactoryContextReference::Artifact(expected.clone()))
             );
           }
-          assert!(context.entries().iter().any(
-            |entry| entry.source() == &FactoryContextReference::Artifact(snapshot.work.artifacts().task().clone())
-          ));
+          for document in [snapshot.work.artifacts().task(), snapshot.work.artifacts().acceptance()] {
+            assert!(
+              context
+                .entries()
+                .iter()
+                .any(|entry| entry.source() == &FactoryContextReference::Artifact(document.clone()))
+            );
+          }
         }
         for name in [
           "specification_gate",
@@ -974,12 +1001,17 @@ fn validation_rework_retains_the_exact_candidate_and_closed_context_after_restar
       initial.payload().value()["accepted_contract"],
       rework.payload().value()["accepted_contract"]
     );
+    assert_eq!(initial.payload().value()["test_scope"], json!(["project.custom"]));
+    assert_eq!(
+      rework.payload().value()["test_scope"],
+      initial.payload().value()["test_scope"]
+    );
     for input in &implementations {
       let wire = serde_json::to_string(input).unwrap();
       assert!(!wire.contains("protected_inventory") && !wire.contains("author_transcript"));
       assert!(input.context().unwrap().entries().iter().all(|entry| matches!(
         entry.source_kind(),
-        ContextSourceKind::Task | ContextSourceKind::Evidence
+        ContextSourceKind::Task | ContextSourceKind::Evidence | ContextSourceKind::Specification
       )));
     }
     let classifier = snapshot
@@ -1014,7 +1046,7 @@ fn validation_rework_retains_the_exact_candidate_and_closed_context_after_restar
       .find(|input| input.node() == &key("review"))
       .unwrap();
     assert_eq!(reviewer.payload().value()["candidate_revision"], candidates[1]);
-    assert_eq!(reviewer.context().unwrap().entries().len(), 3);
+    assert_eq!(reviewer.context().unwrap().entries().len(), 4);
     let review = snapshot
       .flow
       .data
@@ -1187,3 +1219,6 @@ fn classified_requirements_correction_restarts_every_accepted_gate_in_a_fresh_cy
     );
   });
 }
+
+#[path = "factory_requirements_tests/ticket_delivery.rs"]
+mod ticket_delivery;

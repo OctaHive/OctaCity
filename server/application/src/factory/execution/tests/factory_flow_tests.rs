@@ -39,7 +39,9 @@ impl FactoryFlowInputPreparer for Inputs {
       .unwrap()
       .context_binding();
     if let Some(binding) = binding {
-      let selected = binding.selected_sources_with_work_task(input.payload(), input.work_task()).unwrap();
+      let selected = binding
+        .selected_sources_with_work_task(input.payload(), input.work_task())
+        .unwrap();
       let subject = match binding.candidate_revision(input.payload()).unwrap() {
         None => FactoryTaskSubject::Exact(snapshot.work.subject().repository().unwrap().clone()),
         Some(revision) => {
@@ -470,18 +472,26 @@ pub(crate) fn configured_fixture_from_template(
   pool_payload_root: &str,
 ) -> (PublishedFactoryAdmission, Arc<Execution>) {
   let work = store_testing::factory_node_journal_contract_fixture().admission.work;
-  fixture_with_work_and_pool_root(template, work, pool_payload_root)
+  fixture_with_work_and_pool_root(template, work, pool_payload_root, |_, _| {})
 }
 pub(crate) fn configured_fixture_with_work(
   template: FlowDefinitionTemplate,
   work: WorkEnvelope,
 ) -> (PublishedFactoryAdmission, Arc<Execution>) {
-  fixture_with_work_and_pool_root(template, work, "/accepted")
+  configured_fixture_with_profiles(template, work, |_, _| {})
+}
+pub(crate) fn configured_fixture_with_profiles(
+  template: FlowDefinitionTemplate,
+  work: WorkEnvelope,
+  configure: impl FnMut(&FlowTemplateNode, &mut FlowBuildBinding),
+) -> (PublishedFactoryAdmission, Arc<Execution>) {
+  fixture_with_work_and_pool_root(template, work, "/accepted", configure)
 }
 fn fixture_with_work_and_pool_root(
   template: FlowDefinitionTemplate,
   work: WorkEnvelope,
   pool_payload_root: &str,
+  mut configure: impl FnMut(&FlowTemplateNode, &mut FlowBuildBinding),
 ) -> (PublishedFactoryAdmission, Arc<Execution>) {
   let schemas = template.data_schemas().unwrap();
   let fact_schemas = BTreeMap::from([
@@ -627,6 +637,7 @@ fn fixture_with_work_and_pool_root(
         }
         _ => {}
       }
+      configure(node, &mut profile);
       requirements.insert(node.key.clone(), profile.evidence.clone());
       result_schemas.insert(node.key.clone(), schemas[&node.outcomes[0].schema].reference().clone());
       profiles.insert(choice.clone(), profile);
@@ -1015,9 +1026,18 @@ async fn verify_owner_journey<S: FactoryRunStore + FactoryPhasePoolStore>(
   );
   let exposed = serde_json::to_string(implementation.input()).unwrap();
   assert!(!exposed.contains(&private.artifact.artifact_id().to_string()));
-  assert!(implementation.input().context().unwrap().entries().iter().all(|entry|
-    matches!(entry.source(),FactoryContextReference::Artifact(reference) if reference==snapshot.work.artifacts().task())),
-    "the implementation's frozen Context cannot grant the private inventory or author files");
+  let selected = implementation
+    .input()
+    .context()
+    .unwrap()
+    .entries()
+    .iter()
+    .map(|entry| entry.source().clone())
+    .collect::<Vec<_>>();
+  assert_eq!(selected.len(), 2);
+  for document in [snapshot.work.artifacts().task(), snapshot.work.artifacts().acceptance()] {
+    assert!(selected.contains(&FactoryContextReference::Artifact(document.clone())));
+  }
   let replay = FactoryFlowRunner::new(
     store.clone(),
     Arc::new(FactoryNodeBuildAdapter::new(execution.clone(), execution.clone())),

@@ -506,7 +506,8 @@ export function FlowGraphEditor({
                   transitions: value.root.transitions.filter(
                     (edge) =>
                       edge.predecessor !== key &&
-                      !(edge.target.kind === 'node' && edge.target.key === key),
+                      !(edge.target.kind === 'node' && edge.target.key === key) &&
+                      edge.exhausted_node !== key,
                   ),
                   context_projections: value.root.context_projections.filter(
                     (edge) => edge.predecessor !== key && edge.successor !== key,
@@ -558,6 +559,7 @@ function renameNode(value: Draft, index: number, name: string): Draft {
   for (const edge of next.root.transitions) {
     if (edge.predecessor === old) edge.predecessor = name;
     if (edge.target.kind === 'node' && edge.target.key === old) edge.target.key = name;
+    if (edge.exhausted_node === old) edge.exhausted_node = name;
   }
   for (const edge of [...next.root.context_projections, ...next.root.data_projections]) {
     if (edge.predecessor === old) edge.predecessor = name;

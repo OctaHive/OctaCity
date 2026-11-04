@@ -60,7 +60,12 @@ async fn fixture_with_schema(schema: Option<FlowDataSchema>) -> Fixture {
   binding.evidence = vec![inventory.clone()];
   let permissions = FactoryPermissionSet::try_new(FactoryPermissionDraft {
     outputs: FactoryOutputPermissions::try_new(
-      vec![key("private.inventory"), key("hidden.contract"), key("audit.report")],
+      vec![
+        key("private.inventory"),
+        key("hidden.contract"),
+        key("audit.report"),
+        key("author.transcript"),
+      ],
       4,
       9_000,
       1,
@@ -96,40 +101,14 @@ async fn fixture_with_schema(schema: Option<FlowDataSchema>) -> Fixture {
     job_id,
     expires_at: at(5_000),
   }));
-  let content = b"assert_eq!(actual, PRIVATE_EXPECTATION);";
-  let file = store
-    .begin_artifact_upload(BeginArtifactUpload {
-      artifact_id: ArtifactId::generate(),
-      upload_id: ArtifactUploadId::generate(),
-      idempotency_key: IdempotencyKey::new("actual.private.file").unwrap(),
-      lease,
-      job_id,
-      attempt: AttemptNumber::FIRST,
-      logical_name: ArtifactName::new("hidden.contract").unwrap(),
-      producer_run_id: 17,
-      producer_task_id: 23,
-      artifact_type: ArtifactType::Artifact,
-      media_type: ArtifactMediaType::new("text/plain").unwrap(),
-      transport_media_type: ArtifactMediaType::new("application/octet-stream").unwrap(),
-      size_bytes: content.len() as u64,
-      digest: ArtifactContentDigest::from_bytes(FactoryDigest::content_sha256(content).as_bytes()),
-      reserved_at: at(30),
-      capability_expires_at: at(4_000),
-    })
-    .await
-    .unwrap();
-  let verification = VerifyArtifactUpload {
-    upload_id: file.upload.upload_id,
+  let file = publish_private_output(
+    &store,
     lease,
     job_id,
-    attempt: AttemptNumber::FIRST,
-    observed_at: at(31),
-  };
-  store.begin_artifact_verification(verification).await.unwrap();
-  let file = store
-    .finish_artifact_verification(verification, ArtifactVerificationResult::Verified)
-    .await
-    .unwrap();
+    "hidden.contract",
+    b"assert_eq!(actual, PRIVATE_EXPECTATION);",
+  )
+  .await;
   let plan = ProtectedTestPlan::new(
     FactoryDigest::from_bytes([27; 32]),
     intent.input().context().unwrap().subject().clone(),
@@ -158,6 +137,48 @@ async fn fixture_with_schema(schema: Option<FlowDataSchema>) -> Fixture {
   }
 }
 
+async fn publish_private_output(
+  store: &InMemoryArtifactRecordStore,
+  lease: LeaseAccess,
+  job_id: JobId,
+  name: &str,
+  content: &[u8],
+) -> ArtifactUploadRecord {
+  let file = store
+    .begin_artifact_upload(BeginArtifactUpload {
+      artifact_id: ArtifactId::generate(),
+      upload_id: ArtifactUploadId::generate(),
+      idempotency_key: IdempotencyKey::new(name).unwrap(),
+      lease,
+      job_id,
+      attempt: AttemptNumber::FIRST,
+      logical_name: ArtifactName::new(name).unwrap(),
+      producer_run_id: 17,
+      producer_task_id: 23,
+      artifact_type: ArtifactType::Artifact,
+      media_type: ArtifactMediaType::new("text/plain").unwrap(),
+      transport_media_type: ArtifactMediaType::new("application/octet-stream").unwrap(),
+      size_bytes: content.len() as u64,
+      digest: ArtifactContentDigest::from_bytes(FactoryDigest::content_sha256(content).as_bytes()),
+      reserved_at: at(30),
+      capability_expires_at: at(4_000),
+    })
+    .await
+    .unwrap();
+  let verification = VerifyArtifactUpload {
+    upload_id: file.upload.upload_id,
+    lease,
+    job_id,
+    attempt: AttemptNumber::FIRST,
+    observed_at: at(31),
+  };
+  store.begin_artifact_verification(verification).await.unwrap();
+  store
+    .finish_artifact_verification(verification, ArtifactVerificationResult::Verified)
+    .await
+    .unwrap()
+}
+
 #[test]
 fn protected_inventory_uses_published_file_ids_and_replays_the_same_publication() {
   crate::factory::admission::tests::factory_admission_tests::run_ready(async {
@@ -174,8 +195,18 @@ fn protected_inventory_uses_published_file_ids_and_replays_the_same_publication(
       files,
       bytes,
     } = fixture().await;
+    let transcript_name = key("author.transcript");
+    let transcript = publish_private_output(
+      &store,
+      lease,
+      job_id,
+      transcript_name.as_str(),
+      b"PRIVATE_AUTHOR_TRANSCRIPT",
+    )
+    .await;
     let publisher = FactoryProtectedTestInventoryPublisher::new(store.clone(), bytes.clone(), Arc::new(Clock));
     let request = FactoryProtectedTestInventoryPublication {
+      transcript: Some(&transcript_name),
       admitted: &admitted,
       intent: &intent,
       execution: &execution,
@@ -209,6 +240,16 @@ fn protected_inventory_uses_published_file_ids_and_replays_the_same_publication(
       assert_eq!(captured.plan_digest, plan.digest().unwrap());
       assert_eq!(captured.input_digest, intent.input().digest().unwrap());
       assert_eq!(captured.node_attempt_id, intent.node().id());
+      let transcript_identity = transcript.artifact.identity();
+      assert_eq!(
+        captured.transcript.as_ref().unwrap().artifact_id(),
+        transcript_identity.artifact_id
+      );
+      assert_eq!(
+        captured.transcript.unwrap().content_digest().as_bytes(),
+        transcript_identity.digest.as_bytes()
+      );
+      assert!(!String::from_utf8_lossy(raw).contains("PRIVATE_AUTHOR_TRANSCRIPT"));
       assert_eq!(captured.files.len(), 1);
       assert_eq!(
         captured.files[0].artifact.artifact_id(),
@@ -237,6 +278,7 @@ fn protected_inventory_rejects_a_replayed_reservation_with_another_storage_ident
   crate::factory::admission::tests::factory_admission_tests::run_ready(async {
     let f = fixture().await;
     let request = FactoryProtectedTestInventoryPublication {
+      transcript: None,
       admitted: &f.admitted,
       intent: &f.intent,
       execution: &f.execution,
@@ -381,6 +423,7 @@ fn protected_inventory_cannot_promise_more_retention_than_the_reserved_artifact(
       Arc::new(Clock),
     );
     let request = FactoryProtectedTestInventoryPublication {
+      transcript: None,
       admitted: &f.admitted,
       intent: &f.intent,
       execution: &f.execution,
@@ -411,6 +454,7 @@ fn protected_authoring_publishes_only_the_closed_public_handoff_under_the_admitt
       let f = fixture_with_schema(schema).await;
       let publisher = FactoryProtectedTestInventoryPublisher::new(f.store.clone(), f.bytes.clone(), Arc::new(Clock));
       let request = FactoryProtectedTestInventoryPublication {
+        transcript: None,
         admitted: &f.admitted,
         intent: &f.intent,
         execution: &f.execution,
@@ -515,6 +559,7 @@ fn protected_inventory_cannot_become_visible_when_its_original_deadline_passes_d
     );
     let result = publisher
       .publish(FactoryProtectedTestInventoryPublication {
+        transcript: None,
         admitted: &f.admitted,
         intent: &f.intent,
         execution: &f.execution,

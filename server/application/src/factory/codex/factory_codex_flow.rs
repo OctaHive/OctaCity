@@ -86,6 +86,19 @@ impl FactoryCodexReviewCompilation<'_> {
   }
 }
 
+pub(crate) fn candidate_capture_task_digest(
+  legacy: octacity_server_factory::FactoryDigest,
+  capture: Option<&octacity_server_factory::ImmutableReference>,
+) -> octacity_server_factory::FactoryDigest {
+  capture.map_or(legacy, |capture| {
+    let pin = serde_json::to_vec(capture).expect("typed candidate capture pin serializes");
+    octacity_server_factory::FactoryDigest::sha256(
+      "octacity.factory.codex.candidate-capture-task.v1",
+      &[&legacy.as_bytes(), &pin],
+    )
+  })
+}
+
 /// Optional exact raw or trusted candidate context and installed provider allocation.
 /// Neither option contains provider credentials, URLs or API configuration.
 #[derive(Clone, Copy, Default)]
@@ -102,6 +115,8 @@ pub struct FactoryCodexFlowCompilationOptions<'a> {
   /// Trusted exact candidate source proof and its separate declared text bytes.
   /// Capture bodies are never rendered into the model's documents.
   pub candidate_context: Option<&'a crate::FactoryCandidateContext>,
+  /// Installed verifier for the retained input candidate, independent of output capture.
+  pub candidate_capture_tool: Option<&'a octacity_server_factory::ImmutableReference>,
   /// Frozen finite tool-risk policy; absence uses deterministic tool decisions.
   pub tool_risk: Option<FactoryCodexToolRiskPolicy>,
   /// Explicit installed reader byte limits, independent of publication quotas.
@@ -160,6 +175,7 @@ pub fn compile_codex_flow_task_with_options(
       tool_risk: options.tool_risk,
       tool_response_limits: options.tool_response_limits,
       capture: options.capture,
+      candidate_capture_tool: options.candidate_capture_tool,
       reviewer: options.reviewer,
       role: options.role,
       mcp_configurations: options.mcp_configurations,
@@ -247,6 +263,7 @@ struct RenderedCompilationOptions<'a> {
   tool_risk: Option<FactoryCodexToolRiskPolicy>,
   tool_response_limits: Option<octacity_protocol::FactoryToolResponseLimitsV3>,
   capture: Option<&'a crate::FactoryCodexCapturePolicy>,
+  candidate_capture_tool: Option<&'a octacity_server_factory::ImmutableReference>,
   reviewer: Option<FactoryCodexReviewCompilation<'a>>,
 }
 
@@ -299,18 +316,24 @@ fn compile_flow_task(
     })
     .transpose()?
     .unwrap_or_default();
-  let selected_digest = if let Some(role) = options.role {
+  if let Some(role) = options.role {
     role
       .verify_intent(intent)
       .map_err(|_| CodexCompilationError::NodeBindings)?;
     role
       .verify_consumer(consumer, profiles, &mcp_credentials)
       .map_err(|_| CodexCompilationError::MissingAuthority)?;
-    crate::factory_role_task_digest(selected_digest, &role.package().inputs().profile)
-  } else {
-    selected_digest
+  }
+  let bound_digest = candidate_capture_task_digest(selected_digest, options.candidate_capture_tool);
+  let matches_digest = |digest| {
+    let digest = options.role.map_or(digest, |role| {
+      crate::factory_role_task_digest(digest, &role.package().inputs().profile)
+    });
+    digest == profile.task_digest
   };
-  if selected_digest != profile.task_digest {
+  // Previously admitted intents keep their original bytes. Candidate recovery
+  // still verifies the exact retained producer against the installed pin.
+  if !matches_digest(bound_digest) && !matches_digest(selected_digest) {
     return Err(CodexCompilationError::NodeBindings);
   }
   if profile.plugin.identity().as_str() != CODEX_PLUGIN_IDENTITY

@@ -88,7 +88,9 @@ pub use factory::artifacts::factory_stored_candidate_context::{
   FactoryNodeCandidateContextSource, FactoryRetainedCandidateContextSource, FactoryStoredCandidateContextSource,
 };
 pub use factory::authoring::factory_presets::*;
-pub use factory::codex::factory_codex_candidate_context::FactoryCodexCandidateContextSource;
+pub use factory::codex::factory_codex_candidate_context::{
+  FactoryCodexCandidateContextSource, FactoryCodexCandidateReader, FactoryCodexCandidateReaderFactory,
+};
 pub use factory::codex::factory_codex_materializer::{
   FactoryCodexBuildMaterializer, FactoryCodexBuildProfile, FactoryCodexCapturePolicy, FactoryCodexReviewerPolicy,
 };
@@ -585,7 +587,8 @@ pub use factory::authoring::factory_configuration_choices::{
 };
 
 pub use factory::validation::factory_protected_test_context::{
-  FactoryProtectedTestContext, FactoryStoredProtectedTestContextSource,
+  FactoryProtectedTestContext, FactoryProtectedTestObservationInputSource, FactoryProtectedTestObservationInputs,
+  FactoryStoredProtectedTestContextSource,
 };
 
 pub use factory::validation::factory_protected_validation_input_source::FactoryStoredProtectedValidationInputSource;

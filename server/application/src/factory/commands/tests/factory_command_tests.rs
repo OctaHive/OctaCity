@@ -383,3 +383,95 @@ fn installed_command_program_accepts_bounded_source_without_changing_ordinary_fa
   let program: FactoryCommandProgram = serde_json::from_value(original.clone()).unwrap();
   assert_eq!(serde_json::to_value(program).unwrap(), original);
 }
+
+#[test]
+fn command_proof_denies_mounting_a_context_alias_as_an_admitted_work_document() {
+  use octacity_protocol::{ProtectedInputManifestV3, ProtectedInputV3};
+  use octacity_server_domain::ArtifactId;
+
+  crate::factory::admission::tests::factory_admission_tests::run_ready(async {
+    let (intent, admitted, profile) = command_fixture();
+    let input = intent.input().clone();
+    let subject = input.context().unwrap().subject().clone();
+    let document =
+      FactoryArtifactReference::new(ArtifactId::generate(), FactoryDigest::from_bytes([21; 32]), 12).unwrap();
+    let entry = ContextManifestEntry::new(
+      ContextSourceKind::Task,
+      fixtures::key("zz-acceptance-contract"),
+      subject.clone(),
+      FactoryContextReference::Artifact(document.clone()),
+      document.content_digest(),
+      document.encoded_size(),
+      FactorySafeText::new("Selected Build artifact").unwrap(),
+      FactoryDigest::from_bytes([22; 32]),
+    )
+    .unwrap();
+    let context = ContextManifest::new(
+      ContextManifestId::generate(),
+      subject,
+      input.context().unwrap().construction_policy_digest(),
+      input
+        .context()
+        .unwrap()
+        .entries()
+        .iter()
+        .cloned()
+        .chain([entry])
+        .collect(),
+    )
+    .unwrap();
+    let input = input.with_context(context, vec![]).unwrap();
+    let old = intent.node();
+    let definition = admitted.closure().definition(input.definition()).unwrap();
+    let node = NodeAttempt::new(
+      admitted.root_run(),
+      admitted.initial_cycle(),
+      definition,
+      NodeAttemptInput {
+        id: old.id(),
+        node_key: input.node().clone(),
+        node_kind: old.node_kind(),
+        number: old.number(),
+        input_digest: input.digest().unwrap(),
+        budget: definition.node(input.node()).unwrap().budget(),
+        started_at: old.started_at(),
+        deadline: old.deadline(),
+        execution: old.execution().clone(),
+        ownership: FactoryClaimOwnership::new(old.owner().clone(), old.claim()),
+      },
+    )
+    .unwrap();
+    let intent = FlowBuildIntent::new(input, &admitted, node, Default::default(), 0).unwrap();
+    let compiled = compile_factory_command_task(&intent, &admitted, &profile).unwrap();
+    use super::factory_command_materializer_tests::{Bytes, Inputs};
+    struct Clock(octacity_server_domain::Timestamp);
+    impl FactoryExecutionClock for Clock {
+      fn now(&self) -> Result<octacity_server_domain::Timestamp, ApplicationError> {
+        Ok(self.0)
+      }
+    }
+    let publisher = FactoryExecutionInputPublisher::new(
+      std::sync::Arc::new(Inputs::default()),
+      std::sync::Arc::new(Bytes),
+      std::sync::Arc::new(Clock(intent.node().started_at())),
+    );
+    let owner = FactoryClaimOwnership::new(intent.node().owner().clone(), intent.node().claim());
+    let mut inputs = publisher
+      .publish(&intent, &owner, compiled.documents().to_vec())
+      .await
+      .unwrap()
+      .inputs;
+    let historical = ProtectedInputManifestV3 { inputs: inputs.clone() };
+    let selected = ProtectedInputV3 {
+      artifact_id: document.artifact_id().to_string(),
+      size_bytes: document.encoded_size(),
+      sha256: document.content_digest().to_string(),
+      media_type: "text/plain".to_owned(),
+      destination: "/octacity/protected/context/zz-acceptance-contract".to_owned(),
+    };
+    inputs.push(selected);
+    inputs.sort_by(|a, b| a.artifact_id.cmp(&b.artifact_id));
+    assert!(compiled.managed_program(ProtectedInputManifestV3 { inputs }).is_err());
+    assert!(compiled.managed_program(historical).is_ok());
+  });
+}

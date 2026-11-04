@@ -781,6 +781,8 @@ async fn journey(
         FactoryFlowStep::Waiting,
         "a human disposition cannot advance until its authorized exact response"
       );
+      // Reconciliation can advance the Run version while the same gate is waiting.
+      let snapshot = store.factory_run_snapshot(run_id).await.unwrap();
       let input = snapshot
         .flow
         .data

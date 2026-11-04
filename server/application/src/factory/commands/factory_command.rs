@@ -5,14 +5,26 @@ use octacity_protocol::{
 };
 use octacity_server_domain::PipelineNodeId;
 use octacity_server_factory::{
-  AdmittedFlow, BuildConfigurationRef, EvidenceRequirement, FactoryDigest, FactoryKey, FactoryPermissionSet,
-  FlowBuildIntent, ImmutableReference, LocalPermissionCeiling, PermissionCategory,
+  AdmittedFlow, BuildConfigurationRef, EvidenceRequirement, FactoryArtifactReference, FactoryDigest, FactoryKey,
+  FactoryPermissionSet, FlowBuildIntent, ImmutableReference, LocalPermissionCeiling, PermissionCategory,
 };
 use serde::{Deserialize, Serialize};
 use std::collections::BTreeMap;
 
 const OCTAFILE_DESTINATION: &str = "/octacity/protected/command-Octafile.yml";
 const WORK_TASK_DESTINATION: &str = "/octacity/protected/work-task";
+const WORK_ACCEPTANCE_DESTINATION: &str = "/octacity/protected/work-acceptance";
+
+/// Preserve whether an exact command input can become readable on retry.
+pub(super) fn command_input_error(error: ApplicationError) -> OrdinaryBuildApplicationError {
+  use crate::ApplicationFailure;
+  use OrdinaryBuildApplicationError::{Conflict, Invalid, Unavailable};
+  match error.classification() {
+    ApplicationFailure::Unavailable | ApplicationFailure::Internal => Unavailable,
+    ApplicationFailure::Conflict | ApplicationFailure::PreconditionFailed => Conflict,
+    _ => Invalid,
+  }
+}
 
 /// Maximum UTF-8 bytes in one operator-installed command Octafile.
 /// This source bound is separate from human-readable Factory summaries and
@@ -106,6 +118,14 @@ impl FactoryCommandBuildProfile {
       pipeline_node: self.pipeline_node.clone(),
       compilation: None,
     }
+  }
+
+  /// Indicates that the pinned observation can execute only with private test inputs.
+  pub fn requires_protected_tests(&self) -> bool {
+    self
+      .observation_contract
+      .as_ref()
+      .is_some_and(|contract| contract.requires_protected_tests)
   }
 
   /// Returns finite primary reports compatible with this explicitly installed observation contract.
@@ -276,6 +296,8 @@ pub struct CompiledFactoryCommandTask {
   input: octacity_server_factory::FlowNodeInput,
   additional_inputs: Vec<octacity_protocol::ProtectedInputV3>,
   validation: Option<crate::FactoryProtectedValidationMaterialization>,
+  requires_protected_tests: bool,
+  test_observation_reserved_inputs: Option<u16>,
   promotion: bool,
   authority: Option<StaticCommandAuthority>,
 }
@@ -285,8 +307,51 @@ enum StaticCommandAuthority {
   Deployment,
 }
 impl CompiledFactoryCommandTask {
+  #[cfg(test)]
   pub(super) fn work_task_input(
     &self,
+    publication: &octacity_server_store::PublishedExecutionInput,
+    deadline: octacity_server_domain::Timestamp,
+  ) -> Result<ProtectedInputV3, OrdinaryBuildApplicationError> {
+    Self::task_document_input(
+      WORK_TASK_DESTINATION.into(),
+      self.input.work_task().ok_or(OrdinaryBuildApplicationError::Invalid)?,
+      publication,
+      deadline,
+    )
+  }
+
+  fn matches_work_task(&self, input: &ProtectedInputV3) -> bool {
+    self
+      .input
+      .work_task()
+      .is_some_and(|task| input.destination == WORK_TASK_DESTINATION && Self::matches_document(input, task))
+  }
+
+  /// Only documents selected from the immutable Work by its owner may enter a command Job here.
+  pub(super) fn work_documents(&self) -> impl Iterator<Item = (&'static str, &FactoryArtifactReference)> {
+    self
+      .input
+      .work_task()
+      .map(|task| (WORK_TASK_DESTINATION, task))
+      .into_iter()
+      .chain(
+        self
+          .input
+          .work_acceptance()
+          .map(|acceptance| (WORK_ACCEPTANCE_DESTINATION, acceptance)),
+      )
+  }
+
+  fn matches_document(input: &ProtectedInputV3, document: &FactoryArtifactReference) -> bool {
+    input.artifact_id == document.artifact_id().to_string()
+      && input.size_bytes == document.encoded_size()
+      && input.sha256 == document.content_digest().to_string()
+  }
+
+  pub(super) fn task_document_input(
+    destination: String,
+    reference: &FactoryArtifactReference,
     publication: &octacity_server_store::PublishedExecutionInput,
     deadline: octacity_server_domain::Timestamp,
   ) -> Result<ProtectedInputV3, OrdinaryBuildApplicationError> {
@@ -295,21 +360,12 @@ impl CompiledFactoryCommandTask {
       size_bytes: publication.size_bytes,
       sha256: publication.digest.to_string(),
       media_type: publication.media_type.as_str().to_owned(),
-      destination: WORK_TASK_DESTINATION.into(),
+      destination,
     };
-    if !self.matches_work_task(&input) || publication.expires_at.is_some_and(|expiry| expiry < deadline) {
+    if !Self::matches_document(&input, reference) || publication.expires_at.is_some_and(|expiry| expiry < deadline) {
       return Err(OrdinaryBuildApplicationError::Invalid);
     }
     Ok(input)
-  }
-
-  fn matches_work_task(&self, input: &ProtectedInputV3) -> bool {
-    self.input.work_task().is_some_and(|task| {
-      input.destination == WORK_TASK_DESTINATION
-        && input.artifact_id == task.artifact_id().to_string()
-        && input.size_bytes == task.encoded_size()
-        && input.sha256 == task.content_digest().to_string()
-    })
   }
 
   pub(crate) fn with_deployment_authority(
@@ -354,6 +410,24 @@ impl CompiledFactoryCommandTask {
     self.additional_inputs = candidate.materialization(&self.input, at)?.wire_inputs().1;
     Ok(self)
   }
+  /// Adds read-only test files selected by an installed command on the Work base.
+  pub(crate) fn with_test_observation_inputs(
+    mut self,
+    proof: &crate::FactoryProtectedTestObservationInputs,
+  ) -> Result<Self, OrdinaryBuildApplicationError> {
+    use OrdinaryBuildApplicationError::Invalid;
+    if !self.requires_protected_tests
+      || !proof.matches(&self.input).map_err(|_| Invalid)?
+      || !self.additional_inputs.is_empty()
+      || self.validation.is_some()
+      || self.promotion
+    {
+      return Err(Invalid);
+    }
+    self.additional_inputs = proof.inputs().to_vec();
+    self.test_observation_reserved_inputs = Some(proof.reserved_inputs());
+    Ok(self)
+  }
   /// Adds the original private input proof and an immutable report invocation.
   /// The descriptor contains verified identities and classes, never test bodies.
   pub fn with_protected_validation(
@@ -364,6 +438,7 @@ impl CompiledFactoryCommandTask {
     const DESTINATION: &str = "/octacity/protected/validation-input.json";
     if validation.input() != &self.input
       || self.validation.is_some()
+      || self.test_observation_reserved_inputs.is_some()
       || self.promotion
       || self
         .expected
@@ -397,6 +472,7 @@ impl CompiledFactoryCommandTask {
     use OrdinaryBuildApplicationError::Invalid;
     const DESTINATION: &str = "/octacity/protected/promotion-input.json";
     if self.validation.is_some()
+      || self.test_observation_reserved_inputs.is_some()
       || self.promotion
       || octacity_server_factory::PromotionPlan::freeze(admitted, &self.input).map_err(|_| Invalid)? != *plan
       || self
@@ -443,12 +519,16 @@ impl CompiledFactoryCommandTask {
     &self,
     manifest: &octacity_protocol::ProtectedInputManifestV3,
   ) -> Result<FactoryManagedJobProgram, OrdinaryBuildApplicationError> {
+    if self.authority.is_none() {
+      return Err(OrdinaryBuildApplicationError::Invalid);
+    }
     let generated = octacity_protocol::ProtectedInputManifestV3 {
       inputs: manifest
         .inputs
         .iter()
         .filter(|input| {
           input.destination == WORK_TASK_DESTINATION
+            || input.destination == WORK_ACCEPTANCE_DESTINATION
             || self
               .expected
               .iter()
@@ -457,7 +537,7 @@ impl CompiledFactoryCommandTask {
         .cloned()
         .collect(),
     };
-    self.managed_program(generated)
+    self.assemble_managed_program(generated)
   }
   /// Reconstructs the exact published document set, including executable bytes.
   /// New Jobs receive the selected Work task at dispatch. A retained Job may
@@ -466,15 +546,41 @@ impl CompiledFactoryCommandTask {
     &self,
     manifest: ProtectedInputManifestV3,
   ) -> Result<FactoryManagedJobProgram, OrdinaryBuildApplicationError> {
+    if self.requires_protected_tests != self.test_observation_reserved_inputs.is_some() {
+      return Err(OrdinaryBuildApplicationError::Invalid);
+    }
+    self.assemble_managed_program(manifest)
+  }
+
+  fn assemble_managed_program(
+    &self,
+    manifest: ProtectedInputManifestV3,
+  ) -> Result<FactoryManagedJobProgram, OrdinaryBuildApplicationError> {
     let invalid = || OrdinaryBuildApplicationError::Invalid;
     manifest.validate().map_err(|_| invalid())?;
     let task_mounted = manifest.inputs.iter().any(|input| self.matches_work_task(input));
-    if manifest.inputs.len() != self.expected.len() + self.additional_inputs.len() + usize::from(task_mounted)
+    let acceptance = self.input.work_acceptance();
+    if acceptance.is_some_and(|document| {
+      !manifest
+        .inputs
+        .iter()
+        .any(|input| input.destination == WORK_ACCEPTANCE_DESTINATION && Self::matches_document(input, document))
+    }) {
+      return Err(invalid());
+    }
+    let work_documents = usize::from(task_mounted) + usize::from(acceptance.is_some());
+    if manifest.inputs.len() != self.expected.len() + self.additional_inputs.len() + work_documents
       || self
         .additional_inputs
         .iter()
         .any(|expected| !manifest.inputs.contains(expected))
     {
+      return Err(invalid());
+    }
+    if self.test_observation_reserved_inputs.is_some_and(|reserved| {
+      // The inventory and generated command documents consume non-source slots.
+      self.expected.len() + work_documents + 1 > usize::from(reserved)
+    }) {
       return Err(invalid());
     }
     for (destination, media_type, bytes) in &self.expected {
@@ -610,6 +716,8 @@ pub fn compile_factory_command_task(
     input: intent.input().clone(),
     additional_inputs: Vec::new(),
     validation: None,
+    requires_protected_tests: profile.requires_protected_tests(),
+    test_observation_reserved_inputs: None,
     promotion: false,
     intent_digest: FactoryDigest::content_sha256(&serde_json::to_vec(intent).map_err(|_| invalid())?),
     authority: (profile.builtin_authority() && intent.permissions().is_no_broader_than(&profile.project_permissions))

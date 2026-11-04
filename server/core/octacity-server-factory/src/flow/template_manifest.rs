@@ -1,8 +1,8 @@
 //! Bounded composition of editable documents before immutable publication.
 use crate::{
   FactoryError, FactoryKey, FactoryRepositoryPath, FlowContextProjection, FlowDataProjection, FlowDefinitionTemplate,
-  FlowExecutionPolicy, FlowTemplateNode, FlowTemplateSchema, FlowTransition, MAX_FLOW_DATA_BYTES,
-  MAX_FLOW_DEFINITION_EDGES, MAX_FLOW_DEFINITION_NODES, MAX_FLOW_SCHEMA_ENTRIES,
+  FlowExecutionPolicy, FlowGateProgram, FlowPredicate, FlowTemplateNode, FlowTemplateSchema, FlowTransition,
+  MAX_FLOW_DATA_BYTES, MAX_FLOW_DEFINITION_EDGES, MAX_FLOW_DEFINITION_NODES, MAX_FLOW_SCHEMA_ENTRIES,
 };
 use serde::Deserialize;
 use std::collections::BTreeMap;
@@ -21,10 +21,18 @@ struct Part {
   schemas: BTreeMap<FactoryKey, FlowTemplateSchema>,
   deliverable_policies: BTreeMap<FactoryKey, crate::CandidateDeliverablePolicy>,
   nodes: Vec<FlowTemplateNode>,
+  gate_programs: BTreeMap<FactoryKey, FlowGateProgram>,
+  gate_bindings: BTreeMap<FactoryKey, GateBinding>,
   transitions: Vec<FlowTransition>,
   terminals: BTreeMap<FactoryKey, FactoryKey>,
   context_projections: Vec<FlowContextProjection>,
   data_projections: Vec<FlowDataProjection>,
+}
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct GateBinding {
+  program: FactoryKey,
+  precondition: FlowPredicate,
 }
 impl FlowDefinitionTemplate {
   /// Assembles explicitly listed, flat configuration parts into the same editable
@@ -58,6 +66,8 @@ impl FlowDefinitionTemplate {
       data_projections: vec![],
     };
     let mut total = bytes.len();
+    let mut programs = BTreeMap::new();
+    let mut gate_bindings = BTreeMap::new();
     let mut paths = std::collections::BTreeSet::new();
     for path in manifest.parts {
       if !paths.insert(path.clone()) {
@@ -79,6 +89,16 @@ impl FlowDefinitionTemplate {
           return Err(invalid());
         }
       }
+      for (key, program) in part.gate_programs {
+        if program.has_precondition() || programs.insert(key, program).is_some() {
+          return Err(invalid());
+        }
+      }
+      for (node, binding) in part.gate_bindings {
+        if gate_bindings.insert(node, binding).is_some() {
+          return Err(invalid());
+        }
+      }
       for (key, schema) in part.terminals {
         if template.terminals.insert(key, schema).is_some() {
           return Err(invalid());
@@ -95,11 +115,25 @@ impl FlowDefinitionTemplate {
       template.data_projections.extend(part.data_projections);
       if template.schemas.len() > MAX_FLOW_SCHEMA_ENTRIES
         || template.deliverable_policies.len() > MAX_FLOW_SCHEMA_ENTRIES
+        || programs.len() > MAX_FLOW_DEFINITION_NODES
+        || gate_bindings.len() > MAX_FLOW_DEFINITION_NODES
         || template.nodes.len() > MAX_FLOW_DEFINITION_NODES
         || template.transitions.len() > MAX_FLOW_DEFINITION_EDGES
       {
         return Err(invalid());
       }
+    }
+    for (key, binding) in gate_bindings {
+      let node = template
+        .nodes
+        .iter_mut()
+        .find(|node| node.key == key)
+        .ok_or_else(invalid)?;
+      if node.gate.is_some() || node.kind != crate::FlowNodeKind::DeterministicGate {
+        return Err(invalid());
+      }
+      let program = programs.get(&binding.program).ok_or_else(invalid)?;
+      node.gate = Some(program.clone().with_precondition(binding.precondition)?);
     }
     Ok(template)
   }

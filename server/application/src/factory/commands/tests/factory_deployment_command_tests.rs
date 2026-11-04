@@ -245,15 +245,19 @@ fn deployment_compilation_does_not_exhaust_a_bounded_test_stack() {
 
 #[test]
 fn deployment_compilation_requires_the_explicit_promotion_role_and_exact_single_environment() {
-  crate::factory::admission::tests::factory_admission_tests::run_ready(async {
-    let (intent, admitted, command, approved, authority) = fixture_for_environment("substituted.environment").await;
+  use crate::factory::admission::tests::factory_admission_tests::run_ready;
+  {
+    let (intent, admitted, command, approved, authority) =
+      run_ready(fixture_for_environment("substituted.environment"));
     let deployment = FactoryDeploymentCommandProfile::new(command, authority).unwrap();
     deployment.validate_installation(&approved).unwrap();
     assert!(
       compile_factory_deployment_command_task(&intent, &admitted, &deployment, &approved).is_err(),
       "a matching profile/task pin cannot substitute the environment bound by the Promotion Plan"
     );
-    let (_, _, mut command, approved, authority) = fixture().await;
+  }
+  {
+    let (_, _, mut command, approved, authority) = run_ready(fixture());
     let work = fixtures::work();
     command.build_configuration = BuildConfigurationRef::new(
       command.build_configuration.id(),
@@ -284,7 +288,7 @@ fn deployment_compilation_requires_the_explicit_promotion_role_and_exact_single_
       compile_factory_deployment_command_task(&intent, &admitted, &deployment, &approved).is_err(),
       "ordinary BuildCommand never gains deployment qualification"
     );
-  });
+  }
 }
 
 #[test]

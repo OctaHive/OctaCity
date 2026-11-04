@@ -29,6 +29,11 @@ a bounded shape. Publication expands these choices into concrete content-address
 schemas; missing, recursive or oversized expansions fail closed. Published schemas
 contain no mutable aliases.
 
+Manifest parts can declare named `gate_programs` and `gate_bindings` keyed
+by the consuming node. A binding selects one program and supplies the node's
+evidence precondition. Composition resolves the pair into the ordinary gate
+before publication. A node can use a binding or an inline gate.
+
 The editable document contains local bounded schemas, nodes, explicit input
 bindings, finite output contracts, deterministic gates, transitions, bounded
 repeats and terminal schemas. `instantiate` resolves schema choices and exact
@@ -113,6 +118,9 @@ digest. Access to each resource is evaluated separately when reading it.
    narrowed permissions and declared typed outcomes.
 3. Connect accepted predecessor outcomes to that node and its outcomes to
    successor nodes or terminals. Declare limits and exhaustion for repeats.
+   Use `exhausted_terminal` to finish or `exhausted_node` to enter a HumanGate
+   outside the cycle with a configured operator request. Select one exhaustion
+   destination per repeat.
 4. For a queued node, add a named pool binding and its immutable policy/settings
    to the journey configuration. Project severity and exact dependencies from
    the frozen node input; selection reserves the full node budget for each node generation. Repeats freeze a new input identity and acquire a new selection even when the payload is unchanged.

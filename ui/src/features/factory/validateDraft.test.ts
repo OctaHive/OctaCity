@@ -331,3 +331,34 @@ it('checks every declared tag and payload range when projecting externally tagge
   };
   expect(validateFlowDraft(value)).toEqual([]);
 });
+
+it('accepts a HumanGate reached only after exhausting a repeat', () => {
+  const value = draft();
+  const node = value.root.nodes[0]!;
+  const gateIndex = value.root.nodes.length;
+  value.root.nodes.push({
+    ...node,
+    key: 'review-exhaustion',
+    kind: 'human_gate',
+    build: null,
+    operator_requests: { operation: 'escalation', outcomes: { abort: node.outcomes[0]!.key } },
+  });
+  const edge = {
+    predecessor: node.key,
+    outcome: node.outcomes[0]!.key,
+    target: { kind: 'node' as const, key: node.key },
+    max_repeats: 1,
+    exhausted_terminal: null,
+    exhausted_node: 'review-exhaustion',
+  };
+  value.root.transitions.push(edge);
+  expect(validateFlowDraft(value)).not.toEqual(
+    expect.arrayContaining([{ field: `/root/nodes/${gateIndex}`, code: 'unreachable_node' }]),
+  );
+  expect(
+    validateFlowDraft(value).some(
+      (issue) =>
+        issue.field === `/root/transitions/${value.root.transitions.length - 1}/max_repeats`,
+    ),
+  ).toBe(false);
+});

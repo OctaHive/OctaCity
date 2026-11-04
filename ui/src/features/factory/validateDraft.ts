@@ -180,10 +180,17 @@ export function validateFlowDraft(value: Draft): DraftIssue[] {
       add(`${field}/outcome`, 'unavailable_reference');
     if (edge.target.kind === 'node' ? !nodes.has(edge.target.key) : !terminals.has(edge.target.key))
       add(`${field}/target`, 'unavailable_reference');
+    const exhaustionGate = edge.exhausted_node ? nodes.get(edge.exhausted_node) : undefined;
+    const exhaustion = edge.exhausted_node
+      ? !edge.exhausted_terminal &&
+        !edge.starts_cycle &&
+        exhaustionGate?.kind === 'human_gate' &&
+        Boolean(exhaustionGate.operator_requests)
+      : Boolean(edge.exhausted_terminal && terminals.has(edge.exhausted_terminal));
     if (
       edge.max_repeats > value.limits.max_repeat_count ||
-      (edge.max_repeats > 0 &&
-        (!edge.exhausted_terminal || !terminals.has(edge.exhausted_terminal)))
+      (edge.max_repeats > 0 && !exhaustion) ||
+      (edge.max_repeats === 0 && Boolean(edge.exhausted_node || edge.exhausted_terminal))
     )
       add(`${field}/max_repeats`, 'invalid_contract');
   });
@@ -193,8 +200,11 @@ export function validateFlowDraft(value: Draft): DraftIssue[] {
     const key = pending.pop()!;
     if (reachable.has(key)) continue;
     reachable.add(key);
-    for (const edge of value.root.transitions)
-      if (edge.predecessor === key && edge.target.kind === 'node') pending.push(edge.target.key);
+    for (const edge of value.root.transitions) {
+      if (edge.predecessor !== key) continue;
+      if (edge.target.kind === 'node') pending.push(edge.target.key);
+      if (edge.exhausted_node) pending.push(edge.exhausted_node);
+    }
   }
   value.root.nodes.forEach((node, index) => {
     if (!reachable.has(node.key)) add(`/root/nodes/${index}`, 'unreachable_node');

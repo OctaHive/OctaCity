@@ -40,7 +40,7 @@ export function FlowGraphOverview({
             outcome: edge.outcome,
             target: edge.target,
             repeats: edge.max_repeats,
-            exhausted: edge.exhausted_terminal,
+            exhausted: edge.exhausted_node ?? edge.exhausted_terminal,
             detail: '',
           }))
       : connection === 'context'

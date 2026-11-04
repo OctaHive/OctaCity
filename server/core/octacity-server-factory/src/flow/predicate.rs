@@ -209,6 +209,9 @@ impl TryFrom<ProgramWire> for FlowGateProgram {
   }
 }
 impl FlowGateProgram {
+  pub(super) fn has_precondition(&self) -> bool {
+    self.precondition.is_some() || self.precondition_failure_output.is_some()
+  }
   /// Requires one shared bounded predicate before selecting any routing rule.
   /// A false or unknown condition selects the explicit fallback; total predicate
   /// and evaluation ceilings include both this condition and every rule.

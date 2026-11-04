@@ -1,8 +1,13 @@
 //! Canonical installed protected-test policy bound to a command identity.
 use crate::{ApplicationError, FactoryCommandBuildProfile, FactoryProtectedTestFileOutput, FactoryProtectedTestPolicy};
-use octacity_server_factory::{EvidenceOutputKind, EvidenceRequirement, FactoryDigest};
+use octacity_server_factory::{EvidenceOutputKind, EvidenceRequirement, FactoryDigest, FactoryKey};
 use serde::{Deserialize, Serialize};
 use std::collections::BTreeSet;
+
+/// Leave a slot to detect unexpected publications in the bounded Artifact listing.
+pub(crate) fn protected_author_outputs_fit(private: usize, declared: usize) -> bool {
+  private + declared < usize::from(octacity_server_store::MAX_ARTIFACT_PAGE_SIZE)
+}
 
 /// Finite private output mapping and coverage selected by a trusted installation.
 #[derive(Clone, Deserialize, Serialize)]
@@ -11,6 +16,8 @@ pub struct FactoryProtectedTestAuthoringPolicy {
   policy: FactoryProtectedTestPolicy,
   inventory: EvidenceRequirement,
   files: Vec<FactoryProtectedTestFileOutput>,
+  #[serde(skip_serializing_if = "Option::is_none")]
+  transcript: Option<FactoryKey>,
 }
 #[derive(Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -18,11 +25,21 @@ struct AuthoringPolicyWire {
   policy: FactoryProtectedTestPolicy,
   inventory: EvidenceRequirement,
   files: Vec<FactoryProtectedTestFileOutput>,
+  transcript: Option<FactoryKey>,
 }
 impl TryFrom<AuthoringPolicyWire> for FactoryProtectedTestAuthoringPolicy {
   type Error = ApplicationError;
   fn try_from(value: AuthoringPolicyWire) -> Result<Self, Self::Error> {
-    Self::new(value.policy, value.inventory, value.files)
+    let mut policy = Self::new(value.policy, value.inventory, value.files)?;
+    if let Some(name) = &value.transcript
+      && (name == policy.inventory.kind()
+        || policy.files.iter().any(|file| &file.output == name)
+        || !protected_author_outputs_fit(policy.files.len() + 1, 2))
+    {
+      return Err(ApplicationError::invalid());
+    }
+    policy.transcript = value.transcript;
+    Ok(policy)
   }
 }
 impl FactoryProtectedTestAuthoringPolicy {
@@ -39,7 +56,7 @@ impl FactoryProtectedTestAuthoringPolicy {
       || files.is_empty()
       || files.len() > usize::from(policy.coverage().max_files())
       // Publication lists also contain the private inventory and public handoff.
-      || files.len() + 2 > usize::from(octacity_server_store::MAX_ARTIFACT_PAGE_SIZE)
+      || !protected_author_outputs_fit(files.len(), 2)
       || files.windows(2).any(|pair| pair[0].path == pair[1].path)
       || outputs.len() != files.len()
       || outputs.contains(inventory.kind())
@@ -51,6 +68,7 @@ impl FactoryProtectedTestAuthoringPolicy {
       policy,
       inventory,
       files,
+      transcript: None,
     })
   }
   /// Returns the canonical policy content pin used by the command identity.
@@ -97,14 +115,12 @@ impl FactoryProtectedTestAuthoringProfile {
       || !command.outputs.contains(policy.inventory())
       || policy.inventory().tool() != &command.executor
       || policy.inventory().plugin() != &command.plugin
-      || policy.files().iter().any(|file| {
-        file.output == *public[0].kind()
-          || !command
-            .project_permissions
-            .outputs()
-            .kinds()
-            .any(|kind| kind == &file.output)
-      })
+      || policy
+        .files()
+        .iter()
+        .map(|file| &file.output)
+        .chain(policy.transcript.iter())
+        .any(|name| name == public[0].kind() || !command.project_permissions.outputs().kinds().any(|kind| kind == name))
     {
       return Err(ApplicationError::invalid());
     }
@@ -125,5 +141,14 @@ impl FactoryProtectedTestAuthoringProfile {
   /// Returns finite private file names, classes and paths from the same pinned policy.
   pub fn files(&self) -> &[FactoryProtectedTestFileOutput] {
     self.policy.files()
+  }
+  /// Optional private transcript, retained under the same protected inventory as test files.
+  pub const fn transcript(&self) -> Option<&FactoryKey> {
+    self.policy.transcript.as_ref()
+  }
+
+  /// Names of all raw, opaque outputs kept private by the authoring contract.
+  pub(crate) fn private_outputs(&self) -> impl Iterator<Item = &FactoryKey> {
+    self.files().iter().map(|file| &file.output).chain(self.transcript())
   }
 }

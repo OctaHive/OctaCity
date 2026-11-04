@@ -5,8 +5,8 @@ use serde::{Deserialize, Serialize};
 use crate::{
   BudgetLimit, FactoryDigest, FactoryError, FactoryFlowEdge, FactoryKey, FactoryPermissionSet, FlowAdmissionLimits,
   FlowContextProjection, FlowDataProjection, FlowDefinitionId, FlowDefinitionVersion, FlowExecutionPolicy,
-  FlowNodeKind, FlowOutcomeDefinition, FlowTerminalDefinition, FlowTransition, FlowTransitionTarget,
-  ImmutableReference, analyze_factory_flow_graph,
+  FlowNodeKind, FlowOutcomeDefinition, FlowTerminalDefinition, FlowTransition, ImmutableReference,
+  analyze_factory_flow_graph,
 };
 
 /// Maximum nodes stored in one immutable Flow Definition.
@@ -563,12 +563,10 @@ impl FlowDefinition {
     let edges = input
       .transitions
       .iter()
-      .filter_map(|transition| match transition.target() {
-        FlowTransitionTarget::Node(successor) => Some(FactoryFlowEdge::new(
-          transition.predecessor().clone(),
-          successor.clone(),
-        )),
-        FlowTransitionTarget::Terminal(_) => None,
+      .flat_map(|transition| {
+        transition
+          .node_targets()
+          .map(|successor| FactoryFlowEdge::new(transition.predecessor().clone(), successor.clone()))
       })
       .collect::<BTreeSet<_>>()
       .into_iter()
@@ -775,12 +773,10 @@ impl FlowDefinition {
     self
       .transitions
       .iter()
-      .filter_map(|transition| match transition.target() {
-        FlowTransitionTarget::Node(successor) => Some(FactoryFlowEdge::new(
-          transition.predecessor().clone(),
-          successor.clone(),
-        )),
-        FlowTransitionTarget::Terminal(_) => None,
+      .flat_map(|transition| {
+        transition
+          .node_targets()
+          .map(|successor| FactoryFlowEdge::new(transition.predecessor().clone(), successor.clone()))
       })
       .collect::<BTreeSet<_>>()
       .into_iter()

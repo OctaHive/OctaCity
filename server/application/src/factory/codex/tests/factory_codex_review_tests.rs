@@ -21,11 +21,7 @@ impl FactoryFlowInputPreparer for ReviewInputs {
     prepare_factory_flow_input(snapshot, target)
   }
 }
-async fn prepared_review_source() -> (
-  SourceFixture,
-  Arc<dyn FactoryRetainedCandidateContextSource>,
-  Arc<dyn FactoryNodeCandidateContextSource>,
-) {
+async fn prepared_review_source() -> (SourceFixture, Arc<dyn FactoryCodexCandidateReaderFactory>) {
   use crate::factory::execution::tests::factory_review_planning_tests::{EvidenceAction, capture_review_contract};
   let (contracts, planning, mut profile) = capture_review_contract();
   profile.pipeline_node = authoritative_store_contract_fixture().request.jobs[0]
@@ -75,6 +71,7 @@ async fn prepared_review_source() -> (
   let evidence_outcome = evidence_node.outcomes()[0].clone();
   let retained_profile = profile.clone();
   let review_grants = profile.project_permissions.clone();
+  let review_task = profile.task_digest();
   let configured_evidence = evidence_node.clone();
   let configured_plan = plan_node.clone();
   let candidate = candidate_context_fixture_with_preparation(
@@ -93,6 +90,7 @@ async fn prepared_review_source() -> (
       let mut encoded = serde_json::to_value(&review_node).unwrap();
       encoded["key"] = serde_json::to_value(&consumer_key).unwrap();
       encoded["permissions"] = serde_json::to_value(&review_grants).unwrap();
+      encoded["build"]["task_digest"] = serde_json::json!(review_task);
       let review = serde_json::from_value(encoded).unwrap();
       flow.nodes = vec![
         producer.clone(),
@@ -249,6 +247,7 @@ async fn prepared_review_source() -> (
     FactoryCodexFlowCompilationOptions {
       role: None,
       candidate_context: Some(&candidate.context),
+      candidate_capture_tool: profile.candidate_capture_tool.as_ref(),
       reviewer: Some(FactoryCodexReviewCompilation {
         policy: profile.reviewer.as_ref().unwrap(),
         invocation: &invocation,
@@ -326,19 +325,18 @@ async fn prepared_review_source() -> (
     model_result: serde_json::json!({"outcome":"satisfied","summary":"Selected criteria satisfied.","findings":[]}),
   })
   .await;
-  let source = Arc::new(FactoryStoredCandidateContextSource::new(
+  let source = Arc::new(FactoryCodexCandidateContextSource::new(
     candidate.runs,
     candidate.source,
-    fixtures::reference("git.capture"),
     Arc::new(ReviewClock),
   ));
-  (fixture, source.clone(), source)
+  (fixture, source)
 }
 
 #[test]
 fn retained_readonly_reviewer_job_produces_only_server_qualified_assessment() {
   crate::factory::admission::tests::factory_admission_tests::run_ready(async {
-    let (fixture, candidate, _) = prepared_review_source().await;
+    let (fixture, candidate) = prepared_review_source().await;
     let source = FactoryCodexBuildOutputSource::new(
       fixture.runs.clone(),
       fixture.query.clone(),
@@ -399,7 +397,7 @@ fn reviewer_materialization_qualifies_the_same_plan_before_publishing_and_signin
     use crate::factory::commands::tests::factory_command_materializer_tests::{
       Bytes, Context, Inputs, managed_context,
     };
-    let (fixture, _, candidate) = prepared_review_source().await;
+    let (fixture, candidate) = prepared_review_source().await;
     let snapshot = fixture
       .runs
       .factory_run_snapshot(fixture.intent.input().factory_run_id())
@@ -468,7 +466,7 @@ fn reviewer_materialization_qualifies_the_same_plan_before_publishing_and_signin
 #[test]
 fn reviewer_owner_commits_typed_assessment_discovery_once_after_ordinary_job_verification() {
   crate::factory::admission::tests::factory_admission_tests::run_ready(async {
-    let (fixture, candidate, _) = prepared_review_source().await;
+    let (fixture, candidate) = prepared_review_source().await;
     let invocations = Arc::new(FactoryStoredReviewInvocationSource::new(fixture.runs.clone()));
     let source = Arc::new(
       FactoryCodexBuildOutputSource::new(

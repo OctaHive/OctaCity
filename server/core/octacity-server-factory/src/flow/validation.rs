@@ -170,10 +170,13 @@ fn validate_definition(
         used_terminals.insert(terminal);
       }
     }
-    match (transition.max_repeats(), transition.exhausted_terminal()) {
-      (0, None) => {}
-      (0, Some(_)) | (_, None) => return Err(invalid("Flow repeat exhaustion route")),
-      (_, Some(terminal)) => {
+    match (
+      transition.max_repeats(),
+      transition.exhausted_terminal(),
+      transition.exhausted_node(),
+    ) {
+      (0, None, None) => {}
+      (1.., Some(terminal), None) => {
         if terminals
           .get(terminal)
           .is_none_or(|terminal| terminal.schema() != outcome.schema())
@@ -182,6 +185,13 @@ fn validate_definition(
         }
         used_terminals.insert(terminal);
       }
+      (1.., None, Some(node))
+        if !transition.starts_cycle()
+          && definition
+            .node(node)
+            .is_some_and(|gate| gate.kind() == FlowNodeKind::HumanGate && gate.operator_requests().is_some())
+          && !cyclic_components.contains_key(node) => {}
+      _ => return Err(invalid("Flow repeat exhaustion route")),
     }
   }
   // A cycle boundary closes this cycle; sibling routes cannot remain authoritative.
@@ -229,7 +239,10 @@ fn validate_definition(
   loop {
     let before = terminating.len();
     for transition in definition.transitions() {
-      if matches!(transition.target(), FlowTransitionTarget::Node(successor) if terminating.contains(successor)) {
+      if transition
+        .node_targets()
+        .any(|successor| terminating.contains(successor))
+      {
         terminating.insert(transition.predecessor().clone());
       }
     }
@@ -290,9 +303,10 @@ fn validate_projections(definition: &FlowDefinition) -> Result<(), FactoryError>
   let transitions = definition
     .transitions()
     .iter()
-    .filter_map(|transition| match transition.target() {
-      FlowTransitionTarget::Node(successor) => Some((transition.predecessor(), transition.outcome(), successor)),
-      FlowTransitionTarget::Terminal(_) => None,
+    .flat_map(|transition| {
+      transition
+        .node_targets()
+        .map(|successor| (transition.predecessor(), transition.outcome(), successor))
     })
     .collect::<BTreeSet<_>>();
   let mut data_routes = BTreeSet::new();

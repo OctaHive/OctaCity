@@ -422,6 +422,11 @@ impl<S: FactoryRunStore, E: FactoryNodeExecutor> FactoryNodeRunner<S, E> {
           } if *node_attempt_id == attempt.id() => Some((row, outcome, payload)),
           _ => None,
         }) else {
+          if snapshot.run.state() != FactoryRunState::Waiting {
+            self
+              .commit_progress(&snapshot, append, at, GraphDisposition::Waiting, vec![])
+              .await?;
+          }
           return Ok(FactoryNodeStep::Waiting);
         };
         (

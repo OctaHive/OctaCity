@@ -101,6 +101,9 @@ pub struct FlowTemplateNode {
   /// Finite gate outcomes that freeze one exact Work contract.
   #[serde(default)]
   pub accepted_work_outcomes: Vec<FactoryKey>,
+  /// Closed operator dispositions for a HumanGate, resolved at publication.
+  #[serde(default, skip_serializing_if = "Option::is_none")]
+  pub operator_requests: Option<FlowHumanGateBinding>,
   /// Installed plugin action and parameters.
   #[serde(default)]
   pub action: Option<FlowActionBinding>,
@@ -220,6 +223,9 @@ impl FlowDefinitionTemplate {
         .with_execution_retries(choice.max_execution_retries)?;
         if let Some(binding) = &choice.context_binding {
           node = node.with_context_binding(binding.clone())?;
+        }
+        if let Some(binding) = &choice.operator_requests {
+          node = node.with_operator_requests(binding.clone())?;
         }
         if let Some(action) = &choice.action {
           node = node.with_action(action.clone())?;

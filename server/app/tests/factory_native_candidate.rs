@@ -157,13 +157,12 @@ async fn default_native_runtime_materializes_one_exact_readonly_candidate_and_re
     authority.clone(),
     objects.clone(),
   ));
-  let source = FactoryCodexCandidateContextSource::new(
+  let source = FactoryStoredCandidateContextSource::new(
     store.clone(),
     Arc::new(FactoryCandidateContextSource::new(reader)),
-    vec![profile.clone()],
+    candidate_fixture::capture_tool(),
     Arc::new(SystemFactoryExecutionClock),
-  )
-  .unwrap();
+  );
   let at = candidate_fixture::now();
   let context = source
     .read_retained_candidate_context(&intent, at, Timestamp::from_unix_millis(at.unix_millis() + 1).unwrap())

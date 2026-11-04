@@ -92,296 +92,122 @@
             }
           }
         }
-      },
-      "gate": {
-        "precondition": {
-          "operation": "all",
-          "predicates": [
-            {
-              "operation": "compare",
-              "left": {
-                "source": "path",
-                "path": "/facts/accepted"
-              },
-              "comparison": "equal",
-              "right": {
-                "source": "literal",
-                "value": true
-              }
-            },
-            {
-              "operation": "compare",
-              "left": {
-                "source": "path",
-                "path": "/expected_input"
-              },
-              "comparison": "equal",
-              "right": {
-                "source": "path",
-                "path": "/facts/input_digest"
-              }
-            },
-            {
-              "operation": "compare",
-              "left": {
-                "source": "path",
-                "path": "/expected_input"
-              },
-              "comparison": "equal",
-              "right": {
-                "source": "path",
-                "path": "/review/input_digest"
-              }
-            },
-            {
-              "operation": "compare",
-              "left": {
-                "source": "path",
-                "path": "/expected_report"
-              },
-              "comparison": "equal",
-              "right": {
-                "source": "path",
-                "path": "/facts/report_digest"
-              }
-            },
-            {
-              "operation": "compare",
-              "left": {
-                "source": "path",
-                "path": "/request/candidate_revision"
-              },
-              "comparison": "equal",
-              "right": {
-                "source": "path",
-                "path": "/review/candidate_revision"
-              }
-            },
-            {
-              "operation": "compare",
-              "left": {
-                "source": "path",
-                "path": "/request/candidate_digest"
-              },
-              "comparison": "equal",
-              "right": {
-                "source": "path",
-                "path": "/review/candidate_digest"
-              }
-            },
-            {
-              "operation": "compare",
-              "left": {
-                "source": "path",
-                "path": "/facts/fresh_until"
-              },
-              "comparison": "greater",
-              "right": {
-                "source": "observation_time"
-              }
-            },
-            {
-              "operation": "compare",
-              "left": {
-                "source": "path",
-                "path": "/output_deadlines/review"
-              },
-              "comparison": "greater",
-              "right": {
-                "source": "observation_time"
-              }
-            },
-            {
-              "operation": "compare",
-              "left": {
-                "source": "path",
-                "path": "/output_deadlines/facts"
-              },
-              "comparison": "greater",
-              "right": {
-                "source": "observation_time"
-              }
-            }
-          ]
-        },
-        "rules": [
-          {
-            "when": {
-              "operation": "all",
-              "predicates": [
-                {
-                  "operation": "compare",
-                  "left": {
-                    "source": "path",
-                    "path": "/review/quality/correctness"
-                  },
-                  "comparison": "equal",
-                  "right": {
-                    "source": "literal",
-                    "value": "satisfied"
-                  }
-                },
-                {
-                  "operation": "compare",
-                  "left": {
-                    "source": "path",
-                    "path": "/review/quality/maintainability"
-                  },
-                  "comparison": "equal",
-                  "right": {
-                    "source": "literal",
-                    "value": "satisfied"
-                  }
-                },
-                {
-                  "operation": "compare",
-                  "left": {
-                    "source": "path",
-                    "path": "/review/quality/public_tests"
-                  },
-                  "comparison": "equal",
-                  "right": {
-                    "source": "literal",
-                    "value": "satisfied"
-                  }
-                },
-                {
-                  "operation": "compare",
-                  "left": {
-                    "source": "path",
-                    "path": "/review/quality/security"
-                  },
-                  "comparison": "equal",
-                  "right": {
-                    "source": "literal",
-                    "value": "satisfied"
-                  }
-                }
-              ]
-            },
-            "outcome": "accepted"
-          },
-          {
-            "when": {
-              "operation": "any",
-              "predicates": [
-                {
-                  "operation": "compare",
-                  "left": {
-                    "source": "path",
-                    "path": "/review/quality/correctness"
-                  },
-                  "comparison": "equal",
-                  "right": {
-                    "source": "literal",
-                    "value": "violated"
-                  }
-                },
-                {
-                  "operation": "compare",
-                  "left": {
-                    "source": "path",
-                    "path": "/review/quality/maintainability"
-                  },
-                  "comparison": "equal",
-                  "right": {
-                    "source": "literal",
-                    "value": "violated"
-                  }
-                },
-                {
-                  "operation": "compare",
-                  "left": {
-                    "source": "path",
-                    "path": "/review/quality/public_tests"
-                  },
-                  "comparison": "equal",
-                  "right": {
-                    "source": "literal",
-                    "value": "violated"
-                  }
-                },
-                {
-                  "operation": "compare",
-                  "left": {
-                    "source": "path",
-                    "path": "/review/quality/security"
-                  },
-                  "comparison": "equal",
-                  "right": {
-                    "source": "literal",
-                    "value": "violated"
-                  }
-                }
-              ]
-            },
-            "outcome": "changes_required"
-          },
-          {
-            "when": {
-              "operation": "any",
-              "predicates": [
-                {
-                  "operation": "compare",
-                  "left": {
-                    "source": "path",
-                    "path": "/review/quality/correctness"
-                  },
-                  "comparison": "equal",
-                  "right": {
-                    "source": "literal",
-                    "value": "indeterminate"
-                  }
-                },
-                {
-                  "operation": "compare",
-                  "left": {
-                    "source": "path",
-                    "path": "/review/quality/maintainability"
-                  },
-                  "comparison": "equal",
-                  "right": {
-                    "source": "literal",
-                    "value": "indeterminate"
-                  }
-                },
-                {
-                  "operation": "compare",
-                  "left": {
-                    "source": "path",
-                    "path": "/review/quality/public_tests"
-                  },
-                  "comparison": "equal",
-                  "right": {
-                    "source": "literal",
-                    "value": "indeterminate"
-                  }
-                },
-                {
-                  "operation": "compare",
-                  "left": {
-                    "source": "path",
-                    "path": "/review/quality/security"
-                  },
-                  "comparison": "equal",
-                  "right": {
-                    "source": "literal",
-                    "value": "indeterminate"
-                  }
-                }
-              ]
-            },
-            "outcome": "needs_human_input"
-          }
-        ],
-        "fallback": "invalid",
-        "default_output": {
-          "value": {
-            "mapping": "pointer",
-            "path": "/request/summary"
-          }
-        }
       }
     }
-  ]
+  ],
+  "gate_bindings": {
+    "code_review_gate": {
+      "program": "code_review_gate",
+      "precondition": {
+        "operation": "all",
+        "predicates": [
+          {
+            "operation": "compare",
+            "left": {
+              "source": "path",
+              "path": "/facts/accepted"
+            },
+            "comparison": "equal",
+            "right": {
+              "source": "literal",
+              "value": true
+            }
+          },
+          {
+            "operation": "compare",
+            "left": {
+              "source": "path",
+              "path": "/expected_input"
+            },
+            "comparison": "equal",
+            "right": {
+              "source": "path",
+              "path": "/facts/input_digest"
+            }
+          },
+          {
+            "operation": "compare",
+            "left": {
+              "source": "path",
+              "path": "/expected_input"
+            },
+            "comparison": "equal",
+            "right": {
+              "source": "path",
+              "path": "/review/input_digest"
+            }
+          },
+          {
+            "operation": "compare",
+            "left": {
+              "source": "path",
+              "path": "/expected_report"
+            },
+            "comparison": "equal",
+            "right": {
+              "source": "path",
+              "path": "/facts/report_digest"
+            }
+          },
+          {
+            "operation": "compare",
+            "left": {
+              "source": "path",
+              "path": "/request/candidate_revision"
+            },
+            "comparison": "equal",
+            "right": {
+              "source": "path",
+              "path": "/review/candidate_revision"
+            }
+          },
+          {
+            "operation": "compare",
+            "left": {
+              "source": "path",
+              "path": "/request/candidate_digest"
+            },
+            "comparison": "equal",
+            "right": {
+              "source": "path",
+              "path": "/review/candidate_digest"
+            }
+          },
+          {
+            "operation": "compare",
+            "left": {
+              "source": "path",
+              "path": "/facts/fresh_until"
+            },
+            "comparison": "greater",
+            "right": {
+              "source": "observation_time"
+            }
+          },
+          {
+            "operation": "compare",
+            "left": {
+              "source": "path",
+              "path": "/output_deadlines/review"
+            },
+            "comparison": "greater",
+            "right": {
+              "source": "observation_time"
+            }
+          },
+          {
+            "operation": "compare",
+            "left": {
+              "source": "path",
+              "path": "/output_deadlines/facts"
+            },
+            "comparison": "greater",
+            "right": {
+              "source": "observation_time"
+            }
+          }
+        ]
+      }
+    }
+  }
 }

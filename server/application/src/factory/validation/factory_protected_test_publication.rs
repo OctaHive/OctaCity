@@ -16,9 +16,14 @@ pub(crate) async fn has_protected_test_inventory(
   artifacts: &impl ArtifactRecordStore,
   job: octacity_server_domain::JobId,
 ) -> Result<bool, StoreError> {
-  artifacts.has_published_artifact_from_producer(
-    job, INVENTORY_PRODUCER_ID, INVENTORY_PRODUCER_ID, INVENTORY_UPLOAD_PREFIX,
-  ).await
+  artifacts
+    .has_published_artifact_from_producer(
+      job,
+      INVENTORY_PRODUCER_ID,
+      INVENTORY_PRODUCER_ID,
+      INVENTORY_UPLOAD_PREFIX,
+    )
+    .await
 }
 
 /// Installed mapping from a private logical output to its protected test role.
@@ -49,6 +54,8 @@ pub struct FactoryProtectedTestInventoryPublication<'a> {
   pub inventory: &'a EvidenceRequirement,
   /// Finite installed private output selection.
   pub files: &'a [FactoryProtectedTestFileOutput],
+  /// Optional exact installed private transcript output.
+  pub transcript: Option<&'a FactoryKey>,
   /// Authenticated completion, revalidated by the store before publication.
   pub completion: AgentOutputFinalization,
 }
@@ -84,6 +91,7 @@ impl<A: ArtifactRecordStore, B: ArtifactBytePublisher> FactoryProtectedTestInven
       plan,
       inventory,
       files,
+      transcript,
       completion,
     } = request;
     let node = admitted
@@ -93,7 +101,10 @@ impl<A: ArtifactRecordStore, B: ArtifactBytePublisher> FactoryProtectedTestInven
       .ok_or_else(invalid)?;
     let binding = node.build().ok_or_else(invalid)?;
     if files.is_empty()
-      || files.len() >= usize::from(MAX_ARTIFACT_PAGE_SIZE)
+      || files.len() + usize::from(transcript.is_some()) >= usize::from(MAX_ARTIFACT_PAGE_SIZE)
+      || transcript.is_some_and(|name| {
+        name == inventory.kind() || name == &binding.result_output || files.iter().any(|file| &file.output == name)
+      })
       || inventory.output_kind() != EvidenceOutputKind::Artifact
       || inventory.tool() != intent.profile().result_tool()
       || inventory.plugin() != &intent.profile().plugin
@@ -133,11 +144,10 @@ impl<A: ArtifactRecordStore, B: ArtifactBytePublisher> FactoryProtectedTestInven
       })
       .await?;
     let at = self.publication_time(request)?;
-    let mut selected = Vec::with_capacity(files.len());
-    for configured in files {
+    let select = |name: &FactoryKey| {
       let record = records
         .iter()
-        .find(|record| record.artifact.identity().logical_name.as_str() == configured.output.as_str())
+        .find(|record| record.artifact.identity().logical_name.as_str() == name.as_str())
         .ok_or_else(invalid)?;
       let identity = record.artifact.identity();
       if identity.build_id != execution.build_id()
@@ -151,31 +161,35 @@ impl<A: ArtifactRecordStore, B: ArtifactBytePublisher> FactoryProtectedTestInven
           .retention
           .delete_after()
           .is_some_and(|expiry| expiry < plan.retain_until())
-        || !intent
-          .permissions()
-          .outputs()
-          .kinds()
-          .any(|name| name == &configured.output)
+        || !intent.permissions().outputs().kinds().any(|allowed| allowed == name)
       {
         return Err(invalid());
       }
-      selected.push(ProtectedTestFile {
-        class: configured.class.clone(),
-        path: configured.path.clone(),
-        artifact: FactoryArtifactReference::new(
-          identity.artifact_id,
-          FactoryDigest::from_bytes(identity.digest.as_bytes()),
-          identity.size_bytes,
-        )
-        .map_err(|_| invalid())?,
-      });
-    }
+      FactoryArtifactReference::new(
+        identity.artifact_id,
+        FactoryDigest::from_bytes(identity.digest.as_bytes()),
+        identity.size_bytes,
+      )
+      .map_err(|_| invalid())
+    };
+    let mut selected = files
+      .iter()
+      .map(|file| {
+        Ok(ProtectedTestFile {
+          class: file.class.clone(),
+          path: file.path.clone(),
+          artifact: select(&file.output)?,
+        })
+      })
+      .collect::<Result<Vec<_>, ApplicationError>>()?;
+    let transcript = transcript.map(select).transpose()?;
     selected.sort_by(|left, right| left.path.cmp(&right.path));
     let data = FactoryProtectedTestInventory {
       plan_digest: plan.digest().map_err(|_| invalid())?,
       input_digest: intent.input().digest().map_err(|_| invalid())?,
       node_attempt_id: intent.node().id(),
       files: selected.clone(),
+      transcript,
     };
     let raw = serde_json::to_vec(&data).map_err(|_| invalid())?;
     let digest = FactoryDigest::content_sha256(&raw);

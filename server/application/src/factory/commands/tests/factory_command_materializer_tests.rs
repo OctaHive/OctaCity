@@ -667,3 +667,32 @@ pub(crate) fn deployment_context(
     .insert(crate::SecretProfileName::new("staging-credential").unwrap());
   context
 }
+
+#[test]
+fn protected_observation_cannot_dispatch_as_an_ordinary_command() {
+  crate::factory::admission::tests::factory_admission_tests::run_ready(async {
+    let mut wire = serde_json::to_value(crate::factory_node_test_support::probe_observation_contract()).unwrap();
+    wire["requires_protected_tests"] = serde_json::json!(true);
+    let contract = serde_json::from_value(wire).expect("the protected input requirement is part of the pinned command");
+    let (intent, admitted, profile) =
+      crate::factory::commands::tests::factory_command_tests::command_fixture_with_observation(Some(contract));
+    let inputs = Arc::new(Inputs::default());
+    let compiler = FactoryCommandBuildMaterializer::new(
+      Arc::new(Context(context(&profile, &intent))),
+      Arc::new(FactoryExecutionInputPublisher::new(
+        inputs.clone(),
+        Arc::new(Bytes),
+        Arc::new(Clock),
+      )),
+      vec![profile],
+      Arc::new(Clock),
+    )
+    .unwrap();
+    let owner = FactoryClaimOwnership::new(intent.node().owner().clone(), intent.node().claim());
+    assert!(
+      compiler.materialize(&intent, &admitted, owner, at(41)).await.is_err(),
+      "an ordinary compiler cannot dispatch the same command without the selected test set"
+    );
+    assert!(inputs.0.lock().unwrap().is_empty());
+  });
+}

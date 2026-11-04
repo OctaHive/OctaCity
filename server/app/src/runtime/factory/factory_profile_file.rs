@@ -1,4 +1,5 @@
 //! Strict deployment data, separate from provider transports and Flow definitions.
+use super::factory_command_runtime::FileCommandExecutors;
 use crate::runtime::factory::factory_profiles::FactoryRuntimeProfileCatalog;
 use crate::runtime::{FactoryRuntimeInstallationError, FactoryRuntimeSignalConnector};
 use octacity_server_application::{
@@ -116,7 +117,14 @@ impl crate::runtime::FactoryRuntimeInstaller for FileProfileInstaller {
       .bindings
       .commands
       .iter()
-      .chain(self.bindings.authors.iter().map(|profile| profile.command()));
+      .chain(self.bindings.authors.iter().map(|profile| profile.command()))
+      .chain(
+        self
+          .bindings
+          .protected_validation
+          .iter()
+          .flat_map(|binding| &binding.profiles),
+      );
     for profile in commands {
       crate::runtime::factory::factory_profiles::install_pipeline_contract(
         &mut catalog.projects,
@@ -186,8 +194,9 @@ impl crate::runtime::FactoryRuntimeInstaller for FileProfileInstaller {
         .or_default()
         .push(profile.clone());
     }
+    let mut command_executors = FileCommandExecutors::default();
     for profiles in commands.into_values() {
-      catalog.executors.push(resources.command_executor(profiles)?);
+      command_executors.add(&profiles, resources.command_executor(profiles.clone())?)?;
     }
     for binding in &self.bindings.promotions {
       let installed = match binding {
@@ -218,13 +227,28 @@ impl crate::runtime::FactoryRuntimeInstaller for FileProfileInstaller {
       Some(resources.protected_test_output_finalizer(self.bindings.authors.clone())?)
     };
     for binding in &self.bindings.protected_validation {
-      catalog.executors.push(resources.protected_validation_command_executor(
-        binding.profiles.clone(),
-        binding.inputs.clone(),
-        binding.report.clone(),
-        binding.facts.clone(),
-      )?);
+      let executor = match &binding.mode {
+        ProtectedValidationMode::Candidate { capture_tool, facts } => resources.protected_validation_command_executor(
+          binding.profiles.clone(),
+          crate::runtime::FactoryRuntimeProtectedValidationProfile {
+            author_profile: binding.author_profile.clone(),
+            policy: binding.policy.clone(),
+            inventory: binding.inventory.clone(),
+            capture_tool: capture_tool.clone(),
+          },
+          binding.report.clone(),
+          facts.clone(),
+        )?,
+        ProtectedValidationMode::BaseObservation => resources.protected_test_observation_executor(
+          binding.profiles.clone(),
+          binding.author_profile.clone(),
+          binding.policy.clone(),
+          binding.inventory.clone(),
+        )?,
+      };
+      command_executors.add(&binding.profiles, executor)?;
     }
+    catalog.executors.extend(command_executors.bindings());
     for binding in &self.bindings.delivery {
       catalog.executors.push(binding.install(&resources)?);
     }
@@ -347,7 +371,7 @@ struct ValidationCommandEntry {
   profiles: Vec<CommandProfile>,
   inputs: ValidationCommandInputs,
   report: EvidenceRequirement,
-  facts: EvidenceRequirement,
+  facts: Option<EvidenceRequirement>,
 }
 #[derive(Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -355,13 +379,22 @@ struct ValidationCommandInputs {
   author_profile: ImmutableReference,
   policy: FactoryProtectedTestPolicy,
   inventory: EvidenceRequirement,
-  capture_tool: ImmutableReference,
+  capture_tool: Option<ImmutableReference>,
 }
 struct ValidationCommandBinding {
   profiles: Vec<octacity_server_application::FactoryCommandBuildProfile>,
-  inputs: crate::runtime::FactoryRuntimeProtectedValidationProfile,
+  author_profile: ImmutableReference,
+  policy: FactoryProtectedTestPolicy,
+  inventory: EvidenceRequirement,
   report: EvidenceRequirement,
-  facts: EvidenceRequirement,
+  mode: ProtectedValidationMode,
+}
+enum ProtectedValidationMode {
+  Candidate {
+    capture_tool: ImmutableReference,
+    facts: EvidenceRequirement,
+  },
+  BaseObservation,
 }
 
 #[derive(Deserialize)]
@@ -426,6 +459,7 @@ mod observation_contract_tests {
     }))
     .unwrap();
     profile.observation_contract = Some(octacity_server_application::FactoryCommandObservationContract {
+      requires_protected_tests: false,
       stop_on_indeterminate: false,
       environment: profile.identity.clone(),
       criterion: profile.identity.clone(),
@@ -1198,6 +1232,9 @@ impl FactoryRuntimeProfileCatalog {
       .map(CommandProfile::native)
       .collect::<Result<Vec<_>, _>>()?;
     validate_command_choices(&catalog, &commands)?;
+    if commands.iter().any(|profile| profile.requires_protected_tests()) {
+      return Err(Invalid);
+    }
     let authors = file
       .protected_test_authors
       .into_iter()
@@ -1262,16 +1299,41 @@ impl FactoryRuntimeProfileCatalog {
           return Err(Invalid);
         }
         validate_command_choices(&catalog, &profiles)?;
+        let mode = match (entry.inputs.capture_tool, entry.facts) {
+          (Some(capture_tool), Some(facts)) if profiles.iter().all(|profile| !profile.requires_protected_tests()) => {
+            ProtectedValidationMode::Candidate { capture_tool, facts }
+          }
+          (None, None)
+            if profiles.iter().all(|profile| {
+              profile.requires_protected_tests()
+                && profile.candidate_capture_tool.is_none()
+                && profile.outputs.as_slice() == std::slice::from_ref(&entry.report)
+            }) =>
+          {
+            ProtectedValidationMode::BaseObservation
+          }
+          _ => return Err(Invalid),
+        };
+        if matches!(mode, ProtectedValidationMode::BaseObservation)
+          && profiles.iter().any(|profile| {
+            !authors.iter().any(|author| {
+              author.command().identity == entry.inputs.author_profile
+                && author.command().build_configuration.project_id() == profile.build_configuration.project_id()
+                && author.policy() == &entry.inputs.policy
+                && author.inventory() == &entry.inputs.inventory
+                && author.transcript().is_some()
+            })
+          })
+        {
+          return Err(Invalid);
+        }
         Ok(ValidationCommandBinding {
           profiles,
-          inputs: crate::runtime::FactoryRuntimeProtectedValidationProfile {
-            author_profile: entry.inputs.author_profile,
-            policy: entry.inputs.policy,
-            inventory: entry.inputs.inventory,
-            capture_tool: entry.inputs.capture_tool,
-          },
+          author_profile: entry.inputs.author_profile,
+          policy: entry.inputs.policy,
+          inventory: entry.inputs.inventory,
           report: entry.report,
-          facts: entry.facts,
+          mode,
         })
       })
       .collect::<Result<Vec<_>, FactoryRuntimeInstallationError>>()?;

@@ -93,6 +93,8 @@ pub struct FlowNodeInput {
   code: Option<Box<FlowNodeCode>>,
   #[serde(skip_serializing_if = "Option::is_none")]
   work_task: Option<crate::FactoryArtifactReference>,
+  #[serde(skip_serializing_if = "Option::is_none")]
+  work_acceptance: Option<crate::FactoryArtifactReference>,
   configuration: FactoryConfigurationRef,
   root_definition: FlowDefinitionRef,
   admission_limits: FlowAdmissionLimits,
@@ -391,16 +393,31 @@ impl FlowNodeInput {
           && entry.stage.node == node
       })
       .cloned();
+    let work_task = declared
+      .context_binding()
+      .and_then(|binding| binding.work_task())
+      .map(|_| work.artifacts().task().clone());
+    let acceptance = work.artifacts().acceptance();
+    let work_acceptance = declared
+      .context_binding()
+      .zip(work_task.as_ref())
+      .filter(|(_, task)| *task != acceptance)
+      .and_then(|(binding, task)| binding.selected_sources_with_work_task(&payload, Some(task)).ok())
+      .filter(|sources| {
+        sources.values().any(|(kind, source)| {
+          *kind == crate::ContextSourceKind::Task
+            && matches!(source, crate::FactoryContextReference::Artifact(reference) if reference == acceptance)
+        })
+      })
+      .map(|_| acceptance.clone());
     let input = Self {
       schema_version: if code.is_some() { 2 } else { 1 },
       work_id: work.id(),
       work_digest: work_digest(work)?,
       subject: work.subject().clone(),
       code: code.map(Box::new),
-      work_task: declared
-        .context_binding()
-        .and_then(|binding| binding.work_task())
-        .map(|_| work.artifacts().task().clone()),
+      work_task,
+      work_acceptance,
       configuration: work.configuration().clone(),
       root_definition: admitted.closure().root(),
       admission_limits: admitted.limits().clone(),
@@ -492,6 +509,10 @@ impl FlowNodeInput {
   /// Exact admitted task selected by this node; other Work Artifacts are not inherited.
   pub fn work_task(&self) -> Option<&crate::FactoryArtifactReference> {
     self.work_task.as_ref()
+  }
+  /// Exact admitted acceptance explicitly selected alongside the Work task.
+  pub fn work_acceptance(&self) -> Option<&crate::FactoryArtifactReference> {
+    self.work_acceptance.as_ref()
   }
   fn with_sources(mut self, mut sources: Vec<FlowRecordReference>) -> Result<Self, FactoryError> {
     if let Some(FlowNodeCode::Source {
@@ -592,6 +613,10 @@ impl FlowNodeInput {
         .as_ref()
         .is_some_and(|task| task != work.artifacts().task())
       || self
+        .work_acceptance
+        .as_ref()
+        .is_some_and(|acceptance| acceptance != work.artifacts().acceptance())
+      || self
         .profile_override
         .as_ref()
         .is_some_and(|entry| !work.profile_overrides().entries().contains(entry))
@@ -665,6 +690,10 @@ impl FlowNodeInput {
       FlowPayload::restore(&payload_bytes, schema)?,
       candidate,
     )?;
+    // Historical inputs predate the separate signed mount for Work acceptance.
+    if wire.get("work_acceptance").is_none() {
+      input.work_acceptance = None;
+    }
     if let Some(context) = wire.get("context") {
       let context = serde_json::from_value(context.clone()).map_err(|_| invalid())?;
       let retrieval = wire

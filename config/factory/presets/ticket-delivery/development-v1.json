@@ -1,0 +1,132 @@
+{
+  "schemas": {
+    "delivery_review_closure": {
+      "identity": "factory.ticket-delivery.review-closure",
+      "version": "v1",
+      "shape": {
+        "type": "object",
+        "fields": {
+          "operation": {"required": true, "value": {"type": "enum", "values": ["escalation"]}},
+          "disposition": {"required": true, "value": {"type": "enum", "values": ["abort"]}},
+          "reason": {"required": true, "value": {"type": "string", "min_bytes": 1, "max_bytes": 4096}}
+        }
+      }
+    }
+  },
+  "nodes": [
+    {
+      "key": "validation_failure_gate",
+      "kind": "deterministic_gate",
+      "input_schema": "validation_diagnostic_input",
+      "outcomes": [{"key": "classify", "kind": "success", "schema": "validation_diagnostic_input"}, {"key": "indeterminate", "kind": "failure", "schema": "validation_diagnostic_input"}],
+      "budget": {"max_attempts": 1, "max_elapsed_millis": 1000, "max_tokens": 0, "max_cost_micro_units": 0, "max_output_bytes": 1048576},
+      "required": true,
+      "input_binding": {
+        "sources": {
+          "diagnostic": {"source": "predecessor", "view": "payload", "path": ""}
+        },
+        "mapping": {"value": {"mapping": "pointer", "path": "/diagnostic"}}
+      },
+      "gate": {
+        "rules": [{
+          "outcome": "classify",
+          "when": {
+            "operation": "for_each",
+            "collection": {"source": "path", "path": "/classes"},
+            "quantifier": "every",
+            "predicate": {
+              "operation": "not",
+              "predicate": {
+                "operation": "compare",
+                "comparison": "equal",
+                "left": {"source": "item", "path": "/outcome"},
+                "right": {"source": "literal", "value": "indeterminate"}
+              }
+            }
+          }
+        }],
+        "fallback": "indeterminate",
+        "default_output": {"value": {"mapping": "pointer", "path": ""}}
+      }
+    },
+    {
+      "key": "code_review_needs_human_input",
+      "kind": "human_gate",
+      "input_schema": "code_review",
+      "outcomes": [{"key": "closed", "kind": "failure", "schema": "delivery_review_closure"}],
+      "budget": {"max_attempts": 1, "max_elapsed_millis": 1800000, "max_tokens": 0, "max_cost_micro_units": 0, "max_output_bytes": 1048576},
+      "required": true,
+      "input_binding": {
+        "sources": {"evidence": {"source": "predecessor", "view": "input_payload", "path": "/review"}},
+        "mapping": {"value": {"mapping": "pointer", "path": "/evidence"}}
+      },
+      "operator_requests": {"operation": "escalation", "outcomes": {"abort": "closed"}}
+    },
+    {
+      "key": "validation_needs_human_input",
+      "kind": "human_gate",
+      "input_schema": "validation_diagnostic_input",
+      "outcomes": [{"key": "closed", "kind": "failure", "schema": "delivery_review_closure"}],
+      "budget": {"max_attempts": 1, "max_elapsed_millis": 1800000, "max_tokens": 0, "max_cost_micro_units": 0, "max_output_bytes": 1048576},
+      "required": true,
+      "input_binding": {
+        "sources": {"evidence": {"source": "predecessor", "view": "payload", "path": ""}},
+        "mapping": {"value": {"mapping": "pointer", "path": "/evidence"}}
+      },
+      "operator_requests": {"operation": "escalation", "outcomes": {"abort": "closed"}}
+    },
+    {
+      "key": "implementation_rework_exhausted",
+      "kind": "human_gate",
+      "input_schema": "implementation_input",
+      "outcomes": [{"key": "closed", "kind": "failure", "schema": "delivery_review_closure"}],
+      "budget": {"max_attempts": 1, "max_elapsed_millis": 1800000, "max_tokens": 0, "max_cost_micro_units": 0, "max_output_bytes": 1048576},
+      "required": true,
+      "input_binding": {
+        "sources": {"evidence": {"source": "predecessor", "view": "payload", "path": ""}},
+        "mapping": {"value": {"mapping": "pointer", "path": "/evidence"}}
+      },
+      "operator_requests": {"operation": "escalation", "outcomes": {"abort": "closed"}}
+    }
+  ],
+  "transitions": [
+    {"predecessor": "implementation", "outcome": "observed", "target": {"kind": "node", "key": "implementation_result_gate"}, "max_repeats": 0, "exhausted_terminal": null},
+    {"predecessor": "implementation_result_gate", "outcome": "continue", "target": {"kind": "node", "key": "review"}, "max_repeats": 0, "exhausted_terminal": null},
+    {"predecessor": "implementation_result_gate", "outcome": "requirements_defect", "target": {"kind": "terminal", "key": "requirements_correction_needed"}, "max_repeats": 0, "exhausted_terminal": null},
+    {"predecessor": "implementation_result_gate", "outcome": "invalid", "target": {"kind": "terminal", "key": "implementation_invalid"}, "max_repeats": 0, "exhausted_terminal": null},
+    {"predecessor": "review", "outcome": "observed", "target": {"kind": "node", "key": "code_review_gate"}, "max_repeats": 0, "exhausted_terminal": null},
+    {"predecessor": "code_review_gate", "outcome": "accepted", "target": {"kind": "node", "key": "protected_validation"}, "max_repeats": 0, "exhausted_terminal": null},
+    {"predecessor": "code_review_gate", "outcome": "changes_required", "target": {"kind": "node", "key": "implementation_rework_entry"}, "max_repeats": 0, "exhausted_terminal": null},
+    {"predecessor": "code_review_gate", "outcome": "needs_human_input", "target": {"kind": "node", "key": "code_review_needs_human_input"}, "max_repeats": 0, "exhausted_terminal": null},
+    {"predecessor": "code_review_gate", "outcome": "invalid", "target": {"kind": "terminal", "key": "code_review_invalid"}, "max_repeats": 0, "exhausted_terminal": null},
+    {"predecessor": "protected_validation", "outcome": "observed", "target": {"kind": "node", "key": "protected_validation_gate"}, "max_repeats": 0, "exhausted_terminal": null},
+    {"predecessor": "protected_validation_gate", "outcome": "passed", "target": {"kind": "terminal", "key": "verified_candidate"}, "max_repeats": 0, "exhausted_terminal": null},
+    {"predecessor": "protected_validation_gate", "outcome": "failed", "target": {"kind": "node", "key": "validation_failure_gate"}, "max_repeats": 0, "exhausted_terminal": null},
+    {"predecessor": "protected_validation_gate", "outcome": "invalid", "target": {"kind": "terminal", "key": "protected_validation_invalid"}, "max_repeats": 0, "exhausted_terminal": null},
+    {"predecessor": "validation_classification", "outcome": "observed", "target": {"kind": "node", "key": "validation_classification_gate"}, "max_repeats": 0, "exhausted_terminal": null},
+    {"predecessor": "validation_classification_gate", "outcome": "implementation_rework", "target": {"kind": "node", "key": "implementation_rework_entry"}, "max_repeats": 0, "exhausted_terminal": null},
+    {"predecessor": "validation_classification_gate", "outcome": "requirements_correction", "target": {"kind": "terminal", "key": "requirements_correction_needed"}, "max_repeats": 0, "exhausted_terminal": null},
+    {"predecessor": "validation_classification_gate", "outcome": "test_correction", "target": {"kind": "terminal", "key": "test_correction_needed"}, "max_repeats": 0, "exhausted_terminal": null},
+    {"predecessor": "validation_classification_gate", "outcome": "escalation", "target": {"kind": "terminal", "key": "validation_classification_escalation"}, "max_repeats": 0, "exhausted_terminal": null},
+    {"predecessor": "validation_classification_gate", "outcome": "rejection", "target": {"kind": "terminal", "key": "validation_rejected"}, "max_repeats": 0, "exhausted_terminal": null},
+    {"predecessor": "validation_classification_gate", "outcome": "invalid", "target": {"kind": "terminal", "key": "validation_classification_invalid"}, "max_repeats": 0, "exhausted_terminal": null},
+    {"predecessor": "validation_failure_gate", "outcome": "classify", "target": {"kind": "node", "key": "validation_classification"}, "max_repeats": 0, "exhausted_terminal": null},
+    {"predecessor": "validation_failure_gate", "outcome": "indeterminate", "target": {"kind": "node", "key": "validation_needs_human_input"}, "max_repeats": 0, "exhausted_terminal": null},
+    {"predecessor": "implementation_rework_entry", "outcome": "ready", "target": {"kind": "node", "key": "implementation"}, "max_repeats": 1, "exhausted_terminal": null, "exhausted_node": "implementation_rework_exhausted"},
+    {"predecessor": "code_review_needs_human_input", "outcome": "closed", "target": {"kind": "terminal", "key": "development_review_closed"}, "max_repeats": 0, "exhausted_terminal": null},
+    {"predecessor": "validation_needs_human_input", "outcome": "closed", "target": {"kind": "terminal", "key": "development_review_closed"}, "max_repeats": 0, "exhausted_terminal": null},
+    {"predecessor": "implementation_rework_exhausted", "outcome": "closed", "target": {"kind": "terminal", "key": "development_review_closed"}, "max_repeats": 0, "exhausted_terminal": null}
+  ],
+  "terminals": {
+    "verified_candidate": "summary",
+    "requirements_correction_needed": "summary",
+    "implementation_invalid": "summary",
+    "code_review_invalid": "summary",
+    "protected_validation_invalid": "summary",
+    "test_correction_needed": "summary",
+    "validation_rejected": "summary",
+    "validation_classification_invalid": "summary",
+    "validation_classification_escalation": "summary",
+    "development_review_closed": "delivery_review_closure"
+  }
+}

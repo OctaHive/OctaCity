@@ -198,6 +198,7 @@ impl FactoryResultReportingDraft {
         capture_deliverables: None,
         gate: None,
         accepted_work_outcomes: vec![],
+        operator_requests: None,
         action: None,
         pool: None,
         subflow: Some(reporting.definition.reference()),

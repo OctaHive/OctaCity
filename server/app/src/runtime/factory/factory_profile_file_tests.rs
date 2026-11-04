@@ -259,6 +259,7 @@ pub(in crate::runtime) fn command_entry(
     "parameters":profile.parameters,"project_permissions":profile.project_permissions,
     "local_permissions":{"grants":profile.local_permissions.grants(),"enforceable":PermissionCategory::ALL},
     "outputs":profile.outputs,"candidate_capture_tool":profile.candidate_capture_tool,
+    "observation_contract":profile.observation_contract,
   })
 }
 
@@ -500,4 +501,123 @@ fn file_role_profile_declarations_extend_existing_project_choices_without_instal
   foreign["projects"][0]["role_profiles"]["runtime-profile"]["ceiling"]["build_configuration"]["project_id"] =
     serde_json::to_value(octacity_server_domain::ProjectId::generate()).unwrap();
   assert!(FactoryRuntimeProfileCatalog::parse_json(&serde_json::to_vec(&foreign).unwrap()).is_err());
+}
+
+#[tokio::test]
+async fn file_installs_a_protected_observation_on_the_work_base() {
+  use octacity_server_factory::{EvidenceOutputKind, EvidenceRequirement, FlowDataSchema, FlowValueSchema};
+  let reference = |name| crate::runtime::factory::factory_tests::managed::reference(name, "v1");
+  let project = octacity_server_domain::ProjectId::generate();
+  let mut profile = crate::runtime::factory::factory_command_runtime_tests::command_profile(project);
+  let author = crate::runtime::factory::factory_command_runtime_tests::author_profile(project);
+  let observation = octacity_server_application::FactoryCommandObservationContract {
+    environment: reference("installed-baseline-environment"),
+    criterion: reference("expected-baseline-failure"),
+    observations: FlowDataSchema::new(
+      FactoryKey::new("baseline-observations").unwrap(),
+      FactoryKey::new("v1").unwrap(),
+      FlowValueSchema::Boolean,
+    )
+    .unwrap(),
+    completion: serde_json::from_value(serde_json::json!({"operation":"exists","operand":{"source":"path","path":""}}))
+      .unwrap(),
+    symptom: serde_json::from_value(serde_json::json!({
+      "operation":"compare","left":{"source":"path","path":""},"comparison":"equal",
+      "right":{"source":"literal","value":true}
+    }))
+    .unwrap(),
+    requires_protected_tests: true,
+    stop_on_indeterminate: false,
+  };
+  let schema = observation.report_schema().unwrap();
+  let report = EvidenceRequirement::new(
+    profile.outputs[0].kind().clone(),
+    EvidenceOutputKind::Report,
+    schema.reference().clone(),
+    profile.executor.clone(),
+    profile.plugin.clone(),
+  );
+  let ordinary = command_entry(&profile);
+  profile.outputs = vec![report.clone()];
+  profile.observation_contract = Some(observation);
+  let mut document = serde_json::json!({
+    "version":1,"projects":[{"project_id":project,"references":[],
+      "build_configurations":[{"alias":"baseline-build","reference":profile.build_configuration}]}],
+    "codex":[],"commands":[ordinary],"protected_validation":[{"profiles":[command_entry(&profile)],
+      "inputs":{"author_profile":author.command().identity,"policy":author.policy(),"inventory":author.inventory()},
+      "report":report}]
+  });
+  let parse = |value: &serde_json::Value| {
+    crate::runtime::factory::factory_profile_file::FileProfileInstaller::parse_json(
+      &serde_json::to_vec(value).unwrap(),
+      &[],
+    )
+  };
+  assert!(parse(&document).is_err(), "baseline needs its installed author");
+  document["projects"][0]["build_configurations"]
+    .as_array_mut()
+    .unwrap()
+    .push(serde_json::json!({
+      "alias":"author-build","reference":author.command().build_configuration,
+    }));
+  let mut author_policy = serde_json::to_value(
+    octacity_server_application::FactoryProtectedTestAuthoringPolicy::new(
+      author.policy().clone(),
+      author.inventory().clone(),
+      author.files().to_vec(),
+    )
+    .unwrap(),
+  )
+  .unwrap();
+  document["protected_test_authors"] = serde_json::json!([{
+    "command":command_entry(author.command()),"policy":author_policy,
+  }]);
+  assert!(
+    parse(&document).is_err(),
+    "the baseline's exact author must retain a private transcript"
+  );
+  author_policy["transcript"] = serde_json::json!("private.transcript");
+  let policy: octacity_server_application::FactoryProtectedTestAuthoringPolicy =
+    serde_json::from_value(author_policy.clone()).unwrap();
+  let mut author_command = author.command().clone();
+  author_command.identity = ImmutableReference::new(
+    author_command.identity.identity().clone(),
+    author_command.identity.version().clone(),
+    policy.digest().unwrap(),
+  );
+  let mut grants = serde_json::to_value(&author_command.project_permissions).unwrap();
+  grants["outputs"]["kinds"]
+    .as_array_mut()
+    .unwrap()
+    .push(serde_json::json!("private.transcript"));
+  grants["outputs"]["max_artifact_count"] = serde_json::json!(3);
+  author_command.project_permissions = serde_json::from_value(grants).unwrap();
+  author_command.local_permissions =
+    octacity_server_factory::LocalPermissionCeiling::fully_enforced(author_command.project_permissions.clone());
+  document["protected_test_authors"][0] = serde_json::json!({
+    "command":command_entry(&author_command),"policy":author_policy,
+  });
+  document["protected_validation"][0]["inputs"]["author_profile"] = serde_json::json!(author_command.identity);
+  let installer = parse(&document).expect("an exact protected observation is installable without a candidate");
+  let mut resources = crate::runtime::factory::factory_tests::resources();
+  resources.toolchain.octa.plugin_digests.insert(
+    profile.plugin.identity().to_string(),
+    profile.plugin.digest().to_string(),
+  );
+  let installed = installer.install(resources).await.unwrap();
+  let commands = installed
+    .executors
+    .iter()
+    .filter(|binding| binding.0 == FlowNodeKind::BuildCommand)
+    .collect::<Vec<_>>();
+  assert_eq!(commands.len(), 1, "one executor must serve both exact command profiles");
+  assert_eq!(commands[0].1, NodeExecutionIdentity::External(profile.executor));
+  document["protected_validation"][0]["profiles"][0]
+    .as_object_mut()
+    .unwrap()
+    .remove("observation_contract");
+  assert!(
+    parse(&document).is_err(),
+    "an unqualified command must not obtain protected files"
+  );
 }

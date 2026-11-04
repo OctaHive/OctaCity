@@ -27,6 +27,20 @@
               "min_bytes": 64,
               "max_bytes": 64
             }
+          },
+          "test_scope": {
+            "required": true,
+            "value": {
+              "type": "reference",
+              "schema": "protected_test_scope"
+            }
+          },
+          "original_acceptance": {
+            "required": false,
+            "value": {
+              "type": "reference",
+              "schema": "artifact_reference"
+            }
           }
         }
       }

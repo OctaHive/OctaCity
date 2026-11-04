@@ -21,6 +21,7 @@ pub struct FactoryCommandBuildOutputSource<R, Q, A, B> {
   catalog: crate::factory::commands::factory_command_catalog::FactoryCommandCatalog,
   candidate_context: Option<Arc<dyn FactoryRetainedCandidateContextSource>>,
   validation_input: Option<Arc<dyn FactoryProtectedValidationInputSource>>,
+  test_observation: Option<Arc<dyn FactoryProtectedTestObservationInputSource>>,
   authors: Vec<FactoryProtectedTestAuthoringProfile>,
   clock: Arc<dyn FactoryExecutionClock>,
 }
@@ -46,6 +47,7 @@ impl<R, Q: BuildQueryStore, A: ArtifactRecordStore, B: ArtifactByteReader> Facto
       catalog: crate::factory::commands::factory_command_catalog::FactoryCommandCatalog::builtin(profiles)?,
       candidate_context: None,
       validation_input: None,
+      test_observation: None,
       authors: vec![],
       clock,
     })
@@ -72,6 +74,7 @@ impl<R, Q: BuildQueryStore, A: ArtifactRecordStore, B: ArtifactByteReader> Facto
       )?,
       candidate_context: None,
       validation_input: None,
+      test_observation: None,
       authors: vec![],
       clock,
     })
@@ -89,7 +92,10 @@ impl<R, Q: BuildQueryStore, A: ArtifactRecordStore, B: ArtifactByteReader> Facto
     if authors.len() != self.catalog.profiles().count()
       || authors.iter().any(|author| {
         !seen.insert(author.command().task_digest())
-          || author.files().len() + author.command().outputs.len() >= usize::from(MAX_ARTIFACT_PAGE_SIZE)
+          || !crate::factory::validation::factory_protected_test_profile::protected_author_outputs_fit(
+            author.private_outputs().count(),
+            author.command().outputs.len(),
+          )
           || !self
             .catalog
             .profiles()
@@ -129,6 +135,16 @@ impl<R, Q: BuildQueryStore, A: ArtifactRecordStore, B: ArtifactByteReader> Facto
     source: Arc<dyn FactoryProtectedValidationInputSource>,
   ) -> Self {
     self.validation_input = Some(source);
+    self
+  }
+
+  /// Rechecks the same private test inputs before trusting a baseline observation.
+  #[must_use]
+  pub fn with_protected_test_observation_input_source(
+    mut self,
+    source: Arc<dyn FactoryProtectedTestObservationInputSource>,
+  ) -> Self {
+    self.test_observation = Some(source);
     self
   }
 
@@ -199,6 +215,9 @@ impl<R: FactoryRunStore, Q: BuildQueryStore, A: ArtifactRecordStore, B: Artifact
       return Err(Invalid);
     }
     let profile = self.catalog.profile(&intent)?;
+    if profile.requires_protected_tests() != self.test_observation.is_some() {
+      return Err(Invalid);
+    }
     if profile.observation_contract.is_none() {
       profile.observation_bindings()?;
     }
@@ -248,9 +267,8 @@ impl<R: FactoryRunStore, Q: BuildQueryStore, A: ArtifactRecordStore, B: Artifact
           .any(|output| output.kind().as_str() == identity.logical_name.as_str())
           && !self.author(&intent).is_some_and(|author| {
             author
-              .files()
-              .iter()
-              .any(|file| file.output.as_str() == identity.logical_name.as_str())
+              .private_outputs()
+              .any(|name| name.as_str() == identity.logical_name.as_str())
           })
       {
         return Err(Invalid);
@@ -363,7 +381,7 @@ impl<R: FactoryRunStore, Q: BuildQueryStore, A: ArtifactRecordStore, B: Artifact
       return Err(Invalid);
     }
     let author = self.author(&intent);
-    if uploads.len() != profile.outputs.len() + author.map_or(0, |author| author.files().len()) {
+    if uploads.len() != profile.outputs.len() + author.map_or(0, |author| author.private_outputs().count()) {
       return Err(Unavailable);
     }
     if (self.catalog.is_promotion() && self.validation_input.is_some())
@@ -405,8 +423,23 @@ impl<R: FactoryRunStore, Q: BuildQueryStore, A: ArtifactRecordStore, B: Artifact
     } else {
       None
     };
+    let test_observation = if let Some(source) = &self.test_observation {
+      if has_candidate || validation.is_some() {
+        return Err(Invalid);
+      }
+      Some(
+        source
+          .observation_inputs(&intent)
+          .await
+          .map_err(super::factory_command::command_input_error)?,
+      )
+    } else {
+      None
+    };
     let compiled = self.catalog.compile(&intent, &snapshot.admitted_flow)?;
-    let compiled = if let Some(validation) = &validation {
+    let compiled = if let Some(proof) = &test_observation {
+      compiled.with_test_observation_inputs(proof)?
+    } else if let Some(validation) = &validation {
       compiled.with_protected_validation(validation)?
     } else if let Some(candidate) = &candidate {
       compiled.with_candidate(candidate.candidate(), now)?
@@ -439,9 +472,11 @@ impl<R: FactoryRunStore, Q: BuildQueryStore, A: ArtifactRecordStore, B: Artifact
       .iter()
       .filter_map(|upload| upload.artifact.identity().retention.delete_after())
       .fold(
-        validation.as_ref().map_or(intent.node().deadline(), |proof| {
-          intent.node().deadline().min(proof.retained_until())
-        }),
+        validation
+          .as_ref()
+          .map(|proof| proof.retained_until())
+          .or_else(|| test_observation.as_ref().map(|proof| proof.retained_until()))
+          .map_or(intent.node().deadline(), |until| intent.node().deadline().min(until)),
         Timestamp::min,
       );
     let verified_at = uploads
@@ -464,9 +499,8 @@ impl<R: FactoryRunStore, Q: BuildQueryStore, A: ArtifactRecordStore, B: Artifact
           author
             .filter(|author| {
               author
-                .files()
-                .iter()
-                .any(|file| file.output.as_str() == identity.logical_name.as_str())
+                .private_outputs()
+                .any(|name| name.as_str() == identity.logical_name.as_str())
             })
             .map(|author| author.inventory())
         })
@@ -510,7 +544,14 @@ impl<R: FactoryRunStore, Q: BuildQueryStore, A: ArtifactRecordStore, B: Artifact
         && let Some(contract) = &profile.observation_contract
       {
         let report = data.as_ref().ok_or(Invalid)?;
-        let finding = verify_factory_command_observation(contract, &intent, report.payload().value())?;
+        let finding = super::factory_command_observation::verify_command_observation(
+          contract,
+          &intent,
+          report.payload().value(),
+          test_observation
+            .as_ref()
+            .map(FactoryProtectedTestObservationInputs::classes),
+        )?;
         inconclusive = contract.stop_on_indeterminate && finding == FactoryCommandFinding::Indeterminate;
       }
       documents.push(FactoryNodeBuildOutputDocument {
@@ -659,7 +700,6 @@ fn verify_compiled_command_job(
   // Every generated document for this installed role participates in attribution.
   // Candidate/private retained inputs still require their separate opaque proof.
   let program = compiled.attribution_program(managed.protected_inputs())?;
-  compiled.command_proof(&program)?;
   let source_scope = factory_job_source_scope(intent.input(), &permissions).map_err(|_| Invalid)?;
   let required = crate::factory::execution::factory_build_materialization::managed_factory_enforcement(
     &program.required_enforcement,

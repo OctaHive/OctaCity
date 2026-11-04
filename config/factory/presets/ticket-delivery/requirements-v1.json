@@ -1,0 +1,54 @@
+{
+  "input_schema": "delivery_requirements_input",
+  "entry": "requirements_needed",
+  "execution": {
+    "budget": {
+      "max_attempts": 40,
+      "max_elapsed_millis": 3600000,
+      "max_tokens": 1000000,
+      "max_cost_micro_units": 100000000,
+      "max_output_bytes": 33554432
+    },
+    "permissions": {
+      "plugins": [],
+      "executables": [],
+      "tools": [],
+      "commands": [],
+      "max_descendants": 0,
+      "mounts": [],
+      "network_hosts": [],
+      "secret_profiles": [],
+      "workload_identity_profiles": [],
+      "resources": {
+        "cpu_millis": 0,
+        "memory_bytes": 0,
+        "disk_bytes": 0,
+        "process_count": 0,
+        "elapsed_millis": 0
+      },
+      "outputs": {
+        "kinds": [],
+        "max_artifact_count": 0,
+        "max_artifact_bytes": 0,
+        "max_report_count": 0,
+        "max_report_bytes": 0
+      }
+    },
+    "max_active_nodes": 1
+  },
+  "parts": [
+    "flows/base-flow/schemas/artifact_reference.json",
+    "flows/base-flow/schemas/declared_requirements.json",
+    "flows/base-flow/schemas/summary.json",
+    "flows/base-flow/schemas/spec_manifest.json",
+    "flows/base-flow/schemas/spec_handoff.json",
+    "flows/base-flow/schemas/spec_facts.json",
+    "flows/base-flow/schemas/spec_result.json",
+    "flows/base-flow/schemas/spec_author_input.json",
+    "flows/base-flow/schemas/spec_gate_input.json",
+    "flows/base-flow/nodes/specification_author.json",
+    "flows/base-flow/nodes/specification_gate.json",
+    "presets/ticket-delivery/requirements-branch-v1.json",
+    "presets/ticket-delivery/requirements-approval-v1.json"
+  ]
+}

@@ -282,6 +282,7 @@ pub(super) fn insert(schemas: &mut Map<String, Value>) {
         ("target", schema_ref("FactoryFlowTransitionTarget")),
         ("max_repeats", bounded_integer(0, bounds.repeats.into())),
         ("exhausted_terminal", nullable(key())),
+        ("exhausted_node", nullable(key())),
         ("starts_cycle", boolean()),
       ],
       &["predecessor", "outcome", "target", "max_repeats", "exhausted_terminal"],

@@ -1,0 +1,101 @@
+{
+  "schemas": {
+    "delivery_requirements_input": {
+      "identity": "factory.ticket-delivery.requirements-input",
+      "version": "v1",
+      "shape": {
+        "type": "object",
+        "fields": {
+          "summary": {"required": true, "value": {"type": "reference", "schema": "summary"}},
+          "priority_assessment": {"required": true, "value": {"type": "integer", "minimum": 0, "maximum": 100}}
+        }
+      }
+    },
+    "delivery_spec_acceptance": {
+      "identity": "factory.ticket-delivery.specification-acceptance",
+      "version": "v1",
+      "shape": {
+        "type": "object",
+        "fields": {
+          "decision": {"required": true, "value": {"type": "reference", "schema": "summary"}},
+          "specification": {"required": true, "value": {"type": "reference", "schema": "spec_result"}},
+          "priority_assessment": {"required": true, "value": {"type": "integer", "minimum": 0, "maximum": 100}}
+        }
+      }
+    }
+  },
+  "nodes": [
+    {
+      "key": "requirements_needed",
+      "kind": "deterministic_gate",
+      "input_schema": "delivery_requirements_input",
+      "outcomes": [
+        {"key": "prepared", "kind": "success", "schema": "summary"},
+        {"key": "specification", "kind": "success", "schema": "summary"}
+      ],
+      "budget": {"max_attempts": 1, "max_elapsed_millis": 1000, "max_tokens": 0, "max_cost_micro_units": 0, "max_output_bytes": 1048576},
+      "required": true,
+      "input_binding": {
+        "sources": {"triage": {"source": "caller_input", "path": ""}},
+        "mapping": {"value": {"mapping": "pointer", "path": "/triage"}}
+      },
+      "gate": {
+        "rules": [{
+          "when": {
+            "operation": "compare", "comparison": "equal",
+            "left": {"source": "path", "path": "/summary/size"},
+            "right": {"source": "literal", "value": "large"}
+          },
+          "outcome": "specification"
+        }],
+        "fallback": "prepared",
+        "default_output": {"value": {"mapping": "pointer", "path": "/summary"}}
+      }
+    },
+    {
+      "key": "specification_accepted",
+      "kind": "deterministic_gate",
+      "input_schema": "delivery_spec_acceptance",
+      "outcomes": [{"key": "accepted", "kind": "success", "schema": "summary"}],
+      "budget": {"max_attempts": 1, "max_elapsed_millis": 1000, "max_tokens": 0, "max_cost_micro_units": 0, "max_output_bytes": 1048576},
+      "required": true,
+      "input_binding": {
+        "sources": {
+          "specification": {"source": "predecessor", "view": "payload", "path": ""},
+          "decision": {"source": "record", "node": "requirements_needed", "outcome": "specification", "view": "input_payload", "path": ""}
+        },
+        "mapping": {"value": {"mapping": "object", "fields": {
+          "decision": {"mapping": "pointer", "path": "/decision/summary"},
+          "priority_assessment": {"mapping": "pointer", "path": "/decision/priority_assessment"},
+          "specification": {"mapping": "pointer", "path": "/specification"}
+        }}}
+      },
+      "gate": {
+        "rules": [],
+        "fallback": "accepted",
+        "default_output": {"value": {"mapping": "object", "fields": {
+          "work_kind": {"mapping": "pointer", "path": "/decision/work_kind"},
+          "size": {"mapping": "pointer", "path": "/decision/size"},
+          "risk": {"mapping": "pointer", "path": "/decision/risk"},
+          "admission_risk": {"mapping": "pointer", "path": "/decision/admission_risk"},
+          "recommended_route": {"mapping": "pointer", "path": "/decision/recommended_route"},
+          "research_required": {"mapping": "pointer", "path": "/decision/research_required"},
+          "research_accepted": {"mapping": "pointer", "path": "/decision/research_accepted"},
+          "component": {"mapping": "pointer", "path": "/decision/component"},
+          "severity": {"mapping": "pointer", "path": "/decision/severity"},
+          "dependencies": {"mapping": "pointer", "path": "/decision/dependencies"},
+          "specification": {"mapping": "pointer", "path": "/specification"}
+        }}}
+      }
+    }
+  ],
+  "transitions": [
+    {"predecessor": "requirements_needed", "outcome": "prepared", "target": {"kind": "node", "key": "requirements_review_policy"}, "max_repeats": 0, "exhausted_terminal": null},
+    {"predecessor": "requirements_needed", "outcome": "specification", "target": {"kind": "node", "key": "specification_author"}, "max_repeats": 0, "exhausted_terminal": null},
+    {"predecessor": "specification_author", "outcome": "observed", "target": {"kind": "node", "key": "specification_gate"}, "max_repeats": 0, "exhausted_terminal": null},
+    {"predecessor": "specification_gate", "outcome": "review_pending", "target": {"kind": "node", "key": "specification_accepted"}, "max_repeats": 0, "exhausted_terminal": null},
+    {"predecessor": "specification_gate", "outcome": "invalid", "target": {"kind": "terminal", "key": "invalid"}, "max_repeats": 0, "exhausted_terminal": null},
+    {"predecessor": "specification_accepted", "outcome": "accepted", "target": {"kind": "node", "key": "requirements_review_policy"}, "max_repeats": 0, "exhausted_terminal": null}
+  ],
+  "terminals": {"invalid": "spec_result"}
+}

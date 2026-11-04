@@ -1,8 +1,8 @@
 //! Qualified Codex compilation into the existing ordinary Build boundary.
 use crate::{
-  BuildExecutionContextSource, FactoryBuildMaterializer, FactoryBuildPolicyLayers, FactoryCodexFlowCompilationOptions,
-  FactoryExecutionClock, FactoryExecutionDocument, FactoryExecutionInputPublisher, FactoryManagedBuildInput,
-  FactoryManagedSourcePlan, FactoryNodeCandidateContextSource, FactoryNodeContextSource, OrdinaryBuildApplicationError,
+  BuildExecutionContextSource, FactoryBuildMaterializer, FactoryBuildPolicyLayers, FactoryCodexCandidateReaderFactory,
+  FactoryCodexFlowCompilationOptions, FactoryExecutionClock, FactoryExecutionDocument, FactoryExecutionInputPublisher,
+  FactoryManagedBuildInput, FactoryManagedSourcePlan, FactoryNodeContextSource, OrdinaryBuildApplicationError,
   compile_codex_flow_task_with_options, materialize_factory_managed_build_with_source,
 };
 use async_trait::async_trait;
@@ -196,6 +196,10 @@ impl FactoryCodexBuildProfile {
 
   /// Exact installed compilation policy retained alongside older policy versions.
   pub fn task_digest(&self) -> octacity_server_factory::FactoryDigest {
+    super::factory_codex::candidate_capture_task_digest(self.legacy_task_digest(), self.candidate_capture_tool.as_ref())
+  }
+
+  fn legacy_task_digest(&self) -> octacity_server_factory::FactoryDigest {
     let base = self.base_task_digest();
     let selected = self.tool_risk.map_or(base, |policy| policy.task_digest(base));
     let selected = self
@@ -221,27 +225,77 @@ impl FactoryCodexBuildProfile {
         self.tool_response_limits,
       ))
   }
-  /// Selects the complete immutable installed profile for one frozen Build intent.
-  /// Sharing an executable does not share model instructions or capture authority.
-  pub fn matches_intent(&self, intent: &FlowBuildIntent) -> bool {
-    self.matches_role_intent(intent, None)
+  /// Reports whether this profile can consume a verified candidate. Writable
+  /// consumers also pin the original capture tool and their own scoped capture.
+  pub fn permits_candidate_context(&self) -> bool {
+    self.tool_risk.is_none()
+      && match self.consumer {
+        FactoryCredentialConsumer::ReadOnlyReview => self.capture.is_none(),
+        FactoryCredentialConsumer::CodingNode => {
+          self.capture.is_some() && self.candidate_capture_tool.is_some() && self.tool_response_limits.is_none()
+        }
+        _ => false,
+      }
   }
-  /// Matches the same installed adapter under an exact role/profile task identity.
-  pub fn matches_role_intent(
-    &self,
-    intent: &FlowBuildIntent,
-    role: Option<&octacity_server_factory::FactoryRoleProfile>,
-  ) -> bool {
+  fn matches_binding(&self, intent: &FlowBuildIntent) -> bool {
     intent.profile().tool == self.toolchain.executable
       && intent.profile().plugin == self.toolchain.plugin
       && intent.profile().model_or_tool == self.toolchain.model
       && intent.profile().build_configuration == self.build_configuration
-      && intent.profile().task_digest
-        == role.map_or_else(
-          || self.task_digest(),
-          |role| crate::factory_role_task_digest(self.task_digest(), role),
-        )
   }
+
+  /// Selects the installed profile for the frozen Build, including legacy intents
+  /// whose task identity predates the candidate capture pin.
+  pub async fn select_for_intent<'a>(
+    profiles: &'a [Self],
+    intent: &FlowBuildIntent,
+    role: Option<&octacity_server_factory::FactoryRoleProfile>,
+    candidate_context: Option<&dyn FactoryCodexCandidateReaderFactory>,
+  ) -> Result<Option<&'a Self>, crate::ApplicationError> {
+    let invalid = crate::ApplicationError::invalid;
+    let matches_digest = |digest| {
+      intent.profile().task_digest == role.map_or(digest, |role| crate::factory_role_task_digest(digest, role))
+    };
+    let has_candidate = intent
+      .input()
+      .context()
+      .is_some_and(|context| context.subject().candidate().is_some());
+    let matching = profiles.iter().filter(|profile| {
+      profile.matches_binding(intent)
+        && (!has_candidate || (profile.permits_candidate_context() && profile.candidate_capture_tool.is_some()))
+    });
+    let mut exact = matching.clone().filter(|profile| matches_digest(profile.task_digest()));
+    if let Some(profile) = exact.next() {
+      return if exact.next().is_none() {
+        Ok(Some(profile))
+      } else {
+        Err(invalid())
+      };
+    }
+    let mut legacy = matching.filter(|profile| matches_digest(profile.legacy_task_digest()));
+    let Some(first) = legacy.next() else {
+      return Ok(None);
+    };
+    let Some(second) = legacy.next() else {
+      return Ok(Some(first));
+    };
+    // Only legacy identities can share a digest across different capture pins.
+    // Resolve the pin from the retained producer, never from installation order.
+    let tool = candidate_context
+      .ok_or_else(invalid)?
+      .retained_capture_tool(intent)
+      .await?;
+    let mut pinned = [first, second]
+      .into_iter()
+      .chain(legacy)
+      .filter(|profile| profile.candidate_capture_tool.as_ref() == Some(&tool));
+    let profile = pinned.next().ok_or_else(invalid)?;
+    if pinned.next().is_some() {
+      return Err(invalid());
+    }
+    Ok(Some(profile))
+  }
+
   /// Rejects unqualified package selections and authority before installing an executor.
   /// Actual immutable configuration and current owner checks still run per operation.
   pub fn validate_installation(
@@ -389,7 +443,7 @@ pub struct FactoryCodexBuildMaterializer<C, S, B> {
   publisher: Arc<FactoryExecutionInputPublisher<S, B>>,
   profiles: Vec<FactoryCodexBuildProfile>,
   context_bytes: Arc<dyn FactoryNodeContextSource>,
-  candidate_context: Option<Arc<dyn FactoryNodeCandidateContextSource>>,
+  candidate_context: Option<Arc<dyn FactoryCodexCandidateReaderFactory>>,
   review: Option<Arc<dyn crate::FactoryReviewInvocationSource>>,
   role: Option<Arc<dyn crate::FactoryRoleInvocationSource>>,
   runtime_settings: Option<Arc<dyn octacity_server_store::FactoryRuntimeSettingsStore>>,
@@ -470,11 +524,10 @@ impl<C, S, B> FactoryCodexBuildMaterializer<C, S, B> {
     self
   }
 
-  /// Installs owner-fenced recovery for exact readonly candidate consumers.
-  /// Default installations retain their earlier candidate rejection; capture
-  /// and writer/tool authority remain unsupported by this qualified adapter.
+  /// Installs owner-fenced recovery for exact candidate consumers. The frozen
+  /// profile and signed source paths still determine any writable scope.
   #[must_use]
-  pub fn with_candidate_context_source(mut self, source: Arc<dyn FactoryNodeCandidateContextSource>) -> Self {
+  pub fn with_candidate_context_source(mut self, source: Arc<dyn FactoryCodexCandidateReaderFactory>) -> Self {
     self.candidate_context = Some(source);
     self
   }
@@ -514,9 +567,14 @@ impl<
       .await
       .map_err(|_| Unavailable)?;
     crate::factory::execution::factory_build_materialization::validate_factory_build_context(&context, intent)?;
-    let (profile, role) = if intent.selected_profile().is_none()
-      && let Some(profile) = self.profiles.iter().find(|profile| profile.matches_intent(intent))
-    {
+    let static_profile = if intent.selected_profile().is_none() {
+      FactoryCodexBuildProfile::select_for_intent(&self.profiles, intent, None, self.candidate_context.as_deref())
+        .await
+        .map_err(super::factory_codex_candidate_context::classify_selection)?
+    } else {
+      None
+    };
+    let (profile, role) = if let Some(profile) = static_profile {
       (profile, None)
     } else {
       let role = if let Some(role) = self.publisher.role_invocation(intent).await.map_err(|_| Unavailable)? {
@@ -532,11 +590,15 @@ impl<
           .map_err(|_| Unavailable)?
           .ok_or(Invalid)?
       };
-      let profile = self
-        .profiles
-        .iter()
-        .find(|profile| profile.matches_role_intent(intent, Some(&role.package().inputs().profile)))
-        .ok_or(Invalid)?;
+      let profile = FactoryCodexBuildProfile::select_for_intent(
+        &self.profiles,
+        intent,
+        Some(&role.package().inputs().profile),
+        self.candidate_context.as_deref(),
+      )
+      .await
+      .map_err(super::factory_codex_candidate_context::classify_selection)?
+      .ok_or(Invalid)?;
       (profile, Some(role))
     };
     if let Some(capture) = &profile.capture {
@@ -551,11 +613,7 @@ impl<
     } else {
       crate::factory::execution::factory_build_materialization::factory_capture_source_paths(intent, None)?;
     }
-    if is_candidate
-      && (profile.consumer != FactoryCredentialConsumer::ReadOnlyReview
-        || profile.tool_risk.is_some()
-        || intent.permissions().tools().next().is_some())
-    {
+    if is_candidate && (!profile.permits_candidate_context() || intent.permissions().tools().next().is_some()) {
       return Err(Invalid);
     }
     let effective = octacity_server_factory::resolve_factory_permissions(
@@ -584,6 +642,7 @@ impl<
           .candidate_context
           .as_ref()
           .ok_or(Invalid)?
+          .for_capture(profile.candidate_capture_tool.as_ref().ok_or(Invalid)?)
           .read_candidate_context(intent, &ownership, observed_at, intent.node().deadline())
           .await
           .map_err(|_| Unavailable)?,
@@ -643,6 +702,7 @@ impl<
         role: role.as_ref(),
         context: selected.as_ref(),
         candidate_context: candidate.as_ref(),
+        candidate_capture_tool: profile.candidate_capture_tool.as_ref(),
         tool_risk: profile.tool_risk,
         tool_response_limits: profile.tool_response_limits,
         capture: profile.capture.as_ref(),

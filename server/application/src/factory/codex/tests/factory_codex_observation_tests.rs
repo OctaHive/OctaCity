@@ -1485,6 +1485,7 @@ fn qualified_common_reviewer_records_produce_server_owned_assessment_and_reject_
       crate::FactoryCodexFlowCompilationOptions {
         context: Some(&context),
         reviewer: Some(review),
+        candidate_capture_tool: profile.candidate_capture_tool.as_ref(),
         ..Default::default()
       },
     )

@@ -1553,7 +1553,7 @@ async fn deployment_profile_catalog_parses_exact_project_choices_and_private_cod
     candidate_profile.codex[0].candidate_capture_tool.as_ref(),
     Some(&capture_tool)
   );
-  assert_eq!(candidate_profile.codex[0].task_digest(), profile.task_digest());
+  assert_ne!(candidate_profile.codex[0].task_digest(), profile.task_digest());
   let mut author_source = source.clone();
   let author = &mut author_source["codex"][0];
   author["credential_purpose"] = serde_json::json!("model");
@@ -2166,8 +2166,8 @@ async fn deployment_protected_tools_selects_one_exact_installed_signal_policy() 
 mod selection_fixtures;
 use octacity_server_factory as factory;
 
-#[test]
-fn native_codex_selection_keeps_readonly_and_capture_profiles_separate_under_one_cli() {
+#[tokio::test]
+async fn native_codex_selection_keeps_readonly_and_capture_profiles_separate_under_one_cli() {
   let work = selection_fixtures::work();
   let mut readonly = qualified_codex_profile();
   readonly.build_configuration = BuildConfigurationRef::new(
@@ -2234,36 +2234,39 @@ fn native_codex_selection_keeps_readonly_and_capture_profiles_separate_under_one
     outputs: Arc::new(()),
     profiles: vec![coding.clone(), readonly.clone(), other.clone()],
     review_invocations: Arc::new(()),
+    candidate_contexts: None,
   };
-  let capture_tool = |executor: &NativeCodexNodeExecutor<(), (), ()>,
-                      (intent, admitted): &(FlowBuildIntent, AdmittedFlow)| {
+  let capture_tool = async |executor: &NativeCodexNodeExecutor<(), (), ()>,
+                            (intent, admitted): &(FlowBuildIntent, AdmittedFlow)| {
     executor
       .profile(intent, admitted)
+      .await
       .map(|profile| profile.capture.as_ref().map(|capture| capture.tool().clone()))
   };
-  assert_eq!(capture_tool(&executor, &intent(&readonly)).unwrap(), None);
+  assert_eq!(capture_tool(&executor, &intent(&readonly)).await.unwrap(), None);
   assert_eq!(
-    capture_tool(&executor, &intent(&coding)).unwrap().as_ref(),
+    capture_tool(&executor, &intent(&coding)).await.unwrap().as_ref(),
     coding.capture.as_ref().map(|c| c.tool())
   );
   assert_eq!(
-    capture_tool(&executor, &intent(&other)).unwrap().as_ref(),
+    capture_tool(&executor, &intent(&other)).await.unwrap().as_ref(),
     other.capture.as_ref().map(|c| c.tool())
   );
   let mut foreign = readonly.clone();
   foreign.instructions = FactoryText::new("Uninstalled instructions.").unwrap();
-  assert!(capture_tool(&executor, &intent(&foreign)).is_err());
+  assert!(capture_tool(&executor, &intent(&foreign)).await.is_err());
   let duplicate = NativeCodexNodeExecutor {
     builds: Arc::new(()),
     outputs: Arc::new(()),
     profiles: vec![readonly.clone(), readonly.clone()],
     review_invocations: Arc::new(()),
+    candidate_contexts: None,
   };
-  assert!(capture_tool(&duplicate, &intent(&readonly)).is_err());
+  assert!(capture_tool(&duplicate, &intent(&readonly)).await.is_err());
 }
 
-#[test]
-fn native_codex_dispatch_uses_the_frozen_selected_profile() {
+#[tokio::test]
+async fn native_codex_dispatch_uses_the_frozen_selected_profile() {
   let work = selection_fixtures::work();
   let mut installed = qualified_codex_profile();
   let mut binding = selection_fixtures::binding(work.subject().project_id());
@@ -2325,9 +2328,10 @@ fn native_codex_dispatch_uses_the_frozen_selected_profile() {
     outputs: Arc::new(()),
     profiles: vec![installed.clone()],
     review_invocations: Arc::new(()),
+    candidate_contexts: None,
   };
   assert!(
-    executor.profile(&intent, &admitted).is_ok(),
+    executor.profile(&intent, &admitted).await.is_ok(),
     "a frozen role selection must reach its installed compiler"
   );
   let mut changed = installed;
@@ -2336,7 +2340,7 @@ fn native_codex_dispatch_uses_the_frozen_selected_profile() {
     profiles: vec![changed],
     ..executor
   };
-  assert!(substituted.profile(&intent, &admitted).is_err());
+  assert!(substituted.profile(&intent, &admitted).await.is_err());
 }
 
 #[tokio::test]

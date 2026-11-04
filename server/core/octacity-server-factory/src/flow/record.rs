@@ -64,6 +64,7 @@ impl FlowNodeRecord {
     #[derive(Serialize)]
     struct BuildMetadata<'a> {
       profile: &'a crate::FlowBuildProfile,
+      primary_fresh_until: Option<Timestamp>,
       outputs: std::collections::BTreeMap<&'a FactoryKey, &'a crate::FlowVerifiedBuildOutput>,
     }
     #[derive(Serialize)]
@@ -79,6 +80,11 @@ impl FlowNodeRecord {
     }
     let build = self.build.as_ref().map(|build| BuildMetadata {
       profile: build.profile(),
+      primary_fresh_until: build
+        .outputs()
+        .iter()
+        .find(|output| output.name == build.profile().result_output)
+        .map(|output| output.fresh_until),
       outputs: build.outputs().iter().map(|output| (&output.name, output)).collect(),
     });
     let subject = self.input.task_subject()?;

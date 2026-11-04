@@ -61,9 +61,14 @@
           "remediation": {
             "required": false,
             "value": {
-              "type": "string",
-              "min_bytes": 1,
-              "max_bytes": 2048
+              "type": "array",
+              "item": {
+                "type": "string",
+                "min_bytes": 1,
+                "max_bytes": 2048
+              },
+              "min_items": 1,
+              "max_items": 32
             }
           },
           "accepted_contract": {
@@ -72,6 +77,20 @@
               "type": "string",
               "min_bytes": 64,
               "max_bytes": 64
+            }
+          },
+          "test_scope": {
+            "required": false,
+            "value": {
+              "type": "reference",
+              "schema": "protected_test_scope"
+            }
+          },
+          "original_acceptance": {
+            "required": false,
+            "value": {
+              "type": "reference",
+              "schema": "artifact_reference"
             }
           }
         }

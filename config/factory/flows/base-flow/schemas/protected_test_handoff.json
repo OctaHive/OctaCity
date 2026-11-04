@@ -17,17 +17,25 @@
           "classes": {
             "required": true,
             "value": {
-              "type": "array",
-              "item": {
-                "type": "string",
-                "min_bytes": 1,
-                "max_bytes": 96
-              },
-              "min_items": 1,
-              "max_items": 64
+              "type": "reference",
+              "schema": "protected_test_scope"
             }
           }
         }
+      }
+    },
+    "protected_test_scope": {
+      "identity": "factory.base.protected_test_scope",
+      "version": "v1",
+      "shape": {
+        "type": "array",
+        "item": {
+          "type": "string",
+          "min_bytes": 1,
+          "max_bytes": 96
+        },
+        "min_items": 1,
+        "max_items": 64
       }
     }
   }

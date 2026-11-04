@@ -158,6 +158,8 @@ pub struct FlowTransition {
   target: FlowTransitionTarget,
   max_repeats: u16,
   exhausted_terminal: Option<FactoryKey>,
+  #[serde(default, skip_serializing_if = "Option::is_none")]
+  exhausted_node: Option<FactoryKey>,
   #[serde(default, skip_serializing_if = "std::ops::Not::not")]
   starts_cycle: bool,
 }
@@ -172,6 +174,7 @@ impl FlowTransition {
       target,
       max_repeats: 0,
       exhausted_terminal: None,
+      exhausted_node: None,
       starts_cycle: false,
     }
   }
@@ -195,6 +198,7 @@ impl FlowTransition {
       target,
       max_repeats,
       exhausted_terminal: Some(exhausted_terminal),
+      exhausted_node: None,
       starts_cycle: false,
     })
   }
@@ -233,6 +237,35 @@ impl FlowTransition {
   #[must_use]
   pub const fn exhausted_terminal(&self) -> Option<&FactoryKey> {
     self.exhausted_terminal.as_ref()
+  }
+
+  /// Returns the operator gate entered when the repeat bound is exhausted.
+  #[must_use]
+  pub const fn exhausted_node(&self) -> Option<&FactoryKey> {
+    self.exhausted_node.as_ref()
+  }
+
+  pub(super) fn node_targets(&self) -> impl Iterator<Item = &FactoryKey> {
+    match self.target() {
+      FlowTransitionTarget::Node(node) => Some(node),
+      FlowTransitionTarget::Terminal(_) => None,
+    }
+    .into_iter()
+    .chain(self.exhausted_node())
+  }
+
+  pub(super) fn selected_node(&self, traversals: usize) -> Option<&FactoryKey> {
+    if self.is_exhausted(traversals) {
+      return self.exhausted_node();
+    }
+    match self.target() {
+      FlowTransitionTarget::Node(node) => Some(node),
+      FlowTransitionTarget::Terminal(_) => None,
+    }
+  }
+
+  pub(super) fn is_exhausted(&self, traversals: usize) -> bool {
+    self.max_repeats > 0 && traversals > usize::from(self.max_repeats)
   }
 }
 

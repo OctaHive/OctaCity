@@ -6,11 +6,18 @@ use octacity_server_application::*;
 use octacity_server_domain::Timestamp;
 use octacity_server_factory::*;
 use octacity_server_store_postgres::{PostgresAuthoritativeStore, PostgresStore};
-use std::sync::Arc;
+use std::{collections::BTreeMap, sync::Arc};
 
 type NativeReader = FactoryArtifactReader<PostgresStore, PostgresAuthoritativeStore, S3ArtifactStore>;
 type NativeCandidate =
   FactoryStoredCandidateContextSource<PostgresStore, PostgresStore, PostgresAuthoritativeStore, S3ArtifactStore>;
+type NativeProtectedTestInputs = FactoryStoredProtectedTestContextSource<
+  PostgresStore,
+  PostgresStore,
+  PostgresAuthoritativeStore,
+  S3ArtifactStore,
+  FactoryStoredProtectedTestPlanSource<PostgresStore>,
+>;
 type NativeValidationInputs = FactoryStoredProtectedValidationInputSource<
   PostgresStore,
   PostgresStore,
@@ -44,13 +51,20 @@ enum CommandInstallation {
     profiles: Vec<FactoryCommandBuildProfile>,
     inputs: Arc<NativeValidationInputs>,
   },
+  TestObservation {
+    profiles: Vec<FactoryCommandBuildProfile>,
+    inputs: Arc<NativeProtectedTestInputs>,
+  },
   Author(Vec<FactoryProtectedTestAuthoringProfile>),
   Deployment(Vec<FactoryDeploymentCommandProfile>),
 }
 impl CommandInstallation {
   fn profiles(&self) -> Vec<FactoryCommandBuildProfile> {
     match self {
-      Self::Ordinary(profiles) | Self::Promotion(profiles) | Self::Validation { profiles, .. } => profiles.clone(),
+      Self::Ordinary(profiles)
+      | Self::Promotion(profiles)
+      | Self::Validation { profiles, .. }
+      | Self::TestObservation { profiles, .. } => profiles.clone(),
       Self::Author(profiles) => profiles.iter().map(|profile| profile.command().clone()).collect(),
       Self::Deployment(profiles) => profiles.iter().map(|profile| profile.command().clone()).collect(),
     }
@@ -108,6 +122,73 @@ impl FactoryRetainedCandidateContextSource for CommandCandidates {
       .selected(intent)?
       .read_retained_candidate_context(intent, observed_at, required_until)
       .await
+  }
+}
+
+/// Commands sharing an executor can still require different materializers and
+/// output verifiers. Select both from the frozen installed command policy.
+#[derive(Default)]
+pub(super) struct FileCommandExecutors(
+  BTreeMap<ImmutableReference, BTreeMap<FactoryDigest, Arc<dyn FactoryNodeExecutor>>>,
+);
+
+impl FileCommandExecutors {
+  pub(super) fn add(
+    &mut self,
+    profiles: &[FactoryCommandBuildProfile],
+    binding: FactoryNodeExecutorBinding,
+  ) -> Result<(), FactoryRuntimeInstallationError> {
+    let (FlowNodeKind::BuildCommand, NodeExecutionIdentity::External(identity), executor) = binding else {
+      return Err(FactoryRuntimeInstallationError::Invalid);
+    };
+    let by_policy = self.0.entry(identity).or_default();
+    for profile in profiles {
+      if by_policy.insert(profile.task_digest(), executor.clone()).is_some() {
+        return Err(FactoryRuntimeInstallationError::Invalid);
+      }
+    }
+    Ok(())
+  }
+
+  pub(super) fn bindings(self) -> impl Iterator<Item = FactoryNodeExecutorBinding> {
+    self.0.into_iter().map(|(identity, by_policy)| {
+      let executor: Arc<dyn FactoryNodeExecutor> = Arc::new(InstalledCommandExecutor(by_policy));
+      (
+        FlowNodeKind::BuildCommand,
+        NodeExecutionIdentity::External(identity),
+        executor,
+      )
+    })
+  }
+}
+
+struct InstalledCommandExecutor(BTreeMap<FactoryDigest, Arc<dyn FactoryNodeExecutor>>);
+
+impl InstalledCommandExecutor {
+  fn select(&self, request: &FactoryNodeExecutionRequest<'_>) -> Result<&dyn FactoryNodeExecutor, ApplicationError> {
+    request
+      .build
+      .and_then(|intent| self.0.get(&intent.profile().task_digest))
+      .map(Arc::as_ref)
+      .ok_or_else(ApplicationError::invalid)
+  }
+}
+
+#[async_trait]
+impl FactoryNodeExecutor for InstalledCommandExecutor {
+  async fn observe(
+    &self,
+    request: FactoryNodeExecutionRequest<'_>,
+  ) -> Result<FactoryNodeExecutionStep, ApplicationError> {
+    self.select(&request)?.observe(request).await
+  }
+
+  async fn cancel(
+    &self,
+    request: FactoryNodeExecutionRequest<'_>,
+    requested_at: Timestamp,
+  ) -> Result<FactoryNodeCancellationStep, ApplicationError> {
+    self.select(&request)?.cancel(request, requested_at).await
   }
 }
 
@@ -256,6 +337,25 @@ impl FactoryRuntimeResources {
     ))
   }
 
+  /// Installs qualified observations on the Work base with the exact private author bundle.
+  pub(in crate::runtime) fn protected_test_observation_executor(
+    &self,
+    profiles: Vec<FactoryCommandBuildProfile>,
+    author_profile: ImmutableReference,
+    policy: FactoryProtectedTestPolicy,
+    inventory: EvidenceRequirement,
+  ) -> Result<FactoryNodeExecutorBinding, FactoryRuntimeInstallationError> {
+    use FactoryRuntimeInstallationError::Invalid;
+    let executor = profiles.first().ok_or(Invalid)?.executor.clone();
+    let inputs = self.protected_test_context(author_profile, policy, inventory)?;
+    let (builds, outputs) = self.command_ports(CommandInstallation::TestObservation { profiles, inputs })?;
+    Ok((
+      FlowNodeKind::BuildCommand,
+      NodeExecutionIdentity::External(executor),
+      Arc::new(FactoryNodeBuildAdapter::new(builds, outputs)),
+    ))
+  }
+
   fn command_ports(
     &self,
     installation: CommandInstallation,
@@ -264,7 +364,9 @@ impl FactoryRuntimeResources {
     let profiles = installation.profiles();
     let executor = &profiles.first().ok_or(Invalid)?.executor;
     for profile in &profiles {
-      if &profile.executor != executor {
+      if &profile.executor != executor
+        || profile.requires_protected_tests() != matches!(&installation, CommandInstallation::TestObservation { .. })
+      {
         return Err(Invalid);
       }
       if !matches!(&installation, CommandInstallation::Deployment(_)) {
@@ -340,6 +442,10 @@ impl FactoryRuntimeResources {
         compiler = compiler.with_protected_validation_input_source(inputs.clone());
         outputs = outputs.with_protected_validation_input_source(inputs);
       }
+      CommandInstallation::TestObservation { inputs, .. } => {
+        compiler = compiler.with_protected_test_observation_input_source(inputs.clone());
+        outputs = outputs.with_protected_test_observation_input_source(inputs);
+      }
       CommandInstallation::Ordinary(_) | CommandInstallation::Deployment(_) => {}
     }
     let compiler: Arc<dyn FactoryBuildMaterializer> = Arc::new(compiler);
@@ -358,27 +464,13 @@ impl FactoryRuntimeResources {
     &self,
     profile: FactoryRuntimeProtectedValidationProfile,
   ) -> Result<Arc<NativeValidationInputs>, FactoryRuntimeInstallationError> {
-    if profile.inventory.output_kind() != EvidenceOutputKind::Artifact {
-      return Err(FactoryRuntimeInstallationError::Invalid);
-    }
+    let tests = self.protected_test_context(profile.author_profile, profile.policy, profile.inventory)?;
     let clock = Arc::new(SystemFactoryExecutionClock);
     let reader = self.retained_artifact_reader();
-    let plans = Arc::new(FactoryStoredProtectedTestPlanSource::new(
-      self.runs.clone(),
-      profile.author_profile,
-      profile.policy,
-    ));
     let candidates = Arc::new(FactoryStoredCandidateContextSource::new(
       self.runs.clone(),
       Arc::new(FactoryCandidateContextSource::new(reader.clone())),
       profile.capture_tool.clone(),
-      clock.clone(),
-    ));
-    let tests = Arc::new(FactoryStoredProtectedTestContextSource::new(
-      self.runs.clone(),
-      reader.clone(),
-      plans,
-      profile.inventory,
       clock.clone(),
     ));
     Ok(Arc::new(FactoryStoredProtectedValidationInputSource::new(
@@ -388,6 +480,27 @@ impl FactoryRuntimeResources {
       reader,
       profile.capture_tool,
       clock,
+    )))
+  }
+  fn protected_test_context(
+    &self,
+    author_profile: ImmutableReference,
+    policy: FactoryProtectedTestPolicy,
+    inventory: EvidenceRequirement,
+  ) -> Result<Arc<NativeProtectedTestInputs>, FactoryRuntimeInstallationError> {
+    if inventory.output_kind() != EvidenceOutputKind::Artifact {
+      return Err(FactoryRuntimeInstallationError::Invalid);
+    }
+    Ok(Arc::new(FactoryStoredProtectedTestContextSource::new(
+      self.runs.clone(),
+      self.retained_artifact_reader(),
+      Arc::new(FactoryStoredProtectedTestPlanSource::new(
+        self.runs.clone(),
+        author_profile,
+        policy,
+      )),
+      inventory,
+      Arc::new(SystemFactoryExecutionClock),
     )))
   }
 }

@@ -118,6 +118,7 @@
     "base-flow/schemas/code_review_input.json",
     "base-flow/schemas/code_review.json",
     "base-flow/schemas/code_review_gate_input.json",
+    "base-flow/gate-programs.json",
     "base-flow/nodes/code_review_gate.json",
     "base-flow/schemas/validation_classification_input.json",
     "base-flow/schemas/implementation_entry_input.json",

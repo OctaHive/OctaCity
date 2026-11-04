@@ -94,6 +94,7 @@ fn protected_capture_verifies_actual_files_and_frozen_plan_before_public_handoff
   );
   file.plugin = intent.profile().plugin.clone();
   let manifest = FactoryProtectedTestInventory {
+    transcript: None,
     plan_digest: plan.digest().unwrap(),
     input_digest: intent.input().digest().unwrap(),
     node_attempt_id: intent.node().id(),
@@ -282,6 +283,31 @@ fn protected_materialization_requires_an_explicit_exact_selection_and_retained_f
     time(31),
   )
   .unwrap();
+  let baseline = FactoryProtectedTestObservationInputs::new(
+    &validator,
+    &bundle,
+    &manifest.record,
+    std::slice::from_ref(&doc.record),
+    time(31),
+  )
+  .unwrap();
+  assert_eq!(baseline.inputs(), inputs);
+  assert!(baseline.matches(&validator).unwrap());
+  assert!(
+    !baseline.matches(&input).unwrap(),
+    "a different invocation cannot reuse the private input proof"
+  );
+  assert!(
+    FactoryProtectedTestObservationInputs::new(
+      &input,
+      &bundle,
+      &manifest.record,
+      std::slice::from_ref(&doc.record),
+      time(31),
+    )
+    .is_err(),
+    "an invocation without the private selection cannot acquire it"
+  );
   assert_eq!(inputs.len(), 2);
   assert!(
     inputs
@@ -421,6 +447,7 @@ pub(crate) fn retained_author_fixture_with_contract_and_reserved_inputs(
     );
     file.plugin = intent.profile().plugin.clone();
     let inventory = FactoryProtectedTestInventory {
+      transcript: None,
       plan_digest: plan.digest().unwrap(),
       input_digest: input.digest().unwrap(),
       node_attempt_id: node.id(),

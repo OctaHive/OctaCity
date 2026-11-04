@@ -1,4 +1,6 @@
-# Ticket delivery reproduction branch
+# Ticket delivery Flow branches
+
+## Reproduction
 
 `reproduction-v1.json` is an editable Flow manifest for the reproduction branch.
 Resolve its parts relative to `config/factory` through the ordinary manifest
@@ -37,3 +39,153 @@ finding requests adding the mapped `can't reproduce` label, removing the
 managed `need reproduce` label and keeping the ticket open. The positive
 finding only requests removing the managed label. Reporter preserves other
 labels, and the accepted Flow result remains separate from delivery receipts.
+
+## Requirements policy
+
+`requirements-v1.json` loads an editable branch after the reviewed
+reproduction decision. The caller binds `summary` and the retained
+`priority_assessment` from the accepted triage handoff (`/assessment/priority_assessment`
+in the triage preset). In a root Flow, replace the entry's caller binding with
+the equivalent projection from the pinned incoming schema, or select those
+fields from an explicit predecessor.
+The task and implementation acceptance come from the admitted Work. Issue
+admission and automatic intake wait for explicit ticket acceptance when the
+triage Work only contains process-completion criteria.
+
+`requirements_needed` prepares the accepted summary for `small` and
+`medium`. `large` invokes the selected `specification_author` profile.
+Configure its assignment to author an OpenSpec proposal, delta specifications,
+design and tasks, and for a defect to record regression criteria. Qualify the installed independent verifier to check those files and
+their coherence before it attests to the captured requirements. The shared
+`specification_gate` checks the immutable capture and verifier evidence.
+`specification_accepted` prepares the summary with the exact manifest and
+bundle. Invalid evidence has a separate terminal.
+
+The example policy requests human review for component `api`, sizes
+`medium` and `large`, and triage priority at least 70. Edit the ordinary gate
+rules for the Project. An empty rule list sends every valid ticket through
+`automatic`. The queue priority remains independent. The selected rule and
+retained requirements are pinned to the admitted Flow and the pending
+`requirements_review` attempt.
+
+Use the Run's operator controls to resume or abort the pending review.
+The example allows 30 minutes for the operator response. Set the
+HumanGate time budget to fit the Project's review process.
+Resume freezes an Accepted Work Contract at `requirements_approved` using
+the review attempt's original input. Unmatched tickets freeze at
+`requirements_review_policy.automatic`. Abort selects `needs_correction`
+and stops this branch before Tester. For updated ticket acceptance, admit
+the updated Work through the requirements route again. A Flow composing
+its own correction path can route refusal to its declared requirements
+entry in a new workflow cycle. A changed specification or Work requires
+a fresh review when the policy matches.
+
+The compact branch uses the same acceptance policy after the deterministic capture check.
+A Flow that needs an independent specification reviewer can compose the
+existing review, review gate and candidate publication path from the base
+Flow. When connecting protected test authoring, place the requirements nodes
+in the same Flow and explicitly select the accepting record on each route.
+The standalone `ready` terminal supports qualifying the requirements branch
+before that downstream composition.
+
+## Protected test preparation
+
+Compose `protected-preparation-v1.json` after the requirements acceptance
+routes. Include the base Flow's `protected_tests`, `implementation_entry`
+and `implementation` nodes with their referenced schemas and policy.
+The base `protected_tests` node selects the `development.ready` phase pool.
+Configure a pool with that exact key before admission. Set its budget and
+concurrency within the Flow admission limits, and map the queue fields
+`severity` and `dependencies` from `/accepted/severity` and
+`/accepted/dependencies` in the frozen step input. If this Flow should run
+test authoring without a phase pool, remove the node's `pool` setting
+explicitly before publication.
+Connect each successful requirements route to `protected_tests` in the
+same Flow. It reads the frozen Accepted Work Contract and publishes the
+private inventory and a separate public coverage report. The test author reads
+the Work task at `/octacity/protected/work-task` and the exact selected acceptance
+at `/octacity/protected/work-acceptance`.
+
+Install a qualified command in `protected_validation` for
+`tests_on_base`. Set `observation_contract.requires_protected_tests`
+to true and leave `stop_on_indeterminate` off so the graph can retain the
+blocked outcome. Supply the exact author Profile, policy and inventory
+contract under `inputs`. Select the canonical observation report as
+`report` and as the command's sole output. Base observations omit
+`capture_tool` and `facts`. Publish `baseline_report` using the
+installed observation contract's `report_schema()`.
+
+The signed baseline Job checks out the admitted Work revision, including
+for Work with a later specification candidate. Its only private test inputs
+are the selected inventory and the exact files it names. The command should
+establish a working harness and complete applicable test coverage before
+reporting whether the expected behavioral failure was observed. Conclusive
+reports must include `test_classes` in the pinned policy order, with one
+`class` and `outcome` per required class. `matched` requires a failed class
+with no indeterminate classes. `not_matched` requires all classes to pass. Emit a
+bounded indeterminate report for setup or coverage failures when the runner
+can still report them. A technical Job failure stops the command through
+ordinary execution handling.
+
+An observed expected failure proceeds to `implementation`. A complete
+passing baseline reaches `already_satisfied`. Inconclusive observations
+reach `test_preparation_blocked`. These terminal routes end preparation
+before implementation and publication. The Coder input includes requirements
+and the public coverage classes. Only the trusted command receives the
+selected test files. Install the exact referenced author in the same Project.
+Set its policy's `transcript` to the name of the command's private transcript
+Artifact and grant that exact output.
+The original Build retains the bytes, and the immutable inventory pins its
+reference separately from test files. Neither the baseline nor validation
+mounts the transcript, and the public coverage report contains only class names
+and the accepted contract identity.
+
+## Candidate review and validation
+
+Add `development-v1.json` and `agent-result-gates-v1.json` after protected
+preparation. Include the base Flow's `implementation_rework_entry`, `review`,
+`protected_validation`, `protected_validation_gate` and
+`validation_classification` with their referenced schemas. Include `policies/public-deliverables.json` for the
+shared capture and validation contract. Include `flows/base-flow/gate-programs.json`
+for the common review and validation-classification decision rules. Each
+agent-result gate binds those rules to its own evidence precondition, which
+checks the freshness and candidate identity of the qualified Build report.
+For Codex, include `implementation-capture-gate-v1.json`. Select
+`codex-run-result` as the primary report and declare the trusted capture
+observation as `candidate_facts` with the `candidate_capture_facts` schema.
+The gate verifies that the report and the exact capture are fresh for the same
+execution. It forwards the frozen accepted summary and pauses for requirements
+review when the agent reports a possible defect in the requirements.
+Set the writable profile's `candidate_capture_tool` to the exact trusted
+producer accepted for incoming candidates. This selection contributes to the
+immutable Codex task identity. The profile's independently
+installed capture and signed write paths apply to both initial implementation
+and rework.
+
+An installation using `observations` and independent `execution_facts` can
+instead include the base Flow's `implementation_result_gate` and its schema.
+
+Configure a separate read-only review Profile. Review gets the accepted
+requirements and the current candidate. Validation starts after the review
+gate accepts and uses that same candidate with the inventory selected from
+the original test author. Include applicable repository checks as required
+classes in the installed test policy. Have the installed validation
+command run the selected repository checks against the candidate and report
+a result for each class. The gate requires a complete passing report.
+
+Review changes and confirmed implementation defects converge on the same
+rework edge. Its `max_repeats` defaults to one and counts both reasons
+together. The replacement gets the original accepted requirements, public
+coverage scope, exact prior candidate and a bounded list of remediation items.
+For a review failure it contains the review findings, or a single fallback
+when a violated criterion has no written finding. For a validation failure it
+contains the classifier's remediation based on public class outcomes.
+Each replacement repeats review and
+validation with the original protected inventory.
+
+An indeterminate review or validation and exhausted rework wait in an
+operator gate with the exact findings or diagnostic input. An operator can
+close the review with a reason. The gate cannot authorize another automated
+rework or publication. Requirements and test defects end the automatic
+branch for an explicit correction cycle. `verified_candidate` is the
+successful completion of this branch.

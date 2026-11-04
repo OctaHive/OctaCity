@@ -92,6 +92,59 @@ fn modular_templates_publish_identically_without_interpreting_node_or_file_names
 }
 
 #[test]
+fn manifest_reuses_a_gate_program_with_a_local_evidence_precondition() {
+  let original = supplied_base_flow_template();
+  let mut root = serde_json::to_value(&original).unwrap();
+  let mut content = serde_json::json!({});
+  for field in [
+    "schemas",
+    "deliverable_policies",
+    "nodes",
+    "transitions",
+    "terminals",
+    "context_projections",
+    "data_projections",
+  ] {
+    content[field] = root.as_object_mut().unwrap().remove(field).unwrap();
+  }
+  let gate = content["nodes"]
+    .as_array_mut()
+    .unwrap()
+    .iter_mut()
+    .find(|node| node["key"] == "code_review_gate")
+    .unwrap()
+    .as_object_mut()
+    .unwrap();
+  let mut program = gate.remove("gate").unwrap();
+  let precondition = program.as_object_mut().unwrap().remove("precondition").unwrap();
+  content["gate_bindings"] = serde_json::json!({
+    "code_review_gate": {"program": "review_policy", "precondition": precondition}
+  });
+  let library = serde_json::json!({"gate_programs": {"review_policy": program}});
+  root["parts"] = serde_json::json!(["nodes.json", "library.json"]);
+  let manifest = serde_json::to_vec(&root).unwrap();
+  let load = |content: &serde_json::Value, library: &serde_json::Value| {
+    FlowDefinitionTemplate::from_manifest(&manifest, |path| {
+      Ok(
+        serde_json::to_vec(if path.as_str() == "nodes.json" {
+          content
+        } else {
+          library
+        })
+        .unwrap(),
+      )
+    })
+  };
+  assert_eq!(load(&content, &library).unwrap(), original);
+  assert!(
+    load(&content, &serde_json::json!({})).is_err(),
+    "missing decision program"
+  );
+  content["gate_bindings"]["missing_node"] = content["gate_bindings"]["code_review_gate"].clone();
+  assert!(load(&content, &library).is_err(), "unknown consuming node");
+}
+
+#[test]
 fn named_deliverable_policy_is_resolved_once_for_all_selected_nodes() {
   let original = crate::flow_test_support::supplied_base_flow_template();
   let mut wire = serde_json::to_value(&original).unwrap();

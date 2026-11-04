@@ -19,7 +19,7 @@ pub struct FactoryCodexBuildOutputSource<R, Q, A, B> {
   reader: FactoryArtifactReader<A, Q, B>,
   profiles: Vec<FactoryCodexBuildProfile>,
   context: Arc<dyn FactoryNodeContextSource>,
-  candidate_context: Option<Arc<dyn FactoryRetainedCandidateContextSource>>,
+  candidate_context: Option<Arc<dyn FactoryCodexCandidateReaderFactory>>,
   review: Option<Arc<dyn FactoryReviewInvocationSource>>,
   role: Option<Arc<dyn FactoryRoleInvocationStore>>,
   runtime_settings: Option<Arc<dyn FactoryRuntimeSettingsStore>>,
@@ -77,13 +77,10 @@ impl<R, Q: BuildQueryStore, A: ArtifactRecordStore, B: ArtifactByteReader> Facto
     self
   }
 
-  /// Installs readonly recovery for exact candidate inputs and retained lineage.
-  /// The default rejects candidate observations; capture and write roles remain unsupported.
+  /// Installs recovery for exact candidate inputs and retained lineage.
+  /// Candidate observations require an explicitly configured source.
   #[must_use]
-  pub fn with_retained_candidate_context_source(
-    mut self,
-    source: Arc<dyn FactoryRetainedCandidateContextSource>,
-  ) -> Self {
+  pub fn with_retained_candidate_context_source(mut self, source: Arc<dyn FactoryCodexCandidateReaderFactory>) -> Self {
     self.candidate_context = Some(source);
     self
   }
@@ -197,29 +194,37 @@ impl<R: FactoryRunStore, Q: BuildQueryStore, A: ArtifactRecordStore, B: Artifact
     {
       return Err(Invalid);
     }
-    let role =
-      if intent.selected_profile().is_some() || !self.profiles.iter().any(|profile| profile.matches_intent(intent)) {
-        let retained = self
-          .role
-          .as_ref()
-          .ok_or(Invalid)?
-          .factory_role_invocation(intent.operation_id().map_err(|_| Invalid)?)
-          .await
-          .map_err(classify)?
-          .ok_or(Invalid)?;
-        let role = FactoryRoleInvocation::restore(retained).map_err(|_| Invalid)?;
-        role.verify_intent(intent).map_err(|_| Invalid)?;
-        Some(role)
-      } else {
-        None
-      };
-    let mut profiles = self.profiles.iter().filter(|profile| {
-      profile.matches_role_intent(intent, role.as_ref().map(|role| &role.package().inputs().profile))
-    });
-    let profile = profiles.next().ok_or(Invalid)?;
-    if profiles.next().is_some() {
-      return Err(Invalid);
-    }
+    let static_profile = if intent.selected_profile().is_none() {
+      FactoryCodexBuildProfile::select_for_intent(&self.profiles, intent, None, self.candidate_context.as_deref())
+        .await
+        .map_err(super::factory_codex_candidate_context::classify_selection)?
+    } else {
+      None
+    };
+    let (profile, role) = if let Some(profile) = static_profile {
+      (profile, None)
+    } else {
+      let retained = self
+        .role
+        .as_ref()
+        .ok_or(Invalid)?
+        .factory_role_invocation(intent.operation_id().map_err(|_| Invalid)?)
+        .await
+        .map_err(classify)?
+        .ok_or(Invalid)?;
+      let role = FactoryRoleInvocation::restore(retained).map_err(|_| Invalid)?;
+      role.verify_intent(intent).map_err(|_| Invalid)?;
+      let profile = FactoryCodexBuildProfile::select_for_intent(
+        &self.profiles,
+        intent,
+        Some(&role.package().inputs().profile),
+        self.candidate_context.as_deref(),
+      )
+      .await
+      .map_err(super::factory_codex_candidate_context::classify_selection)?
+      .ok_or(Invalid)?;
+      (profile, Some(role))
+    };
     let capture = profile.capture.as_ref();
     let write_paths = crate::factory::execution::factory_build_materialization::factory_capture_source_paths(
       intent,
@@ -249,11 +254,7 @@ impl<R: FactoryRunStore, Q: BuildQueryStore, A: ArtifactRecordStore, B: Artifact
     if &permissions != intent.permissions() {
       return Err(Invalid);
     }
-    if has_candidate
-      && (profile.consumer != FactoryCredentialConsumer::ReadOnlyReview
-        || profile.tool_risk.is_some()
-        || permissions.tools().next().is_some())
-    {
+    if has_candidate && (!profile.permits_candidate_context() || permissions.tools().next().is_some()) {
       return Err(Invalid);
     }
     let source_scope = factory_job_source_scope(intent.input(), &permissions).map_err(|_| Invalid)?;
@@ -302,6 +303,7 @@ impl<R: FactoryRunStore, Q: BuildQueryStore, A: ArtifactRecordStore, B: Artifact
           .candidate_context
           .as_ref()
           .ok_or(Invalid)?
+          .for_capture(profile.candidate_capture_tool.as_ref().ok_or(Invalid)?)
           .read_retained_candidate_context(intent, now, retained_until)
           .await
           .map_err(|_| Unavailable)?,
@@ -358,6 +360,7 @@ impl<R: FactoryRunStore, Q: BuildQueryStore, A: ArtifactRecordStore, B: Artifact
         role: role.as_ref(),
         context: selected.as_ref(),
         candidate_context: candidate.as_ref(),
+        candidate_capture_tool: profile.candidate_capture_tool.as_ref(),
         tool_risk: profile.tool_risk,
         tool_response_limits: profile.tool_response_limits,
         capture: profile.capture.as_ref(),

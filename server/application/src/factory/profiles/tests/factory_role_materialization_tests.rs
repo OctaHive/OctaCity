@@ -1909,7 +1909,16 @@ fn role_package_substitution_cannot_reuse_another_profile_or_node_invocation() {
     factory_role_task_digest(installed.task_digest(), &inputs.profile),
     intent.profile().task_digest
   );
-  assert!(!installed.matches_role_intent(&intent, Some(&inputs.profile)));
+  assert!(
+    crate::factory::admission::tests::factory_admission_tests::run_ready(FactoryCodexBuildProfile::select_for_intent(
+      std::slice::from_ref(&installed),
+      &intent,
+      Some(&inputs.profile),
+      None
+    ),)
+    .unwrap()
+    .is_none()
+  );
   let substituted =
     FactoryRoleInvocation::new(FactoryRoleExecutionPackage::new(inputs).unwrap(), None, BTreeMap::new()).unwrap();
   assert!(

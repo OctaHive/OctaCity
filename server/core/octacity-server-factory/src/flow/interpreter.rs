@@ -261,46 +261,38 @@ impl<'a> FlowInterpreter<'a> {
       .count();
     let mut directives = Vec::with_capacity(transitions.len());
     for transition in transitions {
-      if transition.max_repeats() > 0 && traversals > usize::from(transition.max_repeats()) {
-        let terminal = transition
-          .exhausted_terminal()
-          .and_then(|key| definition.terminals().iter().find(|terminal| terminal.key() == key))
-          .filter(|terminal| terminal.schema() == declared.schema())
-          .ok_or_else(|| invalid("Flow repeat exhaustion route"))?;
-        directives.push(FlowDirective::Complete {
-          terminal: terminal.key().clone(),
-          schema_digest: terminal.schema().digest(),
-        });
-        continue;
-      }
-      match transition.target() {
-        crate::FlowTransitionTarget::Node(successor) => {
-          if transition.starts_cycle() {
-            directives.push(FlowDirective::RestartCycle {
-              node: successor.clone(),
-              source: attempt.id(),
-            });
-            continue;
-          }
+      if let Some(successor) = transition.selected_node(traversals) {
+        if transition.starts_cycle() {
+          directives.push(FlowDirective::RestartCycle {
+            node: successor.clone(),
+            source: attempt.id(),
+          });
+        } else {
           directives.push(directive_for_node(
             definition,
             successor,
             projected_inputs(definition, attempt.node_key(), completion.outcome(), successor),
           )?);
         }
-        crate::FlowTransitionTarget::Terminal(terminal_key) => {
-          let terminal = definition
-            .terminals()
-            .iter()
-            .find(|terminal| terminal.key() == terminal_key)
-            .filter(|terminal| terminal.schema() == declared.schema())
-            .ok_or_else(|| invalid("Flow terminal schema"))?;
-          directives.push(FlowDirective::Complete {
-            terminal: terminal.key().clone(),
-            schema_digest: terminal.schema().digest(),
-          });
-        }
+        continue;
       }
+      let (terminal_key, error_field) = if transition.is_exhausted(traversals) {
+        (transition.exhausted_terminal(), "Flow repeat exhaustion route")
+      } else {
+        let terminal = match transition.target() {
+          crate::FlowTransitionTarget::Terminal(key) => Some(key),
+          crate::FlowTransitionTarget::Node(_) => None,
+        };
+        (terminal, "Flow terminal schema")
+      };
+      let terminal = terminal_key
+        .and_then(|key| definition.terminals().iter().find(|terminal| terminal.key() == key))
+        .filter(|terminal| terminal.schema() == declared.schema())
+        .ok_or_else(|| invalid(error_field))?;
+      directives.push(FlowDirective::Complete {
+        terminal: terminal.key().clone(),
+        schema_digest: terminal.schema().digest(),
+      });
     }
     Ok(directives)
   }
@@ -322,6 +314,7 @@ impl<'a> FlowInterpreter<'a> {
     definition: &FlowDefinition,
     predecessor: &FactoryKey,
     outcome: &FactoryKey,
+    traversals: usize,
   ) -> BTreeSet<FactoryKey> {
     definition
       .transitions()
@@ -329,10 +322,7 @@ impl<'a> FlowInterpreter<'a> {
       .filter(|transition| {
         !transition.starts_cycle() && transition.predecessor() == predecessor && transition.outcome() == outcome
       })
-      .filter_map(|transition| match transition.target() {
-        crate::FlowTransitionTarget::Node(successor) => Some(successor.clone()),
-        crate::FlowTransitionTarget::Terminal(_) => None,
-      })
+      .filter_map(|transition| transition.selected_node(traversals).cloned())
       .collect()
   }
 }

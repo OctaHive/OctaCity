@@ -6,7 +6,7 @@ pub use flow::{
   FactoryCodexFlowCompilationOptions, FactoryCodexReviewCompilation, codex_flow_task_digest, compile_codex_flow_task,
   compile_codex_flow_task_with_context, compile_codex_flow_task_with_options,
 };
-pub(crate) use flow::{RolePrompt, render_context, render_role_prompt};
+pub(crate) use flow::{RolePrompt, candidate_capture_task_digest, render_context, render_role_prompt};
 
 use std::collections::{BTreeMap, BTreeSet};
 

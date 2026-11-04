@@ -80,6 +80,23 @@ struct ValidationFacts {
   covered_classes: Vec<FactoryKey>,
   fresh_until: Timestamp,
 }
+pub(super) fn readonly_test_mounts(intent: &FlowBuildIntent) -> bool {
+  !intent.permissions().mounts().any(|mount| {
+    mount.mode() != MountMode::ReadOnly
+      && [
+        octacity_protocol::FACTORY_SOURCE_ROOT,
+        octacity_protocol::PROTECTED_INPUT_ROOT,
+      ]
+      .iter()
+      .any(|protected| {
+        let root = mount.root().as_str();
+        root == "/"
+          || root == *protected
+          || protected.strip_prefix(root).is_some_and(|rest| rest.starts_with('/'))
+          || root.strip_prefix(protected).is_some_and(|rest| rest.starts_with('/'))
+      })
+  })
+}
 /// Combines inputs only for a command node with explicit candidate and test selections.
 /// No model invocation or predecessor pointer can implicitly acquire these files.
 pub fn factory_protected_validation_materialization(
@@ -98,23 +115,7 @@ pub fn factory_protected_validation_materialization(
     }
     _ => return Err(invalid()),
   };
-  if request.intent.node().node_kind() != FlowNodeKind::BuildCommand
-    || request.intent.permissions().mounts().any(|mount| {
-      mount.mode() != MountMode::ReadOnly
-        && [
-          octacity_protocol::FACTORY_SOURCE_ROOT,
-          octacity_protocol::PROTECTED_INPUT_ROOT,
-        ]
-        .iter()
-        .any(|protected| {
-          let root = mount.root().as_str();
-          root == "/"
-            || root == *protected
-            || protected.strip_prefix(root).is_some_and(|rest| rest.starts_with('/'))
-            || root.strip_prefix(protected).is_some_and(|rest| rest.starts_with('/'))
-        })
-    })
-  {
+  if request.intent.node().node_kind() != FlowNodeKind::BuildCommand || !readonly_test_mounts(request.intent) {
     return Err(invalid());
   }
   let capture = factory_node_candidate_materialization(

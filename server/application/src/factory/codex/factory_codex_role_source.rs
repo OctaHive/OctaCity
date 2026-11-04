@@ -1,7 +1,7 @@
 //! Initial role packages over immutable catalog versions and retained input readers.
 use crate::{
-  ApplicationError, FactoryCodexBuildProfile, FactoryNodeContextSource, FactoryRoleInvocation,
-  FactoryRoleInvocationSource,
+  ApplicationError, FactoryCodexBuildProfile, FactoryCodexCandidateReaderFactory, FactoryNodeContextSource,
+  FactoryRoleInvocation, FactoryRoleInvocationSource,
 };
 use octacity_artifact_store::ArtifactByteReader;
 use octacity_server_domain::Timestamp;
@@ -22,6 +22,7 @@ pub struct FactoryStoredCodexRoleInvocationSource<S, B> {
   bytes: Arc<B>,
   context: Arc<dyn FactoryNodeContextSource>,
   profiles: Vec<FactoryCodexBuildProfile>,
+  candidate_context: Option<Arc<dyn FactoryCodexCandidateReaderFactory>>,
 }
 impl<S, B> FactoryStoredCodexRoleInvocationSource<S, B> {
   /// Shares the installed compiler policies, exact catalog and existing retained readers.
@@ -36,7 +37,14 @@ impl<S, B> FactoryStoredCodexRoleInvocationSource<S, B> {
       bytes,
       context,
       profiles,
+      candidate_context: None,
     }
+  }
+
+  /// Supplies the retained producer pin when legacy profile selection is ambiguous.
+  pub fn with_candidate_context_source(mut self, source: Arc<dyn FactoryCodexCandidateReaderFactory>) -> Self {
+    self.candidate_context = Some(source);
+    self
   }
 }
 #[async_trait::async_trait]
@@ -91,11 +99,14 @@ impl<
     if role.reference() != profile.role() {
       return Err(invalid());
     }
-    let installed = self
-      .profiles
-      .iter()
-      .find(|installed| installed.matches_role_intent(intent, Some(&profile)))
-      .ok_or_else(invalid)?;
+    let installed = FactoryCodexBuildProfile::select_for_intent(
+      &self.profiles,
+      intent,
+      Some(&profile),
+      self.candidate_context.as_deref(),
+    )
+    .await?
+    .ok_or_else(invalid)?;
     if !matches!(
       installed.consumer,
       FactoryCredentialConsumer::ReadOnlyReview | FactoryCredentialConsumer::ToolReasoning

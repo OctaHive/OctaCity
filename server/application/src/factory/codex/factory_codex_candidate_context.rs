@@ -1,99 +1,76 @@
-//! Candidate recovery selected by the existing exact installed Codex profile.
+//! Candidate recovery from the capture pin of an already qualified Codex profile.
 use crate::{
-  ApplicationError, FactoryCandidateContext, FactoryCandidateContextSource, FactoryCodexBuildProfile,
-  FactoryExecutionClock, FactoryNodeCandidateContextSource, FactoryRetainedCandidateContextSource,
-  FactoryStoredCandidateContextSource, MAX_FACTORY_EXECUTOR_BINDINGS, OrdinaryBuildApplicationError,
+  ApplicationError, FactoryCandidateContextSource, FactoryExecutionClock, FactoryNodeCandidateContextSource,
+  FactoryRetainedCandidateContextSource, FactoryStoredCandidateContextSource,
 };
-use async_trait::async_trait;
 use octacity_artifact_store::ArtifactByteReader;
-use octacity_server_domain::Timestamp;
-use octacity_server_factory::{FactoryClaimOwnership, FactoryCredentialConsumer, FlowBuildIntent};
+use octacity_server_factory::{FlowBuildIntent, ImmutableReference};
 use octacity_server_store::{ArtifactRecordStore, BuildQueryStore, FactoryRunStore};
 use std::sync::Arc;
 
-/// Uses one installed profile selection for dispatch and readonly observation.
-/// A capture pin comes only from that profile, never from a model or manifest.
+/// A candidate reader for both fenced dispatch and retained observation.
+pub trait FactoryCodexCandidateReader:
+  FactoryNodeCandidateContextSource + FactoryRetainedCandidateContextSource
+{
+}
+
+impl<T: FactoryNodeCandidateContextSource + FactoryRetainedCandidateContextSource> FactoryCodexCandidateReader for T {}
+
+/// Binds an installed capture pin to the common candidate reader.
+#[async_trait::async_trait]
+pub trait FactoryCodexCandidateReaderFactory: Send + Sync {
+  /// Returns the verified producer's tool for the candidate frozen in this intent.
+  async fn retained_capture_tool(&self, intent: &FlowBuildIntent) -> Result<ImmutableReference, ApplicationError>;
+
+  /// The caller supplies the pin from the profile already qualified against the frozen intent.
+  fn for_capture(&self, capture_tool: &ImmutableReference) -> Box<dyn FactoryCodexCandidateReader + '_>;
+}
+
+/// Reuses the retained candidate reader without resolving a second profile.
 pub struct FactoryCodexCandidateContextSource<R, A, Q, B> {
   runs: Arc<R>,
   source: Arc<FactoryCandidateContextSource<A, Q, B>>,
-  profiles: Vec<FactoryCodexBuildProfile>,
   clock: Arc<dyn FactoryExecutionClock>,
 }
 impl<R, A, Q, B> FactoryCodexCandidateContextSource<R, A, Q, B> {
-  /// Installs the same profile catalog used by the compiler and output verifier.
-  /// Native package/backend qualification remains the composition root's duty.
+  /// Installs authoritative journals, the existing Artifact reader and trusted time.
   pub fn new(
     runs: Arc<R>,
     source: Arc<FactoryCandidateContextSource<A, Q, B>>,
-    profiles: Vec<FactoryCodexBuildProfile>,
     clock: Arc<dyn FactoryExecutionClock>,
-  ) -> Result<Self, OrdinaryBuildApplicationError> {
-    if profiles.is_empty()
-      || profiles.len() > MAX_FACTORY_EXECUTOR_BINDINGS
-      || profiles
-        .iter()
-        .any(|profile| profile.consumer != FactoryCredentialConsumer::ReadOnlyReview || profile.tool_risk.is_some())
-    {
-      return Err(OrdinaryBuildApplicationError::Invalid);
-    }
-    Ok(Self {
-      runs,
-      source,
-      profiles,
-      clock,
-    })
+  ) -> Self {
+    Self { runs, source, clock }
   }
-  fn selected_source(
-    &self,
-    intent: &FlowBuildIntent,
-  ) -> Result<FactoryStoredCandidateContextSource<R, A, Q, B>, ApplicationError> {
-    let mut profiles = self.profiles.iter().filter(|profile| profile.matches_intent(intent));
-    let profile = profiles.next().ok_or_else(ApplicationError::invalid)?;
-    if profiles.next().is_some() {
-      return Err(ApplicationError::invalid());
-    }
-    let capture_tool = profile
-      .candidate_capture_tool
-      .clone()
-      .ok_or_else(ApplicationError::invalid)?;
-    Ok(FactoryStoredCandidateContextSource::new(
+}
+
+#[async_trait::async_trait]
+impl<R: FactoryRunStore, A: ArtifactRecordStore, Q: BuildQueryStore, B: ArtifactByteReader>
+  FactoryCodexCandidateReaderFactory for FactoryCodexCandidateContextSource<R, A, Q, B>
+{
+  async fn retained_capture_tool(&self, intent: &FlowBuildIntent) -> Result<ImmutableReference, ApplicationError> {
+    use crate::factory::artifacts::factory_stored_candidate_context::{
+      selected_candidate_capture, verify_retained_consumer,
+    };
+    let snapshot = self.runs.factory_run_snapshot(intent.input().factory_run_id()).await?;
+    verify_retained_consumer(&snapshot, intent)?;
+    let (_, manifest) = selected_candidate_capture(&snapshot, intent)?;
+    Ok(manifest.producer.tool().clone())
+  }
+
+  fn for_capture(&self, capture_tool: &ImmutableReference) -> Box<dyn FactoryCodexCandidateReader + '_> {
+    Box::new(FactoryStoredCandidateContextSource::new(
       self.runs.clone(),
       self.source.clone(),
-      capture_tool,
+      capture_tool.clone(),
       self.clock.clone(),
     ))
   }
 }
-#[async_trait]
-impl<R: FactoryRunStore, A: ArtifactRecordStore, Q: BuildQueryStore, B: ArtifactByteReader>
-  FactoryNodeCandidateContextSource for FactoryCodexCandidateContextSource<R, A, Q, B>
-{
-  async fn read_candidate_context(
-    &self,
-    intent: &FlowBuildIntent,
-    ownership: &FactoryClaimOwnership,
-    observed_at: Timestamp,
-    required_until: Timestamp,
-  ) -> Result<FactoryCandidateContext, ApplicationError> {
-    self
-      .selected_source(intent)?
-      .read_candidate_context(intent, ownership, observed_at, required_until)
-      .await
-  }
-}
-#[async_trait]
-impl<R: FactoryRunStore, A: ArtifactRecordStore, Q: BuildQueryStore, B: ArtifactByteReader>
-  FactoryRetainedCandidateContextSource for FactoryCodexCandidateContextSource<R, A, Q, B>
-{
-  async fn read_retained_candidate_context(
-    &self,
-    intent: &FlowBuildIntent,
-    observed_at: Timestamp,
-    required_until: Timestamp,
-  ) -> Result<FactoryCandidateContext, ApplicationError> {
-    self
-      .selected_source(intent)?
-      .read_retained_candidate_context(intent, observed_at, required_until)
-      .await
+
+pub(super) fn classify_selection(error: ApplicationError) -> crate::OrdinaryBuildApplicationError {
+  if error.classification() == crate::ApplicationFailure::Unavailable {
+    crate::OrdinaryBuildApplicationError::Unavailable
+  } else {
+    crate::OrdinaryBuildApplicationError::Invalid
   }
 }

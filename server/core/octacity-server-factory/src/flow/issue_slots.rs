@@ -101,7 +101,10 @@ impl<'a> Graph<'a> {
         FlowTransitionTarget::Terminal(terminal) => returned.get(terminal).copied(),
       };
       // An exhausted repeat and its continuation are alternative routes.
-      let exhausted = route.exhausted_terminal().and_then(|key| returned.get(key)).copied();
+      let exhausted = route
+        .exhausted_node()
+        .map(|node| entries[node])
+        .or_else(|| route.exhausted_terminal().and_then(|key| returned.get(key)).copied());
       let successors = target.into_iter().chain(exhausted).collect::<Vec<_>>();
       if successors.len() > 1 {
         let choice = self.vertex(scope, false)?;

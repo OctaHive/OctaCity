@@ -1,6 +1,8 @@
 //! Retained private test selection over the common journal and ordinary Artifacts.
 use crate::*;
+use async_trait::async_trait;
 use octacity_artifact_store::{ArtifactByteReader, MAX_ARTIFACT_READ_BYTES};
+use octacity_protocol::ProtectedInputV3;
 use octacity_server_domain::Timestamp;
 use octacity_server_factory::*;
 use octacity_server_store::{ArtifactRecord, ArtifactRecordStore, BuildQueryStore, FactoryRunStore};
@@ -12,6 +14,7 @@ pub struct FactoryProtectedTestContext {
   bundle: ProtectedTestBundle,
   manifest: ArtifactRecord,
   files: Vec<ArtifactRecord>,
+  job_inputs: Vec<ProtectedInputV3>,
 }
 impl FactoryProtectedTestContext {
   /// Original immutable coverage, subject and retention proof.
@@ -27,6 +30,74 @@ impl FactoryProtectedTestContext {
     &self.files
   }
 }
+/// Private signed-Job inputs for one exact observation of the original Work revision.
+pub struct FactoryProtectedTestObservationInputs {
+  input_digest: FactoryDigest,
+  inputs: Vec<ProtectedInputV3>,
+  retained_until: Timestamp,
+  reserved_inputs: u16,
+  classes: Vec<FactoryKey>,
+}
+
+impl FactoryProtectedTestObservationInputs {
+  #[cfg(test)]
+  pub(crate) fn new(
+    input: &FlowNodeInput,
+    bundle: &ProtectedTestBundle,
+    manifest: &ArtifactRecord,
+    files: &[ArtifactRecord],
+    at: Timestamp,
+  ) -> Result<Self, ApplicationError> {
+    let job_inputs = factory_protected_test_materialization(input, bundle, manifest, files, at)?;
+    Self::from_verified(input, bundle, job_inputs)
+  }
+
+  fn from_verified(
+    input: &FlowNodeInput,
+    bundle: &ProtectedTestBundle,
+    job_inputs: Vec<ProtectedInputV3>,
+  ) -> Result<Self, ApplicationError> {
+    if !matches!(
+      input.context().map(|context| context.subject()),
+      Some(FactoryTaskSubject::Exact(_))
+    ) {
+      return Err(ApplicationError::invalid());
+    }
+    Ok(Self {
+      input_digest: input.digest().map_err(|_| ApplicationError::invalid())?,
+      inputs: job_inputs,
+      retained_until: bundle.retained_until(),
+      reserved_inputs: bundle.plan().reserved_inputs(),
+      classes: bundle.plan().classes().to_vec(),
+    })
+  }
+  pub(crate) fn classes(&self) -> &[FactoryKey] {
+    &self.classes
+  }
+  pub(crate) fn matches(&self, input: &FlowNodeInput) -> Result<bool, ApplicationError> {
+    Ok(self.input_digest == input.digest().map_err(|_| ApplicationError::invalid())?)
+  }
+  pub(crate) fn inputs(&self) -> &[ProtectedInputV3] {
+    &self.inputs
+  }
+  pub(crate) fn retained_until(&self) -> Timestamp {
+    self.retained_until
+  }
+  pub(crate) fn reserved_inputs(&self) -> u16 {
+    self.reserved_inputs
+  }
+}
+
+/// Restores the selected private inputs for a qualified command observing the Work base.
+#[async_trait]
+pub trait FactoryProtectedTestObservationInputSource: Send + Sync {
+  /// Resolves the exact persisted bundle and returns its read-only signed-Job inputs.
+  async fn observation_inputs(
+    &self,
+    intent: &FlowBuildIntent,
+  ) -> Result<FactoryProtectedTestObservationInputs, ApplicationError>;
+}
+
 /// Restores only explicitly selected private metadata from an installed capture contract.
 /// No latest pointer, process cache, logical node name or model producer assertion is used.
 pub struct FactoryStoredProtectedTestContextSource<R, A, Q, B, P> {
@@ -161,11 +232,77 @@ impl<
     if finished >= plan.retain_until() {
       return Err(invalid());
     }
-    factory_protected_test_materialization(input, &bundle, retained.record(), &files, finished)?;
+    let job_inputs = factory_protected_test_materialization(input, &bundle, retained.record(), &files, finished)?;
     Ok(FactoryProtectedTestContext {
       bundle,
       manifest: document.record,
       files,
+      job_inputs,
     })
   }
+}
+
+#[async_trait]
+impl<
+  R: FactoryRunStore,
+  A: ArtifactRecordStore,
+  Q: BuildQueryStore,
+  B: ArtifactByteReader,
+  P: FactoryProtectedTestPlanSource,
+> FactoryProtectedTestObservationInputSource for FactoryStoredProtectedTestContextSource<R, A, Q, B, P>
+{
+  async fn observation_inputs(
+    &self,
+    intent: &FlowBuildIntent,
+  ) -> Result<FactoryProtectedTestObservationInputs, ApplicationError> {
+    use crate::factory::artifacts::factory_stored_candidate_context::verify_retained_consumer;
+    let input = intent.input();
+    let invalid = ApplicationError::invalid;
+    if intent.node().node_kind() != FlowNodeKind::BuildCommand
+      || intent.profile().capture_deliverables.is_some()
+      || !super::factory_protected_validation::readonly_test_mounts(intent)
+      || !matches!(
+        input.context().map(|context| context.subject()),
+        Some(FactoryTaskSubject::Exact(_))
+      )
+    {
+      return Err(invalid());
+    }
+    let at = self.clock.now()?.max(intent.node().started_at());
+    let snapshot = self.runs.factory_run_snapshot(input.factory_run_id()).await?;
+    verify_retained_consumer(&snapshot, intent)?;
+    let (until, completed) = observation_window(&snapshot, intent, at)?;
+    let selected = self.read(input, at, until).await?;
+    let finished = self.clock.now()?.max(at);
+    let current = self.runs.factory_run_snapshot(input.factory_run_id()).await?;
+    verify_retained_consumer(&current, intent)?;
+    if (!completed && finished >= until) || finished >= selected.bundle.retained_until() {
+      return Err(invalid());
+    }
+    FactoryProtectedTestObservationInputs::from_verified(input, &selected.bundle, selected.job_inputs)
+  }
+}
+
+pub(super) fn observation_window(
+  snapshot: &octacity_server_store::FactoryRunSnapshot,
+  intent: &FlowBuildIntent,
+  at: Timestamp,
+) -> Result<(Timestamp, bool), ApplicationError> {
+  let completed = snapshot
+    .flow
+    .completions
+    .iter()
+    .any(|row| row.node_attempt_id() == intent.node().id());
+  let until = if completed {
+    at.unix_millis()
+      .checked_add(1)
+      .and_then(|value| Timestamp::from_unix_millis(value).ok())
+      .ok_or_else(ApplicationError::invalid)?
+  } else {
+    intent.node().deadline()
+  };
+  if at >= until {
+    return Err(ApplicationError::invalid());
+  }
+  Ok((until, completed))
 }

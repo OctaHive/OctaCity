@@ -49,6 +49,13 @@
               "type": "reference",
               "schema": "artifact_reference"
             }
+          },
+          "original_acceptance": {
+            "required": false,
+            "value": {
+              "type": "reference",
+              "schema": "artifact_reference"
+            }
           }
         }
       }

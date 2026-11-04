@@ -161,9 +161,10 @@ fn configured_implementation_handoff_selects_exact_parent_without_protected_gran
     .unwrap();
   let summary = serde_json::json!({"work_kind":"defect","size":"small","risk":"low","admission_risk":"low","component":"api","severity":"high","dependencies":[],"recommended_route":"development","research_required":false,"research_accepted":false});
   let task = serde_json::json!({"artifact_id":"00000000-0000-0000-0000-000000000011","content_digest":"c".repeat(64),"encoded_size":100});
+  let acceptance = serde_json::json!({"artifact_id":"00000000-0000-0000-0000-000000000012","content_digest":"e".repeat(64),"encoded_size":80});
   let input = FlowPayload::new(
     schema,
-    serde_json::json!({"accepted":summary,"task":task,"accepted_contract":"a".repeat(64)}),
+    serde_json::json!({"accepted":summary,"task":task,"original_acceptance":acceptance,"accepted_contract":"a".repeat(64),"test_scope":["project.custom"]}),
   )
   .unwrap();
   let target = flow.definition.node(&key("implementation")).unwrap();
@@ -177,24 +178,32 @@ fn configured_implementation_handoff_selects_exact_parent_without_protected_gran
     serde_json::from_value(serde_json::to_value(program).unwrap()["default_output"].clone()).unwrap();
   let first = mapping.project(&input, target_schema).unwrap();
   assert_eq!(first.value()["accepted_contract"], "a".repeat(64));
+  assert_eq!(first.value()["test_scope"], serde_json::json!(["project.custom"]));
   let binding = target.context_binding().unwrap();
   assert!(binding.candidate_revision(&first).unwrap().is_none());
-  assert_eq!(binding.selected_sources(&first).unwrap().len(), 1);
+  let selected = binding.selected_sources(&first).unwrap();
+  assert_eq!(selected.len(), 2);
+  assert_eq!(
+    selected[&key("original_acceptance")],
+    (
+      ContextSourceKind::Specification,
+      FactoryContextReference::Artifact(serde_json::from_value(acceptance).unwrap())
+    ),
+  );
   let mut rework = first.value().clone();
   rework["parent"] = serde_json::json!({"candidate_revision":"previous-candidate","candidate_digest":"d".repeat(64),"manifest":task,"bundle":task});
-  rework["remediation"] = serde_json::json!("Keep the public API contract");
+  rework["remediation"] = serde_json::json!(["Keep the public API contract"]);
   let rework = FlowPayload::new(target_schema, rework).unwrap();
   assert_eq!(
     binding.candidate_revision(&rework).unwrap().unwrap().as_str(),
     "previous-candidate"
   );
   let selected = binding.selected_sources(&rework).unwrap();
-  assert_eq!(selected.len(), 3);
-  assert!(
-    selected
-      .values()
-      .all(|(kind, _)| matches!(kind, ContextSourceKind::Task | ContextSourceKind::Evidence))
-  );
+  assert_eq!(selected.len(), 4);
+  assert!(selected.values().all(|(kind, _)| matches!(
+    kind,
+    ContextSourceKind::Task | ContextSourceKind::Evidence | ContextSourceKind::Specification
+  )));
   let mut leaked = rework.value().clone();
   leaked["protected_inventory"] = task;
   assert!(FlowPayload::new(target_schema, leaked).is_err());
@@ -212,6 +221,11 @@ fn configured_code_review_requires_independent_exact_fresh_assessment() {
     ("/review/candidate_revision", serde_json::json!("another"), "invalid"),
     ("/review/candidate_digest", serde_json::json!("e".repeat(64)), "invalid"),
     ("/review/input_digest", serde_json::json!("e".repeat(64)), "invalid"),
+    (
+      "/review/findings",
+      serde_json::json!(["The configured security check is bypassed"]),
+      "changes_required",
+    ),
     ("/facts/accepted", serde_json::json!(false), "invalid"),
     ("/facts/report_digest", serde_json::json!("e".repeat(64)), "invalid"),
     ("/output_deadlines/facts", serde_json::json!(30), "invalid"),

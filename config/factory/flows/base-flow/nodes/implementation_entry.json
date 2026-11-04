@@ -22,14 +22,18 @@
       "input_binding": {
         "sources": {
           "original": {
-            "source": "predecessor",
+            "source": "record",
             "view": "input_payload",
-            "path": ""
+            "path": "",
+            "node": "protected_tests",
+            "outcome": "observed"
           },
           "handoff": {
-            "source": "predecessor",
+            "source": "record",
             "view": "payload",
-            "path": ""
+            "path": "",
+            "node": "protected_tests",
+            "outcome": "observed"
           }
         },
         "mapping": {
@@ -47,6 +51,14 @@
               "accepted_contract": {
                 "mapping": "pointer",
                 "path": "/handoff/accepted_contract"
+              },
+              "test_scope": {
+                "mapping": "pointer",
+                "path": "/handoff/classes"
+              },
+              "original_acceptance": {
+                "mapping": "pointer",
+                "path": "/original/original_acceptance"
               }
             }
           }
@@ -94,6 +106,14 @@
                 "accepted_contract": {
                   "mapping": "pointer",
                   "path": "/accepted_contract"
+                },
+                "test_scope": {
+                  "mapping": "pointer",
+                  "path": "/test_scope"
+                },
+                "original_acceptance": {
+                  "mapping": "pointer",
+                  "path": "/original_acceptance"
                 }
               }
             },
@@ -111,6 +131,14 @@
                 "accepted_contract": {
                   "mapping": "pointer",
                   "path": "/accepted_contract"
+                },
+                "test_scope": {
+                  "mapping": "pointer",
+                  "path": "/test_scope"
+                },
+                "original_acceptance": {
+                  "mapping": "pointer",
+                  "path": "/original_acceptance"
                 }
               }
             }

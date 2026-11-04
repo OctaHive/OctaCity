@@ -2,7 +2,6 @@
 use crate::*;
 use async_trait::async_trait;
 use octacity_artifact_store::{ArtifactByteReader, MAX_ARTIFACT_READ_BYTES};
-use octacity_server_domain::Timestamp;
 use octacity_server_factory::*;
 use octacity_server_store::{ArtifactRecordStore, BuildQueryStore, FactoryRunStore};
 use std::sync::Arc;
@@ -57,22 +56,7 @@ impl<
     if intent.node().node_kind() != FlowNodeKind::BuildCommand {
       return Err(invalid());
     }
-    let completed = snapshot
-      .flow
-      .completions
-      .iter()
-      .any(|row| row.node_attempt_id() == intent.node().id());
-    let until = if completed {
-      at.unix_millis()
-        .checked_add(1)
-        .and_then(|value| Timestamp::from_unix_millis(value).ok())
-        .ok_or_else(invalid)?
-    } else {
-      intent.node().deadline()
-    };
-    if at >= until {
-      return Err(invalid());
-    }
+    let (until, completed) = super::factory_protected_test_context::observation_window(&snapshot, intent, at)?;
     let candidate = self
       .candidates
       .read_retained_candidate_context(intent, at, until)

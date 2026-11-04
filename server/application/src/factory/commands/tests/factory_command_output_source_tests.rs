@@ -120,14 +120,11 @@ struct Fixture {
   clock: Arc<dyn FactoryExecutionClock>,
   candidate_context: Option<Arc<dyn FactoryRetainedCandidateContextSource>>,
   validation_source: Option<Arc<dyn FactoryProtectedValidationInputSource>>,
+  test_observation: Option<Arc<PrivateTestInputs>>,
 }
 
 async fn observed_command_fixture(primary: PrimaryReport) -> Fixture {
-  observed_command_fixture_with_contract(
-    crate::factory::commands::tests::factory_command_observation_tests::contract(),
-    primary,
-  )
-  .await
+  observed_command_fixture_with_contract(crate::factory_node_test_support::probe_observation_contract(), primary).await
 }
 
 async fn observed_command_fixture_with_contract(
@@ -151,8 +148,7 @@ async fn observed_command_fixture_with_contract(
 #[test]
 fn configured_reproduction_stops_on_indeterminate_observation() {
   crate::factory::admission::tests::factory_admission_tests::run_ready(async {
-    let mut policy =
-      serde_json::to_value(crate::factory::commands::tests::factory_command_observation_tests::contract()).unwrap();
+    let mut policy = serde_json::to_value(crate::factory_node_test_support::probe_observation_contract()).unwrap();
     policy["stop_on_indeterminate"] = serde_json::json!(true);
     let contract: FactoryCommandObservationContract =
       serde_json::from_value(policy).expect("a qualified command can require a conclusive result");
@@ -513,8 +509,13 @@ impl Fixture {
     } else {
       source
     };
-    if let Some(validation) = &self.validation_source {
+    let source = if let Some(validation) = &self.validation_source {
       source.with_protected_validation_input_source(validation.clone())
+    } else {
+      source
+    };
+    if let Some(tests) = &self.test_observation {
+      source.with_protected_test_observation_input_source(tests.clone())
     } else {
       source
     }
@@ -573,17 +574,18 @@ async fn prepared_with_report(
   primary: PrimaryReport,
   configure: impl FnOnce(&mut FactoryCommandBuildProfile),
 ) -> Fixture {
-  prepared_scoped_report(profile, media_type, output_schema, primary, configure, None).await
+  prepared_scoped_report(profile, media_type, output_schema, primary, configure, None, None).await
 }
 async fn prepared_scoped_report(
   mut profile: FactoryCommandBuildProfile,
   media_type: &str,
   output_schema: Option<FlowDataSchema>,
-  primary: PrimaryReport,
+  primary: impl FnOnce(&FlowBuildIntent, &FactoryCommandBuildProfile) -> Option<serde_json::Value>,
   configure: impl FnOnce(&mut FactoryCommandBuildProfile),
   code_scope: Option<FlowCodeScope>,
+  author: Option<&RetainedAuthorFixture>,
 ) -> Fixture {
-  let work = fixtures::work();
+  let work = author.map_or_else(fixtures::work, |author| author.work.clone());
   configure_profile(&mut profile, &work);
   configure(&mut profile);
   let mut binding = fixtures::binding(work.subject().project_id());
@@ -611,6 +613,31 @@ async fn prepared_scoped_report(
       output_schema,
       profile.project_permissions.clone(),
     )
+  };
+  let input = if let Some(author) = author {
+    let prior = input.context().unwrap();
+    let artifact = author.bundle.artifact().clone();
+    let inventory = ContextManifestEntry::new(
+      ContextSourceKind::Evidence,
+      fixtures::key("inventory"),
+      prior.subject().clone(),
+      FactoryContextReference::Artifact(artifact.clone()),
+      artifact.content_digest(),
+      artifact.encoded_size(),
+      FactorySafeText::new("Selected private test inventory").unwrap(),
+      FactoryDigest::from_bytes([7; 32]),
+    )
+    .unwrap();
+    let context = ContextManifest::new(
+      ContextManifestId::generate(),
+      prior.subject().clone(),
+      prior.construction_policy_digest(),
+      vec![inventory],
+    )
+    .unwrap();
+    input.with_context(context, vec![]).unwrap()
+  } else {
+    input
   };
   assert_eq!(schema.reference(), profile.outputs[0].schema());
   let runs = Arc::new(InMemoryFactoryConfigurationStore::new());
@@ -673,10 +700,42 @@ async fn prepared_scoped_report(
     .unwrap();
   let snapshot = runs.factory_run_snapshot(run.id()).await.unwrap();
   let intent = snapshot.flow.data.build_intents[0].clone();
-  finish_prepared_with_primary(profile, runs, admitted, intent, None, media_type, primary).await
+  let source = author.map(|author| {
+    FixtureSource::TestObservation(Arc::new(PrivateTestInputs {
+      bundle: author.bundle.clone(),
+      manifest: author.manifest.record.clone(),
+      file: author.file.record.clone(),
+    }))
+  });
+  finish_prepared_with_primary(profile, runs, admitted, intent, source, media_type, primary).await
+}
+
+use crate::factory::validation::tests::factory_protected_test_tests::RetainedAuthorFixture;
+
+struct PrivateTestInputs {
+  bundle: ProtectedTestBundle,
+  manifest: ArtifactRecord,
+  file: ArtifactRecord,
+}
+
+#[async_trait]
+impl FactoryProtectedTestObservationInputSource for PrivateTestInputs {
+  async fn observation_inputs(
+    &self,
+    intent: &FlowBuildIntent,
+  ) -> Result<FactoryProtectedTestObservationInputs, ApplicationError> {
+    FactoryProtectedTestObservationInputs::new(
+      intent.input(),
+      &self.bundle,
+      &self.manifest,
+      std::slice::from_ref(&self.file),
+      at(40),
+    )
+  }
 }
 
 enum FixtureSource {
+  TestObservation(Arc<PrivateTestInputs>),
   Candidate(FactoryCandidateContext),
   Validation(Box<FactoryProtectedValidationMaterialization>),
   Promotion(FactoryCandidateContext),
@@ -735,6 +794,9 @@ async fn finish_prepared_with_primary(
       .with_candidate(context.candidate(), intent.node().started_at())
       .unwrap(),
     Some(FixtureSource::Validation(validation)) => compiled.with_protected_validation(validation).unwrap(),
+    Some(FixtureSource::TestObservation(tests)) => compiled
+      .with_test_observation_inputs(&tests.observation_inputs(&intent).await.unwrap())
+      .unwrap(),
     Some(FixtureSource::Promotion(context)) => compiled
       .with_candidate(context.candidate(), intent.node().started_at())
       .unwrap()
@@ -872,7 +934,7 @@ async fn finish_prepared_with_primary(
             .0,
         ),
         Some(FixtureSource::Validation(validation)) => Some(validation.wire_inputs(&[]).unwrap().0),
-        None => None,
+        Some(FixtureSource::TestObservation(_)) | None => None,
       },
     },
     policy_layers: FactoryBuildPolicyLayers {
@@ -991,6 +1053,10 @@ async fn finish_prepared_with_primary(
     clock: Arc::new(ReadClock(50 + offset)),
     candidate_context: None,
     validation_source: None,
+    test_observation: match source {
+      Some(FixtureSource::TestObservation(tests)) => Some(tests),
+      _ => None,
+    },
   }
 }
 #[test]
@@ -1595,6 +1661,13 @@ fn explicit_promotion_commands_sign_and_verify_the_original_rollout_plan_with_re
 }
 
 fn install_author_profile(command: &mut FactoryCommandBuildProfile) -> FactoryProtectedTestAuthoringProfile {
+  install_author_profile_with_transcript(command, false)
+}
+
+fn install_author_profile_with_transcript(
+  command: &mut FactoryCommandBuildProfile,
+  with_transcript: bool,
+) -> FactoryProtectedTestAuthoringProfile {
   let inventory = EvidenceRequirement::new(
     fixtures::key("private.inventory"),
     EvidenceOutputKind::Artifact,
@@ -1607,6 +1680,12 @@ fn install_author_profile(command: &mut FactoryCommandBuildProfile) -> FactoryPr
   }
   let mut grants = serde_json::to_value(&command.project_permissions).unwrap();
   grants["outputs"]["kinds"] = serde_json::json!([command.outputs[0].kind(), inventory.kind(), "hidden.contract"]);
+  if with_transcript {
+    grants["outputs"]["kinds"]
+      .as_array_mut()
+      .unwrap()
+      .push(serde_json::json!("author.transcript"));
+  }
   command.project_permissions = serde_json::from_value(grants).unwrap();
   command.local_permissions = LocalPermissionCeiling::fully_enforced(command.project_permissions.clone());
   let limits: FactoryProtectedTestPolicy = serde_json::from_value(serde_json::json!({
@@ -1624,6 +1703,13 @@ fn install_author_profile(command: &mut FactoryCommandBuildProfile) -> FactoryPr
     }],
   )
   .unwrap();
+  let policy = if with_transcript {
+    let mut encoded = serde_json::to_value(policy).unwrap();
+    encoded["transcript"] = serde_json::json!("author.transcript");
+    serde_json::from_value(encoded).unwrap()
+  } else {
+    policy
+  };
   command.identity = ImmutableReference::new(
     command.identity.identity().clone(),
     command.identity.version().clone(),
@@ -1683,14 +1769,15 @@ fn installed_author_source_retains_exact_private_files_as_opaque_artifacts() {
   crate::factory::admission::tests::factory_admission_tests::run_ready(async {
     let (_, _, command) = crate::factory::commands::tests::factory_command_tests::command_fixture();
     let fixture = prepared_with_profile(command, "application/json", |command| {
-      install_author_profile(command);
+      install_author_profile_with_transcript(command, true);
     })
     .await;
     let mut command = fixture.profile.clone();
-    let author = install_author_profile(&mut command);
+    let author = install_author_profile_with_transcript(&mut command, true);
     assert_eq!(command.task_digest(), fixture.profile.task_digest());
     publish_author_file(&fixture, "private.inventory", b"{\"opaque_inventory\":true}").await;
     publish_author_file(&fixture, "hidden.contract", b"PRIVATE_EXPECTATION\0\xff").await;
+    publish_author_file(&fixture, "author.transcript", b"PRIVATE_TRANSCRIPT").await;
     assert!(
       fixture
         .source(fixture.query.clone())
@@ -1710,8 +1797,8 @@ fn installed_author_source_retains_exact_private_files_as_opaque_artifacts() {
     else {
       panic!("exact installed author outputs must verify");
     };
-    assert_eq!(outputs.documents.len(), 3);
-    for name in ["private.inventory", "hidden.contract"] {
+    assert_eq!(outputs.documents.len(), 4);
+    for name in ["private.inventory", "hidden.contract", "author.transcript"] {
       let document = outputs
         .documents
         .iter()
@@ -2281,6 +2368,7 @@ fn scoped_command_results_settle_with_the_executed_source_visibility_guarantee()
         serde_json::from_value(serde_json::json!({"kind":"selected","entries":[{"kind":"path","path":"README.md"}]}))
           .unwrap(),
       ),
+      None,
     )
     .await;
     let observed = fixture
@@ -2308,6 +2396,7 @@ fn scoped_command_observation_rejects_a_different_retained_source_scope() {
         serde_json::from_value(serde_json::json!({"kind":"selected","entries":[{"kind":"path","path":"README.md"}]}))
           .unwrap(),
       ),
+      None,
     )
     .await;
     let mut template = serde_json::to_value(&fixture.query.attempt.jobs[0].job.job_spec_template).unwrap();
@@ -2320,6 +2409,207 @@ fn scoped_command_observation_rejects_a_different_retained_source_scope() {
     assert!(
       matches!(observed, Err(OrdinaryBuildApplicationError::Invalid)),
       "a command result cannot authorize a different code scope"
+    );
+  });
+}
+
+struct UnavailableTestInventory;
+
+#[async_trait]
+impl FactoryProtectedTestObservationInputSource for UnavailableTestInventory {
+  async fn observation_inputs(
+    &self,
+    _: &FlowBuildIntent,
+  ) -> Result<FactoryProtectedTestObservationInputs, ApplicationError> {
+    Err(ApplicationError::unavailable())
+  }
+}
+
+struct InvalidTestInventory;
+
+#[async_trait]
+impl FactoryProtectedTestObservationInputSource for InvalidTestInventory {
+  async fn observation_inputs(
+    &self,
+    _: &FlowBuildIntent,
+  ) -> Result<FactoryProtectedTestObservationInputs, ApplicationError> {
+    Err(ApplicationError::invalid())
+  }
+}
+
+#[test]
+fn protected_baseline_rejects_conclusive_observations_without_required_test_results() {
+  let author = crate::factory::validation::tests::factory_protected_test_tests::retained_author_fixture();
+  crate::factory::admission::tests::factory_admission_tests::run_ready(async {
+    use crate::factory::commands::tests::factory_command_observation_tests::report;
+    let mut contract = crate::factory_node_test_support::probe_observation_contract();
+    contract.requires_protected_tests = true;
+    let schema = contract.report_schema().unwrap();
+    let (_, _, profile) =
+      crate::factory::commands::tests::factory_command_tests::command_fixture_with_observation(Some(contract));
+    for (classes, negative, qualified) in [
+      (None, false, false),
+      (
+        Some(serde_json::json!([{"class":"another","outcome":"failed"}])),
+        false,
+        false,
+      ),
+      (
+        Some(serde_json::json!([{"class":"custom","outcome":"indeterminate"}])),
+        false,
+        false,
+      ),
+      (
+        Some(serde_json::json!([{"class":"custom","outcome":"passed"}])),
+        false,
+        false,
+      ),
+      (
+        Some(serde_json::json!([{"class":"custom","outcome":"failed"}])),
+        true,
+        false,
+      ),
+      (
+        Some(serde_json::json!([{"class":"custom","outcome":"passed"}])),
+        true,
+        true,
+      ),
+    ] {
+      let fixture = prepared_scoped_report(
+        profile.clone(),
+        "application/json",
+        Some(schema.clone()),
+        |intent, profile| {
+          let mut value = report(intent, profile.observation_contract.as_ref().unwrap());
+          if let Some(classes) = classes {
+            value["test_classes"] = classes;
+          }
+          if negative {
+            value["observations"]["unexpected_statuses"] = 0.into();
+            value["finding"] = "not_matched".into();
+          }
+          Some(value)
+        },
+        |_| {},
+        None,
+        Some(&author),
+      )
+      .await;
+      let result = fixture
+        .source(fixture.query.clone())
+        .published_outputs(fixture.query.build.build.id, fixture.query.attempt.id, 10000)
+        .await;
+      if qualified {
+        assert!(matches!(
+          result.unwrap(),
+          FactoryNodeBuildOutputObservation::Verified(_)
+        ));
+      } else {
+        assert_eq!(result.err(), Some(OrdinaryBuildApplicationError::Invalid));
+      }
+    }
+  });
+}
+
+#[test]
+fn protected_baseline_observation_rechecks_the_signed_private_test_files() {
+  let author = crate::factory::validation::tests::factory_protected_test_tests::retained_author_fixture();
+  crate::factory::admission::tests::factory_admission_tests::run_ready(async {
+    use crate::factory::commands::tests::factory_command_observation_tests::report;
+    use crate::factory_node_test_support::probe_observation_contract as contract;
+    let mut contract = contract();
+    contract.requires_protected_tests = true;
+    let schema = contract.report_schema().unwrap();
+    let (_, _, profile) =
+      crate::factory::commands::tests::factory_command_tests::command_fixture_with_observation(Some(contract));
+    let fixture = prepared_scoped_report(
+      profile,
+      "application/json",
+      Some(schema),
+      |intent, profile| {
+        let mut result = report(intent, profile.observation_contract.as_ref().unwrap());
+        result["test_classes"] = serde_json::json!([{"class":"custom","outcome":"failed"}]);
+        Some(result)
+      },
+      |_| {},
+      None,
+      Some(&author),
+    )
+    .await;
+    for (source, expected) in [
+      (
+        Arc::new(InvalidTestInventory) as Arc<dyn FactoryProtectedTestObservationInputSource>,
+        OrdinaryBuildApplicationError::Invalid,
+      ),
+      (
+        Arc::new(UnavailableTestInventory),
+        OrdinaryBuildApplicationError::Unavailable,
+      ),
+    ] {
+      let result = fixture
+        .source(fixture.query.clone())
+        .with_protected_test_observation_input_source(source)
+        .published_outputs(fixture.query.build.build.id, fixture.query.attempt.id, 10000)
+        .await;
+      assert_eq!(result.err(), Some(expected));
+    }
+    use super::factory_command_materializer_tests::{Bytes, Context, Inputs, managed_context};
+    let profile = &fixture.profile;
+    let intent = &fixture.intent;
+    let admitted = fixture
+      .runs
+      .factory_run_snapshot(intent.input().factory_run_id())
+      .await
+      .unwrap()
+      .admitted_flow;
+    let compiler = FactoryCommandBuildMaterializer::new(
+      Arc::new(Context(managed_context(
+        &profile.build_configuration,
+        &profile.pipeline_node,
+        &profile.plugin,
+        intent,
+      ))),
+      Arc::new(FactoryExecutionInputPublisher::new(
+        Arc::new(Inputs::default()),
+        Arc::new(Bytes),
+        fixture.clock.clone(),
+      )),
+      vec![profile.clone()],
+      fixture.clock.clone(),
+    )
+    .unwrap()
+    .with_protected_test_observation_input_source(Arc::new(UnavailableTestInventory));
+    let owner = FactoryClaimOwnership::new(intent.node().owner().clone(), intent.node().claim());
+    assert_eq!(
+      compiler.materialize(intent, &admitted, owner, at(41)).await.err(),
+      Some(OrdinaryBuildApplicationError::Unavailable),
+    );
+    let original = fixture.query.clone();
+    let mut modified = original.clone();
+    let mut wire = serde_json::to_value(&modified.attempt.jobs[0].job.job_spec_template).unwrap();
+    let files = wire["execution"]["protected_inputs"]["inputs"].as_array_mut().unwrap();
+    let private_file = author.file.record.identity().artifact_id.to_string();
+    let index = files
+      .iter()
+      .position(|file| file["artifact_id"] == private_file)
+      .unwrap();
+    files.remove(index);
+    modified.attempt.jobs[0].job.job_spec_template = serde_json::from_value(wire).unwrap();
+
+    let read = |query| fixture.source(query);
+    assert!(matches!(
+      read(original)
+        .published_outputs(fixture.query.build.build.id, fixture.query.attempt.id, 10000)
+        .await
+        .unwrap(),
+      FactoryNodeBuildOutputObservation::Verified(_),
+    ));
+    assert!(
+      read(modified)
+        .published_outputs(fixture.query.build.build.id, fixture.query.attempt.id, 10000)
+        .await
+        .is_err(),
+      "a valid report from a Job missing a required private file cannot qualify",
     );
   });
 }

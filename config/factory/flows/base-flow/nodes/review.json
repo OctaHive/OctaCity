@@ -50,6 +50,10 @@
             "outcome": "observed",
             "view": "metadata",
             "path": "/build/outputs/change-set.bundle/artifact"
+          },
+          "acceptance": {
+            "source": "work",
+            "path": "/artifacts/acceptance"
           }
         },
         "mapping": {
@@ -79,6 +83,10 @@
               "bundle": {
                 "mapping": "pointer",
                 "path": "/bundle"
+              },
+              "original_acceptance": {
+                "mapping": "pointer",
+                "path": "/acceptance"
               }
             }
           }
@@ -146,6 +154,25 @@
                 }
               }
             }
+          },
+          "original_acceptance": {
+            "source_kind": "specification",
+            "source": {
+              "value": {
+                "mapping": "object",
+                "fields": {
+                  "kind": {
+                    "mapping": "constant",
+                    "value": "artifact"
+                  },
+                  "value": {
+                    "mapping": "pointer",
+                    "path": "/original_acceptance"
+                  }
+                }
+              }
+            },
+            "when_present": "/original_acceptance"
           }
         }
       }

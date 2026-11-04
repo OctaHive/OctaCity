@@ -1,7 +1,7 @@
 //! Same public configured-owner contract under PostgreSQL persistence and restart.
 use async_trait::async_trait;
-use octacity_server_application::MutationDisposition;
 use octacity_server_application::*;
+use octacity_server_application::{ManagementSecurityScope, MutationDisposition};
 use octacity_server_domain::*;
 use octacity_server_factory::*;
 use octacity_server_store::*;

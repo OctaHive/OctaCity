@@ -135,6 +135,7 @@ fn qualified_review_compilation_freezes_adapter_evaluation_schema_under_the_type
         &profile.usage_policy,
         FactoryCodexFlowCompilationOptions {
           context: Some(&context),
+          candidate_capture_tool: profile.candidate_capture_tool.as_ref(),
           reviewer,
           ..Default::default()
         },

@@ -3,7 +3,7 @@
 //! verification; this contract binds its structured report to the frozen input.
 //! Environment/criterion identifiers establish consistency. Actual readiness is
 //! observed by the qualified installed program/runtime, never inferred from an identifier.
-use crate::OrdinaryBuildApplicationError;
+use crate::{FactoryProtectedValidationClassResult, OrdinaryBuildApplicationError};
 use octacity_server_factory::*;
 use serde::{Deserialize, Serialize};
 use std::collections::BTreeMap;
@@ -25,6 +25,9 @@ pub struct FactoryCommandObservationContract {
   pub completion: FlowPredicate,
   /// Configured criterion evaluated only over structured observations.
   pub symptom: FlowPredicate,
+  /// Require the exact retained private tests in the signed command Job.
+  #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+  pub requires_protected_tests: bool,
   /// Require a conclusive finding before accepting a Flow result.
   #[serde(default, skip_serializing_if = "std::ops::Not::not")]
   pub stop_on_indeterminate: bool,
@@ -84,6 +87,30 @@ impl FactoryCommandObservationContract {
       FactoryKey::new("observations").map_err(|_| invalid())?,
       FlowFieldSchema::optional(self.observations.shape().clone()),
     );
+    if self.requires_protected_tests {
+      let item = FlowValueSchema::Object {
+        fields: required_fields([
+          ("class", text(1, MAX_FACTORY_KEY_BYTES)),
+          (
+            "outcome",
+            FlowValueSchema::Enum {
+              values: ["passed", "failed", "indeterminate"]
+                .into_iter()
+                .map(serde_json::Value::from)
+                .collect(),
+            },
+          ),
+        ])?,
+      };
+      fields.insert(
+        FactoryKey::new("test_classes").map_err(|_| invalid())?,
+        FlowFieldSchema::optional(FlowValueSchema::Array {
+          item: Box::new(item),
+          min_items: 1,
+          max_items: MAX_TASK_ARTIFACTS as u16,
+        }),
+      );
+    }
     FlowDataSchema::new(
       FactoryKey::new(OBSERVATION_SCHEMA_ID).map_err(|_| invalid())?,
       FactoryKey::new("v1").map_err(|_| invalid())?,
@@ -193,6 +220,7 @@ struct CommandObservationReport {
   status: CommandObservationStatus,
   observations: Option<serde_json::Value>,
   finding: FactoryCommandFinding,
+  test_classes: Option<Vec<FactoryProtectedValidationClassResult>>,
 }
 
 /// Checks a qualified command's bounded report against its original immutable execution.
@@ -201,6 +229,15 @@ pub fn verify_factory_command_observation(
   contract: &FactoryCommandObservationContract,
   intent: &FlowBuildIntent,
   value: &serde_json::Value,
+) -> Result<FactoryCommandFinding, OrdinaryBuildApplicationError> {
+  verify_command_observation(contract, intent, value, None)
+}
+
+pub(super) fn verify_command_observation(
+  contract: &FactoryCommandObservationContract,
+  intent: &FlowBuildIntent,
+  value: &serde_json::Value,
+  required_classes: Option<&[FactoryKey]>,
 ) -> Result<FactoryCommandFinding, OrdinaryBuildApplicationError> {
   let invalid = || OrdinaryBuildApplicationError::Invalid;
   let program = contract.program()?;
@@ -212,7 +249,9 @@ pub fn verify_factory_command_observation(
     return Err(invalid());
   }
   let report: CommandObservationReport = serde_json::from_value(value.clone()).map_err(|_| invalid())?;
-  if report.input_digest != intent.input().digest().map_err(|_| invalid())?
+  if contract.requires_protected_tests != required_classes.is_some()
+    || (required_classes.is_none() && report.test_classes.is_some())
+    || report.input_digest != intent.input().digest().map_err(|_| invalid())?
     || &report.subject != intent.input().subject()
     || report.command != intent.profile().model_or_tool
     || report.environment != contract.environment
@@ -239,6 +278,22 @@ pub fn verify_factory_command_observation(
   };
   if report.finding != finding {
     return Err(invalid());
+  }
+  if let Some(required) = required_classes
+    && finding != FactoryCommandFinding::Indeterminate
+  {
+    let classes = report.test_classes.ok_or_else(invalid)?;
+    if !classes.iter().map(|result| &result.class).eq(required)
+      || classes
+        .iter()
+        .any(|result| result.outcome == DeterministicGateOutcome::Indeterminate)
+      || classes
+        .iter()
+        .any(|result| result.outcome == DeterministicGateOutcome::Failed)
+        != (finding == FactoryCommandFinding::Matched)
+    {
+      return Err(invalid());
+    }
   }
   Ok(finding)
 }

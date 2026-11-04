@@ -1,0 +1,280 @@
+{
+  "gate_programs": {
+    "code_review_gate": {
+      "rules": [
+        {
+          "when": {
+            "operation": "all",
+            "predicates": [
+              {
+                "operation": "compare",
+                "left": {
+                  "source": "path",
+                  "path": "/review/quality/correctness"
+                },
+                "comparison": "equal",
+                "right": {
+                  "source": "literal",
+                  "value": "satisfied"
+                }
+              },
+              {
+                "operation": "compare",
+                "left": {
+                  "source": "path",
+                  "path": "/review/quality/maintainability"
+                },
+                "comparison": "equal",
+                "right": {
+                  "source": "literal",
+                  "value": "satisfied"
+                }
+              },
+              {
+                "operation": "compare",
+                "left": {
+                  "source": "path",
+                  "path": "/review/quality/public_tests"
+                },
+                "comparison": "equal",
+                "right": {
+                  "source": "literal",
+                  "value": "satisfied"
+                }
+              },
+              {
+                "operation": "compare",
+                "left": {
+                  "source": "path",
+                  "path": "/review/quality/security"
+                },
+                "comparison": "equal",
+                "right": {
+                  "source": "literal",
+                  "value": "satisfied"
+                }
+              },
+              {
+                "operation": "absent",
+                "path": "/review/findings/0"
+              }
+            ]
+          },
+          "outcome": "accepted"
+        },
+        {
+          "when": {
+            "operation": "any",
+            "predicates": [
+              {
+                "operation": "compare",
+                "left": {
+                  "source": "path",
+                  "path": "/review/quality/correctness"
+                },
+                "comparison": "equal",
+                "right": {
+                  "source": "literal",
+                  "value": "indeterminate"
+                }
+              },
+              {
+                "operation": "compare",
+                "left": {
+                  "source": "path",
+                  "path": "/review/quality/maintainability"
+                },
+                "comparison": "equal",
+                "right": {
+                  "source": "literal",
+                  "value": "indeterminate"
+                }
+              },
+              {
+                "operation": "compare",
+                "left": {
+                  "source": "path",
+                  "path": "/review/quality/public_tests"
+                },
+                "comparison": "equal",
+                "right": {
+                  "source": "literal",
+                  "value": "indeterminate"
+                }
+              },
+              {
+                "operation": "compare",
+                "left": {
+                  "source": "path",
+                  "path": "/review/quality/security"
+                },
+                "comparison": "equal",
+                "right": {
+                  "source": "literal",
+                  "value": "indeterminate"
+                }
+              }
+            ]
+          },
+          "outcome": "needs_human_input"
+        },
+        {
+          "when": {
+            "operation": "any",
+            "predicates": [
+              {
+                "operation": "compare",
+                "left": {
+                  "source": "path",
+                  "path": "/review/quality/correctness"
+                },
+                "comparison": "equal",
+                "right": {
+                  "source": "literal",
+                  "value": "violated"
+                }
+              },
+              {
+                "operation": "compare",
+                "left": {
+                  "source": "path",
+                  "path": "/review/quality/maintainability"
+                },
+                "comparison": "equal",
+                "right": {
+                  "source": "literal",
+                  "value": "violated"
+                }
+              },
+              {
+                "operation": "compare",
+                "left": {
+                  "source": "path",
+                  "path": "/review/quality/public_tests"
+                },
+                "comparison": "equal",
+                "right": {
+                  "source": "literal",
+                  "value": "violated"
+                }
+              },
+              {
+                "operation": "compare",
+                "left": {
+                  "source": "path",
+                  "path": "/review/quality/security"
+                },
+                "comparison": "equal",
+                "right": {
+                  "source": "literal",
+                  "value": "violated"
+                }
+              },
+              {
+                "operation": "not",
+                "predicate": {
+                  "operation": "absent",
+                  "path": "/review/findings/0"
+                }
+              }
+            ]
+          },
+          "outcome": "changes_required"
+        }
+      ],
+      "fallback": "invalid",
+      "default_output": {
+        "value": {
+          "mapping": "pointer",
+          "path": "/request/summary"
+        }
+      }
+    },
+    "validation_classification_gate": {
+      "rules": [
+        {
+          "when": {
+            "operation": "compare",
+            "left": {
+              "source": "path",
+              "path": "/classification/classification"
+            },
+            "comparison": "equal",
+            "right": {
+              "source": "literal",
+              "value": "implementation_defect"
+            }
+          },
+          "outcome": "implementation_rework"
+        },
+        {
+          "when": {
+            "operation": "compare",
+            "left": {
+              "source": "path",
+              "path": "/classification/classification"
+            },
+            "comparison": "equal",
+            "right": {
+              "source": "literal",
+              "value": "requirements_defect"
+            }
+          },
+          "outcome": "requirements_correction"
+        },
+        {
+          "when": {
+            "operation": "compare",
+            "left": {
+              "source": "path",
+              "path": "/classification/classification"
+            },
+            "comparison": "equal",
+            "right": {
+              "source": "literal",
+              "value": "test_defect"
+            }
+          },
+          "outcome": "test_correction"
+        },
+        {
+          "when": {
+            "operation": "compare",
+            "left": {
+              "source": "path",
+              "path": "/classification/classification"
+            },
+            "comparison": "equal",
+            "right": {
+              "source": "literal",
+              "value": "indeterminate"
+            }
+          },
+          "outcome": "escalation"
+        },
+        {
+          "when": {
+            "operation": "compare",
+            "left": {
+              "source": "path",
+              "path": "/classification/classification"
+            },
+            "comparison": "equal",
+            "right": {
+              "source": "literal",
+              "value": "reject"
+            }
+          },
+          "outcome": "rejection"
+        }
+      ],
+      "fallback": "invalid",
+      "default_output": {
+        "value": {
+          "mapping": "pointer",
+          "path": "/request/summary"
+        }
+      }
+    }
+  }
+}

@@ -181,13 +181,10 @@ impl<A: ArtifactRecordStore, S: BuildQueryStore, B: ArtifactByteReader> FactoryC
     }) {
       let retained = self
         .reader
-        .read_model_artifact(read(artifact.clone(), remaining.min(MAX_ARTIFACT_READ_BYTES)))
+        .read_model_input(read(artifact.clone(), remaining.min(MAX_ARTIFACT_READ_BYTES)))
         .await?;
       std::str::from_utf8(retained.bytes()).map_err(|_| invalid())?;
-      retained_until = retained_until
-        .into_iter()
-        .chain(retained.record().identity().retention.delete_after())
-        .min();
+      retained_until = retained_until.into_iter().chain([retained.retained_until()]).min();
       remaining = remaining.checked_sub(artifact.encoded_size()).ok_or_else(invalid)?;
       model_context.insert(artifact.artifact_id(), retained.bytes().to_vec());
     }

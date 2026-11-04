@@ -121,8 +121,11 @@ impl<A: ArtifactRecordStore, S: BuildQueryStore, B: ArtifactByteReader> FactoryA
     {
       return read_project_input_object(self.bytes.as_ref(), &request, input).await;
     }
-    let retained_until = request.required_until;
     let retained = self.read_with_audience(request, audience).await?;
+    let retained_until = retained.record().identity().retention.delete_after().unwrap_or(
+      Timestamp::from_unix_millis(octacity_server_domain::MAX_TIMESTAMP_MILLIS)
+        .map_err(|_| ApplicationError::invalid())?,
+    );
     let provenance = serde_json::to_vec(retained.record().identity()).map_err(|_| ApplicationError::invalid())?;
     Ok(FactoryRetainedInput {
       bytes: retained.bytes().to_vec(),
@@ -135,12 +138,12 @@ impl<A: ArtifactRecordStore, S: BuildQueryStore, B: ArtifactByteReader> FactoryA
     self.read_with_audience(request, ArtifactAudience::Trusted).await
   }
 
-  /// Reads a Build Artifact that can be rendered as model Context.
-  pub(super) async fn read_model_artifact(
+  /// Reads an explicitly selected input that can be rendered as model Context.
+  pub(super) async fn read_model_input(
     &self,
     request: ReadFactoryArtifact,
-  ) -> Result<FactoryRetainedArtifact, ApplicationError> {
-    self.read_with_audience(request, ArtifactAudience::Model).await
+  ) -> Result<FactoryRetainedInput, ApplicationError> {
+    self.read_input_with_audience(request, ArtifactAudience::Model).await
   }
 
   async fn read_with_audience(
@@ -248,8 +251,11 @@ impl<A: ArtifactRecordStore, S: BuildQueryStore, B: ArtifactByteReader> FactoryA
         return Err(ApplicationError::invalid());
       }
       if crate::factory::validation::factory_protected_test_publication::has_protected_test_inventory(
-        self.artifacts.as_ref(), identity.job_id,
-      ).await? {
+        self.artifacts.as_ref(),
+        identity.job_id,
+      )
+      .await?
+      {
         return Err(ApplicationError::invalid());
       }
     }

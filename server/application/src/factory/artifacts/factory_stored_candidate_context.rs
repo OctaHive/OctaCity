@@ -143,34 +143,7 @@ impl<R, A: ArtifactRecordStore, Q: BuildQueryStore, B: ArtifactByteReader>
     required_until: Timestamp,
   ) -> Result<FactoryCandidateContext, ApplicationError> {
     let invalid = ApplicationError::invalid;
-    let context = intent.input().context().ok_or_else(invalid)?;
-    if context.subject().candidate().is_none() {
-      return Err(invalid());
-    }
-    let selected = context
-      .entries()
-      .iter()
-      .map(|entry| match entry.source() {
-        FactoryContextReference::Artifact(artifact) => Ok(artifact.artifact_id()),
-        _ => Err(invalid()),
-      })
-      .collect::<Result<BTreeSet<_>, _>>()?;
-    let mut producers = snapshot.flow.data.records.iter().filter(|record| {
-      record.build_provenance().is_some_and(|provenance| {
-        [CHANGE_SET_BUNDLE_OUTPUT, CHANGE_SET_MANIFEST_OUTPUT]
-          .iter()
-          .all(|name| {
-            provenance
-              .outputs()
-              .iter()
-              .any(|output| output.name.as_str() == *name && selected.contains(&output.artifact.artifact_id()))
-          })
-      })
-    });
-    let record = producers.next().ok_or_else(invalid)?;
-    if producers.next().is_some() {
-      return Err(invalid());
-    }
+    let (record, manifest) = selected_candidate_capture(snapshot, intent)?;
     let mut intents = snapshot
       .flow
       .data
@@ -181,13 +154,6 @@ impl<R, A: ArtifactRecordStore, Q: BuildQueryStore, B: ArtifactByteReader>
     if intents.next().is_some() {
       return Err(invalid());
     }
-    let manifest = record
-      .build_provenance()
-      .ok_or_else(invalid)?
-      .outputs()
-      .iter()
-      .find(|output| output.name.as_str() == CHANGE_SET_MANIFEST_OUTPUT)
-      .ok_or_else(invalid)?;
     let mut executions = snapshot.flow.data.build_executions.iter().filter(|row| {
       row.node_attempt_id() == record.node_attempt_id()
         && row.build_id() == manifest.producer.build_id()
@@ -211,6 +177,57 @@ impl<R, A: ArtifactRecordStore, Q: BuildQueryStore, B: ArtifactByteReader>
     }
     self.source.read(request).await
   }
+}
+// Select owner-verified capture metadata through the frozen artifact bindings.
+pub(crate) fn selected_candidate_capture<'a>(
+  snapshot: &'a FactoryRunSnapshot,
+  intent: &FlowBuildIntent,
+) -> Result<
+  (
+    &'a octacity_server_factory::FlowNodeRecord,
+    &'a octacity_server_factory::FlowVerifiedBuildOutput,
+  ),
+  ApplicationError,
+> {
+  let invalid = ApplicationError::invalid;
+  let context = intent.input().context().ok_or_else(invalid)?;
+  if context.subject().candidate().is_none() {
+    return Err(invalid());
+  }
+  let selected = context
+    .entries()
+    .iter()
+    .map(|entry| match entry.source() {
+      FactoryContextReference::Artifact(artifact) => Ok(artifact.artifact_id()),
+      _ => Err(invalid()),
+    })
+    .collect::<Result<BTreeSet<_>, _>>()?;
+  let mut producers = snapshot.flow.data.records.iter().filter(|record| {
+    record.build_provenance().is_some_and(|provenance| {
+      [CHANGE_SET_BUNDLE_OUTPUT, CHANGE_SET_MANIFEST_OUTPUT]
+        .iter()
+        .all(|name| {
+          provenance
+            .outputs()
+            .iter()
+            .any(|output| output.name.as_str() == *name && selected.contains(&output.artifact.artifact_id()))
+        })
+    })
+  });
+  let record = producers.next().ok_or_else(invalid)?;
+  if producers.next().is_some() {
+    return Err(invalid());
+  }
+  let manifest = record
+    .build_provenance()
+    .ok_or_else(invalid)?
+    .outputs()
+    .iter()
+    .find(|output| {
+      output.name.as_str() == CHANGE_SET_MANIFEST_OUTPUT && selected.contains(&output.artifact.artifact_id())
+    })
+    .ok_or_else(invalid)?;
+  Ok((record, manifest))
 }
 fn verify_current_consumer(
   snapshot: &FactoryRunSnapshot,

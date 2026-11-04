@@ -1315,3 +1315,155 @@ fn every_ready_fanout_sibling_remains_visible_without_reserving_existing_work_ag
     );
   }
 }
+
+#[test]
+fn shared_exhaustion_gate_reads_only_the_attempt_that_entered_it() {
+  use crate::{
+    AdmittedFlow, FlowDataMapping, FlowDataSchema, FlowInputBinding, FlowInputPreparation, FlowNodeInput,
+    FlowNodeRecord, FlowPayload, FlowRecordObservation, FlowValueMapping, FlowValueSchema,
+  };
+  let schema = FlowDataSchema::new(key("finding"), key("v1"), FlowValueSchema::Boolean).unwrap();
+  let reference = schema.reference().clone();
+  let source = |name, kind, binding: serde_json::Value| {
+    node(name, kind, Some(reference.clone()), reference.clone(), None, 100)
+      .with_input_binding(serde_json::from_value::<FlowInputBinding>(binding).unwrap())
+      .unwrap()
+  };
+  let constant = serde_json::json!({"sources":{}, "mapping":{"value":{"mapping":"constant","value":false}}});
+  let operator: crate::FlowHumanGateBinding = serde_json::from_value(serde_json::json!({
+    "operation":"escalation","outcomes":{"abort":"accepted"}
+  }))
+  .unwrap();
+  let response = FlowDataSchema::new(
+    key("response"),
+    key("v1"),
+    operator.response_shape(crate::FlowHumanDisposition::Abort).unwrap(),
+  )
+  .unwrap();
+  let gate = node(
+    "operator",
+    FlowNodeKind::HumanGate,
+    Some(reference.clone()),
+    response.reference().clone(),
+    None,
+    100,
+  )
+  .with_input_binding(
+    serde_json::from_value(serde_json::json!({
+      "sources":{"finding":{"source":"predecessor","view":"payload","path":""}},
+      "mapping":FlowDataMapping::new(FlowValueMapping::Pointer{path:"/finding".into()}).unwrap()
+    }))
+    .unwrap(),
+  )
+  .unwrap()
+  .with_operator_requests(operator)
+  .unwrap();
+  let repeat = |name| {
+    serde_json::from_value(serde_json::json!({
+      "predecessor":name,"outcome":"accepted","target":{"kind":"node","key":name},
+      "max_repeats":1,"exhausted_terminal":null,"exhausted_node":"operator"
+    }))
+    .unwrap()
+  };
+  let root = definition(
+    9911,
+    vec![
+      source("split", FlowNodeKind::FanOut, constant.clone()),
+      source("left", FlowNodeKind::Join, constant.clone()),
+      source("right", FlowNodeKind::Join, constant),
+      gate,
+    ],
+    vec![
+      FlowTransition::new(key("split"), key("accepted"), FlowTransitionTarget::Node(key("left"))),
+      FlowTransition::new(key("split"), key("accepted"), FlowTransitionTarget::Node(key("right"))),
+      repeat("left"),
+      repeat("right"),
+      terminal_route("operator", "done"),
+    ],
+    vec![FlowTerminalDefinition::new(key("done"), response.reference().clone())],
+    vec![],
+    4,
+    100,
+  )
+  .unwrap();
+  let work = crate::flow_test_support::work();
+  let flow = FlowRun::root(
+    &crate::FactoryRun::admitted(FactoryRunId::generate(), &work),
+    root.reference(),
+  )
+  .unwrap();
+  let cycle = WorkflowCycle::initial(&flow).unwrap();
+  let admitted = AdmittedFlow::new(
+    PinnedFlowDefinitionClosure::new(root.reference(), vec![root.clone()]).unwrap(),
+    limits(1, 20, 4, 4, 100),
+    flow.clone(),
+    cycle.clone(),
+    crate::FactoryWipLimits::new(4, 4).unwrap(),
+  )
+  .unwrap()
+  .with_data_schemas(vec![schema.clone(), response])
+  .unwrap();
+  let mut attempts = vec![];
+  let mut completions = vec![];
+  let mut records = vec![];
+  for (i, name) in ["split", "left", "left", "right"].into_iter().enumerate() {
+    let input = FlowNodeInput::new(
+      &work,
+      &admitted,
+      &flow,
+      &cycle,
+      key(name),
+      FlowPayload::new(&schema, false.into()).unwrap(),
+    )
+    .unwrap();
+    let mut wire =
+      serde_json::to_value(attempt(9912 + i as u128, 1 + i as u64, &flow, &cycle, &root, name, 100)).unwrap();
+    wire["input_digest"] = serde_json::json!(input.digest().unwrap());
+    let attempt: NodeAttempt = serde_json::from_value(wire).unwrap();
+    let record = FlowNodeRecord::new(
+      &input,
+      &attempt,
+      &root,
+      FlowRecordObservation {
+        outcome: key("accepted"),
+        payload: FlowPayload::new(&schema, (name == "left").into()).unwrap(),
+        producer: attempt.execution().clone(),
+        observed_at: Timestamp::from_unix_millis(2).unwrap(),
+      },
+    )
+    .unwrap();
+    completions.push(
+      record
+        .completion(
+          &attempt,
+          &root,
+          ownership(),
+          BudgetUsage::default(),
+          Timestamp::from_unix_millis(2).unwrap(),
+        )
+        .unwrap(),
+    );
+    records.push(record);
+    attempts.push(attempt);
+  }
+  let prepared = FlowNodeInput::prepare(FlowInputPreparation {
+    work: &work,
+    admitted: &admitted,
+    flow: &flow,
+    cycle: &cycle,
+    node: key("operator"),
+    schema: &schema,
+    history: FlowRuntimeHistory {
+      flow_runs: std::slice::from_ref(&flow),
+      cycles: std::slice::from_ref(&cycle),
+      attempts: &attempts,
+      completions: &completions,
+      stops: &[],
+    },
+    records: &records,
+    inputs: &[],
+    incoming: None,
+  })
+  .unwrap();
+  assert_eq!(prepared.payload().value(), &serde_json::json!(true));
+}

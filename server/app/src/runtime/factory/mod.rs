@@ -428,26 +428,16 @@ impl FactoryRuntimeResources {
       clock.clone(),
     ));
     let review_invocations = Arc::new(FactoryStoredReviewInvocationSource::new(self.runs.clone()));
-    // One trusted profile selection owns both dispatch preparation and retained
-    // observation. Candidate source pins come only from installed operator policy.
-    let readonly_profiles = profiles
+    let candidate_contexts: Option<Arc<dyn FactoryCodexCandidateReaderFactory>> = profiles
       .iter()
-      .filter(|profile| profile.consumer == octacity_server_factory::FactoryCredentialConsumer::ReadOnlyReview)
-      .cloned()
-      .collect::<Vec<_>>();
-    let candidate_contexts = if readonly_profiles.is_empty() {
-      None
-    } else {
-      Some(Arc::new(
-        FactoryCodexCandidateContextSource::new(
+      .any(|profile| profile.permits_candidate_context())
+      .then(|| {
+        Arc::new(FactoryCodexCandidateContextSource::new(
           self.runs.clone(),
           Arc::new(FactoryCandidateContextSource::new(reader.clone())),
-          readonly_profiles,
           clock.clone(),
-        )
-        .map_err(|_| FactoryRuntimeInstallationError::Invalid)?,
-      ))
-    };
+        )) as Arc<dyn FactoryCodexCandidateReaderFactory>
+      });
     let mut outputs = FactoryCodexBuildOutputSource::new(
       self.runs.clone(),
       self.builds.clone(),
@@ -461,21 +451,22 @@ impl FactoryRuntimeResources {
     .with_role_invocation_store(self.runs.clone())
     .with_runtime_settings_store(self.runs.clone())
     .with_review_invocation_source(review_invocations.clone());
-    let role_invocations = Arc::new(FactoryStoredCodexRoleInvocationSource::new(
+    let mut role_invocations = FactoryStoredCodexRoleInvocationSource::new(
       self.runs.clone(),
       self.objects.clone(),
       reader.clone(),
       profiles.clone(),
-    ));
+    );
     let mut compiler = FactoryCodexBuildMaterializer::new(contexts, publisher, profiles.clone(), reader, clock.clone())
       .map_err(|_| FactoryRuntimeInstallationError::Invalid)?
       .with_review_invocation_source(review_invocations.clone())
-      .with_runtime_settings_store(self.runs.clone())
-      .with_role_invocation_source(role_invocations);
-    if let Some(candidate_contexts) = candidate_contexts {
+      .with_runtime_settings_store(self.runs.clone());
+    if let Some(candidate_contexts) = &candidate_contexts {
       outputs = outputs.with_retained_candidate_context_source(candidate_contexts.clone());
-      compiler = compiler.with_candidate_context_source(candidate_contexts);
+      compiler = compiler.with_candidate_context_source(candidate_contexts.clone());
+      role_invocations = role_invocations.with_candidate_context_source(candidate_contexts.clone());
     }
+    let compiler = compiler.with_role_invocation_source(Arc::new(role_invocations));
     let outputs = Arc::new(outputs);
     let compiler: Arc<dyn FactoryBuildMaterializer> = Arc::new(compiler);
     let builds = Arc::new(FactoryOrdinaryBuildService::new(
@@ -492,6 +483,7 @@ impl FactoryRuntimeResources {
         outputs,
         profiles,
         review_invocations,
+        candidate_contexts,
       }),
     ))
   }
@@ -504,9 +496,10 @@ pub(super) struct NativeCodexNodeExecutor<B, O, R> {
   pub(super) outputs: Arc<O>,
   pub(super) profiles: Vec<octacity_server_application::FactoryCodexBuildProfile>,
   pub(super) review_invocations: Arc<R>,
+  pub(super) candidate_contexts: Option<Arc<dyn octacity_server_application::FactoryCodexCandidateReaderFactory>>,
 }
 impl<B, O, R> NativeCodexNodeExecutor<B, O, R> {
-  pub(super) fn profile(
+  pub(super) async fn profile(
     &self,
     intent: &octacity_server_factory::FlowBuildIntent,
     admitted: &octacity_server_factory::AdmittedFlow,
@@ -534,17 +527,14 @@ impl<B, O, R> NativeCodexNodeExecutor<B, O, R> {
           .ok_or_else(ApplicationError::invalid)
       })
       .transpose()?;
-    let mut matches = self
-      .profiles
-      .iter()
-      .filter(|profile| profile.matches_role_intent(intent, selected));
-    let profile = matches
-      .next()
-      .ok_or_else(octacity_server_application::ApplicationError::invalid)?;
-    if matches.next().is_some() {
-      return Err(octacity_server_application::ApplicationError::invalid());
-    }
-    Ok(profile)
+    octacity_server_application::FactoryCodexBuildProfile::select_for_intent(
+      &self.profiles,
+      intent,
+      selected,
+      self.candidate_contexts.as_deref(),
+    )
+    .await?
+    .ok_or_else(ApplicationError::invalid)
   }
 }
 #[async_trait]
@@ -560,7 +550,7 @@ where
   ) -> Result<octacity_server_application::FactoryNodeExecutionStep, octacity_server_application::ApplicationError> {
     use octacity_server_application::*;
     let intent = request.build.ok_or_else(ApplicationError::invalid)?;
-    let profile = self.profile(intent, request.admitted)?;
+    let profile = self.profile(intent, request.admitted).await?;
     match (&profile.capture, &profile.reviewer) {
       (Some(capture), None) => {
         FactoryNodeCaptureBuildAdapter::new(self.builds.clone(), self.outputs.clone(), capture.tool().clone())

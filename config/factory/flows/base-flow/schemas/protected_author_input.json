@@ -26,6 +26,13 @@
               "type": "reference",
               "schema": "test_correction_reason"
             }
+          },
+          "original_acceptance": {
+            "required": false,
+            "value": {
+              "type": "reference",
+              "schema": "artifact_reference"
+            }
           }
         }
       }

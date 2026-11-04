@@ -1136,7 +1136,7 @@ fn delivery_reproduction_routes_one_build_and_reports_only_conclusive_checks() {
     use crate::factory::commands::tests::factory_command_output_source_tests::{
       configure_profile, retained_command_executor,
     };
-    let contract = crate::factory::commands::tests::factory_command_observation_tests::contract();
+    let contract = crate::factory_node_test_support::probe_observation_contract();
     let report = contract.report_schema().unwrap();
     template.schemas.insert(
       key("reproduction_report"),

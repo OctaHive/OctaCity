@@ -19,6 +19,28 @@ use octacity_server_store::{
 };
 use std::sync::Mutex;
 
+/// Immutable HTTP probe used by command and configured Flow contract tests.
+pub(crate) fn probe_observation_contract() -> crate::FactoryCommandObservationContract {
+  use fixtures::key;
+  use serde_json::json;
+  use std::collections::BTreeMap;
+  let reference = |name| ImmutableReference::new(key(name), key("v1"), FactoryDigest::from_bytes([91; 32]));
+  crate::FactoryCommandObservationContract {
+    requires_protected_tests: false,
+    stop_on_indeterminate: false,
+    environment: reference("reviewed-probe-environment"),
+    criterion: reference("http-status-symptom"),
+    observations: FlowDataSchema::new(key("http-probe-observations"), key("v1"),
+      FlowValueSchema::Object { fields: BTreeMap::from([
+        (key("probe"), FlowFieldSchema::required(FlowValueSchema::Enum { values: vec![json!("GET /health")] })),
+        (key("requests"), FlowFieldSchema::required(FlowValueSchema::Integer { minimum:0, maximum:1 })),
+        (key("unexpected_statuses"), FlowFieldSchema::required(FlowValueSchema::Integer { minimum:0, maximum:1 })),
+      ]) }).unwrap(),
+    completion: serde_json::from_value(json!({"operation":"compare","left":{"source":"path","path":"/requests"},"comparison":"equal","right":{"source":"literal","value":1}})).unwrap(),
+    symptom: serde_json::from_value(json!({"operation":"compare","left":{"source":"path","path":"/unexpected_statuses"},"comparison":"equal","right":{"source":"literal","value":1}})).unwrap(),
+  }
+}
+
 /// Uses actual retained input/attempt policy when testing a trusted action's own validation.
 pub(crate) fn retained_action_request<'a>(
   snapshot: &'a octacity_server_store::FactoryRunSnapshot,

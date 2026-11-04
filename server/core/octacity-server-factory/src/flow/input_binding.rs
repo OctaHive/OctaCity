@@ -39,7 +39,8 @@ pub enum FlowInputSource {
     path: String,
   },
   /// Latest producing attempt on an explicitly declared incoming control edge.
-  /// An unfinished or differently routed newer producer blocks an older result.
+  /// The latest producer on a normal target must finish with the matching
+  /// outcome. An exhaustion target only considers attempts that reached it.
   Predecessor {
     /// Explicit selected result view.
     view: FlowRecordView,
@@ -263,8 +264,37 @@ fn predecessor<'a>(context: &'a FlowInputPreparation<'_>) -> Result<&'a crate::N
   let incoming = definition
     .transitions()
     .iter()
-    .filter(|edge| matches!(edge.target(),crate::FlowTransitionTarget::Node(key) if key==&context.node))
+    .filter(|edge| edge.node_targets().any(|key| key == &context.node))
     .collect::<Vec<_>>();
+  let numbers = incoming.iter().any(|edge| edge.max_repeats() > 0).then(|| {
+    context
+      .history
+      .attempts
+      .iter()
+      .map(|attempt| (attempt.id(), attempt.number()))
+      .collect::<BTreeMap<_, _>>()
+  });
+  let completion_for = |id| {
+    context
+      .history
+      .completions
+      .iter()
+      .find(|row| row.node_attempt_id() == id)
+  };
+  let routes_here =
+    |edge: &crate::FlowTransition, attempt: &crate::NodeAttempt, completion: &crate::NodeAttemptCompletion| {
+      if edge.predecessor() != attempt.node_key() || edge.outcome() != completion.outcome() {
+        return false;
+      }
+      let traversals = if edge.max_repeats() > 0 {
+        super::history::traversals_through(context.history.completions, completion, attempt, |id| {
+          numbers.as_ref()?.get(&id).copied()
+        })
+      } else {
+        0
+      };
+      edge.selected_node(traversals) == Some(&context.node)
+    };
   let attempt = context
     .history
     .attempts
@@ -272,9 +302,12 @@ fn predecessor<'a>(context: &'a FlowInputPreparation<'_>) -> Result<&'a crate::N
     .filter(|attempt| {
       attempt.flow_run_id() == context.flow.id()
         && attempt.workflow_cycle_id() == context.cycle.id()
-        && incoming
-          .iter()
-          .any(|edge| !edge.starts_cycle() && edge.predecessor() == attempt.node_key())
+        && incoming.iter().any(|edge| {
+          !edge.starts_cycle()
+            && edge.predecessor() == attempt.node_key()
+            && (edge.exhausted_node() != Some(&context.node)
+              || completion_for(attempt.id()).is_some_and(|completion| routes_here(edge, attempt, completion)))
+        })
     })
     .max_by_key(|attempt| attempt.number());
   let attempt = match attempt {
@@ -296,16 +329,8 @@ fn predecessor<'a>(context: &'a FlowInputPreparation<'_>) -> Result<&'a crate::N
         .ok_or_else(invalid)?
     }
   };
-  let completion = context
-    .history
-    .completions
-    .iter()
-    .find(|row| row.node_attempt_id() == attempt.id())
-    .ok_or_else(invalid)?;
-  if !incoming
-    .iter()
-    .any(|edge| edge.predecessor() == attempt.node_key() && edge.outcome() == completion.outcome())
-  {
+  let completion = completion_for(attempt.id()).ok_or_else(invalid)?;
+  if !incoming.iter().any(|edge| routes_here(edge, attempt, completion)) {
     return Err(invalid());
   }
   Ok(attempt)
