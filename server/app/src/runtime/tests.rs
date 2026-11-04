@@ -30,9 +30,9 @@ fn installed_owner_context_preserves_verified_identity_and_retained_partition() 
   use octacity_server_api_rest::integrations::ProtectedIntegrationRequest;
   use octacity_server_application::{ManagementActorKind, ManagementIngress};
 
-  let first = super::integration_management::request_context("integration-owner");
-  let next = super::integration_management::request_context("integration-owner");
-  let other = super::integration_management::request_context("another-owner");
+  let first = crate::runtime::integrations::integration_management::request_context("integration-owner");
+  let next = crate::runtime::integrations::integration_management::request_context("integration-owner");
+  let other = crate::runtime::integrations::integration_management::request_context("another-owner");
   assert_eq!(first.actor().kind(), ManagementActorKind::AuthenticatedManagement);
   assert_eq!(first.actor().identity(), Some("integration-owner"));
   assert_eq!(first.attributes().ingress(), ManagementIngress::VerifiedIdentity);

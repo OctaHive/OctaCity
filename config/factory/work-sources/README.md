@@ -75,10 +75,10 @@ Installed native configuration and actual provider access still need their own
 validation. The canonical private GitHub
 [Source installation fixture](../../../server/infrastructure/octacity-github/tests/support/issues.rs)
 illustrates the existing file layout with synthetic credentials only. Shared public
-[read profile](../../../server/app/src/runtime/work_source_read_profile.rs),
-[Source composition](../../../server/app/src/runtime/work_source.rs),
-[Reporter profile](../../../server/app/src/runtime/work_reporter.rs) and
-[read-only checker](../../../server/app/src/runtime/integration_check.rs) define the
+[read profile](../../../server/app/src/runtime/sources/worker/read_profile.rs),
+[Source composition](../../../server/app/src/runtime/sources/worker/mod.rs),
+[Reporter profile](../../../server/app/src/runtime/reporting/worker/mod.rs) and
+[read-only checker](../../../server/app/src/runtime/integrations/integration_check.rs) define the
 installation boundary. Neither these fragments nor their tests deploy that composition.
 Use the [opt-in live procedure](../../../docs/reference/github-work-source-live-qualification.md)
 only after explicitly selecting a disposable repository and its installed grants.

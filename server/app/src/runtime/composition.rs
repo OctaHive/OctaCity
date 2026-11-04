@@ -118,7 +118,7 @@ impl ServerRuntime {
     .await?;
     // Source services use the same database owner; finalize the immutable Factory inventory
     // only after optional native producer contracts and executors have been paired.
-    let installed_integrations = super::integration_management::install_with_factory(
+    let installed_integrations = crate::runtime::integrations::integration_management::install_with_factory(
       &config,
       Arc::new(octacity_server_store_postgres::PostgresStore::new(
         resources.postgres.clone(),
@@ -210,9 +210,9 @@ impl ServerRuntime {
       match sources.reporting_dispatcher(explicit, &mut resources.readiness) {
         Ok(worker) => worker,
         Err(octacity_server_application::ApplicationError::CapabilityUnavailable) => {
-          resources
-            .readiness
-            .push_factory(Arc::new(super::source_reporting::UnavailableSourceReporting));
+          resources.readiness.push_factory(Arc::new(
+            crate::runtime::reporting::source_reporting::UnavailableSourceReporting,
+          ));
           tracing::warn!("shared Source Reporter overlaps an explicitly installed reporting owner");
           None
         }
@@ -228,7 +228,7 @@ impl ServerRuntime {
           .integration_management()
           .expect("installed local Source authority")
           .principal;
-        super::managed_factory_source::ManagedFactorySource::worker(
+        crate::runtime::sources::managed_factory_source::ManagedFactorySource::worker(
           sources,
           resources.object_storage.clone(),
           revision_resolver.clone(),
@@ -246,7 +246,7 @@ impl ServerRuntime {
       webhook_verifier,
       webhook_provider,
     } = management_application(ApplicationAssembly {
-      management_policy: super::integration_management::management_policy(
+      management_policy: crate::runtime::integrations::integration_management::management_policy(
         config.integration_management().map(|local| local.principal.as_str()),
       ),
       issue_integrations,
@@ -452,7 +452,7 @@ impl ServerRuntime {
         config.cache().max_blob_bytes() as usize,
       )
     });
-    let issue_mcp_router = super::issue_mcp::router(&config, registration_store.clone())
+    let issue_mcp_router = crate::runtime::issues::issue_mcp::router(&config, registration_store.clone())
       .await
       .map_err(ServerRuntimeError::Assembly)?;
     Self::start_with_components(
@@ -558,7 +558,7 @@ pub(super) async fn configured_factory_installer(
         None => vec![],
       };
       Some(Arc::new(
-        super::factory_profile_file::FileProfileInstaller::load(path, &providers)
+        crate::runtime::factory::factory_profile_file::FileProfileInstaller::load(path, &providers)
           .await
           .map_err(|_| ServerRuntimeError::InvalidFactoryInstallation)?
           .with_management_principal(config.integration_management().map(|local| local.principal.as_str())),

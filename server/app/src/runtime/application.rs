@@ -53,8 +53,8 @@ type WebhookHostConfiguration = (
 
 pub(super) struct ApplicationAssembly {
   pub(super) management_policy: Arc<dyn ManagementAuthorizationPolicy>,
-  pub(super) source_management: Option<Arc<super::source_management::SourceManagement>>,
-  pub(super) managed_issue_sources: Option<super::integration_management::ManagedIssueSources>,
+  pub(super) source_management: Option<Arc<crate::runtime::sources::source_management::SourceManagement>>,
+  pub(super) managed_issue_sources: Option<crate::runtime::integrations::integration_management::ManagedIssueSources>,
   pub(super) issue_integrations: super::IssueRuntimeIntegrations,
   pub(super) store: Arc<PostgresStore>,
   pub(super) authoritative_store: Arc<PostgresAuthoritativeStore>,

@@ -45,9 +45,9 @@ pub async fn validate_runtime_files(config: &ServerConfig) -> Result<(), Runtime
   super::composition::configured_factory_installer(config)
     .await
     .map_err(|_| RuntimeAssemblyError::InvalidFactoryInstallation)?;
-  super::issue_mcp::validate(config).await?;
+  crate::runtime::issues::issue_mcp::validate(config).await?;
   load_runtime_file_inputs(config).await?;
-  super::integration_management::validate_source_profiles(config).await
+  crate::runtime::integrations::integration_management::validate_source_profiles(config).await
 }
 
 async fn load_runtime_file_inputs(config: &ServerConfig) -> Result<RuntimeFileInputs, RuntimeAssemblyError> {

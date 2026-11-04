@@ -5,7 +5,7 @@ See [proposal.md](proposal.md) for motivation. The existing integration model al
 Observed implementation constraints:
 
 - `server/application/src/integration_connection.rs` accepts resources only from verified installed declarations; it neither resolves a project address nor handles credentials.
-- `server/app/src/runtime/integration_management.rs` installs fixed resource, check and credential-publisher targets. Adding an address field to the UI cannot create a usable resource under that contract.
+- `server/app/src/runtime/integrations/integration_management.rs` installs fixed resource, check and credential-publisher targets. Adding an address field to the UI cannot create a usable resource under that contract.
 - `tools/factory_integrations.py` resolves a public repository without authentication and produces an immutable bundle for that repository. `tools/factory_local_stand.py` currently defaults to the demo repository when no installation exists.
 - `ConnectionEditor.tsx` publishes metadata, `CredentialSetup.tsx` provisions credentials, and `ConnectionDetails.tsx` exposes activation and checks separately. Existing secret entry deliberately avoids browser persistence and mutation-cache retention.
 - Source, Reporter and existing optional task observations already use native resource identities and separate live purpose grants. Pending reporting retains exact target/version/deadline information.

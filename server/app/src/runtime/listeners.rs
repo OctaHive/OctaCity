@@ -106,9 +106,9 @@ impl ServerRuntime {
       .as_ref()
       .and_then(|app| app.source_management_readiness())
     {
-      checks.push_factory(Arc::new(super::integration_management::SourceManagementReadiness(
-        ready,
-      )));
+      checks.push_factory(Arc::new(
+        crate::runtime::integrations::integration_management::SourceManagementReadiness(ready),
+      ));
     }
     let monitor = ReadinessMonitor::start(
       checks,

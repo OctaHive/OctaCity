@@ -136,7 +136,7 @@ visibility or expiry changed during the asynchronous read.
 
 Implementation ownership: [protocol adapter](../../server/api/octacity-server-api-mcp/src/lib.rs),
 [scoped application reads](../../server/application/src/management_security/issue_read.rs),
-[server installation](../../server/app/src/runtime/issue_mcp.rs).
+[server installation](../../server/app/src/runtime/issues/issue_mcp.rs).
 
 ## Native execution qualification
 

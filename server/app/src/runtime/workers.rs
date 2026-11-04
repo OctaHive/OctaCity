@@ -20,9 +20,9 @@ use tracing::{info, warn};
 use crate::{DurableWorkerError, ServerConfig, config::RetentionWorkerPolicy, readiness::WorkerHealth};
 
 pub(super) struct DurableWorkers {
-  pub(super) source_reads: Option<super::issue_source_worker::IssueSourceWorker>,
+  pub(super) source_reads: Option<crate::runtime::sources::issue_source_worker::IssueSourceWorker>,
   pub(super) managed_factory_source: Option<super::factory::InstalledFactorySource>,
-  pub(super) source_reporting: Option<super::source_reporting::InstalledSourceReporting>,
+  pub(super) source_reporting: Option<crate::runtime::reporting::source_reporting::InstalledSourceReporting>,
   pub(super) factory: Option<super::factory::InstalledFactoryWorker>,
   pub(super) legacy_issues: Arc<PostgresStore>,
   pub(super) actions: octacity_server_application::FactoryActionProjectionWorker<PostgresStore>,
@@ -224,7 +224,7 @@ pub(super) fn spawn_durable_workers(
   if let Some(task) = factory {
     tasks.push((FACTORY_WORKER_NAME, task));
   }
-  if let Some(super::source_reporting::InstalledSourceReporting {
+  if let Some(crate::runtime::reporting::source_reporting::InstalledSourceReporting {
     dispatcher,
     policy,
     health,

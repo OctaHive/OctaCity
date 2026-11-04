@@ -1,5 +1,5 @@
 //! Protected local proxy transport; HTTP headers never establish its identity.
-use super::{ListenerTaskResult, ServerRuntimeError, integration_management::request_context};
+use super::{ListenerTaskResult, ServerRuntimeError, integrations::integration_management::request_context};
 use crate::config::LocalIntegrationManagement;
 use axum::{
   extract::{ConnectInfo, Request},
