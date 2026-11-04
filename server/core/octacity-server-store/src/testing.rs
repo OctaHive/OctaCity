@@ -3,7 +3,9 @@
 //! Production adapters enable the `test-support` feature from their test
 //! dependencies and run [`verify_authoritative_store_contract`] unchanged.
 
-pub use crate::project_skill_import_testing::{skill_import_contract_request, verify_project_skill_import_publication};
+pub use crate::projects::testing::project_skill_import_testing::{
+  skill_import_contract_request, verify_project_skill_import_publication,
+};
 
 use std::{
   collections::{BTreeMap, BTreeSet},
@@ -45,6 +47,8 @@ use crate::{
 };
 
 mod build_control;
+#[cfg(test)]
+mod contracts;
 mod factory_build;
 mod fixtures;
 mod lease_events;
@@ -60,63 +64,71 @@ pub use fixtures::{
 };
 pub(crate) use state::*;
 
-pub use crate::agent_testing::InMemoryAgentStore;
-pub use crate::artifact_contract_testing::{
+pub use crate::artifacts::testing::artifact_contract_testing::{
   ArtifactRecordStoreContractFixture, ArtifactUploadStoreContractFixture, verify_artifact_record_store_contract,
   verify_artifact_upload_store_contract,
 };
-pub use crate::artifact_testing::{ArtifactLeaseFixture, InMemoryArtifactRecordStore};
-pub use crate::authoritative_contract_testing::{
-  verify_authoritative_store_contract, verify_in_memory_store_contract, verify_management_trigger_audit_contract,
+pub use crate::artifacts::testing::artifact_testing::{ArtifactLeaseFixture, InMemoryArtifactRecordStore};
+pub use crate::artifacts::testing::cache_contract_testing::{
+  CacheSessionStoreContractFixture, verify_cache_session_store_contract,
 };
-pub use crate::build_discovery_contract_testing::verify_in_memory_build_discovery_contract;
-pub use crate::build_discovery_testing::InMemoryBuildDiscoveryStore;
-pub use crate::cache_contract_testing::{CacheSessionStoreContractFixture, verify_cache_session_store_contract};
-pub use crate::cache_testing::{CacheLeaseFixture, InMemoryCacheSessionStore};
-pub use crate::configuration_contract_testing::{
-  verify_configuration_store_contract, verify_in_memory_configuration_store_contract,
-};
-pub use crate::configuration_testing::InMemoryConfigurationStore;
-pub use crate::credential_contract_testing::{
+pub use crate::artifacts::testing::cache_testing::{CacheLeaseFixture, InMemoryCacheSessionStore};
+pub use crate::cicd::agents::testing::agent_testing::InMemoryAgentStore;
+pub use crate::cicd::agents::testing::credential_contract_testing::{
   agent_credential_store_contract_fixture, verify_agent_credential_store_contract,
   verify_in_memory_agent_credential_contract,
 };
-pub use crate::definition_discovery_contract_testing::{
+pub use crate::cicd::builds::testing::build_discovery_contract_testing::verify_in_memory_build_discovery_contract;
+pub use crate::cicd::builds::testing::build_discovery_testing::InMemoryBuildDiscoveryStore;
+pub use crate::cicd::definitions::testing::configuration_contract_testing::{
+  verify_configuration_store_contract, verify_in_memory_configuration_store_contract,
+};
+pub use crate::cicd::definitions::testing::configuration_testing::InMemoryConfigurationStore;
+pub use crate::cicd::definitions::testing::definition_discovery_contract_testing::{
   verify_in_memory_definition_discovery_contract, verify_seeded_configuration_definition_discovery_contract,
   verify_seeded_pipeline_definition_discovery_contract, verify_seeded_trigger_definition_discovery_contract,
 };
-pub use crate::definition_discovery_testing::InMemoryTriggerDefinitionDiscoveryStore;
-pub use crate::factory_configuration_testing::InMemoryFactoryConfigurationStore;
-pub use crate::factory_phase_pool_contract_testing::{
-  FactoryPhasePoolContractScenario, freeze_phase_pool_contract_input, phase_pool_contract_input,
-  verify_factory_phase_pool_contract, verify_factory_phase_pool_progress, verify_factory_phase_pool_scan_invalidation,
+pub use crate::cicd::definitions::testing::definition_discovery_testing::InMemoryTriggerDefinitionDiscoveryStore;
+pub use crate::cicd::testing::authoritative_contract_testing::{
+  verify_authoritative_store_contract, verify_in_memory_store_contract, verify_management_trigger_audit_contract,
 };
-pub use crate::factory_project_policy_contract_testing::verify_factory_project_policy_publication;
-pub use crate::factory_role_deletion_contract_testing::{
+pub use crate::factory::authoring::testing::factory_configuration_testing::InMemoryFactoryConfigurationStore;
+pub use crate::factory::authoring::testing::factory_project_policy_contract_testing::verify_factory_project_policy_publication;
+pub use crate::factory::authoring::testing::factory_role_deletion_contract_testing::{
   verify_factory_role_deletion, verify_factory_role_deletion_blocks_automatic_selection,
   verify_factory_role_deletion_blocks_live_selection,
 };
-pub use crate::factory_runtime_settings_contract_testing::verify_factory_runtime_settings_publication;
+pub use crate::factory::authoring::testing::factory_runtime_settings_contract_testing::verify_factory_runtime_settings_publication;
+pub use crate::factory::execution::testing::factory_phase_pool_contract_testing::{
+  FactoryPhasePoolContractScenario, freeze_phase_pool_contract_input, phase_pool_contract_input,
+  verify_factory_phase_pool_contract, verify_factory_phase_pool_progress, verify_factory_phase_pool_scan_invalidation,
+};
 
-pub use crate::factory_role_profile_contract_testing::{
+pub use crate::cicd::agents::testing::pool_contract_testing::{
+  verify_agent_pool_store_contract, verify_in_memory_agent_pool_store_contract,
+};
+pub use crate::cicd::agents::testing::pool_testing::{InMemoryAgentPoolStore, PoolReferenceKind};
+pub use crate::cicd::definitions::testing::pipeline_contract_testing::{
+  verify_in_memory_pipeline_store_contract, verify_pipeline_store_contract,
+};
+pub use crate::cicd::definitions::testing::pipeline_testing::InMemoryPipelineStore;
+pub use crate::factory::authoring::testing::factory_role_profile_contract_testing::{
   role_profile_contract_definition, role_profile_contract_intent, verify_factory_role_profile_atomicity,
   verify_factory_role_profile_catalog, verify_factory_role_profile_publication,
   verify_factory_role_profile_replacement, verify_factory_role_template_copy,
 };
-pub use crate::log_search_contract_testing::{
+pub use crate::operations::testing::log_search_contract_testing::{
   verify_in_memory_log_search_index_contract, verify_log_search_index_contract,
 };
-pub use crate::log_search_testing::InMemoryLogSearchIndex;
-pub use crate::operator_attention_testing::{InMemoryOperatorAttentionStore, OperatorAttentionSeedError};
-pub use crate::pipeline_contract_testing::{verify_in_memory_pipeline_store_contract, verify_pipeline_store_contract};
-pub use crate::pipeline_testing::InMemoryPipelineStore;
-pub use crate::pool_contract_testing::{verify_agent_pool_store_contract, verify_in_memory_agent_pool_store_contract};
-pub use crate::pool_testing::{InMemoryAgentPoolStore, PoolReferenceKind};
-pub use crate::project_contract_testing::{
+pub use crate::operations::testing::log_search_testing::InMemoryLogSearchIndex;
+pub use crate::operations::testing::operator_attention_testing::{
+  InMemoryOperatorAttentionStore, OperatorAttentionSeedError,
+};
+pub use crate::operations::testing::resource_search_testing::{InMemoryResourceSearchStore, ResourceSearchSeedError};
+pub use crate::projects::testing::project_contract_testing::{
   verify_in_memory_project_store_contract, verify_project_store_contract, verify_security_scoped_project_replay,
 };
-pub use crate::project_testing::InMemoryProjectStore;
-pub use crate::resource_search_testing::{InMemoryResourceSearchStore, ResourceSearchSeedError};
+pub use crate::projects::testing::project_testing::InMemoryProjectStore;
 
 /// Counts of transactional evidence produced by accepted mutations.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -637,7 +649,7 @@ impl ManagementEvidenceIdentity<'_> {
   }
 }
 
-pub use crate::factory_node_journal_testing::{
+pub use crate::factory::execution::testing::factory_node_journal_testing::{
   FactoryNodeJournalContractFixture, factory_flow_contract_transition, factory_node_journal_contract_fixture,
   factory_node_journal_contract_fixture_with_large_signal, factory_node_journal_contract_fixture_with_retries,
   factory_profile_recovery_race_contract_fixture, factory_profile_selection_capabilities,
@@ -651,13 +663,17 @@ pub use crate::factory_node_journal_testing::{
   verify_factory_profile_wait_controls,
 };
 
-pub use crate::integration_administration_tests::{
+pub use crate::integrations::testing::integration_administration_tests::{
   verify_integration_administration, verify_integration_preparation_cleanup,
 };
 
-pub use crate::integration_connection_testing::{integration_connection_fixture, verify_connection_publication};
+pub use crate::integrations::testing::integration_connection_testing::{
+  integration_connection_fixture, verify_connection_publication,
+};
 
-pub use crate::integration_project_access_tests::{verify_project_grant_replay, verify_project_grant_subset};
+pub use crate::integrations::testing::integration_project_access_tests::{
+  verify_project_grant_replay, verify_project_grant_subset,
+};
 
 // Shared authoritative memory insertion for Trigger and Factory admission.
 fn insert_ordinary_build(

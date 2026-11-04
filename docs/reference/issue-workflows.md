@@ -43,7 +43,7 @@ and needs no administrative permission, Factory configuration or integration.
 The implicit workflow's typed ID uses the Project UUID, scoped by that Project.
 Its publication time is the Project creation time.
 
-The retained [v1 template](../../server/core/octacity-server-store/src/issue_workflow_default.v1.json)
+The retained [v1 template](../../server/core/octacity-server-store/src/issues/issue_workflow_default.v1.json)
 is ordinary editable policy data. Its names are not domain enum values. Never
 overwrite the meaning of that version when introducing future templates;
 existing exact references must remain resolvable.

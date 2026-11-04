@@ -6,290 +6,123 @@
 #![forbid(unsafe_code)]
 #![deny(missing_docs)]
 
-mod issue_check;
-pub use issue_check::*;
-mod issue_code_review;
-pub use issue_code_review::*;
-mod issue_planning;
-pub use issue_planning::*;
-mod issue_classification;
-pub use issue_classification::*;
-mod issue;
-mod issue_activity;
-pub use issue_activity::*;
-mod issue_discussion;
-pub use issue_discussion::*;
-mod issue_source_import;
-pub use issue_source_import::*;
-mod issue_source_read;
-pub use issue_source_read::*;
-mod issue_source_refresh;
-pub use issue_source_refresh::*;
-mod issue_source;
-pub use issue_source::*;
-mod issue_source_mapping;
-pub use issue_source_mapping::*;
-mod issue_source_resolution;
-pub use issue_source_resolution::*;
-mod issue_source_push;
-pub use issue_source_push::*;
-mod issue_source_status;
-pub use issue_source_status::*;
-mod issue_execution;
-pub use issue_execution::*;
-mod issue_outcomes;
-pub use issue_outcomes::*;
-mod issue_pipeline_action;
-mod issue_policy;
-pub use issue::*;
-pub use issue_pipeline_action::*;
-#[cfg(any(test, feature = "test-support"))]
-mod issue_testing;
-mod issue_workflow;
-pub use issue_workflow::*;
-#[cfg(any(test, feature = "test-support"))]
-mod issue_workflow_testing;
-
-mod agent_model;
-mod agent_resources;
-pub use agent_model::{SetAgentEnabled, SetAgentEnabledOutcome};
-pub use agent_resources::{AgentResourceObservation, AgentResourceStore, AgentResources};
-mod agent_port;
-mod artifact_model;
-mod artifact_port;
-mod audit_port;
-mod build_control;
-mod build_discovery_model;
-mod build_discovery_port;
-mod build_origin;
-mod factory_execution_input;
-mod factory_signal_receipt;
-pub use build_origin::{BuildOrigin, BuildSummaryOrigin, FactoryBuildOrigin, TriggerBuildOrigin};
-mod build_query;
-mod build_query_port;
-mod cache_model;
-mod cache_port;
-mod configuration_model;
-mod configuration_port;
-mod credential_port;
-mod credentials;
-mod definition_discovery_model;
-mod definition_discovery_port;
-mod definition_model;
-mod definition_port;
+mod artifacts;
+mod cicd;
 mod error;
-mod external_trigger_model;
-mod external_trigger_port;
-mod factory_admission_intent;
-pub use factory_admission_intent::{
-  FactoryAdmissionSource, FactoryWorkAdmissionIntent, ProjectInputSource, RepositorySourceSelection,
-  factory_admission_intent_digest, factory_source_admission_probe,
-};
-mod factory_admission_model;
-mod factory_admission_port;
-mod project_input_document;
-mod project_input_policy;
-pub use project_input_document::*;
-mod project_text_input;
-pub use project_text_input::*;
-mod factory_source_artifact;
-#[cfg(any(test, feature = "test-support"))]
-mod project_text_input_testing;
-pub use factory_source_artifact::*;
-mod factory_source;
-mod factory_source_projection;
-pub use factory_source_projection::*;
-mod factory_source_worker;
-pub use factory_source_worker::*;
-mod factory_source_poll;
-pub use factory_source_poll::*;
-#[cfg(any(test, feature = "test-support"))]
-mod factory_source_artifact_testing;
-pub use factory_source::*;
-mod factory_build_acceptance;
-#[cfg(any(test, feature = "test-support"))]
-mod factory_source_testing;
-pub use factory_build_acceptance::{
-  AcceptFactoryBuild, AcceptedFactoryBuild, CancelFactoryBuildExecution, FactoryBuildAcceptanceStore,
-  FactoryBuildCancellationStore, MAX_FACTORY_BUILD_JOBS,
-};
-mod factory_action;
-mod factory_action_queue;
-pub use factory_action_queue::*;
-mod factory_action_projection;
-pub use factory_action_projection::*;
-#[cfg(any(test, feature = "test-support"))]
-mod factory_action_projection_testing;
-mod factory_configuration_model;
-mod factory_configuration_port;
-mod factory_discovery_model;
-mod factory_discovery_port;
-mod factory_phase_pool;
-mod factory_retention_model;
-mod factory_retention_port;
-pub use factory_action::{FactoryNodeActionDescription, FactoryNodeActionKind};
-mod factory_run_control;
-mod factory_run_control_port;
-mod factory_run_model;
-mod factory_run_port;
-mod factory_run_transition;
+mod factory;
 mod idempotency;
-mod internal_trigger_model;
-mod internal_trigger_port;
-mod job_model;
-mod lease_recovery;
-mod lease_recovery_port;
-mod log_search;
-mod log_search_port;
+mod integrations;
+mod issues;
 mod management_mutation;
-mod model;
-mod operator_attention_model;
-mod operator_attention_port;
-mod pipeline_model;
-mod pipeline_port;
-mod pool_model;
-mod pool_port;
-mod port;
-mod project_model;
-mod project_policy;
-mod project_policy_port;
-mod project_port;
-mod read_visibility;
-mod resource_search_model;
-mod resource_search_port;
-mod schedule_model;
-mod schedule_port;
-mod trigger_evaluation_model;
-mod trigger_evaluation_port;
-mod trigger_port;
-mod webhook_delivery_model;
-
-#[cfg(any(test, feature = "test-support"))]
-mod log_search_testing;
-
-#[cfg(any(test, feature = "test-support"))]
-mod log_search_contract_testing;
-
-#[cfg(any(test, feature = "test-support"))]
-mod credential_testing;
-
-#[cfg(any(test, feature = "test-support"))]
-mod credential_contract_testing;
-
-#[cfg(any(test, feature = "test-support"))]
-mod configuration_contract_testing;
-
-#[cfg(any(test, feature = "test-support"))]
-mod configuration_testing;
-
-#[cfg(any(test, feature = "test-support"))]
-mod factory_configuration_testing;
-
-#[cfg(any(test, feature = "test-support"))]
-mod factory_phase_pool_contract_testing;
-#[cfg(any(test, feature = "test-support"))]
-mod factory_phase_pool_testing;
-#[cfg(any(test, feature = "test-support"))]
-mod factory_run_testing;
-
-#[cfg(any(test, feature = "test-support"))]
-mod definition_discovery_testing;
-
-#[cfg(any(test, feature = "test-support"))]
-mod definition_discovery_contract_testing;
-
-#[cfg(any(test, feature = "test-support"))]
-mod build_discovery_testing;
-
-#[cfg(any(test, feature = "test-support"))]
-mod build_discovery_contract_testing;
-
-#[cfg(any(test, feature = "test-support"))]
-mod resource_search_testing;
-
-#[cfg(any(test, feature = "test-support"))]
-mod operator_attention_testing;
-
+mod operations;
 #[cfg(any(test, feature = "test-support"))]
 mod pagination;
-
-#[cfg(any(test, feature = "test-support"))]
-mod authoritative_contract_testing;
-
-#[cfg(any(test, feature = "test-support"))]
-mod project_contract_testing;
-
-#[cfg(any(test, feature = "test-support"))]
-mod project_testing;
-mod restore;
-mod retention_hold_model;
-mod retention_hold_port;
-mod retention_model;
-mod retention_port;
-
-#[cfg(any(test, feature = "test-support"))]
-mod pipeline_contract_testing;
-
-#[cfg(any(test, feature = "test-support"))]
-mod pipeline_testing;
-
-#[cfg(any(test, feature = "test-support"))]
-mod pool_testing;
-
-#[cfg(any(test, feature = "test-support"))]
-mod pool_contract_testing;
-
-#[cfg(any(test, feature = "test-support"))]
-mod agent_testing;
-
-#[cfg(any(test, feature = "test-support"))]
-mod artifact_contract_testing;
-
-#[cfg(any(test, feature = "test-support"))]
-mod artifact_testing;
-
-#[cfg(any(test, feature = "test-support"))]
-mod cache_contract_testing;
-
-#[cfg(any(test, feature = "test-support"))]
-mod cache_testing;
-
+mod projects;
+mod read_visibility;
 #[cfg(any(test, feature = "test-support"))]
 mod test_support;
-
 #[cfg(any(test, feature = "test-support"))]
 pub mod testing;
 
-pub use agent_model::{
-  AgentCurrentExecution, AgentCurrentLeaseState, AgentDetail, AgentDrainMode, AgentPage, AgentStatus, DrainAgent,
-  DrainAgentOutcome, EnrolledAgent, ListAgents, MAX_AGENT_PAGE_SIZE, ReassignAgentPool, ReassignAgentPoolOutcome,
+pub use issues::issue::*;
+pub use issues::issue_activity::*;
+pub use issues::issue_check::*;
+pub use issues::issue_classification::*;
+pub use issues::issue_code_review::*;
+pub use issues::issue_discussion::*;
+pub use issues::issue_execution::*;
+pub use issues::issue_outcomes::*;
+pub use issues::issue_pipeline_action::*;
+pub use issues::issue_planning::*;
+pub use issues::issue_source::*;
+pub use issues::issue_source_import::*;
+pub use issues::issue_source_mapping::*;
+pub use issues::issue_source_push::*;
+pub use issues::issue_source_read::*;
+pub use issues::issue_source_refresh::*;
+pub use issues::issue_source_resolution::*;
+pub use issues::issue_source_status::*;
+pub use issues::issue_workflow::*;
+
+pub use cicd::agents::agent_model::{SetAgentEnabled, SetAgentEnabledOutcome};
+pub use cicd::agents::agent_resources::{AgentResourceObservation, AgentResourceStore, AgentResources};
+pub use cicd::builds::build_origin::{BuildOrigin, BuildSummaryOrigin, FactoryBuildOrigin, TriggerBuildOrigin};
+pub use factory::execution::factory_action::{FactoryNodeActionDescription, FactoryNodeActionKind};
+pub use factory::execution::factory_action_projection::*;
+pub use factory::execution::factory_action_queue::*;
+pub use factory::execution::factory_admission_intent::{
+  FactoryAdmissionSource, FactoryWorkAdmissionIntent, ProjectInputSource, RepositorySourceSelection,
+  factory_admission_intent_digest, factory_source_admission_probe,
 };
-pub use agent_port::AgentStore;
-pub use artifact_model::{
+pub use factory::execution::factory_build_acceptance::{
+  AcceptFactoryBuild, AcceptedFactoryBuild, CancelFactoryBuildExecution, FactoryBuildAcceptanceStore,
+  FactoryBuildCancellationStore, MAX_FACTORY_BUILD_JOBS,
+};
+pub use factory::sources::factory_source::*;
+pub use factory::sources::factory_source_artifact::*;
+pub use factory::sources::factory_source_poll::*;
+pub use factory::sources::factory_source_projection::*;
+pub use factory::sources::factory_source_worker::*;
+pub use projects::project_input_document::*;
+pub use projects::project_text_input::*;
+
+pub use artifacts::artifact_model::{
   ArtifactTransitionAuthority, ArtifactUploadRecord, ArtifactVerificationResult, BeginArtifactUpload,
   BeginArtifactUploadOutcome, ListPublishedArtifacts, MAX_ARTIFACT_PAGE_SIZE, ReserveArtifact, TransitionArtifact,
   VerifyArtifactUpload, artifact_authority_is_valid,
 };
-pub use artifact_port::ArtifactRecordStore;
-pub use audit_port::{AuditFactStore, ListAuditFacts};
-pub use build_control::{
-  CancelBuild, CancellationDisposition, MAX_RETRY_BUILD_BYTES, RetryBuild, RetryDisposition, retry_graph_is_equivalent,
-};
-pub use build_discovery_model::{
-  ListProjectBuilds, MAX_PROJECT_BUILD_PAGE_SIZE, ProjectBuildFilter, ProjectBuildPage, ProjectBuildPagePosition,
-  ProjectBuildSummary,
-};
-pub use build_discovery_port::BuildDiscoveryStore;
-pub use build_query::{AttemptRecord, BuildRecord, JobAssignmentRecord, JobQueueRecord, JobRecord, JobTerminalRecord};
-pub use build_query_port::BuildQueryStore;
-pub use cache_model::{
+pub use artifacts::artifact_port::ArtifactRecordStore;
+pub use artifacts::cache_model::{
   AuthorizeCacheSession, BeginCacheSession, BeginCacheSessionOutcome, CacheAuthorization, CacheAuthorizationOutcome,
   CacheBlobPreparationOutcome, CacheDataAccess, CachePublicationOutcome, CacheRetentionOutcome, CacheSessionRecord,
   ListBuildCacheSessions, MAX_CACHE_SESSION_PAGE_SIZE, PublishCacheAction, PublishCacheBlob, RevokeCacheSession,
   cache_action_key, cache_blob_key, cache_scope_id,
 };
-pub use cache_port::{CacheDataStore, CacheSessionStore};
-pub use configuration_model::{
+pub use artifacts::cache_port::{CacheDataStore, CacheSessionStore};
+pub use cicd::agents::agent_model::{
+  AgentCurrentExecution, AgentCurrentLeaseState, AgentDetail, AgentDrainMode, AgentPage, AgentStatus, DrainAgent,
+  DrainAgentOutcome, EnrolledAgent, ListAgents, MAX_AGENT_PAGE_SIZE, ReassignAgentPool, ReassignAgentPoolOutcome,
+};
+pub use cicd::agents::agent_port::AgentStore;
+pub use cicd::agents::credential_port::AgentCredentialStore;
+pub use cicd::agents::credentials::{
+  AgentCredentialTarget, AgentPlatform, AgentRegistrationInventory, AgentRegistrationOutcome, AgentRegistrationProof,
+  AuthenticateAgentRegistration, AuthenticatedAgentRegistration, CredentialDigest, CredentialSecret,
+  ExpectedAgentPlatform, FreshRegistrationCredential, IssueAgentEnrollment, IssueAgentEnrollmentOutcome,
+  MAX_AGENT_INVENTORY_BYTES, MAX_AGENT_PLATFORM_LABEL_BYTES, RegisterAgent, RegistrationValidity,
+  RevokeAgentCredential,
+};
+pub use cicd::agents::pool_model::{
+  AgentPoolDefinition, AgentPoolMutationOutcome, AgentPoolPage, CreateAgentPool, DeleteAgentPool,
+  DeleteAgentPoolOutcome, ListAgentPools, MAX_AGENT_POOL_PAGE_SIZE, MAX_POOL_ADMISSION_PLATFORMS,
+  MAX_POOL_EXECUTION_TARGETS, MAX_POOL_STATIC_CAPACITY, PoolAdmissionPolicy, PoolExecutionTarget, PoolFairnessPolicy,
+  PublishAgentPoolVersion, PublishedAgentPool, validate_pool_drain_transition,
+};
+pub use cicd::agents::pool_port::AgentPoolStore;
+pub use cicd::builds::build_control::{
+  CancelBuild, CancellationDisposition, MAX_RETRY_BUILD_BYTES, RetryBuild, RetryDisposition, retry_graph_is_equivalent,
+};
+pub use cicd::builds::build_discovery_model::{
+  ListProjectBuilds, MAX_PROJECT_BUILD_PAGE_SIZE, ProjectBuildFilter, ProjectBuildPage, ProjectBuildPagePosition,
+  ProjectBuildSummary,
+};
+pub use cicd::builds::build_discovery_port::BuildDiscoveryStore;
+pub use cicd::builds::build_query::{
+  AttemptRecord, BuildRecord, JobAssignmentRecord, JobQueueRecord, JobRecord, JobTerminalRecord,
+};
+pub use cicd::builds::build_query_port::BuildQueryStore;
+pub use cicd::builds::job_model::{
+  AppendJobEvents, AppendJobEventsOutcome, CompletionDisposition, DurableJobEvent, JobClaim, JobClaimOutcome,
+  JobCompletion, JobCompletionKind, JobEventAppendPreparation, JobEventPage, LeaseAccess, LeaseGrant,
+  LeaseHeartbeatOutcome, LeaseWindow, ReadJobEvents, RenewLease, complete_job_state, start_job_execution,
+  validate_new_log_chunks,
+};
+pub use cicd::builds::lease_recovery::{
+  ClaimExpiredLeases, ExpiredLeaseClaim, LeaseRecoveryAction, MAX_LEASE_EXPIRY_BATCH_SIZE, MAX_WORKER_OWNER_BYTES,
+  RecoverExpiredLease, RecoverExpiredLeaseOutcome, WorkerOwner,
+};
+pub use cicd::builds::lease_recovery_port::LeaseRecoveryStore;
+pub use cicd::definitions::configuration_model::{
   BuildConfigurationDefinition, BuildConfigurationMutationOutcome, ConfigurationAgentRequirements,
   ConfigurationCachePolicy, ConfigurationNetworkPolicy, ConfigurationRetryPolicy, ConfigurationRuntimePolicy,
   ConfigurationTriggerPolicy, CreateBuildConfiguration, CreateRepository, MAX_AGENT_REQUIREMENT_LABELS,
@@ -299,32 +132,40 @@ pub use configuration_model::{
   PublishedBuildConfiguration, PublishedRepository, RepositoryDefinition, RepositoryMutationOutcome,
   RepositorySelectionPolicy, RetryClass,
 };
-pub use configuration_port::ConfigurationStore;
-pub use credential_port::AgentCredentialStore;
-pub use credentials::{
-  AgentCredentialTarget, AgentPlatform, AgentRegistrationInventory, AgentRegistrationOutcome, AgentRegistrationProof,
-  AuthenticateAgentRegistration, AuthenticatedAgentRegistration, CredentialDigest, CredentialSecret,
-  ExpectedAgentPlatform, FreshRegistrationCredential, IssueAgentEnrollment, IssueAgentEnrollmentOutcome,
-  MAX_AGENT_INVENTORY_BYTES, MAX_AGENT_PLATFORM_LABEL_BYTES, RegisterAgent, RegistrationValidity,
-  RevokeAgentCredential,
-};
-pub use definition_discovery_model::ListProjectIssueWorkflows;
-pub use definition_discovery_model::{
+pub use cicd::definitions::configuration_port::ConfigurationStore;
+pub use cicd::definitions::definition_discovery_model::ListProjectIssueWorkflows;
+pub use cicd::definitions::definition_discovery_model::{
   CurrentBuildConfigurationPage, CurrentBuildConfigurationSummary, CurrentPipelinePage, CurrentPipelineSummary,
   CurrentRepositoryPage, CurrentRepositorySummary, CurrentTriggerDefinitionKind, CurrentTriggerDefinitionPage,
   CurrentTriggerDefinitionSummary, ListProjectBuildConfigurations, ListProjectPipelines, ListProjectRepositories,
   ListProjectTriggerDefinitions, MAX_CURRENT_DEFINITION_PAGE_SIZE,
 };
-pub use definition_discovery_port::{
+pub use cicd::definitions::definition_discovery_port::{
   ConfigurationDiscoveryStore, PipelineDiscoveryStore, TriggerDefinitionDiscoveryStore,
 };
-pub use definition_model::{
+pub use cicd::definitions::definition_model::{
   CreateTriggerDefinition, ManualTriggerDefinitionRecord, ProjectPolicyMutationOutcome, PublishProjectPolicy,
   TriggerDefinitionMutationOutcome,
 };
-pub use definition_port::DefinitionStore;
-pub use error::{StoreError, StoreInputError, StoreOperation};
-pub use external_trigger_model::{
+pub use cicd::definitions::definition_port::DefinitionStore;
+pub use cicd::definitions::pipeline_model::{
+  CreatePipeline, PipelineMutationOutcome, PublishPipelineVersion, PublishedPipeline,
+};
+pub use cicd::definitions::pipeline_port::PipelineStore;
+pub use cicd::model::{
+  AcceptTrigger, AcceptTriggerOutcome, BuildRetentionDeadlines, EventDigest, EventSequence, ImmutableBuildInput,
+  JobEventKind, LeaseFence, MAX_ACCEPT_TRIGGER_BYTES, MAX_ALLOWED_POOLS_PER_JOB, MAX_JOB_DEPENDENCIES,
+  MAX_JOB_EVENT_BATCH_BYTES, MAX_JOB_EVENT_BATCH_SIZE, MAX_JOB_EVENT_KIND_BYTES, MAX_JOB_EVENT_PAYLOAD_BYTES,
+  MAX_JOB_EVENT_READ_PAGE_SIZE, MAX_MATERIALIZED_DEPENDENCY_EDGES, MAX_MATERIALIZED_JOBS,
+  MAX_STRUCTURED_DOCUMENT_BYTES, MaterializedJob, MaterializedJobPayload, MutationDisposition, RegistrationEpoch,
+  SuppressTrigger, SuppressTriggerOutcome, TriggerAcceptanceProbe, TriggerEvaluationOutcome, TriggerIntentDigest,
+  TriggerIntentDigestError, TriggerReplayNamespace,
+};
+pub use cicd::port::{
+  AuthoritativeStore, BuildControlStore, JobEventReadStore, JobExecutionStore, LeaseHeartbeatStore,
+  LogChunkManifestStore, TriggerAcceptanceStore,
+};
+pub use cicd::triggers::external_trigger_model::{
   ClaimManagedWebhookOperations, CreateManagedWebhook, CreateUnmanagedWebhook, EnqueueManagedWebhookOperation,
   FailManagedWebhookOperation, MAX_MANAGED_WEBHOOK_OPERATION_BATCH_SIZE, MAX_WEBHOOK_ADAPTER_ID_BYTES,
   MAX_WEBHOOK_HEADER_NAME_BYTES, MAX_WEBHOOK_MATERIAL_HANDLE_BYTES, MAX_WEBHOOK_VERIFICATION_HEADERS,
@@ -333,49 +174,77 @@ pub use external_trigger_model::{
   UnmanagedWebhookDefinition, UnmanagedWebhookMutationOutcome, WEBHOOK_ADAPTER_SHA256_BYTES, WebhookIntegrationRecord,
   canonical_webhook_headers,
 };
-pub use external_trigger_port::{
+pub use cicd::triggers::external_trigger_port::{
   ManagedWebhookOperationStore, ManagedWebhookRegistrationStore, WebhookConfigurationStore,
   WebhookDeliveryAdmissionStore, WebhookDeliveryQueryStore, WebhookDeliveryWorkStore, WebhookIntegrationReader,
 };
-pub use factory_admission_model::{
-  AdmitFactoryWork, FactoryAdmissionContext, FactoryAdmissionIdentity, FactoryAdmissionMutationOutcome,
-  FactoryAdmissionProbe, FactoryWorkSourceScope, PublishedFactoryAdmission, ReadFactoryAdmissionContext,
+pub use cicd::triggers::internal_trigger_model::{
+  ClaimInternalTriggerEvents, CompleteInternalTriggerEvent, CreateInternalTriggerDefinition,
+  InternalTriggerDefinitionPage, InternalTriggerDefinitionRecord, InternalTriggerEventClaim, InternalTriggerMatch,
+  InternalTriggerSourceOrigin, ListInternalTriggerDefinitions, MAX_INTERNAL_TRIGGER_EVENT_BATCH_SIZE,
+  MAX_INTERNAL_TRIGGER_MATCHES_PER_EVENT, MAX_INTERNAL_TRIGGER_PAGE_SIZE, PublishInternalTriggerVersion,
 };
-pub use factory_admission_port::FactoryAdmissionStore;
-pub use factory_configuration_model::{
+pub use cicd::triggers::internal_trigger_port::{InternalTriggerDefinitionStore, InternalTriggerEventStore};
+pub use cicd::triggers::schedule_model::{
+  ClaimDueSchedules, CompleteScheduleClaim, CreateSchedule, DueScheduleClaim, MAX_SCHEDULE_CLAIM_BATCH_SIZE,
+  ScheduleRecord,
+};
+pub use cicd::triggers::schedule_port::ScheduleStore;
+pub use cicd::triggers::trigger_evaluation_model::{
+  ClaimTriggerEvaluations, CompleteTriggerEvaluation, FailTriggerEvaluation, MAX_TRIGGER_EVALUATION_BATCH_SIZE,
+  MAX_TRIGGER_EVALUATION_DIAGNOSTIC_BYTES, MAX_TRIGGER_EVALUATION_PAYLOAD_BYTES, RecordTriggerEvaluationRevision,
+  ReserveTriggerEvaluation, TriggerEvaluationClaim, TriggerEvaluationReservation,
+};
+pub use cicd::triggers::trigger_evaluation_port::TriggerEvaluationWorkStore;
+pub use cicd::triggers::trigger_port::TriggerDefinitionStore;
+pub use cicd::triggers::webhook_delivery_model::{
+  ClaimWebhookDeliveries, CompleteWebhookDelivery, EnqueueWebhookDelivery, FailWebhookDelivery,
+  MAX_STORED_WEBHOOK_BODY_BYTES, MAX_WEBHOOK_DELIVERY_BATCH_SIZE, MAX_WEBHOOK_DIAGNOSTIC_BYTES,
+  MAX_WEBHOOK_HEADER_VALUE_BYTES, MAX_WEBHOOK_METADATA_ENTRIES, MAX_WEBHOOK_METADATA_NAME_BYTES,
+  MAX_WEBHOOK_VALUE_BYTES, NormalizedWebhookEvent, RecordWebhookEvent, RecordWebhookEventOutcome,
+  SuppressWebhookDelivery, WebhookDeliveryClaim, WebhookDeliveryDiagnostic, WebhookDeliveryId, WebhookDeliveryState,
+  WebhookDeliveryWork, WebhookFailureCode,
+};
+pub use error::{StoreError, StoreInputError, StoreOperation};
+pub use factory::authoring::factory_configuration_model::{
   CreateFactoryConfiguration, FactoryConfigurationAvailability, FactoryConfigurationMutationIntent,
   FactoryConfigurationMutationOutcome, PublishedFactoryConfiguration, ReplaceFactoryConfiguration,
   ReplaceFactoryConfigurationError, ReplayFactoryConfigurationMutation,
 };
-pub use factory_configuration_port::{FactoryCapabilitySource, FactoryConfigurationStore};
-pub use factory_discovery_model::{
+pub use factory::authoring::factory_configuration_port::{FactoryCapabilitySource, FactoryConfigurationStore};
+pub use factory::authoring::factory_discovery_model::{
   CurrentFactoryConfigurationPage, CurrentFactoryConfigurationSummary, FactoryConfigurationPagePosition,
   FactoryRunBudgetSummary, FactoryRunDecisionSummary, FactoryRunDeliverySummary, FactoryRunFilter,
   FactoryRunNodeSummary, FactoryRunPage, FactoryRunPagePosition, FactoryRunSummary, FactoryRunSummaryDiagnostics,
   ListFactoryRuns, ListProjectFactoryConfigurations, MAX_FACTORY_CONFIGURATION_PAGE_SIZE, MAX_FACTORY_RUN_PAGE_SIZE,
   MAX_FACTORY_RUN_SUMMARY_NODES,
 };
-pub use factory_discovery_port::FactoryDiscoveryStore;
-pub use factory_phase_pool::{
+pub use factory::authoring::factory_discovery_port::FactoryDiscoveryStore;
+pub use factory::execution::factory_admission_model::{
+  AdmitFactoryWork, FactoryAdmissionContext, FactoryAdmissionIdentity, FactoryAdmissionMutationOutcome,
+  FactoryAdmissionProbe, FactoryWorkSourceScope, PublishedFactoryAdmission, ReadFactoryAdmissionContext,
+};
+pub use factory::execution::factory_admission_port::FactoryAdmissionStore;
+pub use factory::execution::factory_phase_pool::{
   FactoryPhasePoolStore, PhasePoolCandidate, PhasePoolDependency, PhasePoolEntry, PhasePoolInput, PhasePoolSelection,
   SelectPhasePool, compare_phase_pool_entries, configured_phase_pool_input, derive_phase_pool_entry,
   observe_phase_pool_candidate, phase_pool_dependency_ready, phase_pool_run_budget_ready, phase_pool_selection,
   phase_pool_selection_active, phase_pool_work_digest, plan_phase_pool_selection,
 };
-pub use factory_retention_model::{
+pub use factory::execution::factory_retention_model::{
   AdvanceFactoryRetentionWork, ClaimFactoryRetentionWork, FactoryArtifactRole, FactoryRetentionPassOutcome,
   FactoryRetentionPhase, FactoryRetentionWorkClaim, FailFactoryRetentionWork, MAX_FACTORY_RETENTION_CLEANUP_BATCH_SIZE,
   MAX_FACTORY_RETENTION_WORK_BATCH_SIZE,
 };
-pub use factory_retention_port::FactoryRetentionStore;
-pub use factory_run_control::{
+pub use factory::execution::factory_retention_port::FactoryRetentionStore;
+pub use factory::execution::factory_run_control::{
   ApplyFactoryRunControl, FactoryRunControlChange, FactoryRunControlIntent, FactoryRunControlOutcome,
   FactoryRunControlRecord, factory_node_response_contract, factory_profile_choice_is_open,
   factory_profile_wait_is_open, latest_factory_profile_control, prepare_factory_run_control,
   validate_factory_node_control_history, validate_factory_node_response, validate_factory_node_retry,
 };
-pub use factory_run_control_port::FactoryRunControlStore;
-pub use factory_run_model::{
+pub use factory::execution::factory_run_control_port::FactoryRunControlStore;
+pub use factory::execution::factory_run_model::{
   ClaimFactoryOutbox, ClaimFactoryRun, ClaimFactoryRunOutcome, ClaimFactoryRuns, ClaimedFactoryOutbox,
   ClaimedFactoryRun, CommitFactoryRunTransition, CommitFactoryRunTransitionOutcome, FactoryAuditFact,
   FactoryBudgetRecord, FactoryBuildExecutionDiagnostic, FactoryCallProfileDiagnostic, FactoryDomainDiagnostic,
@@ -386,52 +255,15 @@ pub use factory_run_model::{
   MAX_FACTORY_RECONCILIATION_BATCH_SIZE, MAX_FACTORY_RUN_DIAGNOSTIC_PAGE_SIZE, MAX_FACTORY_RUN_SNAPSHOT_RECORDS,
   MAX_FACTORY_TRANSITION_OUTBOX_RECORDS, MAX_FACTORY_TRANSITION_RECORDS, SettleFactoryOutbox,
 };
-pub use factory_run_port::FactoryRunStore;
-pub use factory_run_transition::{
+pub use factory::execution::factory_run_port::FactoryRunStore;
+pub use factory::execution::factory_run_transition::{
   FactoryTransitionBaseline, factory_profile_selection_roles, validate_factory_transition,
 };
 pub use idempotency::{
   IdempotencyKey, MAX_IDEMPOTENCY_KEY_BYTES, MAX_MANAGEMENT_SECURITY_SCOPE_BYTES, ManagementIdempotencyKey,
   ManagementSecurityScope,
 };
-pub use internal_trigger_model::{
-  ClaimInternalTriggerEvents, CompleteInternalTriggerEvent, CreateInternalTriggerDefinition,
-  InternalTriggerDefinitionPage, InternalTriggerDefinitionRecord, InternalTriggerEventClaim, InternalTriggerMatch,
-  InternalTriggerSourceOrigin, ListInternalTriggerDefinitions, MAX_INTERNAL_TRIGGER_EVENT_BATCH_SIZE,
-  MAX_INTERNAL_TRIGGER_MATCHES_PER_EVENT, MAX_INTERNAL_TRIGGER_PAGE_SIZE, PublishInternalTriggerVersion,
-};
-pub use internal_trigger_port::{InternalTriggerDefinitionStore, InternalTriggerEventStore};
-pub use job_model::{
-  AppendJobEvents, AppendJobEventsOutcome, CompletionDisposition, DurableJobEvent, JobClaim, JobClaimOutcome,
-  JobCompletion, JobCompletionKind, JobEventAppendPreparation, JobEventPage, LeaseAccess, LeaseGrant,
-  LeaseHeartbeatOutcome, LeaseWindow, ReadJobEvents, RenewLease, complete_job_state, start_job_execution,
-  validate_new_log_chunks,
-};
-pub use lease_recovery::{
-  ClaimExpiredLeases, ExpiredLeaseClaim, LeaseRecoveryAction, MAX_LEASE_EXPIRY_BATCH_SIZE, MAX_WORKER_OWNER_BYTES,
-  RecoverExpiredLease, RecoverExpiredLeaseOutcome, WorkerOwner,
-};
-pub use lease_recovery_port::LeaseRecoveryStore;
-pub use log_search::{
-  BuildLogStream, ClaimLogIndexWork, CompleteLogIndexWork, DeleteLogSearchDocuments, FailLogIndexWork,
-  IndexedLogSearchPage, LogIndexDocumentSource, LogIndexPosition, LogIndexWorkClaim, LogIndexWorkKind,
-  LogSearchCriteria, LogSearchCursor, LogSearchDocument, LogSearchError, LogSearchFreshness, LogSearchHit,
-  LogSearchInputError, LogSearchMode, LogSearchMutationDisposition, LogSearchOperation, LogSearchPage, LogSearchQuery,
-  MAX_LOG_INDEX_FAILURE_CODE_BYTES, MAX_LOG_INDEX_WORK_BATCH_SIZE, MAX_LOG_SEARCH_DOCUMENT_BYTES,
-  MAX_LOG_SEARCH_PAGE_SIZE, MAX_LOG_SEARCH_QUERY_BYTES, MAX_LOG_SEARCH_SNIPPET_BYTES, WriteLogSearchDocument,
-  bounded_log_search_snippet,
-};
-pub use log_search_port::{LogIndexWorkQueue, LogIndexWorkStore, LogSearchIndex};
 pub use management_mutation::{ManagementMutation, MutationAuditContext};
-pub use model::{
-  AcceptTrigger, AcceptTriggerOutcome, BuildRetentionDeadlines, EventDigest, EventSequence, ImmutableBuildInput,
-  JobEventKind, LeaseFence, MAX_ACCEPT_TRIGGER_BYTES, MAX_ALLOWED_POOLS_PER_JOB, MAX_JOB_DEPENDENCIES,
-  MAX_JOB_EVENT_BATCH_BYTES, MAX_JOB_EVENT_BATCH_SIZE, MAX_JOB_EVENT_KIND_BYTES, MAX_JOB_EVENT_PAYLOAD_BYTES,
-  MAX_JOB_EVENT_READ_PAGE_SIZE, MAX_MATERIALIZED_DEPENDENCY_EDGES, MAX_MATERIALIZED_JOBS,
-  MAX_STRUCTURED_DOCUMENT_BYTES, MaterializedJob, MaterializedJobPayload, MutationDisposition, RegistrationEpoch,
-  SuppressTrigger, SuppressTriggerOutcome, TriggerAcceptanceProbe, TriggerEvaluationOutcome, TriggerIntentDigest,
-  TriggerIntentDigestError, TriggerReplayNamespace,
-};
 pub use octacity_server_artifacts::{
   ArtifactContentDigest, ArtifactEvent, ArtifactIdentity, ArtifactMediaType, ArtifactRecord, ArtifactRecordError,
   ArtifactReportFormat, ArtifactRetentionPolicy, ArtifactState, ArtifactType, LogChunkDigest, LogChunkManifest,
@@ -455,7 +287,18 @@ pub use octacity_server_trigger::{
   TriggerDefinitionRef, TriggerEventKind, TriggerInputError, TriggerKind, TriggerMetadata, TriggerOccurrenceIntent,
   TriggerOccurrenceState, TriggerTarget, derive_internal_causality, validate_internal_ancestry,
 };
-pub use operator_attention_model::{
+pub use operations::audit_port::{AuditFactStore, ListAuditFacts};
+pub use operations::log_search::{
+  BuildLogStream, ClaimLogIndexWork, CompleteLogIndexWork, DeleteLogSearchDocuments, FailLogIndexWork,
+  IndexedLogSearchPage, LogIndexDocumentSource, LogIndexPosition, LogIndexWorkClaim, LogIndexWorkKind,
+  LogSearchCriteria, LogSearchCursor, LogSearchDocument, LogSearchError, LogSearchFreshness, LogSearchHit,
+  LogSearchInputError, LogSearchMode, LogSearchMutationDisposition, LogSearchOperation, LogSearchPage, LogSearchQuery,
+  MAX_LOG_INDEX_FAILURE_CODE_BYTES, MAX_LOG_INDEX_WORK_BATCH_SIZE, MAX_LOG_SEARCH_DOCUMENT_BYTES,
+  MAX_LOG_SEARCH_PAGE_SIZE, MAX_LOG_SEARCH_QUERY_BYTES, MAX_LOG_SEARCH_SNIPPET_BYTES, WriteLogSearchDocument,
+  bounded_log_search_snippet,
+};
+pub use operations::log_search_port::{LogIndexWorkQueue, LogIndexWorkStore, LogSearchIndex};
+pub use operations::operator_attention_model::{
   CriticalSystemConditionChange, CriticalSystemConditionSourceId, ListOperatorAttention,
   MAX_OPERATOR_ATTENTION_CODE_BYTES, MAX_OPERATOR_ATTENTION_PAGE_SIZE, MAX_OPERATOR_ATTENTION_SUMMARY_BYTES,
   MAX_OPERATOR_ATTENTION_TARGETS, OperatorAttentionCategory, OperatorAttentionEvent, OperatorAttentionEventKind,
@@ -463,27 +306,40 @@ pub use operator_attention_model::{
   OperatorAttentionScope, OperatorAttentionSeverity, OperatorAttentionTarget, OperatorAttentionValueError,
   OperatorAttentionVisibility,
 };
-pub use operator_attention_port::{CriticalSystemConditionStore, OperatorAttentionStore};
-pub use pipeline_model::{CreatePipeline, PipelineMutationOutcome, PublishPipelineVersion, PublishedPipeline};
-pub use pipeline_port::PipelineStore;
-pub use pool_model::{
-  AgentPoolDefinition, AgentPoolMutationOutcome, AgentPoolPage, CreateAgentPool, DeleteAgentPool,
-  DeleteAgentPoolOutcome, ListAgentPools, MAX_AGENT_POOL_PAGE_SIZE, MAX_POOL_ADMISSION_PLATFORMS,
-  MAX_POOL_EXECUTION_TARGETS, MAX_POOL_STATIC_CAPACITY, PoolAdmissionPolicy, PoolExecutionTarget, PoolFairnessPolicy,
-  PublishAgentPoolVersion, PublishedAgentPool, validate_pool_drain_transition,
+pub use operations::operator_attention_port::{CriticalSystemConditionStore, OperatorAttentionStore};
+pub use operations::resource_search_model::{
+  MAX_RESOURCE_SEARCH_CONTEXT_BYTES, MAX_RESOURCE_SEARCH_LABEL_BYTES, MAX_RESOURCE_SEARCH_PAGE_SIZE,
+  MAX_RESOURCE_SEARCH_QUERY_BYTES, NormalizedResourceSearchQuery, ResourceSearchKind, ResourceSearchPage,
+  ResourceSearchPagePosition, ResourceSearchRank, ResourceSearchResource, ResourceSearchSummary,
+  ResourceSearchValueError, ResourceSearchVisibility, ResourceSearchVisibilityError, ResourceSearchVisibilityView,
+  SearchResources, normalize_resource_search_text,
 };
-pub use pool_port::AgentPoolStore;
-pub use port::{
-  AuthoritativeStore, BuildControlStore, JobEventReadStore, JobExecutionStore, LeaseHeartbeatStore,
-  LogChunkManifestStore, TriggerAcceptanceStore,
+pub use operations::resource_search_port::ResourceSearchStore;
+pub use operations::restore::{
+  MAX_RESTORE_RECONCILIATION_BATCH_SIZE, RestoreArtifactPage, RestoreCacheBlobPage, RestoreCacheCursor,
+  RestoreFactoryArtifactPage, RestoreFactoryRecovery, RestoreInventoryStore, RestoreLogChunkPage,
 };
-pub use project_model::{
+pub use operations::retention_hold_model::{
+  BuildResultRetentionState, BuildResultVisibility, GetBuildResultRetention, MAX_RETENTION_HOLD_REASON_BYTES,
+  PlaceBuildResultHold, ReleaseBuildResultHold, ReleaseBuildResultHoldError, RetentionAuditIdentity, RetentionHold,
+  RetentionHoldMutationOutcome, RetentionHoldReason, RetentionHoldState,
+};
+pub use operations::retention_hold_port::BuildResultRetentionHoldStore;
+pub use operations::retention_model::{
+  BuildResultComponent, ClaimOrphanLogChunks, ClaimRetentionWork, CompleteOrphanLogChunk, CompleteRetentionObject,
+  CompleteRetentionSearch, FailOrphanLogChunk, FailRetentionWork, FinishRetentionPass,
+  MAX_RETENTION_FAILURE_CODE_BYTES, MAX_RETENTION_OBJECT_BATCH_SIZE, MAX_RETENTION_WORK_BATCH_SIZE,
+  OrphanLogChunkClaim, PrepareRetentionWork, RetentionObject, RetentionObjectIdentity, RetentionPassOutcome,
+  RetentionPhase, RetentionPreparation, RetentionWorkClaim, StageOrphanLogChunk,
+};
+pub use operations::retention_port::{BuildRetentionStore, OrphanLogChunkStore};
+pub use projects::project_model::{
   CreateProject, DeleteProject, DeleteProjectOutcome, ListProjects, MAX_PROJECT_PAGE_SIZE, MoveProject, Project,
   ProjectDetails, ProjectHierarchyError, ProjectMutationOutcome, ProjectPage, RenameProject, validate_project_ancestry,
 };
-pub use project_policy::ProjectPolicyDocument;
-pub use project_policy_port::ProjectPolicyStore;
-pub use project_port::ProjectStore;
+pub use projects::project_policy::ProjectPolicyDocument;
+pub use projects::project_policy_port::ProjectPolicyStore;
+pub use projects::project_port::ProjectStore;
 pub use read_visibility::{
   AgentListVisibility, AgentPoolListVisibility, ArtifactListVisibility, AuditFactListVisibility,
   BuildConfigurationListVisibility, BuildListVisibility, BuildLogSearchVisibility, CacheSessionListVisibility,
@@ -494,478 +350,50 @@ pub use read_visibility::{
   TriggerDefinitionListVisibility,
 };
 pub use read_visibility::{IssueListVisibility, IssueWorkflowListVisibility};
-pub use resource_search_model::{
-  MAX_RESOURCE_SEARCH_CONTEXT_BYTES, MAX_RESOURCE_SEARCH_LABEL_BYTES, MAX_RESOURCE_SEARCH_PAGE_SIZE,
-  MAX_RESOURCE_SEARCH_QUERY_BYTES, NormalizedResourceSearchQuery, ResourceSearchKind, ResourceSearchPage,
-  ResourceSearchPagePosition, ResourceSearchRank, ResourceSearchResource, ResourceSearchSummary,
-  ResourceSearchValueError, ResourceSearchVisibility, ResourceSearchVisibilityError, ResourceSearchVisibilityView,
-  SearchResources, normalize_resource_search_text,
-};
-pub use resource_search_port::ResourceSearchStore;
-pub use restore::{
-  MAX_RESTORE_RECONCILIATION_BATCH_SIZE, RestoreArtifactPage, RestoreCacheBlobPage, RestoreCacheCursor,
-  RestoreFactoryArtifactPage, RestoreFactoryRecovery, RestoreInventoryStore, RestoreLogChunkPage,
-};
-pub use retention_hold_model::{
-  BuildResultRetentionState, BuildResultVisibility, GetBuildResultRetention, MAX_RETENTION_HOLD_REASON_BYTES,
-  PlaceBuildResultHold, ReleaseBuildResultHold, ReleaseBuildResultHoldError, RetentionAuditIdentity, RetentionHold,
-  RetentionHoldMutationOutcome, RetentionHoldReason, RetentionHoldState,
-};
-pub use retention_hold_port::BuildResultRetentionHoldStore;
-pub use retention_model::{
-  BuildResultComponent, ClaimOrphanLogChunks, ClaimRetentionWork, CompleteOrphanLogChunk, CompleteRetentionObject,
-  CompleteRetentionSearch, FailOrphanLogChunk, FailRetentionWork, FinishRetentionPass,
-  MAX_RETENTION_FAILURE_CODE_BYTES, MAX_RETENTION_OBJECT_BATCH_SIZE, MAX_RETENTION_WORK_BATCH_SIZE,
-  OrphanLogChunkClaim, PrepareRetentionWork, RetentionObject, RetentionObjectIdentity, RetentionPassOutcome,
-  RetentionPhase, RetentionPreparation, RetentionWorkClaim, StageOrphanLogChunk,
-};
-pub use retention_port::{BuildRetentionStore, OrphanLogChunkStore};
-pub use schedule_model::{
-  ClaimDueSchedules, CompleteScheduleClaim, CreateSchedule, DueScheduleClaim, MAX_SCHEDULE_CLAIM_BATCH_SIZE,
-  ScheduleRecord,
-};
-pub use schedule_port::ScheduleStore;
-pub use trigger_evaluation_model::{
-  ClaimTriggerEvaluations, CompleteTriggerEvaluation, FailTriggerEvaluation, MAX_TRIGGER_EVALUATION_BATCH_SIZE,
-  MAX_TRIGGER_EVALUATION_DIAGNOSTIC_BYTES, MAX_TRIGGER_EVALUATION_PAYLOAD_BYTES, RecordTriggerEvaluationRevision,
-  ReserveTriggerEvaluation, TriggerEvaluationClaim, TriggerEvaluationReservation,
-};
-pub use trigger_evaluation_port::TriggerEvaluationWorkStore;
-pub use trigger_port::TriggerDefinitionStore;
-pub use webhook_delivery_model::{
-  ClaimWebhookDeliveries, CompleteWebhookDelivery, EnqueueWebhookDelivery, FailWebhookDelivery,
-  MAX_STORED_WEBHOOK_BODY_BYTES, MAX_WEBHOOK_DELIVERY_BATCH_SIZE, MAX_WEBHOOK_DIAGNOSTIC_BYTES,
-  MAX_WEBHOOK_HEADER_VALUE_BYTES, MAX_WEBHOOK_METADATA_ENTRIES, MAX_WEBHOOK_METADATA_NAME_BYTES,
-  MAX_WEBHOOK_VALUE_BYTES, NormalizedWebhookEvent, RecordWebhookEvent, RecordWebhookEventOutcome,
-  SuppressWebhookDelivery, WebhookDeliveryClaim, WebhookDeliveryDiagnostic, WebhookDeliveryId, WebhookDeliveryState,
-  WebhookDeliveryWork, WebhookFailureCode,
-};
 
-#[cfg(test)]
-mod tests {
-  use std::collections::{BTreeMap, BTreeSet};
+pub use factory::execution::factory_job_policy::{factory_job_permissions, factory_job_source_scope};
 
-  use octacity_server_domain::{BuildId, Timestamp};
-  use serde_json::json;
-
-  use super::testing::{
-    InMemoryStore, authoritative_store_contract_fixture, compatible_snapshot,
-    verify_in_memory_agent_credential_contract, verify_in_memory_log_search_index_contract,
-    verify_in_memory_store_contract,
-  };
-  use super::{
-    AppendJobEvents, DurableJobEvent, EventSequence, IdempotencyKey, JobClaim, JobClaimOutcome, JobEventKind,
-    JobExecutionStore, LeaseAccess, LeaseFence, LeaseWindow, ListProjects, MAX_IDEMPOTENCY_KEY_BYTES,
-    MAX_JOB_EVENT_BATCH_SIZE, MAX_JOB_EVENT_PAYLOAD_BYTES, MAX_MATERIALIZED_JOBS, MAX_PROJECT_PAGE_SIZE,
-    MAX_WEBHOOK_HEADER_NAME_BYTES, MutationDisposition, RegistrationEpoch, StoreError, StoreInputError, StoreOperation,
-    TriggerAcceptanceStore, TriggerEventKind, UnmanagedWebhookDefinition, WEBHOOK_ADAPTER_SHA256_BYTES,
-    canonical_webhook_headers,
-  };
-
-  #[test]
-  fn in_memory_adapter_satisfies_the_authoritative_store_contract() {
-    verify_in_memory_store_contract();
-  }
-
-  #[test]
-  fn materialized_job_count_is_bounded_before_template_validation() {
-    let fixture = authoritative_store_contract_fixture();
-    let jobs = vec![fixture.request.jobs[0].clone(); MAX_MATERIALIZED_JOBS + 1];
-    let unrelated_build = super::test_support::id::<BuildId>(999);
-
-    assert_eq!(
-      super::model::validate_materialized_jobs(StoreOperation::AcceptTrigger, unrelated_build, &jobs),
-      Err(StoreError::invalid(
-        StoreOperation::AcceptTrigger,
-        StoreInputError::TooManyJobs,
-      )),
-    );
-  }
-
-  #[test]
-  fn ordinary_build_acceptance_rejects_job_source_mode_and_revision_substitution() {
-    let free = super::testing::source_free_store_contract_fixture().request;
-    let repository = authoritative_store_contract_fixture().request;
-    free.validate().unwrap();
-    repository.validate().unwrap();
-    let mut free_with_checkout = free.clone();
-    free_with_checkout.jobs = repository.jobs.clone();
-    let mut repository_without_checkout = repository.clone();
-    repository_without_checkout.jobs = free.jobs;
-    let mut changed_revision = repository;
-    changed_revision.build.immutable_revision =
-      Some(octacity_server_domain::ImmutableRevision::new("another-revision").unwrap());
-    for request in [free_with_checkout, repository_without_checkout, changed_revision] {
-      assert!(
-        request.validate().is_err(),
-        "Job source authority must match the retained Build intent"
-      );
-    }
-  }
-
-  #[test]
-  fn immutable_build_input_retains_explicit_source_absence_and_rejects_mixed_vcs_facts() {
-    let mut build = authoritative_store_contract_fixture().request.build;
-    let historical = serde_json::to_value(&build).unwrap();
-    assert!(historical.get("source").is_none());
-    let mut conflicting = build.clone();
-    conflicting.input_snapshot = json!({"parameters": {}, "source": {"kind": "source_free_v1"}});
-    assert!(
-      conflicting.validate().is_err(),
-      "repository facts must agree with retained source intent"
-    );
-    build.repository_id = None;
-    build.repository_version = None;
-    build.immutable_revision = None;
-    build.source = Some(octacity_server_domain::BuildSourceMode::SourceFreeV1);
-    build.input_snapshot = json!({"parameters": {}, "source": {"kind": "source_free_v1"}});
-    build.validate().unwrap();
-    let retained = serde_json::to_value(&build).unwrap();
-    assert_eq!(retained["source"], json!({"kind": "source_free_v1"}));
-    for field in ["repository_id", "repository_version", "immutable_revision"] {
-      assert!(retained.get(field).is_none(), "source-free input must omit {field}");
-    }
-    build.repository_id = Some(super::test_support::id(34));
-    assert!(
-      build.validate().is_err(),
-      "source-free mode must reject a repository identity"
-    );
-    build.repository_id = None;
-    build.source = None;
-    assert!(
-      build.validate().is_err(),
-      "source absence must be explicit and versioned"
-    );
-  }
-
-  #[test]
-  fn accepted_build_requires_a_positive_typed_job_concurrency_limit() {
-    let mut request = authoritative_store_contract_fixture().request;
-    request.build.project_job_concurrency_limit = 0;
-
-    assert_eq!(
-      request.validate(),
-      Err(StoreError::invalid(
-        StoreOperation::AcceptTrigger,
-        StoreInputError::InvalidBuildSchedulingPolicy,
-      )),
-    );
-  }
-
-  #[test]
-  fn failed_ready_signing_rolls_back_the_complete_in_memory_acceptance() {
-    let fixture = authoritative_store_contract_fixture();
-    let store = InMemoryStore::new();
-    store.seed_authoritative_contract_prerequisites(&fixture).unwrap();
-    let mut invalid = fixture.request.clone();
-    invalid.accepted_at = Timestamp::from_unix_millis(-1).unwrap();
-    super::test_support::run_ready(
-      async {
-        assert_eq!(
-          store.accept_trigger(invalid).await.unwrap_err(),
-          StoreError::Unavailable
-        );
-        assert_eq!(
-          store.accept_trigger(fixture.request).await.unwrap().disposition,
-          MutationDisposition::Applied
-        );
-      },
-      "the in-memory transaction unexpectedly yielded",
-    );
-  }
-
-  #[test]
-  fn incompatible_ready_work_does_not_block_a_later_compatible_job() {
-    let mut fixture = authoritative_store_contract_fixture();
-    let blocked_job = fixture.request.jobs[0].id;
-    fixture.request.jobs[0]
-      .requirements
-      .labels
-      .insert("factory-enforcement".to_owned(), "missing".to_owned());
-    fixture.request.jobs[1].dependencies.clear();
-    let expected_job = fixture.request.jobs[1].id;
-    let store = InMemoryStore::new();
-    store.seed_authoritative_contract_prerequisites(&fixture).unwrap();
-
-    super::test_support::run_ready(
-      async {
-        store.accept_trigger(fixture.request).await.unwrap();
-        let outcome = store
-          .claim_ready_job(
-            JobClaim::new(
-              super::test_support::id(990),
-              LeaseFence::from_bytes([9; 32]),
-              fixture.agent_id,
-              fixture.registration_epoch,
-              fixture.allowed_pool,
-              compatible_snapshot(),
-              LeaseWindow::new(super::test_support::time(1_000), super::test_support::time(2_000)).unwrap(),
-            )
-            .unwrap(),
-          )
-          .await
-          .unwrap();
-        let JobClaimOutcome::Claimed(grant) = outcome else {
-          panic!("the compatible Job behind an incompatible ready Job must remain schedulable");
-        };
-        assert_eq!(grant.job_id, expected_job);
-        assert_ne!(grant.job_id, blocked_job);
-      },
-      "the in-memory placement check unexpectedly yielded",
-    );
-  }
-
-  #[test]
-  fn in_memory_adapter_satisfies_the_agent_credential_contract() {
-    verify_in_memory_agent_credential_contract();
-  }
-
-  #[test]
-  fn in_memory_adapter_satisfies_the_log_search_index_contract() {
-    verify_in_memory_log_search_index_contract();
-  }
-
-  #[test]
-  fn in_memory_adapter_satisfies_the_project_store_contract() {
-    super::testing::verify_in_memory_project_store_contract();
-  }
-
-  #[test]
-  fn in_memory_adapter_satisfies_the_pipeline_store_contract() {
-    super::testing::verify_in_memory_pipeline_store_contract();
-  }
-
-  #[test]
-  fn in_memory_adapter_satisfies_the_configuration_store_contract() {
-    super::testing::verify_in_memory_configuration_store_contract();
-  }
-
-  #[test]
-  fn in_memory_adapters_satisfy_the_definition_discovery_contract() {
-    super::testing::verify_in_memory_definition_discovery_contract();
-  }
-
-  #[test]
-  fn in_memory_adapter_satisfies_the_build_discovery_contract() {
-    super::testing::verify_in_memory_build_discovery_contract();
-  }
-
-  #[test]
-  fn in_memory_adapter_satisfies_the_agent_pool_store_contract() {
-    super::testing::verify_in_memory_agent_pool_store_contract();
-  }
-
-  #[test]
-  fn agent_credentials_are_redacted_by_all_formatters() {
-    let marker = "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa";
-    let secret = super::CredentialSecret::from_bytes(*b"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa");
-    let debug = format!("{secret:?}");
-    let display = format!("{secret}");
-    assert!(!debug.contains(marker));
-    assert!(!display.contains(marker));
-    assert_eq!(debug, "CredentialSecret([REDACTED])");
-    assert_eq!(display, "[REDACTED]");
-  }
-
-  #[test]
-  fn durable_events_compute_canonical_digests_and_enforce_bounds() {
-    let time = Timestamp::from_unix_millis(1).unwrap();
-    let kind = JobEventKind::new("progress").unwrap();
-    let left = DurableJobEvent::new(
-      EventSequence::new(1).unwrap(),
-      kind.clone(),
-      time,
-      json!({"b": 2, "a": 1}),
-    )
-    .unwrap();
-    let right = DurableJobEvent::new(
-      EventSequence::new(1).unwrap(),
-      kind.clone(),
-      time,
-      json!({"a": 1, "b": 2}),
-    )
-    .unwrap();
-    assert_eq!(left.digest(), right.digest());
-
-    assert_eq!(
-      DurableJobEvent::new(
-        EventSequence::new(2).unwrap(),
-        kind,
-        time,
-        json!({"text": "x".repeat(MAX_JOB_EVENT_PAYLOAD_BYTES)}),
-      )
-      .unwrap_err(),
-      StoreInputError::EventPayloadTooLarge
-    );
-  }
-
-  #[test]
-  fn event_batches_are_bounded_even_when_callers_mutate_public_collections() {
-    let mut events = Vec::with_capacity(MAX_JOB_EVENT_BATCH_SIZE + 1);
-    for sequence in 1..=MAX_JOB_EVENT_BATCH_SIZE + 1 {
-      events.push(
-        DurableJobEvent::new(
-          EventSequence::new(u64::try_from(sequence).unwrap()).unwrap(),
-          JobEventKind::new("progress").unwrap(),
-          Timestamp::from_unix_millis(1).unwrap(),
-          json!({}),
-        )
-        .unwrap(),
-      );
-    }
-    let lease = LeaseAccess {
-      lease_id: "00000000-0000-0000-0000-000000000001".parse().unwrap(),
-      fence: LeaseFence::from_bytes([1; 32]),
-      agent_id: "00000000-0000-0000-0000-000000000002".parse().unwrap(),
-      registration_epoch: RegistrationEpoch::new(1).unwrap(),
-    };
-    assert_eq!(
-      AppendJobEvents::new(lease, events, Timestamp::from_unix_millis(2).unwrap()).unwrap_err(),
-      StoreError::InvalidInput {
-        operation: StoreOperation::AppendJobEvents,
-        source: StoreInputError::EventBatchTooLarge,
-      }
-    );
-  }
-
-  #[test]
-  fn project_query_and_idempotency_inputs_are_bounded() {
-    assert_eq!(IdempotencyKey::new(""), Err(StoreInputError::InvalidIdempotencyKey));
-    assert_eq!(
-      IdempotencyKey::new("x".repeat(MAX_IDEMPOTENCY_KEY_BYTES + 1)),
-      Err(StoreInputError::InvalidIdempotencyKey)
-    );
-    for invalid_limit in [0, MAX_PROJECT_PAGE_SIZE + 1] {
-      assert_eq!(
-        ListProjects::new(None, None, invalid_limit, crate::ProjectListVisibility::all()),
-        Err(StoreError::InvalidInput {
-          operation: StoreOperation::ListProjects,
-          source: StoreInputError::InvalidProjectPageSize,
-        })
-      );
-    }
-  }
-
-  #[test]
-  fn webhook_header_validation_is_shared_by_construction_and_store_revalidation() {
-    for invalid in [
-      vec!["x-signature".to_owned(), "x-signature".to_owned()],
-      vec!["X-Signature".to_owned()],
-      vec!["x".repeat(MAX_WEBHOOK_HEADER_NAME_BYTES + 1)],
-    ] {
-      assert_eq!(
-        canonical_webhook_headers(invalid),
-        Err(StoreInputError::InvalidWebhookDefinition)
-      );
-    }
-
-    let definition = UnmanagedWebhookDefinition {
-      adapter_id: "fixture".to_owned(),
-      adapter_sha256: "0".repeat(WEBHOOK_ADAPTER_SHA256_BYTES),
-      verification_material_handle: "secret:webhook".to_owned(),
-      verification_headers: BTreeSet::from(["x".repeat(MAX_WEBHOOK_HEADER_NAME_BYTES + 1)]),
-      repository_id: super::test_support::id(101),
-      event_kind: TriggerEventKind::new("push").unwrap(),
-      parameters: BTreeMap::new(),
-      priority: 0,
-    };
-    assert_eq!(definition.validate(), Err(StoreInputError::InvalidWebhookDefinition));
-  }
-}
-
-#[cfg(any(test, feature = "test-support"))]
-mod factory_node_journal_testing;
-
-mod factory_job_policy;
-pub use factory_job_policy::{factory_job_permissions, factory_job_source_scope};
-
-mod factory_flow_definition;
-pub use factory_flow_definition::{
+pub use factory::authoring::factory_flow_definition::{
   FactoryFlowDefinitionMutationOutcome, FactoryFlowDefinitionPage, FactoryFlowDefinitionStore,
   FlowDefinitionPagePosition, PublishFactoryFlowDefinition, PublishedFactoryFlowDefinition,
   ReplayFactoryFlowDefinition,
 };
 
-mod factory_phase_discovery;
-pub use factory_phase_discovery::{ListPhaseReadyEntries, PhaseReadyPage, PhaseReadyPagePosition};
+pub use factory::execution::factory_phase_discovery::{ListPhaseReadyEntries, PhaseReadyPage, PhaseReadyPagePosition};
 
-pub use factory_execution_input::{
+pub use factory::execution::factory_execution_input::{
   CompleteFactoryExecutionInputDeletion, FactoryExecutionInputDisposition, FactoryExecutionInputPublication,
   FactoryExecutionInputRetentionStore, FactoryExecutionInputStore, FactoryRoleInvocationStore,
   PublishFactoryExecutionInputs, PublishedExecutionInput, RetainedFactoryRoleInvocation,
 };
 
-pub use factory_signal_receipt::{
+pub use factory::execution::factory_signal_receipt::{
   FactoryDecisionSignalLeaseGuard, FactoryDecisionSignalNodeUsage, FactoryDecisionSignalReceiptStore,
   FactoryDecisionSignalRequestDisposition, FactoryDecisionSignalRequestStore, FactoryDecisionSignalUsageStore,
   PublishFactoryDecisionSignalReceipt, ReserveFactoryDecisionSignalRequest,
 };
 
-#[cfg(any(test, feature = "test-support"))]
-mod integration_administration_tests;
-#[cfg(test)]
-mod integration_connection_tests;
+pub use integrations::integration_connection::*;
 
-mod integration_connection;
-pub use integration_connection::*;
+pub use integrations::integration_administration::*;
+pub use integrations::integration_connection_port::*;
 
-#[cfg(any(test, feature = "test-support"))]
-mod integration_connection_testing;
+pub use integrations::integration_project_access::*;
 
-mod integration_connection_port;
-pub use integration_connection_port::*;
-mod integration_administration;
-pub use integration_administration::*;
+pub use factory::sources::factory_source_configuration::*;
+pub use factory::sources::factory_source_diagnostics::*;
 
-#[cfg(any(test, feature = "test-support"))]
-mod integration_project_access_tests;
+pub use issues::issue_legacy::*;
 
-mod integration_project_access;
-pub use integration_project_access::*;
+pub use issues::issue_retention::*;
 
-mod factory_source_configuration;
-pub use factory_source_configuration::*;
-mod factory_source_diagnostics;
-pub use factory_source_diagnostics::*;
+pub use factory::authoring::factory_role_profiles::*;
 
-mod issue_legacy;
-pub use issue_legacy::*;
+pub use factory::authoring::factory_role_profile_catalog::*;
 
-mod issue_retention;
-pub use issue_retention::*;
+pub use projects::project_skill_import::*;
 
-#[cfg(any(test, feature = "test-support"))]
-mod factory_role_deletion_contract_testing;
-#[cfg(any(test, feature = "test-support"))]
-mod factory_role_profile_contract_testing;
-mod factory_role_profiles;
-pub use factory_role_profiles::*;
-#[cfg(any(test, feature = "test-support"))]
-mod factory_role_profile_testing;
-
-mod factory_role_profile_catalog;
-pub use factory_role_profile_catalog::*;
-
-mod project_skill_import;
-pub use project_skill_import::*;
-#[cfg(any(test, feature = "test-support"))]
-mod project_skill_import_testing;
-
-#[cfg(any(test, feature = "test-support"))]
-mod factory_role_package_testing;
-
-mod factory_configuration_policy;
-mod factory_project_policy;
-pub use factory_configuration_policy::*;
-mod factory_project_provision;
-pub use factory_project_provision::*;
-mod factory_runtime_settings;
-pub use factory_project_policy::*;
-#[cfg(any(test, feature = "test-support"))]
-mod factory_project_policy_contract_testing;
-pub use factory_runtime_settings::*;
-#[cfg(any(test, feature = "test-support"))]
-mod factory_runtime_settings_testing;
-
-#[cfg(any(test, feature = "test-support"))]
-mod factory_runtime_settings_contract_testing;
+pub use factory::authoring::factory_configuration_policy::*;
+pub use factory::authoring::factory_project_policy::*;
+pub use factory::authoring::factory_project_provision::*;
+pub use factory::authoring::factory_runtime_settings::*;

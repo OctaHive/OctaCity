@@ -74,7 +74,7 @@ impl FactoryBuildAcceptanceStore for InMemoryStore {
       .get(&request.intent.input().factory_run_id())
       .ok_or(StoreError::Unavailable)?
       .snapshot()?;
-    crate::factory_role_package_testing::verify_dispatch(
+    crate::factory::authoring::testing::factory_role_package_testing::verify_dispatch(
       &run,
       &request.intent,
       &request.ownership,
