@@ -255,12 +255,14 @@ pub(crate) enum PublicationCase {
   Normal,
   LostResponse,
   ChangedAncestry,
+  ProviderRejected,
   StaleReview,
   HumanDeclined,
 }
 pub(crate) struct Publisher {
   pub(crate) behavior: PublicationCase,
   pub(crate) lost: AtomicBool,
+  pub(crate) lose_first_recovery_probe: AtomicBool,
   pub(crate) writes: Mutex<BTreeMap<FactoryDigest, FactoryCandidatePublication>>,
   pub(crate) requests: Mutex<Vec<FactoryCandidatePublicationRequest>>,
 }
@@ -270,8 +272,16 @@ impl FactoryCandidatePublisher for Publisher {
     &self,
     request: &FactoryCandidatePublicationRequest,
   ) -> Result<Option<FactoryCandidatePublication>, ApplicationError> {
+    if self.behavior == PublicationCase::ProviderRejected {
+      return Err(ApplicationError::PublicationRejected(
+        crate::FactoryPublicationRejection::ProviderRejected,
+      ));
+    }
     if self.behavior == PublicationCase::ChangedAncestry {
       return Err(ApplicationError::PreconditionFailed);
+    }
+    if self.lost.load(Ordering::SeqCst) && self.lose_first_recovery_probe.swap(false, Ordering::SeqCst) {
+      return Err(ApplicationError::unavailable());
     }
     Ok(self.writes.lock().unwrap().get(&request.operation_id).cloned())
   }
@@ -279,18 +289,23 @@ impl FactoryCandidatePublisher for Publisher {
     &self,
     request: &FactoryCandidatePublicationRequest,
   ) -> Result<FactoryCandidatePublication, ApplicationError> {
-    assert_eq!(request.candidate.changeset_digest(), request.manifest.content_digest());
+    let mut facts = crate::FactoryPublicationFacts::new(
+      "refs/heads/reviewed-candidate".into(),
+      request.candidate.candidate_revision().clone(),
+      "23".into(),
+      crate::FactoryReviewState::Open,
+    )
+    .unwrap();
+    if request.require_review_url {
+      facts = facts
+        .with_review_url("https://forge.example/team/repository/pull/23".parse().unwrap())
+        .unwrap();
+    }
     let publication = FactoryCandidatePublication {
       operation_id: request.operation_id,
       candidate: request.candidate.clone(),
       receipt: request.operation_id,
-      facts: crate::FactoryPublicationFacts::new(
-        "refs/heads/reviewed-candidate".into(),
-        request.candidate.candidate_revision().clone(),
-        "23".into(),
-        crate::FactoryReviewState::Open,
-      )
-      .unwrap(),
+      facts,
       usage: BudgetUsage::default(),
     };
     self.requests.lock().unwrap().push(request.clone());
@@ -430,6 +445,7 @@ fn publication_registry(
   let publisher = Arc::new(Publisher {
     behavior,
     lost: AtomicBool::new(false),
+    lose_first_recovery_probe: AtomicBool::new(true),
     writes: Mutex::new(BTreeMap::new()),
     requests: Mutex::new(vec![]),
   });
@@ -623,7 +639,7 @@ pub(crate) async fn verify_specified_owner<
   let snapshot = restarted.factory_run_snapshot(admission.run.id()).await.unwrap();
   let requests = publisher.requests.lock().unwrap();
   match behavior {
-    PublicationCase::ChangedAncestry | PublicationCase::StaleReview => {
+    PublicationCase::ChangedAncestry | PublicationCase::StaleReview | PublicationCase::ProviderRejected => {
       assert!(blocked);
       assert!(requests.is_empty());
       assert!(contracts.is_empty());

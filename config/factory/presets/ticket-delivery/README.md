@@ -189,3 +189,56 @@ close the review with a reason. The gate cannot authorize another automated
 rework or publication. Requirements and test defects end the automatic
 branch for an explicit correction cycle. `verified_candidate` is the
 successful completion of this branch.
+
+## Pull request publication
+
+To continue from validation to publication, add `pull-request-v1.json`.
+Remove the previous
+`protected_validation_gate.passed` transition to `verified_candidate`
+and its unused terminal in the composed draft before publishing the Flow.
+The branch prepares metadata only after validation passes.
+
+Bind `prepare_pull_request` to a reviewed DevOps Profile. The step
+gets the original task, accepted summary, review and validated revision.
+Its result contains a title and public summary. Give this profile only
+the access needed to produce that result. The title must contain text;
+the summary may contain multiple paragraphs. Delivery validates both
+before contacting the forge.
+
+In `publish_pull_request`, select the exact installed trusted action
+and target policy in place of the example references. Include both the
+trusted action identity from the step's binding and the provider plugin
+identity from the selected policy in the step, Flow and admission access
+requests. The same reference suffices if both identities match. Allow
+the policy's credential profile and network hosts in the enclosing
+ceilings and request them on the trusted action, with no grant on the
+DevOps step. The action gets the accepted revision, its original bundle
+and manifest, the validation deadline and the prepared metadata. The
+installed target policy controls the repository, target branch and draft mode.
+
+Install the Delivery action with the `published` outcome from this
+branch and its exact `pull_request_receipt` schema. Set `review_links`
+to `github` on the installed Delivery policy entry, alongside `draft`
+and `input_directory`. Use a pinned GitHub repository with its
+canonical HTTPS clone URL.
+GitHub.com uses `api.github.com` with `github.com`; an Enterprise
+installation uses the same HTTPS origin for the API and clone URL.
+Installation verifies and pins the browser route for that repository.
+The publisher resolves the numeric identity confirmed by the adapter
+against that route. A policy change requires a new pinned reference in
+the Flow.
+
+The `delivered_for_review` terminal retains the receipt, exact published
+head and review URL. A provider conflict, permanent rejection, invalid
+review metadata, or an expired validation window without an observed
+PR ends at `publication_blocked` with the corresponding reason.
+Ticket status changes require a separate
+Reporter action. Merge takes place manually in the forge under its
+branch policy, including for a production target.
+
+If a publication response is lost, Delivery looks up the original
+operation before making another write. If that lookup is unavailable,
+the next reconciliation resumes the same recorded attempt. Review
+expiry blocks new forge writes. Within the attempt's original deadline
+and the current claim, a read-only lookup can still recover the
+already-created PR.

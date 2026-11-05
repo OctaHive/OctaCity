@@ -13,7 +13,7 @@ use octacity_delivery_protocol::{
 };
 use octacity_server_application::{
   ApplicationError, FactoryCandidatePublication, FactoryCandidatePublicationRequest, FactoryCandidatePublisher,
-  FactoryExecutionClock,
+  FactoryExecutionClock, FactoryPublicationRejection,
 };
 use octacity_server_delivery::DeliveryAdapterRegistry;
 use octacity_server_domain::{ProjectId, RepositoryId, Timestamp};
@@ -84,7 +84,9 @@ fn deserialize_hosts<'de, D: serde::Deserializer<'de>>(deserializer: D) -> Resul
 pub struct FactoryDeliveryPolicy {
   reference: ImmutableReference,
   draft: FactoryDeliveryPolicyDraft,
+  review_links: Option<Box<ReviewLinkResolver>>,
 }
+type ReviewLinkResolver = dyn Fn(&str) -> Result<url::Url, ApplicationError> + Send + Sync;
 impl FactoryDeliveryPolicy {
   /// Freezes the complete operator profile under a content-derived identity.
   pub fn new(
@@ -117,7 +119,11 @@ impl FactoryDeliveryPolicy {
       version,
       FactoryDigest::sha256("octacity.factory.delivery-policy.v1", &[&bytes]),
     );
-    Ok(Self { reference, draft })
+    Ok(Self {
+      reference,
+      draft,
+      review_links: None,
+    })
   }
   /// Exact content identity to publish in the action's configured target.
   pub fn reference(&self) -> &ImmutableReference {
@@ -260,7 +266,14 @@ impl HostedFactoryCandidatePublisher {
       target: policy.draft.target.materialize(request.operation_id),
       bundle: input("bundle", &request.bundle),
       manifest: input("manifest", &request.manifest),
-      review: policy.draft.review.clone(),
+      review: request.review_metadata.as_ref().map_or_else(
+        || policy.draft.review.clone(),
+        |metadata| ReviewMetadata {
+          title: metadata.title().to_owned(),
+          summary: metadata.summary().to_owned(),
+          draft: policy.draft.review.draft,
+        },
+      ),
     }
   }
   async fn execute(
@@ -274,6 +287,16 @@ impl HostedFactoryCandidatePublisher {
     if now >= authority_end || now < request.started_at {
       return Err(ApplicationError::invalid());
     }
+    let authority_end = if publish && let Some(cutoff) = request.publish_until {
+      if now >= cutoff {
+        return Err(ApplicationError::PublicationRejected(
+          FactoryPublicationRejection::ValidationExpired,
+        ));
+      }
+      authority_end.min(cutoff)
+    } else {
+      authority_end
+    };
     let elapsed =
       u64::try_from(now.unix_millis() - request.started_at.unix_millis()).map_err(|_| ApplicationError::invalid())?;
     let remaining = request
@@ -299,6 +322,15 @@ impl HostedFactoryCandidatePublisher {
       return Err(ApplicationError::invalid());
     }
     let intent = self.intent(request, policy);
+    intent
+      .review
+      .validate()
+      .map_err(|_| ApplicationError::PublicationRejected(FactoryPublicationRejection::InvalidReviewMetadata))?;
+    let review_links = if request.require_review_url {
+      Some(policy.review_links.as_deref().ok_or_else(ApplicationError::invalid)?)
+    } else {
+      None
+    };
     let wire = Request {
       protocol_version: DELIVERY_PROTOCOL_VERSION,
       request_id: request.operation_id.to_string(),
@@ -325,6 +357,11 @@ impl HostedFactoryCandidatePublisher {
     }
     let end = self.clock.now()?;
     if end >= authority_end {
+      if publish && end < request.deadline.min(request.authority_expires_at) {
+        return Err(ApplicationError::PublicationRejected(
+          FactoryPublicationRejection::ValidationExpired,
+        ));
+      }
       return Err(ApplicationError::invalid());
     }
     let timeout = timeout.min(Duration::from_millis(
@@ -340,14 +377,17 @@ impl HostedFactoryCandidatePublisher {
       })?;
     match outcome {
       Outcome::Absent | Outcome::RepairRequired(_) if !publish => Ok(None),
-      Outcome::Observed(receipt) if receipt.review.is_some() => self.publication(request, *receipt).map(Some),
+      Outcome::Observed(receipt) if receipt.review.is_some() => {
+        self.publication(request, review_links, *receipt).map(Some)
+      }
       // A partially published branch is repairable by the adapter's original identity.
       Outcome::Observed(_) if !publish => Ok(None),
       Outcome::Failure(failure) => Err(match failure.class {
-        FailureClass::Transient | FailureClass::Cancelled | FailureClass::Unsupported => {
-          ApplicationError::unavailable()
-        }
+        FailureClass::Transient | FailureClass::Cancelled => ApplicationError::unavailable(),
         FailureClass::Conflict => ApplicationError::PreconditionFailed,
+        FailureClass::Permanent | FailureClass::Unsupported => {
+          ApplicationError::PublicationRejected(FactoryPublicationRejection::ProviderRejected)
+        }
         _ => ApplicationError::invalid(),
       }),
       _ => Err(ApplicationError::invalid()),
@@ -356,6 +396,7 @@ impl HostedFactoryCandidatePublisher {
   fn publication(
     &self,
     request: &FactoryCandidatePublicationRequest,
+    review_links: Option<&ReviewLinkResolver>,
     receipt: DeliveryReceipt,
   ) -> Result<FactoryCandidatePublication, ApplicationError> {
     let now = self.clock.now()?;
@@ -377,16 +418,20 @@ impl HostedFactoryCandidatePublisher {
     usage
       .validate(request.budget)
       .map_err(|_| ApplicationError::invalid())?;
+    let mut facts = octacity_server_application::FactoryPublicationFacts::new(
+      receipt.branch_reference,
+      octacity_server_domain::ImmutableRevision::new(receipt.remote_head).map_err(|_| ApplicationError::invalid())?,
+      review.identity.clone(),
+      state,
+    )?;
+    if let Some(resolve) = review_links {
+      facts = facts.with_review_url(resolve(&review.identity)?)?;
+    }
     Ok(FactoryCandidatePublication {
       operation_id: request.operation_id,
       candidate: request.candidate.clone(),
       receipt: FactoryDigest::sha256("octacity.factory.delivery-receipt.v1", &[&bytes]),
-      facts: octacity_server_application::FactoryPublicationFacts::new(
-        receipt.branch_reference,
-        octacity_server_domain::ImmutableRevision::new(receipt.remote_head).map_err(|_| ApplicationError::invalid())?,
-        review.identity,
-        state,
-      )?,
+      facts,
       usage,
     })
   }

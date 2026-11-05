@@ -85,6 +85,9 @@ pub struct FlowTemplateNode {
   /// Installed command/reasoning profile choice.
   #[serde(default)]
   pub build_profile: Option<FactoryKey>,
+  /// Reviewed assignment for this step, separate from reusable profile instructions.
+  #[serde(default, skip_serializing_if = "Option::is_none")]
+  pub task: Option<crate::FactoryInstructions>,
   /// Exact reviewed Role/Profile candidates and selection policy, using the same
   /// ordinary reasoning-node contract as immutable definitions. No live aliases.
   #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -262,6 +265,9 @@ impl FlowDefinitionTemplate {
             binding.capture_write_paths = Some(paths.clone());
           }
           node = node.with_build(binding)?;
+        }
+        if let Some(task) = &choice.task {
+          node = node.with_task(task.clone())?;
         }
         if let Some(selection) = &choice.profile_selection {
           node = node.with_profile_selection(selection.clone())?;

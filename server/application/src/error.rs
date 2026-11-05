@@ -37,6 +37,9 @@ pub enum ApplicationError {
   /// Safe terminal Reporter outcome; no remote diagnostics or retry authority.
   #[error("reporter rejected the projection: {0:?}")]
   ReporterRejected(octacity_server_store::FactoryOutboxFailure),
+  /// Safe terminal Delivery failure. The publisher exposes no provider diagnostics.
+  #[error("candidate publication was rejected: {0:?}")]
+  PublicationRejected(crate::FactoryPublicationRejection),
   /// Safe source dependency facts, preserving an original provider retry lower bound.
   #[error("source dependency failed: {class:?}")]
   SourceDependency {
@@ -106,6 +109,7 @@ impl ApplicationError {
       }
       Self::ReporterRejected(octacity_server_store::FactoryOutboxFailure::Conflict) => ApplicationFailure::Conflict,
       Self::ReporterRejected(_) => ApplicationFailure::Unavailable,
+      Self::PublicationRejected(_) => ApplicationFailure::Invalid,
       Self::SourceDependency { .. } | Self::SourcePredecessorSearchPending(_) => ApplicationFailure::Unavailable,
       Self::InvalidInput | Self::FactoryValidation(_) => ApplicationFailure::Invalid,
       Self::CapabilityUnavailable => ApplicationFailure::CapabilityUnavailable,

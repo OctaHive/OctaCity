@@ -94,7 +94,8 @@ impl FlowDataMapping {
   pub(crate) fn is_input_independent(&self) -> bool {
     self.value.is_input_independent()
   }
-  pub(crate) fn project_raw(&self, input: &Value) -> Result<Value, FactoryError> {
+  /// Evaluates a bounded projection for a caller that validates the result against its own contract.
+  pub fn project_raw(&self, input: &Value) -> Result<Value, FactoryError> {
     let mut remaining = MAX_FLOW_DATA_BYTES;
     self.value.project(input, &mut remaining)
   }

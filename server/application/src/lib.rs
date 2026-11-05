@@ -78,7 +78,8 @@ pub use factory::artifacts::factory_candidate_deliverables::{
 };
 pub use factory::artifacts::factory_candidate_publication::{
   FactoryCandidatePublication, FactoryCandidatePublicationAction, FactoryCandidatePublicationRequest,
-  FactoryCandidatePublisher, FactoryPublicationFacts, FactoryReviewState,
+  FactoryCandidatePublisher, FactoryPublicationFacts, FactoryPublicationRejection, FactoryPublicationReview,
+  FactoryReviewState,
 };
 pub use factory::artifacts::factory_execution_input_publisher::{
   FactoryExecutionDocument, FactoryExecutionInputPublisher,

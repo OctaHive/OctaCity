@@ -16,9 +16,9 @@
 
 ## 3. Trusted PR publication
 
-- [ ] 3.1 Add a public execution test for DevOps preparing and publishing the exact accepted candidate through scoped trusted Delivery tools; observe Red, compose the existing publication boundary, then Green. Verify no AI forge credential, merge operation, forge auto-merge setting or pipeline merge-approval stage is available, including for a production target.
-- [ ] 3.2 Add provider/application behavioral coverage for publication conflicts and completion with `delivered_for_review`, PR URL and receipt; observe Red before completing missing Delivery composition, then Green. Verify published head matches the reviewed/validated candidate and ticket reporting does not claim merge or completion solely from PR publication.
-- [ ] 3.3 Test application/store recovery when PR creation succeeds remotely but its response is lost; observe Red before adding missing integration, then Green through the existing Delivery owner. Verify one original PR and no duplicate publication, merge operation or new lifecycle journal.
+- [x] 3.1 Add a public execution test for DevOps preparing PR metadata and the scoped trusted Delivery action publishing and observing the exact accepted candidate; observe Red, compose the existing publication boundary, then Green. Verify no AI forge credential, merge operation, forge auto-merge setting or pipeline merge-approval stage is available, including for a production target.
+- [x] 3.2 Add provider/application behavioral coverage for publication conflicts and completion with `delivered_for_review`, PR URL and receipt; observe Red before completing missing Delivery composition, then Green. Verify published head matches the reviewed/validated candidate and ticket reporting does not claim merge or completion solely from PR publication.
+- [x] 3.3 Test application/store recovery when PR creation succeeds remotely but its response is lost; observe Red before adding missing integration, then Green through the existing Delivery owner. Verify one original PR, read-only recovery after review expiry within the attempt, and no duplicate publication, merge operation or new lifecycle journal.
 
 ## 4. Common authoring and Issue outcome cards
 

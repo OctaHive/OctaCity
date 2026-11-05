@@ -98,20 +98,20 @@ The pipeline SHALL execute implementation or defect correction, capture its exac
 
 ### Requirement: Successful delivery ends with a pull request for manual merge
 
-The pipeline SHALL select a DevOps AI-agent invocation for Delivery using the existing trusted PR publication capability. DevOps SHALL prepare and observe publication through scoped tools; only trusted actions SHALL perform forge writes. Only the candidate that passed review and validation SHALL be published. Successful publication SHALL end the pipeline with `delivered_for_review`, the PR reference and publication receipt. A human SHALL perform any later merge in the forge, including into production branches. This pipeline SHALL NOT invoke merge, enable forge auto-merge or add an in-pipeline approval that subsequently triggers merge. The existing publication-only Delivery protocol SHALL remain unchanged.
+The pipeline SHALL select a DevOps AI-agent invocation for Delivery using the existing trusted PR publication capability. DevOps SHALL prepare the public PR metadata. The scoped trusted Delivery action SHALL perform forge writes, observe the exact result and retain the receipt. Confirmation SHALL NOT require another AI invocation. Only the candidate that passed review and validation SHALL be published. Successful publication SHALL end the pipeline with `delivered_for_review`, the PR reference and publication receipt. A human SHALL perform any later merge in the forge, including into production branches. This pipeline SHALL NOT invoke merge, enable forge auto-merge or add an in-pipeline approval that subsequently triggers merge. The existing publication-only Delivery protocol SHALL remain unchanged.
 
-Recovery SHALL reuse the original publication identity and PR after an unknown response. Publication failure or conflict SHALL remain visible without claiming successful delivery. A changed candidate SHALL require fresh review and validation before publication. AI invocations, including DevOps, SHALL NOT receive direct forge-write credentials. Reporting SHALL distinguish delivered-for-review from merged code and SHALL NOT claim merge or complete the ticket solely because a PR was published. Observing a later manual merge SHALL NOT be required to finish this pipeline.
+Recovery SHALL reuse the original publication identity and PR after an unknown response. Review or validation expiry SHALL prevent another forge write. An exact read-only recovery SHALL remain possible within the original attempt deadline and current claim. Publication failure or conflict SHALL remain visible without claiming successful delivery. A changed candidate SHALL require fresh review and validation before publication. AI invocations, including DevOps, SHALL NOT receive direct forge-write credentials. Reporting SHALL distinguish delivered-for-review from merged code and SHALL NOT claim merge or complete the ticket solely because a PR was published. Observing a later manual merge SHALL NOT be required to finish this pipeline.
 
 #### Scenario: Successful pipeline publishes the accepted candidate
 - **WHEN** the exact candidate passed review and validation and its configured publication is authorized
-- **THEN** DevOps uses trusted Delivery to publish one PR and the pipeline ends with `delivered_for_review` and a link for manual merge
+- **THEN** the trusted Delivery action publishes and observes one PR using the prepared metadata, and the pipeline ends with `delivered_for_review` and a link for manual merge
 
 #### Scenario: Publication response is lost
 - **WHEN** the provider created the PR but its response was lost
-- **THEN** recovery observes and returns the original PR without another publication identity or any merge operation
+- **THEN** recovery within the original attempt observes and returns the original PR, even if the review has expired, without another publication identity or any merge operation
 
 #### Scenario: PR targets production
-- **WHEN** DevOps publishes the accepted candidate to a PR targeting a production branch
+- **WHEN** the trusted Delivery action publishes the accepted candidate to a PR targeting a production branch
 - **THEN** the pipeline ends with delivery for review, merge remains a human forge operation and no pipeline merge approval is requested
 
 #### Scenario: Publication is blocked
@@ -174,7 +174,7 @@ Each stage SHALL declare its own code resource and scope, Work task selection, s
 
 Invocation and permission isolation SHALL be a required deliverable of this pipeline. Each stage SHALL execute with its own enforced workspace/Artifact access, read/write paths, tools/commands, child-process, network and credential grants. Stages sharing a role SHALL NOT inherit each other's private workspace, session, environment or secret access. Omitting data from a prompt or Context Manifest SHALL NOT substitute for enforcement at the actual access boundary. The system SHALL use and, where needed, extend existing runtime enforcement; a backend unable to enforce a required restriction SHALL block dispatch without falling back to broader permissions.
 
-The independent reviewer SHALL have read-only access to the selected candidate; allowed report-output paths SHALL remain separate. Test execution SHALL use isolated temporary/output paths without mutating the retained candidate or protected test bundle. Only implementation SHALL write its allowed implementation paths. Requirements and test authors SHALL write their selected owned deliverables. DevOps SHALL use scoped trusted publication tools without direct forge-write credentials or merge authority.
+The independent reviewer SHALL have read-only access to the selected candidate; allowed report-output paths SHALL remain separate. Test execution SHALL use isolated temporary/output paths without mutating the retained candidate or protected test bundle. Only implementation SHALL write its allowed implementation paths. Requirements and test authors SHALL write their selected owned deliverables. DevOps SHALL supply metadata to a separately scoped trusted publication action without forge-write credentials or merge authority.
 
 #### Scenario: Review attempts to change code
 - **WHEN** the Coder review invocation attempts to write a selected candidate file

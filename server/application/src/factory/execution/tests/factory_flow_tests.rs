@@ -483,15 +483,15 @@ pub(crate) fn configured_fixture_with_work(
 pub(crate) fn configured_fixture_with_profiles(
   template: FlowDefinitionTemplate,
   work: WorkEnvelope,
-  configure: impl FnMut(&FlowTemplateNode, &mut FlowBuildBinding),
+  configure: impl FnMut(&mut FlowTemplateNode, &mut FlowBuildBinding),
 ) -> (PublishedFactoryAdmission, Arc<Execution>) {
   fixture_with_work_and_pool_root(template, work, "/accepted", configure)
 }
 fn fixture_with_work_and_pool_root(
-  template: FlowDefinitionTemplate,
+  mut template: FlowDefinitionTemplate,
   work: WorkEnvelope,
   pool_payload_root: &str,
-  mut configure: impl FnMut(&FlowTemplateNode, &mut FlowBuildBinding),
+  mut configure: impl FnMut(&mut FlowTemplateNode, &mut FlowBuildBinding),
 ) -> (PublishedFactoryAdmission, Arc<Execution>) {
   let schemas = template.data_schemas().unwrap();
   let fact_schemas = BTreeMap::from([
@@ -505,8 +505,8 @@ fn fixture_with_work_and_pool_root(
   let mut profiles = BTreeMap::new();
   let mut requirements = BTreeMap::new();
   let mut result_schemas = BTreeMap::new();
-  for node in &template.nodes {
-    if let Some(choice) = &node.build_profile {
+  for node in &mut template.nodes {
+    if let Some(choice) = node.build_profile.clone() {
       let mut profile = fixtures::binding(work.subject().project_id());
       profile.task_digest = FactoryDigest::sha256("fixture.profile-task", &[choice.as_str().as_bytes()]);
       profile.model_or_tool = reference(choice.as_str());
@@ -640,7 +640,7 @@ fn fixture_with_work_and_pool_root(
       configure(node, &mut profile);
       requirements.insert(node.key.clone(), profile.evidence.clone());
       result_schemas.insert(node.key.clone(), schemas[&node.outcomes[0].schema].reference().clone());
-      profiles.insert(choice.clone(), profile);
+      profiles.insert(choice, profile);
     }
   }
   let published = template

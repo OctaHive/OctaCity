@@ -57,6 +57,11 @@ impl RegistryAdapter for InstalledDeliveryAdapter {
   }
 }
 impl InstalledDeliveryAdapter {
+  /// Directory used as the installed adapter process's working directory.
+  pub fn working_directory(&self) -> Option<&Path> {
+    self.executable.path().parent()
+  }
+
   /// Executes one bounded, correlated request with clean environment and whole-tree cleanup.
   /// Profile/capability validation happens before any protected handle is passed.
   pub async fn execute(

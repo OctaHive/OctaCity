@@ -106,6 +106,20 @@ pub struct ReviewMetadata {
   /// Whether the review is initially a draft.
   pub draft: bool,
 }
+impl ReviewMetadata {
+  /// Validates the public title and summary before the provider can perform effects.
+  pub fn validate(&self) -> Result<(), ProtocolError> {
+    if self.title.trim().is_empty()
+      || self.title.len() > 256
+      || self.title.chars().any(char::is_control)
+      || self.summary.len() > 4096
+      || self.summary.chars().any(|c| c.is_control() && c != '\n' && c != '\t')
+    {
+      return Err(ProtocolError::Invalid);
+    }
+    Ok(())
+  }
+}
 /// Complete exact accepted intent retained across response loss and process restart.
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
 #[serde(deny_unknown_fields)]
@@ -184,18 +198,9 @@ impl DeliveryIntent {
       || self.bundle.size_bytes > MAX_DELIVERY_BUNDLE_BYTES
       || self.manifest.size_bytes == 0
       || self.manifest.size_bytes > MAX_DELIVERY_MANIFEST_BYTES
-      || self.review.title.is_empty()
-      || self.review.title.len() > 256
-      || self.review.title.chars().any(char::is_control)
-      || self.review.summary.len() > 4096
-      || self
-        .review
-        .summary
-        .chars()
-        .any(|c| c.is_control() && c != '\n' && c != '\t')
     {
       return Err(ProtocolError::Invalid);
     }
-    Ok(())
+    self.review.validate()
   }
 }

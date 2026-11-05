@@ -107,11 +107,7 @@ impl Config {
       repositories: wire.repositories,
     })
   }
-  pub(crate) fn authorize_network(&self, intent: &DeliveryIntent) -> Result<(), GithubConfigError> {
-    let repository = self
-      .repositories
-      .get(&intent.repository.repository_locator)
-      .ok_or(GithubConfigError)?;
+  pub(crate) fn authorize_network(&self, repository: &Repository, hosts: &[String]) -> Result<(), GithubConfigError> {
     let remote = url::Url::parse(&repository.remote).map_err(|_| GithubConfigError)?;
     for endpoint in [&self.api_base, &remote] {
       // Installed configuration admits HTTPS only. Local file URLs are used by
@@ -124,20 +120,25 @@ impl Config {
         url::Host::Ipv4(host) => host.to_string(),
         url::Host::Ipv6(host) => host.to_string(),
       };
-      if !intent.network_hosts.contains(&host) {
+      if !hosts.contains(&host) {
         return Err(GithubConfigError);
       }
     }
     Ok(())
   }
-  pub(crate) fn delivery_credential(&self, intent: &DeliveryIntent) -> Result<Credential, GithubConfigError> {
-    let repo = self
-      .repositories
-      .get(&intent.repository.repository_locator)
-      .ok_or(GithubConfigError)?;
-    if repo.repository_id != intent.repository.repository_id {
+  pub(crate) fn delivery_repository(
+    &self,
+    locator: &str,
+    repository_id: &str,
+  ) -> Result<&Repository, GithubConfigError> {
+    let repo = self.repositories.get(locator).ok_or(GithubConfigError)?;
+    if repo.repository_id != repository_id {
       return Err(GithubConfigError);
     }
+    Ok(repo)
+  }
+  pub(crate) fn delivery_credential(&self, intent: &DeliveryIntent) -> Result<Credential, GithubConfigError> {
+    self.delivery_repository(&intent.repository.repository_locator, &intent.repository.repository_id)?;
     read_credential(
       &self.credential_directory,
       "delivery_write",

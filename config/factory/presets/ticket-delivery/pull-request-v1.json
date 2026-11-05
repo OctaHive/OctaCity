@@ -1,0 +1,256 @@
+{
+  "schemas": {
+    "pull_request_preparation": {
+      "identity": "factory.ticket-delivery.pull-request-preparation",
+      "version": "v1",
+      "shape": {
+        "type": "object",
+        "fields": {
+          "accepted": {"required": true, "value": {"type": "reference", "schema": "summary"}},
+          "review": {"required": true, "value": {"type": "reference", "schema": "code_review"}},
+          "validated_revision": {"required": true, "value": {"type": "string", "min_bytes": 1, "max_bytes": 256}}
+        }
+      }
+    },
+    "pull_request_metadata": {
+      "identity": "factory.ticket-delivery.pull-request-metadata",
+      "version": "v1",
+      "shape": {
+        "type": "object",
+        "fields": {
+          "title": {"required": true, "value": {"type": "string", "min_bytes": 1, "max_bytes": 256}},
+          "summary": {"required": true, "value": {"type": "string", "min_bytes": 0, "max_bytes": 4096}}
+        }
+      }
+    },
+    "pull_request_receipt": {
+      "identity": "factory.ticket-delivery.pull-request-receipt",
+      "version": "v1",
+      "shape": {
+        "type": "object",
+        "fields": {
+          "receipt": {"required": true, "value": {"type": "string", "min_bytes": 64, "max_bytes": 64}},
+          "candidate_revision": {"required": true, "value": {"type": "string", "min_bytes": 1, "max_bytes": 256}},
+          "changeset_digest": {"required": true, "value": {"type": "string", "min_bytes": 64, "max_bytes": 64}},
+          "external": {
+            "required": true,
+            "value": {
+              "type": "object",
+              "fields": {
+                "branch_reference": {"required": true, "value": {"type": "string", "min_bytes": 1, "max_bytes": 1024}},
+                "remote_head": {"required": true, "value": {"type": "string", "min_bytes": 1, "max_bytes": 256}},
+                "review_identity": {"required": true, "value": {"type": "string", "min_bytes": 1, "max_bytes": 256}},
+                "review_state": {"required": true, "value": {"type": "enum", "values": ["open", "merged_externally"]}},
+                "review_url": {"required": true, "value": {"type": "string", "min_bytes": 1, "max_bytes": 2048}}
+              }
+            }
+          }
+        }
+      }
+    },
+    "pull_request_blocked": {
+      "identity": "factory.ticket-delivery.pull-request-blocked",
+      "version": "v1",
+      "shape": {
+        "type": "object",
+        "fields": {
+          "reason": {"required": true, "value": {"type": "enum", "values": ["publication_conflict", "provider_rejected", "invalid_review_metadata", "validation_expired"]}}
+        }
+      }
+    },
+    "pull_request_publication": {
+      "identity": "factory.ticket-delivery.pull-request-publication",
+      "version": "v1",
+      "shape": {
+        "type": "object",
+        "fields": {
+          "metadata": {"required": true, "value": {"type": "reference", "schema": "pull_request_metadata"}},
+          "candidate_revision": {"required": true, "value": {"type": "string", "min_bytes": 1, "max_bytes": 256}},
+          "candidate_digest": {"required": true, "value": {"type": "string", "min_bytes": 64, "max_bytes": 64}},
+          "valid_until": {"required": true, "value": {"type": "integer", "minimum": 0, "maximum": 9007199254740991}},
+          "bundle": {"required": true, "value": {"type": "reference", "schema": "artifact_reference"}},
+          "manifest": {"required": true, "value": {"type": "reference", "schema": "artifact_reference"}}
+        }
+      }
+    }
+  },
+  "nodes": [
+    {
+      "key": "prepare_pull_request",
+      "kind": "reasoning",
+      "input_schema": "pull_request_preparation",
+      "outcomes": [{"key": "observed", "kind": "success", "schema": "pull_request_metadata"}],
+      "budget": {
+        "max_attempts": 1,
+        "max_elapsed_millis": 60000,
+        "max_tokens": 10000,
+        "max_cost_micro_units": 1000000,
+        "max_output_bytes": 1048576
+      },
+      "required": true,
+      "task": [
+        "Prepare the title and public summary for a pull request for manual merge. Use the original task and the accepted review and validation results. Return only the title and summary."
+      ],
+      "build_profile": "delivery_devops",
+      "input_binding": {
+        "sources": {
+          "accepted": {"source": "predecessor", "view": "payload", "path": ""},
+          "review": {"source": "record", "node": "review", "outcome": "observed", "view": "payload", "path": ""},
+          "validation": {
+            "source": "record",
+            "node": "protected_validation_gate",
+            "outcome": "passed",
+            "view": "input_payload",
+            "path": "/candidate_revision"
+          }
+        },
+        "mapping": {
+          "value": {
+            "mapping": "object",
+            "fields": {
+              "accepted": {"mapping": "pointer", "path": "/accepted"},
+              "review": {"mapping": "pointer", "path": "/review"},
+              "validated_revision": {"mapping": "pointer", "path": "/validation"}
+            }
+          }
+        }
+      },
+      "context_binding": {"work_task": "task", "entries": {}}
+    },
+    {
+      "key": "publish_pull_request",
+      "kind": "trusted_action",
+      "input_schema": "pull_request_publication",
+      "outcomes": [
+        {"key": "published", "kind": "success", "schema": "pull_request_receipt"},
+        {"key": "conflict", "kind": "failure", "schema": "pull_request_blocked"},
+        {"key": "rejected", "kind": "failure", "schema": "pull_request_blocked"}
+      ],
+      "budget": {
+        "max_attempts": 1,
+        "max_elapsed_millis": 60000,
+        "max_tokens": 0,
+        "max_cost_micro_units": 0,
+        "max_output_bytes": 1048576
+      },
+      "required": true,
+      "input_binding": {
+        "sources": {
+          "metadata": {"source": "predecessor", "view": "payload", "path": ""},
+          "validation": {
+            "source": "record",
+            "node": "protected_validation_gate",
+            "outcome": "passed",
+            "view": "input_payload",
+            "path": ""
+          },
+          "bundle": {
+            "source": "record",
+            "node": "implementation",
+            "outcome": "observed",
+            "view": "metadata",
+            "path": "/build/outputs/change-set.bundle/artifact"
+          },
+          "manifest": {
+            "source": "record",
+            "node": "implementation",
+            "outcome": "observed",
+            "view": "metadata",
+            "path": "/build/outputs/change-set-manifest.json/artifact"
+          }
+        },
+        "mapping": {
+          "value": {
+            "mapping": "object",
+            "fields": {
+              "metadata": {"mapping": "pointer", "path": "/metadata"},
+              "candidate_revision": {"mapping": "pointer", "path": "/validation/candidate_revision"},
+              "candidate_digest": {"mapping": "pointer", "path": "/validation/candidate_digest"},
+              "valid_until": {"mapping": "pointer", "path": "/validation/facts/fresh_until"},
+              "bundle": {"mapping": "pointer", "path": "/bundle"},
+              "manifest": {"mapping": "pointer", "path": "/manifest"}
+            }
+          }
+        }
+      },
+      "action": {
+        "plugin": {
+          "identity": "candidate.publisher",
+          "version": "v1",
+          "digest": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+        },
+        "action": "publish_candidate",
+        "parameters": {
+          "bundle": "candidate_bundle",
+          "manifest": "candidate_manifest",
+          "target": {
+            "identity": "production.review",
+            "version": "v1",
+            "digest": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+          },
+          "valid_until": {"value": {"mapping": "pointer", "path": "/valid_until"}},
+          "review_metadata": {"value": {"mapping": "pointer", "path": "/metadata"}},
+          "require_review_url": true,
+          "conflict_outcome": "conflict",
+          "rejected_outcome": "rejected"
+        }
+      },
+      "context_binding": {
+        "candidate_revision": {"value": {"mapping": "pointer", "path": "/candidate_revision"}},
+        "entries": {
+          "candidate_bundle": {
+            "source_kind": "evidence",
+            "source": {
+              "value": {
+                "mapping": "object",
+                "fields": {"kind": {"mapping": "constant", "value": "artifact"}, "value": {"mapping": "pointer", "path": "/bundle"}}
+              }
+            }
+          },
+          "candidate_manifest": {
+            "source_kind": "evidence",
+            "source": {
+              "value": {
+                "mapping": "object",
+                "fields": {"kind": {"mapping": "constant", "value": "artifact"}, "value": {"mapping": "pointer", "path": "/manifest"}}
+              }
+            }
+          }
+        }
+      }
+    }
+  ],
+  "transitions": [
+    {
+      "predecessor": "protected_validation_gate",
+      "outcome": "passed",
+      "target": {"kind": "node", "key": "prepare_pull_request"},
+      "max_repeats": 0
+    },
+    {
+      "predecessor": "prepare_pull_request",
+      "outcome": "observed",
+      "target": {"kind": "node", "key": "publish_pull_request"},
+      "max_repeats": 0
+    },
+    {
+      "predecessor": "publish_pull_request",
+      "outcome": "published",
+      "target": {"kind": "terminal", "key": "delivered_for_review"},
+      "max_repeats": 0
+    },
+    {
+      "predecessor": "publish_pull_request",
+      "outcome": "rejected",
+      "target": {"kind": "terminal", "key": "publication_blocked"},
+      "max_repeats": 0
+    },
+    {
+      "predecessor": "publish_pull_request",
+      "outcome": "conflict",
+      "target": {"kind": "terminal", "key": "publication_blocked"},
+      "max_repeats": 0
+    }
+  ],
+  "terminals": {"delivered_for_review": "pull_request_receipt", "publication_blocked": "pull_request_blocked"}
+}

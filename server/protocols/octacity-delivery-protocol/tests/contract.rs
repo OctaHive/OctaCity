@@ -1,6 +1,15 @@
 use octacity_delivery_protocol::decode_request;
 
 #[test]
+fn public_review_metadata_requires_a_meaningful_title_and_allows_multiline_summary() {
+  let mut request: serde_json::Value = serde_json::from_slice(include_bytes!("../fixtures/publish-v1.json")).unwrap();
+  request["command"]["payload"]["review"]["summary"] = serde_json::json!("First paragraph\n\tSecond paragraph");
+  assert!(decode_request(&serde_json::to_vec(&request).unwrap()).is_ok());
+  request["command"]["payload"]["review"]["title"] = serde_json::json!(" \u{00a0} ");
+  assert!(decode_request(&serde_json::to_vec(&request).unwrap()).is_err());
+}
+
+#[test]
 fn delivery_requires_its_write_credential_class_and_rejects_read_only_callers() {
   let bytes = include_bytes!("../fixtures/publish-v1.json");
   assert!(
@@ -112,4 +121,18 @@ fn network_ceilings_admit_only_bounded_unique_exact_hosts() {
       "invalid network ceilings cannot be admitted"
     );
   }
+}
+
+#[test]
+fn production_publication_does_not_accept_merge_or_auto_merge() {
+  let mut request: serde_json::Value = serde_json::from_slice(include_bytes!("../fixtures/publish-v1.json")).unwrap();
+  request["command"]["payload"]["target"]["base_reference"] = serde_json::json!("refs/heads/production");
+  assert!(decode_request(&serde_json::to_vec(&request).unwrap()).is_ok());
+
+  let mut merge = request.clone();
+  merge["command"]["operation"] = serde_json::json!("merge");
+  assert!(decode_request(&serde_json::to_vec(&merge).unwrap()).is_err());
+
+  request["command"]["payload"]["review"]["auto_merge"] = serde_json::json!(true);
+  assert!(decode_request(&serde_json::to_vec(&request).unwrap()).is_err());
 }

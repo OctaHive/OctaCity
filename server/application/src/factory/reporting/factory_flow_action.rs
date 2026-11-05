@@ -24,6 +24,8 @@ pub struct FactoryFlowActionRequest<'a> {
   pub input: &'a FlowNodeInput,
   /// Published contracts for the finite declared outputs.
   pub schemas: &'a [FlowDataSchema],
+  /// Finite outcomes declared by the selected node.
+  pub outcomes: &'a [FlowOutcomeDefinition],
   /// Maximum authority; the plugin must enforce it before any effect.
   pub permissions: FactoryPermissionSet,
   /// Hard resource ceiling; the plugin must enforce it during execution.
@@ -141,6 +143,7 @@ impl FactoryFlowActionAdapter {
       binding,
       input: request.input,
       schemas: request.admitted.data_schemas(),
+      outcomes: node.outcomes(),
       permissions,
       budget: node.budget(),
       deadline: request.attempt.deadline(),

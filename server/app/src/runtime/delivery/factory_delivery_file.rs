@@ -7,7 +7,7 @@ use octacity_server_application::{
   FactoryCandidatePublicationAction, FactoryFlowActionAdapter, FactoryNodeExecutorBinding,
   MAX_FACTORY_EXECUTOR_BINDINGS, SystemFactoryExecutionClock,
 };
-use octacity_server_delivery::DeliveryAdapterRegistry;
+use octacity_server_delivery::{DeliveryAdapterRegistry, InstalledDeliveryAdapter};
 use octacity_server_factory::{FlowNodeKind, FlowOutcomeDefinition, ImmutableReference, NodeExecutionIdentity};
 use serde::Deserialize;
 use std::{collections::BTreeMap, path::PathBuf, sync::Arc, time::Duration};
@@ -29,6 +29,41 @@ struct FactoryFileDeliveryPolicy {
   reference: ImmutableReference,
   draft: FactoryDeliveryPolicyDraft,
   input_directory: PathBuf,
+  review_links: Option<ReviewLinkProvider>,
+}
+
+#[derive(Clone, Deserialize)]
+#[serde(rename_all = "snake_case")]
+enum ReviewLinkProvider {
+  Github,
+}
+
+pub(super) fn install_github_review_links(
+  policy: &mut FactoryDeliveryPolicy,
+  adapter: &InstalledDeliveryAdapter,
+) -> Result<(), FactoryRuntimeInstallationError> {
+  use FactoryRuntimeInstallationError::Invalid;
+  let github = octacity_github::GithubPlugin::load(adapter.working_directory().ok_or(Invalid)?).map_err(|_| Invalid)?;
+  let draft = &policy.draft;
+  let hosts = draft
+    .network_hosts
+    .iter()
+    .map(|host| host.as_str().to_owned())
+    .collect::<Vec<_>>();
+  let links = github
+    .delivery_review_links(
+      &draft.configuration_digest.to_string(),
+      &draft.repository_locator,
+      &draft.repository_id.to_string(),
+      &hosts,
+    )
+    .map_err(|_| Invalid)?;
+  policy.review_links = Some(Box::new(move |identity| {
+    links
+      .resolve(identity)
+      .map_err(|_| octacity_server_application::ApplicationError::invalid())
+  }));
+  Ok(())
 }
 
 impl FactoryFileDeliveryProfile {
@@ -54,7 +89,7 @@ impl FactoryFileDeliveryProfile {
     let mut policies = Vec::with_capacity(self.policies.len());
     let mut directories = BTreeMap::new();
     for selected in &self.policies {
-      let policy = FactoryDeliveryPolicy::new(
+      let mut policy = FactoryDeliveryPolicy::new(
         selected.reference.identity().clone(),
         selected.reference.version().clone(),
         selected.draft.clone(),
@@ -76,6 +111,9 @@ impl FactoryFileDeliveryProfile {
           .is_some()
       {
         return Err(Invalid);
+      }
+      if let Some(ReviewLinkProvider::Github) = selected.review_links {
+        install_github_review_links(&mut policy, adapter)?;
       }
       policies.push(policy);
     }

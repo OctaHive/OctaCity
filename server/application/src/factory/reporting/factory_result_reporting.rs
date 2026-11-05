@@ -193,6 +193,7 @@ impl FactoryResultReportingDraft {
         input_binding: binding,
         context_binding: None,
         build_profile: None,
+        task: None,
         profile_selection: None,
         capture_write_paths: None,
         capture_deliverables: None,

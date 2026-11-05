@@ -36,19 +36,27 @@ impl FactoryDeliveryMaterializer for NoMaterial {
   }
 }
 fn fixture(plugin: ImmutableReference) -> (FactoryDeliveryPolicy, FactoryCandidatePublicationRequest) {
-  fixture_for(plugin, ProjectId::generate(), RepositoryId::generate())
+  fixture_for(
+    plugin,
+    ProjectId::generate(),
+    RepositoryId::generate(),
+    "refs/heads/main",
+    FactoryDigest::from_bytes([5; 32]),
+  )
 }
 fn fixture_for(
   plugin: ImmutableReference,
   project: ProjectId,
   repository: RepositoryId,
+  base_reference: &str,
+  configuration_digest: FactoryDigest,
 ) -> (FactoryDeliveryPolicy, FactoryCandidatePublicationRequest) {
   let policy = FactoryDeliveryPolicy::new(
     key("review-policy"),
     key("v1"),
     FactoryDeliveryPolicyDraft {
       plugin,
-      configuration_digest: FactoryDigest::from_bytes([5; 32]),
+      configuration_digest,
       project_id: project,
       repository_id: repository,
       repository_locator: "repository:accepted-project".into(),
@@ -56,7 +64,7 @@ fn fixture_for(
       credential_handle: "protected-delivery-grant".into(),
       network_hosts: vec![NetworkHost::new("forge.example").unwrap()],
       target: FactoryDeliveryTargetPolicy {
-        base_reference: "refs/heads/main".into(),
+        base_reference: base_reference.into(),
         candidate_reference_prefix: "refs/heads/review/accepted-candidate-".into(),
       },
       review: ReviewMetadata {
@@ -81,9 +89,12 @@ fn fixture_for(
     bundle: FactoryArtifactReference::new(ArtifactId::generate(), FactoryDigest::from_bytes([3; 32]), 100).unwrap(),
     manifest: FactoryArtifactReference::new(ArtifactId::generate(), FactoryDigest::from_bytes([2; 32]), 100).unwrap(),
     target,
+    review_metadata: None,
+    require_review_url: false,
     permissions: FactoryPermissionSet::default(),
     budget: BudgetLimit::new(1, 1000, 1, 1, 1_048_576).unwrap(),
     deadline: at(1000),
+    publish_until: None,
     started_at: at(1),
     authority_expires_at: at(1000),
   };
@@ -134,20 +145,20 @@ impl FactoryDeliveryMaterializer for Material {
 #[cfg(unix)]
 #[tokio::test]
 async fn exact_delivery_is_hosted_under_its_ceiling_and_retains_remote_facts() {
-  hosted_publication(false, false).await;
+  hosted_publication(false, false, Some("refs/heads/production")).await;
 }
 #[cfg(unix)]
 #[tokio::test]
 async fn hosted_observation_routes_an_owned_review_requiring_repair_to_publication() {
-  hosted_publication(true, false).await;
+  hosted_publication(true, false, None).await;
 }
 #[cfg(unix)]
 #[tokio::test]
 async fn one_installed_publication_policy_supports_distinct_operations_and_stable_replay() {
-  hosted_publication(false, true).await;
+  hosted_publication(false, true, None).await;
 }
 #[cfg(unix)]
-async fn hosted_publication(repair_required: bool, distinct_operations: bool) {
+async fn hosted_publication(repair_required: bool, distinct_operations: bool, prepared_target: Option<&str>) {
   use sha2::{Digest as _, Sha256};
   use std::{fs, os::unix::fs::PermissionsExt as _};
   let root = tempfile::tempdir().unwrap();
@@ -158,11 +169,60 @@ async fn hosted_publication(repair_required: bool, distinct_operations: bool) {
     key("v1"),
     FactoryDigest::from_bytes([4; 32]),
   ));
+  let configuration_digest = if prepared_target.is_some() {
+    fs::set_permissions(&directory, fs::Permissions::from_mode(0o700)).unwrap();
+    for name in ["credentials", "inputs"] {
+      let path = directory.join(name);
+      fs::create_dir(&path).unwrap();
+      fs::set_permissions(path, fs::Permissions::from_mode(0o700)).unwrap();
+    }
+    let configuration = format!(
+      r#"
+config_version = 1
+api_base = "https://forge.example/"
+api_version = "2026-03-10"
+git_path = "/bin/sh"
+git_sha256 = {:?}
+credential_directory = "credentials"
+input_directory = "inputs"
+[repositories."repository:accepted-project"]
+repository_id = "{}"
+owner = "team"
+name = "actual-repository"
+remote = "https://forge.example/team/actual-repository.git"
+"#,
+      hex::encode(Sha256::digest(fs::read("/bin/sh").unwrap())),
+      original.candidate.exact().repository_id(),
+    );
+    let path = directory.join("github-plugin.toml");
+    fs::write(&path, &configuration).unwrap();
+    fs::set_permissions(path, fs::Permissions::from_mode(0o600)).unwrap();
+    hex::encode(Sha256::digest(configuration))
+      .parse::<FactoryDigest>()
+      .unwrap()
+  } else {
+    FactoryDigest::from_bytes([5; 32])
+  };
+  let base_reference = prepared_target.unwrap_or("refs/heads/main");
+  let metadata = serde_json::json!({"title":"Prepared PR","summary":"Verified candidate"});
+  let review = serde_json::to_string(&ReviewMetadata {
+    title: "Prepared PR".into(),
+    summary: "Verified candidate".into(),
+    draft: true,
+  })
+  .unwrap();
+  let check_publish = if prepared_target.is_some() {
+    format!(
+      "case \"$frame\" in\n*'\"base_reference\":\"{base_reference}\"'*'\"review\":{review}'*) ;;\n*) exit 93 ;;\nesac\n"
+    )
+  } else {
+    String::new()
+  };
   let response = serde_json::json!({"protocol_version":1,"request_id":"01".repeat(32),"outcome":{"status":if repair_required {"repair_required"} else {"observed"},"payload":{
     "delivery_id":"01".repeat(32),"repository_id":original.candidate.exact().repository_id(),
     "base_revision":"1".repeat(40),"candidate_revision":"2".repeat(40),"changeset_digest":"02".repeat(32),
-    "decision_digest":"06".repeat(32),"configuration_digest":"05".repeat(32),
-    "target":{"base_reference":"refs/heads/main","candidate_reference":format!("refs/heads/review/accepted-candidate-{}","01".repeat(32))},
+    "decision_digest":"06".repeat(32),"configuration_digest":configuration_digest,
+    "target":{"base_reference":base_reference,"candidate_reference":format!("refs/heads/review/accepted-candidate-{}","01".repeat(32))},
     "branch_reference":format!("refs/heads/review/accepted-candidate-{}","01".repeat(32)),"remote_head":"2".repeat(40),
     "review":{"identity":"23","state":"open","head":"2".repeat(40),"base":"1".repeat(40)}}}});
   let mut second_response = response.clone();
@@ -179,19 +239,25 @@ async fn hosted_publication(repair_required: bool, distinct_operations: bool) {
     second_response["outcome"]["payload"]["review"]["identity"] = serde_json::json!("24");
   }
   let ack = serde_json::json!({"protocol_version":1,"request_id":"01".repeat(32),"outcome":{"status":"acknowledged","payload":{"delivery_id":"01".repeat(32)}}});
+  let denied = serde_json::json!({"protocol_version":1,"request_id":"01".repeat(32),
+    "outcome":{"status":"failure","payload":{"class":"permanent","retry_after_millis":null}}});
   let script = format!(
-    "#!/bin/sh\nIFS= read -r frame || exit 91\nif [ \"${{HOME+x}}\" = x ]; then exit 92; fi\ncase \"$frame\" in\n*'\"operation\":\"cancel\"'*) printf '%s\\n' '{ack}';;\n*'0808080808080808080808080808080808080808080808080808080808080808'*) printf '%s\\n' '{second_response}';;\n*) printf '%s\\n' '{response}';;\nesac\n"
+    "#!/bin/sh\nIFS= read -r frame || exit 91\nif [ \"${{HOME+x}}\" = x ]; then exit 92; fi\ncase \"$frame\" in *'\"operation\":\"publish\"'*) {check_publish} : ;; esac\ncase \"$frame\" in\n*'\"operation\":\"cancel\"'*) printf '%s\\n' '{ack}';;\n*'\"title\":\"Blocked by provider\"'*) printf '%s\\n' '{denied}';;\n*'0808080808080808080808080808080808080808080808080808080808080808'*) printf '%s\\n' '{second_response}';;\n*) printf '%s\\n' '{response}';;\nesac\n"
   );
   let sha = hex::encode(Sha256::digest(script.as_bytes()));
   fs::write(directory.join("plugin"), &script).unwrap();
   fs::set_permissions(directory.join("plugin"), fs::Permissions::from_mode(0o700)).unwrap();
-  fs::write(directory.join("adapter.toml"),format!("manifest_version = 1\nadapter_id = \"provider-plugin\"\nexecutable = \"plugin\"\nexecutable_sha256 = {sha:?}\n[protocol]\nmin = 1\nmax = 1\n[capabilities]\nobserve = true\npublish = true\ncancel = true\nidempotency = \"observe_before_retry\"\ncredential_class = \"delivery_write\"\nconfiguration_digest = {:?}\n","05".repeat(32))).unwrap();
+  fs::write(directory.join("adapter.toml"),format!("manifest_version = 1\nadapter_id = \"provider-plugin\"\nexecutable = \"plugin\"\nexecutable_sha256 = {sha:?}\n[protocol]\nmin = 1\nmax = 1\n[capabilities]\nobserve = true\npublish = true\ncancel = true\nidempotency = \"observe_before_retry\"\ncredential_class = \"delivery_write\"\nconfiguration_digest = {:?}\n",configuration_digest.to_string())).unwrap();
   let plugin = ImmutableReference::new(key("provider-plugin"), key("v1"), sha.parse().unwrap());
-  let (policy, mut request) = fixture_for(
+  let (mut policy, mut request) = fixture_for(
     plugin.clone(),
     original.candidate.exact().project_id(),
     original.candidate.exact().repository_id(),
+    base_reference,
+    configuration_digest,
   );
+  request.require_review_url = prepared_target.is_some();
+  request.review_metadata = prepared_target.map(|_| serde_json::from_value(metadata).unwrap());
   request.permissions = FactoryPermissionSet::try_new(FactoryPermissionDraft {
     plugins: vec![plugin],
     secret_profiles: vec![key("delivery-writer")],
@@ -200,8 +266,16 @@ async fn hosted_publication(repair_required: bool, distinct_operations: bool) {
   })
   .unwrap();
   let material = Arc::new(Material(std::sync::atomic::AtomicUsize::new(0)));
+  let registry = DeliveryAdapterRegistry::discover(root.path()).unwrap();
+  if prepared_target.is_some() {
+    super::factory_delivery_file::install_github_review_links(
+      &mut policy,
+      registry.resolve("provider-plugin", &sha).unwrap(),
+    )
+    .unwrap();
+  }
   let publisher = HostedFactoryCandidatePublisher::new(
-    Arc::new(DeliveryAdapterRegistry::discover(root.path()).unwrap()),
+    Arc::new(registry),
     vec![policy],
     material.clone(),
     Arc::new(Clock),
@@ -210,6 +284,11 @@ async fn hosted_publication(repair_required: bool, distinct_operations: bool) {
     CancellationToken::new(),
   )
   .unwrap();
+  if prepared_target.is_some() {
+    // The stub adapter returns a receipt without reading GitHub files. Resolving
+    // its link in the host must use the provider settings pinned at installation.
+    fs::remove_file(directory.join("github-plugin.toml")).unwrap();
+  }
   if repair_required {
     assert!(
       publisher
@@ -230,6 +309,53 @@ async fn hosted_publication(repair_required: bool, distinct_operations: bool) {
   assert_eq!(publication.candidate, request.candidate);
   let facts = serde_json::to_value(publication.facts).unwrap();
   assert_eq!(facts["review_identity"], "23");
+  if prepared_target.is_some() {
+    assert_eq!(
+      facts["review_url"],
+      "https://forge.example/team/actual-repository/pull/23"
+    );
+    let mut expired = request.clone();
+    expired.publish_until = Some(at(10));
+    assert!(matches!(
+      publisher.publish(&expired).await,
+      Err(ApplicationError::PublicationRejected(
+        octacity_server_application::FactoryPublicationRejection::ValidationExpired
+      ))
+    ));
+    let observed = publisher.observe(&expired).await.unwrap().unwrap();
+    assert_eq!(observed.receipt, publication.receipt);
+
+    use octacity_server_application::FactoryPublicationRejection;
+    for (title, reason) in [
+      ("Blocked by provider", FactoryPublicationRejection::ProviderRejected),
+      ("   ", FactoryPublicationRejection::InvalidReviewMetadata),
+    ] {
+      let mut rejected = request.clone();
+      rejected.review_metadata = Some(serde_json::from_value(serde_json::json!({"title":title,"summary":""})).unwrap());
+      assert!(matches!(
+        publisher.observe(&rejected).await,
+        Err(ApplicationError::PublicationRejected(actual)) if actual == reason
+      ));
+    }
+
+    // Granting the Flow action does not also grant its selected provider.
+    let mut missing_provider = request.clone();
+    missing_provider.permissions = FactoryPermissionSet::try_new(FactoryPermissionDraft {
+      plugins: vec![ImmutableReference::new(
+        key("candidate.publisher"),
+        key("v1"),
+        FactoryDigest::from_bytes([4; 32]),
+      )],
+      secret_profiles: vec![key("delivery-writer")],
+      network_hosts: vec![NetworkHost::new("forge.example").unwrap()],
+      ..Default::default()
+    })
+    .unwrap();
+    assert!(matches!(
+      publisher.publish(&missing_provider).await,
+      Err(ApplicationError::InvalidInput)
+    ));
+  }
   assert_eq!(facts["remote_head"], "2".repeat(40));
   assert_eq!(material.0.load(std::sync::atomic::Ordering::SeqCst), 1);
   if distinct_operations {

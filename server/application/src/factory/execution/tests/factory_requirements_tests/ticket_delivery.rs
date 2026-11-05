@@ -32,7 +32,7 @@ fn delivery_requirements_fixture(
 fn delivery_fixture_with_profiles(
   mut template: FlowDefinitionTemplate,
   triage: Value,
-  configure: impl FnMut(&FlowTemplateNode, &mut FlowBuildBinding),
+  configure: impl FnMut(&mut FlowTemplateNode, &mut FlowBuildBinding),
 ) -> (
   PublishedFactoryAdmission,
   Arc<Execution>,
@@ -648,7 +648,11 @@ fn ticket_delivery_protected_preparation_requires_observed_behavioral_failure() 
 }
 
 fn delivery_development_template() -> FlowDefinitionTemplate {
-  delivery_preparation_template(&[
+  delivery_development_template_with(&[])
+}
+
+fn delivery_development_template_with(extra_parts: &[&str]) -> FlowDefinitionTemplate {
+  let parts = [
     "flows/base-flow/schemas/candidate_subject.json",
     "flows/base-flow/schemas/code_review.json",
     "flows/base-flow/schemas/code_review_input.json",
@@ -670,7 +674,8 @@ fn delivery_development_template() -> FlowDefinitionTemplate {
     "flows/base-flow/gate-programs.json",
     "presets/ticket-delivery/agent-result-gates-v1.json",
     "presets/ticket-delivery/development-v1.json",
-  ])
+  ];
+  delivery_preparation_template(&[parts.as_slice(), extra_parts].concat())
 }
 
 #[test]
@@ -776,7 +781,7 @@ fn ticket_delivery_reviews_each_candidate_before_protected_validation() {
         repository,
         candidates: Mutex::default(),
       };
-      let (snapshot, terminal) = ticket_delivery_development_snapshot(template.clone(), outputs).await;
+      let (snapshot, terminal) = ticket_delivery_development_snapshot(template.clone(), outputs, None).await;
       assert_eq!(terminal, key(expected), "{review:?}/{repository:?}");
       if expected == "verified_candidate" {
         assert_eq!(snapshot.run.state(), FactoryRunState::Completed);
@@ -976,6 +981,9 @@ impl FactoryTestOutputBuilder for TicketDeliveryChecks {
           ]}),
         )
       }
+      "factory.ticket-delivery.pull-request-metadata" => Some(json!({
+        "title":"Fix the public API", "summary":"Reviewed and verified the candidate."
+      })),
       _ => None,
     };
     QualifiedOutputs {
@@ -989,6 +997,7 @@ impl FactoryTestOutputBuilder for TicketDeliveryChecks {
 async fn ticket_delivery_development_snapshot(
   template: FlowDefinitionTemplate,
   outputs: TicketDeliveryChecks,
+  publisher: Option<Arc<Publisher>>,
 ) -> (FactoryRunSnapshot, FactoryKey) {
   let summary = json!({"work_kind":"defect","size":"small","risk":"low","admission_risk":"low",
     "recommended_route":"requirements","research_required":false,"research_accepted":false,
@@ -997,6 +1006,9 @@ async fn ticket_delivery_development_snapshot(
     without_protected_test_pool(template),
     json!({"summary":summary,"priority_assessment":50}),
     |node, profile| {
+      if node.key == key("prepare_pull_request") {
+        pin_delivery_profile(node, profile);
+      }
       if node.key == key("implementation") {
         profile.result_output = key("codex-run-result");
         profile
@@ -1019,7 +1031,47 @@ async fn ticket_delivery_development_snapshot(
     .reports
     .insert(key("tests_on_base"), baseline_report(exact, "completed", "matched"));
   let execution = Arc::new(execution);
-  let registry = delivery_execution_registry(&admission, &execution);
+  let mut restart_after_write = publisher
+    .as_ref()
+    .filter(|publisher| publisher.behavior == PublicationCase::LostResponse)
+    .cloned();
+  let expects_delayed_observation = restart_after_write
+    .as_ref()
+    .is_some_and(|publisher| publisher.lose_first_recovery_probe.load(Ordering::SeqCst));
+  let registry = if let Some(publisher) = publisher {
+    let definition = admission
+      .flow
+      .closure()
+      .definition(admission.flow.root_run().definition())
+      .unwrap();
+    let node = definition.node(&key("publish_pull_request")).unwrap();
+    let identity = node.action().unwrap().plugin().clone();
+    let publication = FactoryFlowActionAdapter::new(Arc::new(FactoryCandidatePublicationAction::new(
+      identity.clone(),
+      publisher,
+      node.outcome(&key("published")).unwrap().clone(),
+    )));
+    let adapter = Arc::new(FactoryNodeBuildAdapter::new(execution.clone(), execution.clone()));
+    let tool = NodeExecutionIdentity::External(fixtures_build_tool(&admission));
+    Arc::new(
+      FactoryNodeExecutorRegistry::new(vec![
+        (
+          FlowNodeKind::Reasoning,
+          tool.clone(),
+          adapter.clone() as Arc<dyn crate::FactoryNodeExecutor>,
+        ),
+        (FlowNodeKind::BuildCommand, tool, adapter),
+        (
+          FlowNodeKind::TrustedAction,
+          NodeExecutionIdentity::External(identity),
+          Arc::new(publication),
+        ),
+      ])
+      .unwrap(),
+    )
+  } else {
+    delivery_execution_registry(&admission, &execution)
+  };
   let store = Arc::new(testing::InMemoryFactoryConfigurationStore::new());
   let audit = testing::management_mutation_with_request((), "ticket-delivery-development")
     .audit()
@@ -1027,26 +1079,81 @@ async fn ticket_delivery_development_snapshot(
   store
     .seed_factory_run(admission.clone(), FactoryDigest::from_bytes([1; 32]), &audit)
     .unwrap();
+  let project = admission.work.subject().project_id();
+  store.seed_project(project).unwrap();
+  store
+    .enable_project(
+      project,
+      testing::factory_profile_selection_capabilities(&admission.flow),
+    )
+    .unwrap();
   let run = admission.run.id();
-  let claim = claim_run(store.as_ref(), run, 10).await;
-  let owner = FactoryFlowRunner::new(
-    store.clone(),
-    registry,
-    Arc::new(Inputs),
-    crate::factory_node_test_support::clock(),
-  );
+  let mut claim = claim_run(store.as_ref(), run, 10).await;
+  let make_owner = || {
+    FactoryFlowRunner::new(
+      store.clone(),
+      registry.clone(),
+      Arc::new(Inputs),
+      crate::factory_node_test_support::clock(),
+    )
+    .with_profile_catalog(store.clone())
+  };
+  let mut owner = make_owner();
   for tick in 31..150 {
     execution.clock.store(tick, Ordering::SeqCst);
-    match crate::factory_node_test_support::reconcile_admission_then_observe(
+    if restart_after_write
+      .as_ref()
+      .is_some_and(|publisher| publisher.lost.load(Ordering::SeqCst))
+    {
+      claim = claim_run(store.as_ref(), run, tick).await;
+      owner = make_owner();
+      restart_after_write = None;
+    }
+    let step = crate::factory_node_test_support::reconcile_admission_then_observe(
       &owner,
       store.as_ref(),
       run,
       claim.id,
       at(tick),
     )
-    .await
-    .unwrap()
+    .await;
+    if expects_delayed_observation
+      && matches!(&step, Err(ApplicationError::Store(StoreError::Unavailable)))
+      && restart_after_write
+        .as_ref()
+        .is_some_and(|publisher| publisher.lost.load(Ordering::SeqCst))
     {
+      let snapshot = store.factory_run_snapshot(run).await.unwrap();
+      assert!(
+        snapshot
+          .flow
+          .data
+          .records
+          .iter()
+          .all(|record| record.input().node() != &key("publish_pull_request"))
+      );
+      continue;
+    }
+    if let Err(error) = &step {
+      let snapshot = store.factory_run_snapshot(run).await.unwrap();
+      panic!(
+        "delivery progress at {tick}: {error:?}; attempts: {:?}; inputs: {:?}",
+        snapshot
+          .flow
+          .attempts
+          .iter()
+          .map(NodeAttempt::node_key)
+          .collect::<Vec<_>>(),
+        snapshot
+          .flow
+          .data
+          .inputs
+          .iter()
+          .map(FlowNodeInput::node)
+          .collect::<Vec<_>>()
+      );
+    }
+    match step.unwrap() {
       FactoryFlowStep::Advanced => {}
       FactoryFlowStep::Resolved(outcome) => return (store.factory_run_snapshot(run).await.unwrap(), outcome),
       FactoryFlowStep::Waiting => {
@@ -1067,6 +1174,383 @@ async fn ticket_delivery_development_snapshot(
     }
   }
   panic!("ticket delivery development did not resolve");
+}
+
+fn pin_delivery_profile(node: &mut FlowTemplateNode, build: &FlowBuildBinding) {
+  let project = build.build_configuration.project_id();
+  let role = FactoryRole::publish(
+    FactoryRoleId::generate(),
+    project,
+    FactoryRoleDefinition {
+      name: FactoryText::new("DevOps").unwrap(),
+      instructions: "Prepare public review notes.".into(),
+      template: None,
+      skills: Default::default(),
+      icon: None,
+      avatar: None,
+      description: String::new(),
+      concurrency_limit: None,
+    },
+  )
+  .unwrap();
+  let profile = FactoryRoleProfile::publish(
+    FactoryRoleProfileId::generate(),
+    project,
+    &role,
+    FactoryRoleProfileDefinition {
+      template: None,
+      name: FactoryText::new("PR preparation").unwrap(),
+      instructions: "Use only the accepted evidence.".into(),
+      toolchain: FactoryTaskToolchain {
+        executable: build.tool.clone(),
+        plugin: build.plugin.clone(),
+        model: build.model_or_tool.clone(),
+      },
+      model_identifier: None,
+      execution: Default::default(),
+      model_parameters: Default::default(),
+      thinking_parameter: None,
+      skills: Default::default(),
+      context_requirements: Default::default(),
+      build_configuration: build.build_configuration.clone(),
+      credential_purpose: FactoryCredentialPurpose::Model,
+      permissions: node.permissions.clone(),
+      budget: node.budget,
+    },
+  )
+  .unwrap();
+  let candidate = key("devops");
+  node.build_profile = None;
+  node.profile_selection = Some(FlowProfileSelectionBinding {
+    role: role.reference().clone(),
+    candidates: BTreeMap::from([(
+      candidate.clone(),
+      FlowProfileCandidate {
+        profile,
+        build: build.clone(),
+      },
+    )]),
+    policy: FlowProfileSelectionPolicy::Manual {
+      candidate: Some(candidate),
+    },
+    failure: FlowProfileSelectionFailure::ManualSelection,
+    selection_budget: BudgetUsage::default(),
+  });
+}
+
+fn pull_request_template() -> (FlowDefinitionTemplate, FactoryKey, octacity_server_factory::NetworkHost) {
+  let mut template = delivery_development_template_with(&["presets/ticket-delivery/pull-request-v1.json"]);
+  template.transitions.retain(
+    |edge| !matches!(edge.target(), FlowTransitionTarget::Terminal(terminal) if terminal == &key("verified_candidate")),
+  );
+  template.terminals.remove(&key("verified_candidate"));
+  let publication = template
+    .nodes
+    .iter_mut()
+    .find(|node| node.key == key("publish_pull_request"))
+    .unwrap();
+  let writer = key("delivery-writer");
+  let host = octacity_server_factory::NetworkHost::new("forge.example").unwrap();
+  publication.permissions = FactoryPermissionSet::try_new(FactoryPermissionDraft {
+    plugins: vec![publication.action.as_ref().unwrap().plugin().clone()],
+    secret_profiles: vec![writer.clone()],
+    network_hosts: vec![host.clone()],
+    ..Default::default()
+  })
+  .unwrap();
+  template.execution = FlowExecutionPolicy::new(
+    template.execution.budget(),
+    publication.permissions.clone(),
+    template.execution.max_active_nodes(),
+  )
+  .unwrap();
+  (template, writer, host)
+}
+
+#[test]
+fn ticket_delivery_retains_publication_conflict_without_success() {
+  crate::factory_flow_tests::run_ready(async {
+    let (template, _, _) = pull_request_template();
+    let publisher = Arc::new(Publisher {
+      behavior: PublicationCase::ChangedAncestry,
+      lost: AtomicBool::new(false),
+      lose_first_recovery_probe: AtomicBool::new(false),
+      writes: Mutex::default(),
+      requests: Mutex::default(),
+    });
+    let checks = TicketDeliveryChecks {
+      review: ["satisfied"; 2],
+      repository: ["passed"; 2],
+      candidates: Mutex::default(),
+    };
+    let (snapshot, terminal) = ticket_delivery_development_snapshot(template, checks, Some(publisher.clone())).await;
+    assert_eq!(terminal, key("publication_blocked"));
+    let publication = snapshot
+      .flow
+      .data
+      .records
+      .iter()
+      .find(|row| row.input().node() == &key("publish_pull_request"))
+      .unwrap();
+    assert_eq!(publication.outcome(), &key("conflict"));
+    assert_eq!(publication.payload().value(), &json!({"reason":"publication_conflict"}));
+    assert!(
+      snapshot
+        .outbox
+        .iter()
+        .all(|row| row.kind.as_str() != "work.status.projection")
+    );
+    assert!(publisher.writes.lock().unwrap().is_empty());
+    assert!(publisher.requests.lock().unwrap().is_empty());
+  });
+}
+
+#[test]
+fn ticket_delivery_retains_final_rejections_without_a_forge_write() {
+  crate::factory_flow_tests::run_ready(async {
+    for (behavior, reason) in [
+      (PublicationCase::ProviderRejected, "provider_rejected"),
+      (PublicationCase::Normal, "validation_expired"),
+    ] {
+      let (mut template, _, _) = pull_request_template();
+      if behavior == PublicationCase::Normal {
+        let publication = template
+          .nodes
+          .iter_mut()
+          .find(|node| node.key == key("publish_pull_request"))
+          .unwrap();
+        let binding = publication.action.as_ref().unwrap();
+        let mut parameters = binding.parameters().clone();
+        parameters["valid_until"] = json!({"value":{"mapping":"constant","value":0}});
+        publication.action =
+          Some(FlowActionBinding::new(binding.plugin().clone(), binding.action().clone(), parameters).unwrap());
+      }
+      let publisher = Arc::new(Publisher {
+        behavior,
+        lost: AtomicBool::new(false),
+        lose_first_recovery_probe: AtomicBool::new(false),
+        writes: Mutex::default(),
+        requests: Mutex::default(),
+      });
+      let checks = TicketDeliveryChecks {
+        review: ["satisfied"; 2],
+        repository: ["passed"; 2],
+        candidates: Mutex::default(),
+      };
+      let (snapshot, terminal) = ticket_delivery_development_snapshot(template, checks, Some(publisher.clone())).await;
+      assert_eq!(terminal, key("publication_blocked"));
+      let publication = snapshot
+        .flow
+        .data
+        .records
+        .iter()
+        .find(|row| row.input().node() == &key("publish_pull_request"))
+        .unwrap();
+      assert_eq!(publication.payload().value(), &json!({"reason":reason}));
+      assert!(publisher.requests.lock().unwrap().is_empty());
+    }
+  });
+}
+
+#[test]
+fn ticket_delivery_recovers_the_original_pr_after_the_publish_response_is_lost() {
+  crate::factory_flow_tests::run_ready(async {
+    for delay_observation in [false, true] {
+      let (template, _, _) = pull_request_template();
+      let publisher = Arc::new(Publisher {
+        behavior: PublicationCase::LostResponse,
+        lost: AtomicBool::new(false),
+        lose_first_recovery_probe: AtomicBool::new(delay_observation),
+        writes: Mutex::default(),
+        requests: Mutex::default(),
+      });
+      let checks = TicketDeliveryChecks {
+        review: ["satisfied"; 2],
+        repository: ["passed"; 2],
+        candidates: Mutex::default(),
+      };
+      let (snapshot, terminal) = ticket_delivery_development_snapshot(template, checks, Some(publisher.clone())).await;
+      assert!(publisher.lost.load(Ordering::SeqCst));
+      assert_eq!(terminal, key("delivered_for_review"));
+      let attempts = snapshot
+        .flow
+        .attempts
+        .iter()
+        .filter(|attempt| attempt.node_key() == &key("publish_pull_request"))
+        .collect::<Vec<_>>();
+      assert_eq!(attempts.len(), 1);
+      assert_ne!(
+        snapshot.current_claim.as_ref().unwrap().claim.fence(),
+        attempts[0].claim().fence()
+      );
+      let receipts = snapshot
+        .flow
+        .data
+        .records
+        .iter()
+        .filter(|record| record.node_attempt_id() == attempts[0].id())
+        .collect::<Vec<_>>();
+      assert_eq!(receipts.len(), 1);
+      let requests = publisher.requests.lock().unwrap();
+      assert_eq!(requests.len(), 1);
+      assert_eq!(publisher.writes.lock().unwrap().len(), 1);
+      let retained = receipts[0].payload().value();
+      assert_eq!(retained["receipt"], json!(requests[0].operation_id));
+      assert_eq!(retained["external"]["review_identity"], "23");
+      assert_eq!(retained["external"]["review_state"], "open");
+      assert_eq!(
+        retained["external"]["review_url"],
+        "https://forge.example/team/repository/pull/23"
+      );
+      assert_eq!(
+        retained["external"]["remote_head"],
+        json!(requests[0].candidate.candidate_revision())
+      );
+    }
+  });
+}
+
+#[test]
+fn devops_prepares_an_exact_candidate_for_trusted_production_pr_publication() {
+  crate::factory_flow_tests::run_ready(async {
+    let (template, writer, host) = pull_request_template();
+    let publisher = Arc::new(Publisher {
+      behavior: PublicationCase::Normal,
+      lost: AtomicBool::new(false),
+      lose_first_recovery_probe: AtomicBool::new(false),
+      writes: Mutex::new(BTreeMap::new()),
+      requests: Mutex::new(Vec::new()),
+    });
+    let checks = TicketDeliveryChecks {
+      review: ["violated", "satisfied"],
+      repository: ["passed"; 2],
+      candidates: Mutex::default(),
+    };
+    let (snapshot, terminal) = ticket_delivery_development_snapshot(template, checks, Some(publisher.clone())).await;
+    assert_eq!(terminal, key("delivered_for_review"));
+    let attempts = &snapshot.flow.data.build_intents;
+    let devops = attempts
+      .iter()
+      .find(|intent| intent.input().node() == &key("prepare_pull_request"))
+      .unwrap();
+    let implementation = attempts
+      .iter()
+      .find(|intent| intent.input().node() == &key("implementation"))
+      .unwrap();
+    assert_ne!(devops.node().id(), implementation.node().id());
+    let definition = snapshot
+      .admitted_flow
+      .closure()
+      .definition(devops.input().definition())
+      .unwrap();
+    let preparation = definition.node(devops.input().node()).unwrap();
+    let selected = devops.selected_profile().unwrap();
+    let profile = &preparation.profile_selection().unwrap().candidates[&key("devops")].profile;
+    assert_eq!(selected, profile.reference());
+    assert_eq!(profile.definition().credential_purpose, FactoryCredentialPurpose::Model);
+    assert_eq!(devops.permissions().secret_profiles().count(), 0);
+    assert_eq!(devops.permissions().tools().count(), 0);
+    assert_eq!(devops.permissions().network_hosts().count(), 0);
+    assert_eq!(devops.permissions().commands().count(), 0);
+    assert!(devops.step_task().is_some());
+    assert!(
+      snapshot
+        .flow
+        .attempts
+        .iter()
+        .all(|attempt| attempt.node_kind() != FlowNodeKind::HumanGate)
+    );
+
+    let requests = publisher.requests.lock().unwrap();
+    assert_eq!(requests.len(), 1);
+    let request = &requests[0];
+    assert_eq!(request.target.identity(), &key("production.review"));
+    assert_eq!(request.permissions.secret_profiles().collect::<Vec<_>>(), [&writer]);
+    assert_eq!(request.permissions.network_hosts().collect::<Vec<_>>(), [&host]);
+    let review = request.review_metadata.as_ref().unwrap();
+    assert_eq!(review.title(), "Fix the public API");
+    assert_eq!(review.summary(), "Reviewed and verified the candidate.");
+    let record = |name: &str| {
+      snapshot
+        .flow
+        .data
+        .records
+        .iter()
+        .filter(|row| row.input().node() == &key(name))
+        .max_by_key(|row| row.observed_at())
+        .unwrap()
+    };
+    let validated = record("protected_validation_gate");
+    assert_eq!(validated.outcome(), &key("passed"));
+    assert_eq!(
+      validated.input().payload().value()["candidate_revision"],
+      json!(request.candidate.candidate_revision())
+    );
+    assert_eq!(
+      record("review").payload().value()["candidate_revision"],
+      json!(request.candidate.candidate_revision())
+    );
+    assert_eq!(
+      validated.input().payload().value()["candidate_digest"],
+      json!(request.candidate.changeset_digest())
+    );
+    let superseded = snapshot
+      .flow
+      .data
+      .records
+      .iter()
+      .filter(|row| row.input().node() == &key("review"))
+      .min_by_key(|row| row.observed_at())
+      .unwrap();
+    assert_ne!(
+      superseded.payload().value()["candidate_revision"],
+      json!(request.candidate.candidate_revision())
+    );
+    let captured = record("implementation").build_provenance().unwrap();
+    for (name, expected) in [
+      ("change-set.bundle", &request.bundle),
+      ("change-set-manifest.json", &request.manifest),
+    ] {
+      assert_eq!(
+        &captured
+          .outputs()
+          .iter()
+          .find(|output| output.name == key(name))
+          .unwrap()
+          .artifact,
+        expected
+      );
+    }
+    let publication = definition.node(&key("publish_pull_request")).unwrap();
+    assert_eq!(publication.action().unwrap().action(), &key("publish_candidate"));
+    let retained = snapshot
+      .accepted_terminal_result(
+        devops.input().definition(),
+        &key("delivered_for_review"),
+        &std::collections::BTreeSet::from([key("published")]),
+      )
+      .unwrap()
+      .unwrap()
+      .payload()
+      .value();
+    assert_eq!(retained["external"]["review_state"], "open");
+    assert_eq!(
+      retained["external"]["review_url"],
+      "https://forge.example/team/repository/pull/23"
+    );
+    assert_eq!(
+      retained["external"]["remote_head"],
+      json!(request.candidate.candidate_revision())
+    );
+    assert_eq!(retained["receipt"], json!(request.operation_id));
+    assert!(
+      snapshot
+        .outbox
+        .iter()
+        .all(|row| row.kind.as_str() != "work.status.projection")
+    );
+    assert_eq!(snapshot.run.state(), FactoryRunState::Completed);
+  });
 }
 
 fn baseline_report(exact: &ExactSubject, status: &str, finding: &str) -> Value {

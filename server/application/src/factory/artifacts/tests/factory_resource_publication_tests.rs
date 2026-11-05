@@ -86,6 +86,7 @@ fn candidate_publication_control_binds_the_selected_resource_without_a_work_repo
           binding: &binding,
           input: &input,
           schemas: &[],
+          outcomes: &[],
           permissions,
           budget: fixture.snapshot.admitted_flow.limits().budget(),
           deadline: time(100),

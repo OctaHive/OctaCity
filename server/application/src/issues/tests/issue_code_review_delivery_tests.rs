@@ -93,6 +93,7 @@ fn issue_code_review_delivery_uses_the_retained_publication_receipt_without_repu
         requests: Mutex::new(vec![]),
         published: Mutex::new(None),
         lose_response: std::sync::atomic::AtomicBool::new(false),
+        first_recovery_error: Mutex::new(None),
       });
       let plugin: Arc<dyn FactoryFlowActionPlugin> = if publication {
         Arc::new(FactoryCandidatePublicationAction::new(

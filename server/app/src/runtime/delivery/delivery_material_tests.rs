@@ -197,9 +197,12 @@ async fn retained_delivery_materialization_stages_exact_private_bytes_and_replay
     bundle: bundle.clone(),
     manifest: manifest.clone(),
     target: target.clone(),
+    review_metadata: None,
+    require_review_url: false,
     permissions: FactoryPermissionSet::deny_all(),
     budget: BudgetLimit::new(1, 1000, 1, 1, 10000).unwrap(),
     deadline: at(1000),
+    publish_until: None,
     started_at: at(1),
     authority_expires_at: at(1000),
   };

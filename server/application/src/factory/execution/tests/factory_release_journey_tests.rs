@@ -673,6 +673,7 @@ async fn journey(
   let publisher = Arc::new(Publisher {
     behavior: PublicationCase::Normal,
     lost: AtomicBool::new(false),
+    lose_first_recovery_probe: AtomicBool::new(false),
     writes: Mutex::new(BTreeMap::new()),
     requests: Mutex::new(vec![]),
   });

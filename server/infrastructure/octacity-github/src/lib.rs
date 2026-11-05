@@ -38,6 +38,19 @@ pub struct GithubPlugin {
 #[derive(Clone, Copy, Debug, Eq, PartialEq, thiserror::Error)]
 #[error("GitHub plugin configuration is invalid")]
 pub struct GithubConfigError;
+
+/// Browser links for one repository verified against the installed provider configuration.
+pub struct GithubDeliveryReviewLinks(url::Url);
+impl GithubDeliveryReviewLinks {
+  /// Resolves the numeric PR identity returned by this provider.
+  pub fn resolve(&self, identity: &str) -> Result<url::Url, GithubConfigError> {
+    let number = identity.parse::<u64>().map_err(|_| GithubConfigError)?;
+    if number == 0 || number.to_string() != identity {
+      return Err(GithubConfigError);
+    }
+    self.0.join(identity).map_err(|_| GithubConfigError)
+  }
+}
 impl GithubPlugin {
   /// Loads strict operator configuration without reading a forge token.
   pub fn load(directory: &Path) -> Result<Self, GithubConfigError> {
@@ -48,6 +61,36 @@ impl GithubPlugin {
   /// Immutable provider profile identity; credential rotation is excluded.
   pub fn configuration_digest(&self) -> &str {
     &self.config.digest
+  }
+  /// Derives a browser route from the same pinned GitHub repository used for Delivery.
+  /// No credentials or network requests are needed to resolve this route.
+  pub fn delivery_review_links(
+    &self,
+    configuration_digest: &str,
+    repository_locator: &str,
+    repository_id: &str,
+    network_hosts: &[String],
+  ) -> Result<GithubDeliveryReviewLinks, GithubConfigError> {
+    if self.configuration_digest() != configuration_digest {
+      return Err(GithubConfigError);
+    }
+    let repository = self.config.delivery_repository(repository_locator, repository_id)?;
+    self.config.authorize_network(repository, network_hosts)?;
+    let mut url = url::Url::parse(&repository.remote).map_err(|_| GithubConfigError)?;
+    let api = &self.config.api_base;
+    // GitHub.com uses separate public API and browser hosts; Enterprise can use one origin.
+    let public_github = api.host_str() == Some("api.github.com")
+      && url.host_str() == Some("github.com")
+      && api.port().is_none()
+      && url.port().is_none();
+    let path = format!("/{}/{}", repository.owner, repository.name);
+    if !(api.origin() == url.origin() || public_github)
+      || !(url.path().eq_ignore_ascii_case(&path) || url.path().eq_ignore_ascii_case(&format!("{path}.git")))
+    {
+      return Err(GithubConfigError);
+    }
+    url.set_path(&format!("{path}/pull/"));
+    Ok(GithubDeliveryReviewLinks(url))
   }
   /// Executes one scoped Delivery operation. Provider details never become diagnostics.
   pub async fn execute(&self, request: &Request, cancellation: CancellationToken) -> Outcome {
@@ -68,7 +111,18 @@ impl GithubPlugin {
     if intent.configuration_digest != self.config.digest {
       return failure(FailureClass::Conflict);
     }
-    if self.config.authorize_network(intent).is_err() {
+    let repository = match self
+      .config
+      .delivery_repository(&intent.repository.repository_locator, &intent.repository.repository_id)
+    {
+      Ok(repository) => repository,
+      Err(_) => return failure(FailureClass::Permanent),
+    };
+    if self
+      .config
+      .authorize_network(repository, &intent.network_hosts)
+      .is_err()
+    {
       return failure(FailureClass::InvalidRequest);
     }
     let credential = match self.config.delivery_credential(intent) {
@@ -81,11 +135,6 @@ impl GithubPlugin {
       }
       api::branch(&intent.target.base_reference)?;
       api::branch(&intent.target.candidate_reference)?;
-      let repository = self
-        .config
-        .repositories
-        .get(&intent.repository.repository_locator)
-        .ok_or(FailureClass::Permanent)?;
       // The shared SDK client consumes a provider repository and scoped grant,
       // rather than a Delivery DTO; other capabilities reuse this transport.
       let api = api::GithubApi::new(&self.config, repository, &credential)?;

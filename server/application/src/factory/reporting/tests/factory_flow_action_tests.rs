@@ -1169,6 +1169,7 @@ struct Publisher {
   requests: Mutex<Vec<FactoryCandidatePublicationRequest>>,
   published: Mutex<Option<FactoryCandidatePublication>>,
   lose_response: std::sync::atomic::AtomicBool,
+  first_recovery_error: Mutex<Option<ApplicationError>>,
 }
 #[async_trait]
 impl FactoryCandidatePublisher for Publisher {
@@ -1178,6 +1179,9 @@ impl FactoryCandidatePublisher for Publisher {
   ) -> Result<Option<FactoryCandidatePublication>, ApplicationError> {
     let publication = self.published.lock().unwrap().clone();
     if let Some(ref publication) = publication {
+      if let Some(error) = self.first_recovery_error.lock().unwrap().take() {
+        return Err(error);
+      }
       assert_eq!(publication.candidate, request.candidate);
     }
     Ok(publication)
@@ -1334,6 +1338,50 @@ fn attach_candidate(h: &mut Harness) -> CandidateSubject {
   candidate
 }
 #[test]
+fn prepared_review_metadata_flows_through_the_trusted_publication_action() {
+  crate::factory::admission::tests::factory_admission_tests::run_ready(async {
+    let mut h = harness_with_result(
+      binding(
+        "publisher",
+        "publish_candidate",
+        serde_json::json!({
+          "bundle":"candidate_bytes", "manifest":"candidate_manifest", "target":reference("production"),
+          "review_metadata":{"value":{"mapping":"constant","value":{"title":"Fix public API", "summary":"Verified against the accepted contract."}}}
+        }),
+      ),
+      permissions("publisher"),
+      publication_schema(),
+    );
+    let candidate = attach_candidate(&mut h);
+    let publisher = Arc::new(Publisher {
+      requests: Mutex::new(vec![]),
+      published: Mutex::new(None),
+      lose_response: std::sync::atomic::AtomicBool::new(false),
+      first_recovery_error: Mutex::new(None),
+    });
+    let adapter = FactoryFlowActionAdapter::new(Arc::new(FactoryCandidatePublicationAction::new(
+      reference("publisher"),
+      publisher.clone(),
+      h.outcome,
+    )));
+    let runner = FactoryNodeRunner::new(h.store, Arc::new(adapter), crate::factory_node_test_support::clock());
+    runner
+      .run_once(h.run, h.claim, h.target.clone(), Some(h.input), at(11))
+      .await
+      .unwrap();
+    let step = runner.run_once(h.run, h.claim, h.target, None, at(12)).await.unwrap();
+    assert!(matches!(step, FactoryNodeStep::Completed(_)));
+    let requests = publisher.requests.lock().unwrap();
+    assert_eq!(requests.len(), 1);
+    assert_eq!(requests[0].candidate, candidate);
+    assert_eq!(requests[0].target, reference("production"));
+    let review = requests[0].review_metadata.as_ref().unwrap();
+    assert_eq!(review.title(), "Fix public API");
+    assert_eq!(review.summary(), "Verified against the accepted contract.");
+  });
+}
+
+#[test]
 fn exact_candidate_publication_recovers_a_lost_response_without_another_write() {
   crate::factory::admission::tests::factory_admission_tests::run_ready(async {
     let schema = publication_schema();
@@ -1351,6 +1399,7 @@ fn exact_candidate_publication_recovers_a_lost_response_without_another_write() 
       requests: Mutex::new(vec![]),
       published: Mutex::new(None),
       lose_response: std::sync::atomic::AtomicBool::new(true),
+      first_recovery_error: Mutex::new(Some(ApplicationError::unavailable())),
     });
     let adapter = Arc::new(FactoryFlowActionAdapter::new(Arc::new(
       FactoryCandidatePublicationAction::new(reference("publisher"), publisher.clone(), h.outcome.clone()),
@@ -1409,6 +1458,44 @@ fn exact_candidate_publication_recovers_a_lost_response_without_another_write() 
 }
 
 #[test]
+fn publication_reports_conflict_confirmed_while_recovering_the_lost_response() {
+  crate::factory::admission::tests::factory_admission_tests::run_ready(async {
+    let mut h = harness_with_result(
+      binding(
+        "publisher",
+        "publish_candidate",
+        serde_json::json!({"bundle":"candidate_bytes","manifest":"candidate_manifest","target":reference("review_branch")}),
+      ),
+      permissions("publisher"),
+      publication_schema(),
+    );
+    attach_candidate(&mut h);
+    let publisher = Arc::new(Publisher {
+      requests: Mutex::new(vec![]),
+      published: Mutex::new(None),
+      lose_response: std::sync::atomic::AtomicBool::new(true),
+      first_recovery_error: Mutex::new(Some(ApplicationError::PreconditionFailed)),
+    });
+    let runner = FactoryNodeRunner::new(
+      h.store,
+      Arc::new(FactoryFlowActionAdapter::new(Arc::new(
+        FactoryCandidatePublicationAction::new(reference("publisher"), publisher.clone(), h.outcome),
+      ))),
+      crate::factory_node_test_support::clock(),
+    );
+    runner
+      .run_once(h.run, h.claim, h.target.clone(), Some(h.input), at(11))
+      .await
+      .unwrap();
+    assert!(matches!(
+      runner.run_once(h.run, h.claim, h.target, None, at(12)).await,
+      Err(ApplicationError::PreconditionFailed)
+    ));
+    assert_eq!(publisher.requests.lock().unwrap().len(), 1);
+  });
+}
+
+#[test]
 fn publication_rejects_an_unversioned_target_policy_before_external_effects() {
   crate::factory::admission::tests::factory_admission_tests::run_ready(async {
     let mut h = harness_with_result(
@@ -1425,6 +1512,7 @@ fn publication_rejects_an_unversioned_target_policy_before_external_effects() {
       requests: Mutex::new(vec![]),
       published: Mutex::new(None),
       lose_response: std::sync::atomic::AtomicBool::new(false),
+      first_recovery_error: Mutex::new(None),
     });
     let adapter = Arc::new(FactoryFlowActionAdapter::new(Arc::new(
       FactoryCandidatePublicationAction::new(reference("publisher"), publisher.clone(), h.outcome.clone()),
@@ -1461,6 +1549,7 @@ fn publication_rejects_an_incompatible_receipt_contract_before_any_external_writ
       requests: Mutex::new(vec![]),
       published: Mutex::new(None),
       lose_response: std::sync::atomic::AtomicBool::new(false),
+      first_recovery_error: Mutex::new(None),
     });
     let runner = FactoryNodeRunner::new(
       h.store.clone(),
@@ -1482,7 +1571,7 @@ fn publication_rejects_an_incompatible_receipt_contract_before_any_external_writ
 }
 
 #[test]
-fn lost_publication_cannot_be_accepted_after_the_declared_review_expiry() {
+fn lost_publication_can_be_observed_after_review_expiry_without_republishing() {
   crate::factory::admission::tests::factory_admission_tests::run_ready(async {
     let mut h = harness_with_result(
       binding(
@@ -1498,6 +1587,7 @@ fn lost_publication_cannot_be_accepted_after_the_declared_review_expiry() {
       requests: Mutex::new(vec![]),
       published: Mutex::new(None),
       lose_response: std::sync::atomic::AtomicBool::new(true),
+      first_recovery_error: Mutex::new(Some(ApplicationError::unavailable())),
     });
     let adapter = Arc::new(FactoryFlowActionAdapter::new(Arc::new(
       FactoryCandidatePublicationAction::new(reference("publisher"), publisher.clone(), h.outcome),
@@ -1523,21 +1613,17 @@ fn lost_publication_cannot_be_accepted_after_the_declared_review_expiry() {
       "publication was valid before expiry"
     );
     let restarted = FactoryNodeRunner::new(h.store.clone(), adapter, crate::factory_node_test_support::clock());
-    assert!(
-      restarted
-        .run_once(h.run, h.claim, h.target, None, at(14))
-        .await
-        .is_err()
-    );
-    assert!(
-      h.store
-        .factory_run_snapshot(h.run)
-        .await
-        .unwrap()
-        .flow
-        .data
-        .records
-        .is_empty()
+    let FactoryNodeStep::Completed(record) = restarted
+      .run_once(h.run, h.claim, h.target, None, at(14))
+      .await
+      .unwrap()
+    else {
+      panic!("review expiry must block new writes but allow observing the original PR");
+    };
+    assert_eq!(record.payload().value()["external"]["review_identity"], "23");
+    assert_eq!(
+      record.payload().value()["receipt"],
+      serde_json::json!(FactoryDigest::from_bytes([88; 32]))
     );
     assert_eq!(publisher.requests.lock().unwrap().len(), 1);
   });
@@ -1560,6 +1646,7 @@ fn a_receipt_for_another_publication_cannot_authorize_the_same_candidate() {
       requests: Mutex::new(vec![]),
       published: Mutex::new(None),
       lose_response: std::sync::atomic::AtomicBool::new(true),
+      first_recovery_error: Mutex::new(Some(ApplicationError::unavailable())),
     });
     let adapter = Arc::new(FactoryFlowActionAdapter::new(Arc::new(
       FactoryCandidatePublicationAction::new(reference("publisher"), publisher.clone(), h.outcome),
@@ -1617,6 +1704,7 @@ fn publication_rejects_a_probe_only_receipt_schema_before_any_external_write() {
       requests: Mutex::new(vec![]),
       published: Mutex::new(None),
       lose_response: std::sync::atomic::AtomicBool::new(false),
+      first_recovery_error: Mutex::new(None),
     });
     let runner = FactoryNodeRunner::new(
       h.store.clone(),

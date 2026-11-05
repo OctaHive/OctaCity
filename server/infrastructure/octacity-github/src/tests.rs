@@ -393,6 +393,7 @@ async fn captured_publication(lose_push_response: bool) {
   let base = serde_json::json!({"ref":"refs/heads/main","object":{"type":"commit","sha":intent.base_revision}});
   let candidate = serde_json::json!({"ref":intent.target.candidate_reference,"object":{"type":"commit","sha":intent.candidate_revision}});
   let review = serde_json::json!({"number":23,"state":"open","merged_at":null,
+    "html_url":"https://untrusted.invalid/other/repository/pull/90",
     "head":{"sha":intent.candidate_revision,"ref":"review/accepted-candidate","repo":{"full_name":"owner/repository"}},
     "base":{"sha":intent.base_revision,"ref":"main","repo":{"full_name":"owner/repository"}},
     "title":intent.review.title,"body":format!("{}\n\n{}",intent.review.summary,api::marker(&intent))});
@@ -473,6 +474,8 @@ async fn captured_publication(lose_push_response: bool) {
     panic!("accepted candidate must be published: {result:?}")
   };
   assert_eq!(receipt.remote_head, intent.candidate_revision);
+  assert!(!serde_json::to_string(&receipt).unwrap().contains("untrusted.invalid"));
+  assert_eq!(receipt.review.as_ref().unwrap().head, intent.candidate_revision);
   assert_eq!(receipt.review.unwrap().identity, "23");
   assert_eq!(
     git(
@@ -619,7 +622,14 @@ async fn replay_observes_the_original_review_after_an_unknown_write_response() {
     })
   ));
   assert!(!format!("{result:?}").contains("private upstream"));
-  let replay = plugin.execute(&request, CancellationToken::new()).await;
+  let Command::Publish(intent) = request.command else {
+    unreachable!();
+  };
+  let observation = Request {
+    command: Command::Observe(intent),
+    ..request
+  };
+  let replay = plugin.execute(&observation, CancellationToken::new()).await;
   assert!(matches!(replay,Outcome::Observed(receipt) if receipt.review.as_ref().unwrap().identity=="23"));
   tokio::time::timeout(std::time::Duration::from_secs(2), served)
     .await
@@ -662,6 +672,30 @@ async fn altered_capture_bytes_and_a_conflicting_remote_head_cannot_be_published
       "/repos/owner/repository/git/ref/heads/review/accepted-candidate",
       200,
       serde_json::json!({"ref":intent.target.candidate_reference,"object":{"type":"commit","sha":"3".repeat(40)}}),
+    ),
+  ])
+  .await;
+  plugin.config.api_base = endpoint;
+  assert!(matches!(
+    plugin.execute(&request, CancellationToken::new()).await,
+    Outcome::Failure(Failure {
+      class: FailureClass::Conflict,
+      ..
+    })
+  ));
+  served.await.unwrap();
+  let (endpoint, served) = forge_server(vec![
+    (
+      "GET",
+      "/repos/owner/repository/git/ref/heads/main",
+      200,
+      serde_json::json!({"ref":"refs/heads/main","object":{"type":"commit","sha":"3".repeat(40)}}),
+    ),
+    (
+      "GET",
+      "/repos/owner/repository/git/ref/heads/review/accepted-candidate",
+      404,
+      serde_json::json!({}),
     ),
   ])
   .await;
