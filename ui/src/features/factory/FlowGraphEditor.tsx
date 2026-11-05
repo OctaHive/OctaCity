@@ -270,6 +270,7 @@ export function FlowGraphEditor({
             />
           ) : null}
           <FlowSettings
+            flows={subflows}
             budgetCalculation={budgetCalculation}
             onBudgetCalculationChange={(kind, automatic) =>
               setBudgetCalculation((current) => ({ ...current, [kind]: automatic }))
@@ -329,6 +330,7 @@ export function FlowGraphEditor({
               target.build = null;
               target.action = null;
               target.gate = null;
+              target.accepted_work_outcomes = [];
               target.subflow = null;
               target.operator_requests = null;
               onChange(next);
@@ -363,7 +365,8 @@ export function FlowGraphEditor({
           {authoring &&
           (node.kind === 'deterministic_gate' ||
             node.kind === 'human_gate' ||
-            node.kind === 'build_command') ? (
+            node.kind === 'build_command' ||
+            node.kind === 'trusted_action') ? (
             <FlowPrimitives
               key={`${selected}:${node.kind}:${bindingRevision}`}
               draft={stepDrafts[nodeKeys[selected] ?? '']}

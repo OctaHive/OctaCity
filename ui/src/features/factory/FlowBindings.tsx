@@ -77,6 +77,7 @@ export function FlowBindings({
   );
   const editableEntries = Object.entries(entries).filter(([key]) => !documentKeys.has(key));
   const entryKeys = useDraftRowKeys(editableEntries.map(([, entry]) => entry));
+  const candidate = node.context_binding?.candidate_revision;
   const updateSources = (sources: Record<string, Source>) =>
     onChange({
       ...node,
@@ -271,9 +272,10 @@ export function FlowBindings({
                 options={[
                   { value: 'payload', label: t('factory.payload') },
                   { value: 'metadata', label: t('factory.metadata') },
+                  { value: 'input_payload', label: t('factory.retainedStepInput') },
                 ]}
                 onValueChange={(view) => {
-                  if (view === 'payload' || view === 'metadata')
+                  if (view === 'payload' || view === 'metadata' || view === 'input_payload')
                     updateSources({ ...sources, [name]: { ...source, view } });
                 }}
               />
@@ -291,6 +293,44 @@ export function FlowBindings({
           </fieldset>
         ))}
         <h4>{t('factory.contextEntries')}</h4>
+        <label>
+          <input
+            type="checkbox"
+            checked={!!candidate}
+            onChange={(event) =>
+              onChange({
+                ...node,
+                context_binding: {
+                  ...node.context_binding,
+                  entries,
+                  candidate_revision: event.target.checked
+                    ? { value: { mapping: 'pointer', path: '' } }
+                    : null,
+                  ...(!event.target.checked ? { candidate_when_present: null } : {}),
+                },
+              })
+            }
+          />
+          {t('factory.selectCandidateRevision')}
+        </label>
+        {candidate ? (
+          <fieldset>
+            <legend>{t('factory.candidateRevisionMapping')}</legend>
+            <ValueMappingEditor
+              value={candidate.value}
+              onChange={(value) =>
+                onChange({
+                  ...node,
+                  context_binding: {
+                    ...node.context_binding,
+                    entries,
+                    candidate_revision: { value },
+                  },
+                })
+              }
+            />
+          </fieldset>
+        ) : null}
         <button
           type="button"
           disabled={Object.keys(entries).length >= 64 || Object.hasOwn(entries, '')}

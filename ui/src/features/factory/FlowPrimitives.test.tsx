@@ -441,3 +441,39 @@ it('authors a scalar-result condition with explicit unmatched fallback using rea
   expect(api.createFlow).not.toHaveBeenCalled();
   expect(screen.queryByRole('textbox', { name: 'Components' })).toBeNull();
 });
+
+it('marks only the selected condition outcome as accepting the frozen Work contract', async () => {
+  const { api, draft } = setup();
+  await userEvent.click(await screen.findByRole('combobox', { name: 'If no condition matches' }));
+  await userEvent.click(screen.getByRole('option', { name: 'accepted' }));
+  await userEvent.click(screen.getByRole('button', { name: 'Validate and use condition' }));
+  await userEvent.click(await screen.findByRole('checkbox', { name: 'Accept Work on accepted' }));
+  expect(draft().root.nodes[0]?.accepted_work_outcomes).toEqual(['accepted']);
+  expect(api.createFlow).not.toHaveBeenCalled();
+});
+
+it('normalizes an explicit guard and a retained outcome projection before applying the condition', async () => {
+  const { api } = setup();
+  const editor = within(await screen.findByRole('group', { name: 'Condition check' }));
+  await userEvent.click(editor.getByRole('combobox', { name: 'If no condition matches' }));
+  await userEvent.click(screen.getByRole('option', { name: 'review' }));
+  await userEvent.click(editor.getByText('Advanced conditions and projections'));
+  await userEvent.click(editor.getByRole('checkbox', { name: 'Check a precondition' }));
+  await userEvent.type(editor.getByRole('textbox', { name: 'Observation path' }), '/candidate');
+  await userEvent.click(editor.getByRole('checkbox', { name: 'Project data for accepted' }));
+  const projection = within(editor.getByRole('group', { name: 'Data for accepted' }));
+  await userEvent.type(projection.getByRole('textbox', { name: 'Selection path' }), '/evidence');
+  await userEvent.click(editor.getByRole('button', { name: 'Validate and use condition' }));
+  expect(api.normalizeGateProgram).toHaveBeenCalledWith(
+    'delivery',
+    {
+      program: {
+        fallback: 'review',
+        rules: [],
+        precondition: { operation: 'exists', operand: { source: 'path', path: '/candidate' } },
+        outputs: { accepted: { value: { mapping: 'pointer', path: '/evidence' } } },
+      },
+    },
+    expect.any(AbortSignal),
+  );
+});

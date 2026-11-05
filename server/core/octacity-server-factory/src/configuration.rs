@@ -176,12 +176,28 @@ pub struct FactoryConfigurationChoiceEntries {
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct FactoryConfigurationChoices {
   build_pipelines: Vec<crate::FactoryBuildPipelineContract>,
+  candidate_publications: Vec<FactoryCandidatePublicationChoice>,
   references: BTreeMap<(FactoryChoiceKind, FactoryKey), ImmutableReference>,
   build_configurations: BTreeMap<FactoryKey, BuildConfigurationRef>,
   metadata: BTreeMap<(FactoryChoiceKind, FactoryKey), FactoryChoiceMetadata>,
   role_profiles: BTreeMap<FactoryKey, crate::FactoryRoleProfileCapability>,
   runtime_settings: BTreeMap<FactoryKey, crate::FactoryRuntimeSettingsSupport>,
   excluded_roles: std::collections::BTreeSet<crate::FactoryRoleId>,
+}
+
+/// Safe authoring facts from the installed trusted publisher and its Project target.
+#[derive(Clone, Debug, Eq, PartialEq, Serialize)]
+pub struct FactoryCandidatePublicationChoice {
+  /// Installed action plugin. The corresponding Project capability must be visible.
+  pub plugin: ImmutableReference,
+  /// Immutable delivery target, without its private connector configuration.
+  pub target: ImmutableReference,
+  /// The installed publisher's successful outcome.
+  pub outcome: crate::FlowOutcomeDefinition,
+  /// The exact schema named by the successful outcome.
+  pub receipt_schema: crate::FlowDataSchema,
+  /// Whether the trusted target can return a verified review URL.
+  pub review_url: bool,
 }
 
 /// Safe deployment-declared capabilities. Absence means no declaration is available;
@@ -277,10 +293,38 @@ impl FactoryConfigurationChoices {
       build_configurations: choice_map(entries.build_configurations, FactoryChoiceKind::BuildConfiguration)?,
       metadata: BTreeMap::new(),
       build_pipelines: Vec::new(),
+      candidate_publications: Vec::new(),
       role_profiles: BTreeMap::new(),
       runtime_settings: BTreeMap::new(),
       excluded_roles: Default::default(),
     })
+  }
+
+  /// Associates an installed target with a selectable plugin; grants no execution rights.
+  pub fn with_candidate_publication(mut self, choice: FactoryCandidatePublicationChoice) -> Result<Self, FactoryError> {
+    if !self
+      .references
+      .iter()
+      .any(|((kind, _), reference)| *kind == FactoryChoiceKind::NodeCapability && reference == &choice.plugin)
+      || choice.receipt_schema.reference() != choice.outcome.schema()
+      || choice.outcome.kind() != crate::FlowOutcomeKind::Success
+      || self.candidate_publications.len() >= MAX_CONFIGURATION_CHOICES_PER_KIND
+      || self
+        .candidate_publications
+        .iter()
+        .any(|installed| installed.plugin == choice.plugin && installed.target == choice.target)
+    {
+      return Err(FactoryError::InvalidConfiguration {
+        field: "candidate publication choice",
+      });
+    }
+    self.candidate_publications.push(choice);
+    Ok(self)
+  }
+
+  /// Project targets registered by the installed publication executor.
+  pub fn candidate_publications(&self) -> &[FactoryCandidatePublicationChoice] {
+    &self.candidate_publications
   }
 
   /// Adds exact compiler metadata to existing selectable references; no execution authority.

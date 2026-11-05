@@ -250,7 +250,19 @@ impl crate::runtime::FactoryRuntimeInstaller for FileProfileInstaller {
     }
     catalog.executors.extend(command_executors.bindings());
     for binding in &self.bindings.delivery {
-      catalog.executors.push(binding.install(&resources)?);
+      let (executor, publication_choices) = binding.install(&resources)?;
+      for (project, choice) in publication_choices {
+        let (_, catalog_choices) = catalog
+          .projects
+          .iter_mut()
+          .find(|(owner, _)| *owner == project)
+          .ok_or(FactoryRuntimeInstallationError::Invalid)?;
+        *catalog_choices = catalog_choices
+          .clone()
+          .with_candidate_publication(choice)
+          .map_err(|_| FactoryRuntimeInstallationError::Invalid)?;
+      }
+      catalog.executors.push(executor);
     }
     let mut installed = crate::runtime::FactoryProfileRuntimeInstaller::new(catalog, readiness, vec![])?
       .with_model_discovery(self.model_discovery()?)

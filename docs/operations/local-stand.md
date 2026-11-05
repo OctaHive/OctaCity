@@ -1000,6 +1000,14 @@ resolution. Changing a published package requires a deliberate stand reset;
 Repeat the same Delivery bundle option on each subsequent `up`, alongside the
 Factory catalog and any separately installed Signal connector options.
 
+To make an installed publisher selectable in the Console, include its exact
+`identity` as a `node_capability` in the target Project's catalog and supply the
+optional `receipt_schema` on its `delivery` profile. Use the normalized Flow data
+schema whose reference matches `outcome.schema`. The Console receives the
+publisher and target references, successful outcome and receipt schema. The
+adapter settings and credential values remain private. Authorizing the action,
+adapter, host and credential profile still requires the Project access policy.
+
 Only the Factory overlay increases private runtime storage for bounded profile
 and connector inputs and installs an executable private tmpfs for Delivery.
 The ordinary Compose profile keeps its existing mounts. Retained delivery

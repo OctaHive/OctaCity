@@ -403,6 +403,11 @@ async fn visible_factory_choices_from<S: octacity_server_store::FactoryConfigura
       visible = qualified;
     }
   }
+  for choice in choices.candidate_publications() {
+    if let Ok(qualified) = visible.clone().with_candidate_publication(choice.clone()) {
+      visible = qualified;
+    }
+  }
   visible.intersect_role_availability(&choices);
   for (alias, cap) in choices.role_profile_capabilities() {
     if let Some(cap) = visible.available_role_profile_capability(alias, cap) {

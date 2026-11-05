@@ -113,6 +113,9 @@ pub struct FactoryCommandAuthoringContract {
 pub struct FactoryAuthoringCapabilities {
   /// Commands explicitly declared by visible installed compilers; an empty list grants nothing.
   pub commands: Vec<FactoryCommandAuthoringContract>,
+  /// Visible installed publication targets, independent of previously published Flows.
+  #[serde(skip_serializing_if = "Vec::is_empty")]
+  pub candidate_publications: Vec<FactoryCandidatePublicationChoice>,
   /// Present when the Project has an installed local writer and active mapped labels.
   #[serde(skip_serializing_if = "Option::is_none")]
   pub issue_classification: Option<FactoryIssueClassificationChoices>,
@@ -211,7 +214,7 @@ impl<S: FactoryConfigurationStore> ManagementQueryUseCase<GetFactoryAuthoringCap
         resource_modes: vec!["none"],
       });
     }
-    let (commands, issue_classification) =
+    let (commands, candidate_publications, issue_classification) =
       match crate::factory::authoring::factory_configuration_choices::visible_installed_factory_choices(
         self.store.as_ref(),
         self.policy.as_ref(),
@@ -222,6 +225,7 @@ impl<S: FactoryConfigurationStore> ManagementQueryUseCase<GetFactoryAuthoringCap
       {
         Ok(choices) => (
           command_contracts(&choices),
+          choices.candidate_publications().to_vec(),
           crate::factory::reporting::factory_issue_classification_authoring::current_choices(
             &choices,
             self.issue_properties.as_deref(),
@@ -231,11 +235,12 @@ impl<S: FactoryConfigurationStore> ManagementQueryUseCase<GetFactoryAuthoringCap
           )
           .await?,
         ),
-        Err(ApplicationError::CapabilityUnavailable) => (vec![], None),
+        Err(ApplicationError::CapabilityUnavailable) => (vec![], vec![], None),
         Err(error) => return Err(error),
       };
     Ok(FactoryAuthoringCapabilities {
       commands,
+      candidate_publications,
       issue_classification,
       deterministic_gate: FactoryDeterministicGateContract {
         policy: gate.policy().clone(),

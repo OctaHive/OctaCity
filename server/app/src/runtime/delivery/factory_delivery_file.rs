@@ -8,7 +8,11 @@ use octacity_server_application::{
   MAX_FACTORY_EXECUTOR_BINDINGS, SystemFactoryExecutionClock,
 };
 use octacity_server_delivery::{DeliveryAdapterRegistry, InstalledDeliveryAdapter};
-use octacity_server_factory::{FlowNodeKind, FlowOutcomeDefinition, ImmutableReference, NodeExecutionIdentity};
+use octacity_server_domain::ProjectId;
+use octacity_server_factory::{
+  FactoryCandidatePublicationChoice, FlowDataSchema, FlowNodeKind, FlowOutcomeDefinition, ImmutableReference,
+  NodeExecutionIdentity,
+};
 use serde::Deserialize;
 use std::{collections::BTreeMap, path::PathBuf, sync::Arc, time::Duration};
 
@@ -17,6 +21,7 @@ use std::{collections::BTreeMap, path::PathBuf, sync::Arc, time::Duration};
 pub(in crate::runtime) struct FactoryFileDeliveryProfile {
   identity: ImmutableReference,
   outcome: FlowOutcomeDefinition,
+  receipt_schema: Option<FlowDataSchema>,
   adapter_root: PathBuf,
   policies: Vec<FactoryFileDeliveryPolicy>,
   timeout_milliseconds: u64,
@@ -70,13 +75,23 @@ impl FactoryFileDeliveryProfile {
   pub(in crate::runtime) fn install(
     &self,
     resources: &FactoryRuntimeResources,
-  ) -> Result<FactoryNodeExecutorBinding, FactoryRuntimeInstallationError> {
+  ) -> Result<
+    (
+      FactoryNodeExecutorBinding,
+      Vec<(ProjectId, FactoryCandidatePublicationChoice)>,
+    ),
+    FactoryRuntimeInstallationError,
+  > {
     use FactoryRuntimeInstallationError::Invalid;
     if self.policies.is_empty()
       || self.policies.len() > MAX_FACTORY_EXECUTOR_BINDINGS
       || !self.adapter_root.is_absolute()
       || !(1..=300_000).contains(&self.timeout_milliseconds)
       || !(1..=30_000).contains(&self.termination_grace_milliseconds)
+      || self
+        .receipt_schema
+        .as_ref()
+        .is_some_and(|schema| schema.reference() != self.outcome.schema())
     {
       return Err(Invalid);
     }
@@ -88,6 +103,7 @@ impl FactoryFileDeliveryProfile {
     .map_err(|_| Invalid)?;
     let mut policies = Vec::with_capacity(self.policies.len());
     let mut directories = BTreeMap::new();
+    let mut choices = Vec::new();
     for selected in &self.policies {
       let mut policy = FactoryDeliveryPolicy::new(
         selected.reference.identity().clone(),
@@ -115,6 +131,18 @@ impl FactoryFileDeliveryProfile {
       if let Some(ReviewLinkProvider::Github) = selected.review_links {
         install_github_review_links(&mut policy, adapter)?;
       }
+      if let Some(schema) = &self.receipt_schema {
+        choices.push((
+          selected.draft.project_id,
+          FactoryCandidatePublicationChoice {
+            plugin: self.identity.clone(),
+            target: selected.reference.clone(),
+            outcome: self.outcome.clone(),
+            receipt_schema: schema.clone(),
+            review_url: policy.review_links.is_some(),
+          },
+        ));
+      }
       policies.push(policy);
     }
     let publisher = HostedFactoryCandidatePublisher::new(
@@ -128,11 +156,14 @@ impl FactoryFileDeliveryProfile {
     )
     .map_err(|_| Invalid)?;
     Ok((
-      FlowNodeKind::TrustedAction,
-      NodeExecutionIdentity::External(self.identity.clone()),
-      Arc::new(FactoryFlowActionAdapter::new(Arc::new(
-        FactoryCandidatePublicationAction::new(self.identity.clone(), Arc::new(publisher), self.outcome.clone()),
-      ))),
+      (
+        FlowNodeKind::TrustedAction,
+        NodeExecutionIdentity::External(self.identity.clone()),
+        Arc::new(FactoryFlowActionAdapter::new(Arc::new(
+          FactoryCandidatePublicationAction::new(self.identity.clone(), Arc::new(publisher), self.outcome.clone()),
+        ))),
+      ),
+      choices,
     ))
   }
 }
@@ -142,7 +173,7 @@ mod tests {
   use super::*;
   use crate::runtime::{FactoryDeliveryPolicy, FactoryDeliveryPolicyDraft, FactoryDeliveryTargetPolicy};
   use octacity_delivery_protocol::ReviewMetadata;
-  use octacity_server_domain::{ProjectId, RepositoryId};
+  use octacity_server_domain::RepositoryId;
   use octacity_server_factory::*;
   use sha2::{Digest as _, Sha256};
   use std::{fs, os::unix::fs::PermissionsExt as _};
@@ -193,19 +224,31 @@ mod tests {
     fs::create_dir(&inputs).unwrap();
     fs::set_permissions(&inputs, fs::Permissions::from_mode(0o700)).unwrap();
     let identity = reference("configured-publication", FactoryDigest::from_bytes([9; 32]));
+    let receipt = FlowDataSchema::new(
+      FactoryKey::new("receipt").unwrap(),
+      FactoryKey::new("v1").unwrap(),
+      FlowValueSchema::String {
+        min_bytes: 1,
+        max_bytes: 64,
+      },
+    )
+    .unwrap();
     let outcome = FlowOutcomeDefinition::new(
       FactoryKey::new("published").unwrap(),
       FlowOutcomeKind::Success,
-      reference("receipt", FactoryDigest::from_bytes([8; 32])),
+      receipt.reference().clone(),
     );
     let document = serde_json::json!({
-      "identity": identity, "outcome": outcome,
+      "identity": identity, "outcome": outcome, "receipt_schema": receipt,
       "adapter_root": adapters, "timeout_milliseconds": 1000, "termination_grace_milliseconds": 50,
       "policies": [{ "reference": target.reference(), "draft": draft, "input_directory": inputs }]
     });
     let catalog = serde_json::json!({
       "version": 1,
-      "projects": [{"project_id":document["policies"][0]["draft"]["project_id"],"references":[],"build_configurations":[]}],
+      "projects": [
+        {"project_id":draft.project_id,"references":[{"kind":"node_capability","alias":"publisher","reference":identity}],"build_configurations":[]},
+        {"project_id":ProjectId::generate(),"references":[{"kind":"node_capability","alias":"publisher","reference":identity}],"build_configurations":[]}
+      ],
       "codex": [], "delivery": [document.clone()],
     });
     let catalog_path = root.path().join("profiles.json");
@@ -223,12 +266,32 @@ mod tests {
       installation.executors[0].1,
       NodeExecutionIdentity::External(identity.clone())
     );
+    let octacity_server_store::FactoryConfigurationAvailability::Available(choices) =
+      installation.capabilities.availability(draft.project_id).await.unwrap()
+    else {
+      panic!("the installed target's Project must be available")
+    };
+    let [choice] = choices.candidate_publications() else {
+      panic!("expected one Project target")
+    };
+    assert_eq!(choice.plugin, identity);
+    assert_eq!(&choice.target, target.reference());
+    assert_eq!(choice.outcome, outcome);
+    assert_eq!(choice.receipt_schema, receipt);
+    assert!(!choice.review_url);
+    let other_project = serde_json::from_value(catalog["projects"][1]["project_id"].clone()).unwrap();
+    let octacity_server_store::FactoryConfigurationAvailability::Available(other) =
+      installation.capabilities.availability(other_project).await.unwrap()
+    else {
+      panic!("the other Project must be available")
+    };
+    assert!(other.candidate_publications().is_empty());
     assert!(
       !marker.exists(),
       "loading the native deployment does not execute an adapter"
     );
     let profile: FactoryFileDeliveryProfile = serde_json::from_value(document.clone()).unwrap();
-    let installed = profile
+    let (installed, _) = profile
       .install(&crate::runtime::factory::factory_tests::resources())
       .unwrap();
     assert_eq!(installed.0, FlowNodeKind::TrustedAction);

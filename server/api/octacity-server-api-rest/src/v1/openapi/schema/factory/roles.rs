@@ -110,12 +110,29 @@ pub(super) fn insert(schemas: &mut Map<String, Value>) {
     ),
   );
   schemas.insert(
+    "FactoryCandidatePublicationChoice".into(),
+    object(
+      [
+        ("plugin", reference()),
+        ("target", reference()),
+        ("outcome", schema_ref("FactoryFlowOutcome")),
+        ("receipt_schema", schema_ref("FactoryFlowDataSchema")),
+        ("review_url", boolean()),
+      ],
+      &["plugin", "target", "outcome", "receipt_schema", "review_url"],
+    ),
+  );
+  schemas.insert(
     "FactoryAuthoringCapabilities".into(),
     object(
       [
         (
           "commands",
           bounded_array(schema_ref("FactoryCommandAuthoringContract"), b.choice_entries),
+        ),
+        (
+          "candidate_publications",
+          bounded_array(schema_ref("FactoryCandidatePublicationChoice"), b.choice_entries),
         ),
         ("issue_classification", schema_ref("FactoryIssueClassificationChoices")),
         (

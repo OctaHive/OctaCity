@@ -7,6 +7,7 @@ import { PermissionEditor } from './ResourceEditors';
 import { BudgetSettings } from './BudgetSettings';
 import { flowBudget } from './flowRequirements';
 import { FlowSchemaSelect, flowSchemaChoices } from './FlowSchemaSelect';
+import { FlowIncomingCompletion } from './FlowIncomingCompletion';
 type Draft = components['schemas']['FactoryFlowDefinitionDraft'];
 const LIMITS = {
   max_depth: 'factory.depth',
@@ -18,6 +19,7 @@ const LIMITS = {
 export function FlowSettings({
   value,
   choices,
+  flows = [],
   permissionDeclarations,
   onChange,
   budgetCalculation,
@@ -27,6 +29,7 @@ export function FlowSettings({
 }: {
   value: Draft;
   choices: readonly components['schemas']['FactoryConfigurationChoiceResource'][];
+  flows?: readonly components['schemas']['FactoryFlowDefinitionDetails'][];
   permissionDeclarations: components['schemas']['FactoryPermissions'];
   onChange: (draft: Draft) => void;
   budgetCalculation: { run: boolean; admission: boolean };
@@ -64,6 +67,7 @@ export function FlowSettings({
           options={value.root.nodes.map((node) => ({ value: node.key, label: node.key }))}
           onValueChange={(entry) => onChange({ ...value, root: { ...value.root, entry } })}
         />
+        <FlowIncomingCompletion value={value} flows={flows} onChange={onChange} />
         <details>
           <summary>{t('factory.advancedContracts')}</summary>
           <FlowSchemaSelect

@@ -153,6 +153,15 @@ bounded result, enable **Choose result data** and select the root path; for a
 summary, select only that field. Provide declared rejection, review or no-effect
 handling for uncertainty and unmatched values.
 
+For a downstream pipeline, open **Flow settings** and choose **Incoming pipeline
+completion**. Select a published Flow completion and the successful outcomes
+that can supply its input. In each consuming step, select the **Incoming** input
+source and the exact format supplied by that completion. Use **Retained step
+input** in advanced mappings when a downstream trusted step needs the input that
+an earlier step actually reviewed. A deterministic check can mark a successful
+outcome to freeze the accepted Work contract. Its advanced options control the
+precondition and the data retained for specific outcomes.
+
 A control edge makes a successor eligible; it transfers no private Context.
 Configure an explicit accepted-result input/projection for the successor, with
 the predecessor, outcome and selected fields. In the example, classification
@@ -263,6 +272,13 @@ validate, review and publish. Source preview only reads candidates. Publication
 and activation are separate from manual Work admission; enable automatic intake
 explicitly and inspect its saved current version. A matching preview is not an
 admission receipt. Configure Reporter independently if external effects are wanted.
+
+For trusted Delivery, choose **Server action** and **Publish candidate**.
+Select the installed Project target and review its receipt result. Connect the
+candidate revision, bundle and manifest explicitly, along with any required
+validation expiry and review metadata. Review the step request against Project
+access policy before publishing. The Delivery credentials belong to the trusted
+action. Keep them out of the AI steps' requests.
 
 Open the returned Run and inspect admission, node input/result records, linked
 ordinary Builds and any separate delivery receipts. A blocked/unknown prerequisite

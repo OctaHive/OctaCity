@@ -1,5 +1,5 @@
 // @vitest-environment jsdom
-import { cleanup, render, screen } from '@testing-library/react';
+import { cleanup, render, screen, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { useState } from 'react';
 import { afterEach, it, expect } from 'vitest';
@@ -340,4 +340,60 @@ it('connects only selected result fields without asking for an input schema and 
   expect(screen.queryByRole('combobox', { name: 'Step input field' })).toBeNull();
   expect(screen.queryByRole('textbox', { name: 'Input name' })).toBeNull();
   expect(observed).toEqual(connected);
+});
+
+it('explicitly selects retained validation input and the exact candidate revision for a trusted step', async () => {
+  const root = configurationFixture().configuration.flow.closure.definitions[0]!;
+  const validation = root.nodes[0]!;
+  const node: (typeof root.nodes)[number] = {
+    ...validation,
+    key: 'publish',
+    kind: 'trusted_action',
+    input_binding: {
+      sources: {
+        validated: {
+          source: 'record',
+          node: validation.key,
+          outcome: validation.outcomes[0]!.key,
+          path: '',
+        },
+      },
+      mapping: { value: { mapping: 'pointer', path: '/validated' } },
+    },
+  };
+  let observed = node;
+  function Harness() {
+    const [value, setValue] = useState(node);
+    return (
+      <FlowBindings
+        root={{ ...root, nodes: [validation, value] }}
+        schemas={[]}
+        node={value}
+        onChange={(next) => {
+          observed = next;
+          setValue(next);
+        }}
+      />
+    );
+  }
+  render(<Harness />);
+  await userEvent.click(screen.getByText('Advanced input and Context mappings'));
+  await userEvent.click(screen.getByRole('combobox', { name: 'Record view' }));
+  await userEvent.click(screen.getByRole('option', { name: 'Retained step input' }));
+  await userEvent.click(screen.getByRole('checkbox', { name: 'Select a candidate revision' }));
+  const candidate = screen.getByRole('group', { name: 'Candidate revision' });
+  await userEvent.type(
+    within(candidate).getByRole('textbox', { name: 'Selection path' }),
+    '/candidate_revision',
+  );
+  expect(observed.input_binding?.sources.validated).toMatchObject({
+    source: 'record',
+    node: validation.key,
+    outcome: validation.outcomes[0]!.key,
+    path: '',
+    view: 'input_payload',
+  });
+  expect(observed.context_binding?.candidate_revision).toEqual({
+    value: { mapping: 'pointer', path: '/candidate_revision' },
+  });
 });

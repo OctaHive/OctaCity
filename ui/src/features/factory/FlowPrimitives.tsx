@@ -14,6 +14,7 @@ import { HumanDecision } from './HumanDecision';
 import { ValueMappingEditor } from './ValueMappingEditor';
 import type { SourceUpdateDraft } from './FlowSourceUpdate';
 import { PredicateEditor } from './PredicateEditor';
+import { PublicationStep, publishCandidateAction } from './PublicationStep';
 
 type Schema = components['schemas'];
 type Node = Schema['FactoryFlowNodeDefinition'];
@@ -42,10 +43,23 @@ export function FlowPrimitives({
   onChange: (patch: Partial<Node>, schemas?: Schema['FactoryFlowDataSchema'][]) => void;
 } & PrimitiveDraftProps) {
   const { t } = usePresentation();
+  const publication = node.kind === 'trusted_action';
+  const [inspectPublication, setInspectPublication] = useState(false);
+  const publicationSelected = node.action?.action === publishCandidateAction;
+  const canConfigurePublication = publication && (!node.action || publicationSelected);
   const capabilities = useQuery({
     queryKey: queryKeys.factoryAuthoringCapabilities(services.projectId),
     queryFn: ({ signal }) => services.api.getAuthoringCapabilities(services.projectId, signal),
+    enabled:
+      !publication || (canConfigurePublication && (inspectPublication || publicationSelected)),
   });
+  if (publication && !canConfigurePublication) return null;
+  if (publication && !inspectPublication && !publicationSelected)
+    return (
+      <button type="button" onClick={() => setInspectPublication(true)}>
+        {t('factory.publicationAction')}
+      </button>
+    );
   if (capabilities.error)
     return (
       <QueryFailureNotice
@@ -75,6 +89,12 @@ export function FlowPrimitives({
     />
   ) : node.kind === 'build_command' ? (
     <CommandStep node={node} commands={capabilities.data.commands ?? []} onChange={onChange} />
+  ) : node.kind === 'trusted_action' ? (
+    <PublicationStep
+      node={node}
+      choices={capabilities.data.candidate_publications ?? []}
+      onChange={onChange}
+    />
   ) : null;
 }
 
@@ -198,33 +218,93 @@ function ConditionEditor({
       >
         {t('factory.addCondition')}
       </button>
-      <label>
-        <input
-          type="checkbox"
-          checked={program.default_output != null}
-          onChange={(event) => {
-            if (event.target.checked)
-              edit({ ...program, default_output: { value: { mapping: 'pointer', path: '' } } });
-            else {
-              const { default_output: _removed, ...rest } = program;
-              void _removed;
-              edit(rest);
+      <ConditionProjection
+        label={t('factory.defaultConditionData')}
+        action={t('factory.chooseConditionData')}
+        help={t('factory.conditionDataHelp')}
+        value={program.default_output}
+        onChange={(default_output) => {
+          if (default_output) edit({ ...program, default_output });
+          else {
+            const { default_output: _removed, ...rest } = program;
+            void _removed;
+            edit(rest);
+          }
+        }}
+      />
+      <details>
+        <summary>{t('factory.advancedConditions')}</summary>
+        <label>
+          <input
+            type="checkbox"
+            checked={!!program.precondition}
+            onChange={(event) =>
+              edit(
+                event.target.checked
+                  ? {
+                      ...program,
+                      precondition: { operation: 'exists', operand: { source: 'path', path: '' } },
+                    }
+                  : { ...program, precondition: null, precondition_failure_output: null },
+              )
             }
-          }}
-        />
-        {t('factory.chooseConditionData')}
-      </label>
-      {program.default_output ? (
-        <fieldset>
-          <legend>{t('factory.defaultConditionData')}</legend>
-          <p>{t('factory.conditionDataHelp')}</p>
-          <ValueMappingEditor
-            value={program.default_output.value}
-            onChange={(value) => edit({ ...program, default_output: { value } })}
           />
-        </fieldset>
-      ) : null}
+          {t('factory.conditionPrecheck')}
+        </label>
+        {program.precondition ? (
+          <>
+            <PredicateEditor
+              value={program.precondition}
+              onChange={(precondition) => edit({ ...program, precondition })}
+            />
+            <ConditionProjection
+              label={t('factory.conditionFailedPrecheckData')}
+              value={program.precondition_failure_output}
+              onChange={(precondition_failure_output) =>
+                edit({ ...program, precondition_failure_output })
+              }
+            />
+          </>
+        ) : null}
+        {outcomes.map(({ value: outcome }) => (
+          <ConditionProjection
+            key={outcome}
+            label={t('factory.conditionOutcomeData', { outcome })}
+            action={t('factory.conditionProjectOutcome', { outcome })}
+            value={program.outputs?.[outcome]}
+            onChange={(mapping) => {
+              const outputs = { ...program.outputs };
+              if (mapping) outputs[outcome] = mapping;
+              else delete outputs[outcome];
+              edit({ ...program, outputs });
+            }}
+          />
+        ))}
+      </details>
       {node.gate ? <p>{t('factory.conditionConfigured')}</p> : null}
+      {isFactoryGateProgram(node.gate?.parameters)
+        ? node.outcomes
+            .filter(({ kind }) => kind === 'success')
+            .map(({ key }) => {
+              const accepted = node.accepted_work_outcomes ?? [];
+              return (
+                <label key={key}>
+                  <input
+                    type="checkbox"
+                    checked={accepted.includes(key)}
+                    onChange={(event) =>
+                      onChange({
+                        accepted_work_outcomes: event.target.checked
+                          ? [...accepted, key].sort()
+                          : accepted.filter((outcome) => outcome !== key),
+                      })
+                    }
+                  />
+                  {t('factory.acceptWorkOnOutcome', { outcome: key })}
+                </label>
+              );
+            })
+        : null}
       <button type="button" disabled={!valid || pending} onClick={() => void apply()}>
         {t('factory.useCondition')}
       </button>
@@ -237,5 +317,41 @@ function ConditionEditor({
         />
       ) : null}
     </fieldset>
+  );
+}
+
+function ConditionProjection({
+  label,
+  action = label,
+  help,
+  value,
+  onChange,
+}: {
+  label: string;
+  action?: string;
+  help?: string;
+  value: Schema['FactoryFlowDataMapping'] | null | undefined;
+  onChange: (mapping: Schema['FactoryFlowDataMapping'] | null) => void;
+}) {
+  return (
+    <>
+      <label>
+        <input
+          type="checkbox"
+          checked={!!value}
+          onChange={(event) =>
+            onChange(event.target.checked ? { value: { mapping: 'pointer', path: '' } } : null)
+          }
+        />
+        {action}
+      </label>
+      {value ? (
+        <fieldset>
+          <legend>{label}</legend>
+          {help ? <p>{help}</p> : null}
+          <ValueMappingEditor value={value.value} onChange={(value) => onChange({ value })} />
+        </fieldset>
+      ) : null}
+    </>
   );
 }
