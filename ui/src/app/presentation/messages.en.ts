@@ -1226,6 +1226,11 @@ export const enMessages = {
   'issues.startHelp':
     'Saving requirements never starts execution. Review pipeline inputs separately.',
   'issues.executionAcceptanceRequired': 'Add acceptance criteria before starting a pipeline.',
+  'issues.usePredecessor': 'Use a result from an earlier run',
+  'issues.predecessorRun': 'Earlier Issue run',
+  'issues.noPredecessors': 'No earlier run is available for this repository.',
+  'issues.predecessorHelp':
+    'Factory checks that the selected run retained an eligible result for the current task.',
   'issues.start': 'Start pipeline',
   'issues.executionUnavailable':
     'Execution and its results are not available on this base card yet. Existing Factory runs remain available in Factory.',

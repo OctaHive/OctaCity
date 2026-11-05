@@ -273,6 +273,12 @@ and activation are separate from manual Work admission; enable automatic intake
 explicitly and inspect its saved current version. A matching preview is not an
 admission receipt. Configure Reporter independently if external effects are wanted.
 
+To start from a retained result, open the Issue and choose **Start pipeline**.
+Select the downstream configuration and repository. Enable **Use a result from
+an earlier run**, select the earlier Run of this Issue, then review and confirm.
+Factory checks the selected Run against the published predecessor, terminal,
+outcome, repository and current Issue requirements.
+
 For trusted Delivery, choose **Server action** and **Publish candidate**.
 Select the installed Project target and review its receipt result. Connect the
 candidate revision, bundle and manifest explicitly, along with any required

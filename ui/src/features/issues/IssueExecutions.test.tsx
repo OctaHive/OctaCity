@@ -554,3 +554,35 @@ it('does not open another task association returned for selected Work', async ()
   expect(executions.get).not.toHaveBeenCalled();
   expect(executions.start).not.toHaveBeenCalled();
 });
+
+it('pins an explicitly selected earlier Issue run in the confirmed manual launch', async () => {
+  const { executions } = setupExecution();
+  const earlier = executionFixture('admitted', 'triage-request');
+  const pending = executionFixture('pending', 'pending-request');
+  executions.list.mockResolvedValue({
+    items: [earlier, pending],
+    next_cursor: null,
+    observation: 'request-watermark-v1',
+    watermark: 2,
+    issue_version: 1,
+  });
+  await userEvent.click(await screen.findByRole('button', { name: 'Start pipeline' }));
+  await userEvent.click(screen.getByText('Use a result from an earlier run', { exact: true }));
+  await userEvent.click(await screen.findByRole('combobox', { name: 'Earlier Issue run' }));
+  expect(screen.queryByRole('option', { name: /pending-request/ })).toBeNull();
+  await userEvent.click(screen.getByRole('option', { name: /triage-request/ }));
+  await userEvent.click(screen.getByRole('button', { name: 'Review pipeline launch' }));
+  const confirmation = screen.getByRole('dialog');
+  expect(confirmation.textContent).toContain('retained-run');
+  await userEvent.click(
+    within(confirmation).getByRole('button', { name: 'Confirm pipeline launch' }),
+  );
+  expect(executions.start).toHaveBeenCalledWith(
+    'delivery',
+    issue.id,
+    expect.objectContaining({
+      target: expect.objectContaining({ predecessor_run: 'retained-run' }),
+    }),
+    expect.objectContaining({ 'If-Match': '"1"' }),
+  );
+});

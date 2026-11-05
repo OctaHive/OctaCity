@@ -13,6 +13,7 @@ import {
   type PipelineTargetSources,
 } from '../../shared/PipelineTargetFields';
 import { SelectMenu } from '../../shared/SelectMenu';
+import { PagedExplorerBranch, useCursorPage } from '../../shared/PagedExplorerBranch';
 import type { Issue } from './api';
 import type { IssueExecutionsApi, IssueExecutionRequest } from './executionApi';
 import { ExecutionReceipt } from './IssueExecutionReceipt';
@@ -37,7 +38,7 @@ export function IssueExecutionForm({
   onSelect: (id: string) => void;
   onClose: () => void;
 }) {
-  const { t } = usePresentation();
+  const { t, locale } = usePresentation();
   const queryClient = useQueryClient();
   const activeRef = useRef(true);
   // Publication inputs stay frozen; selection follows the card's current section and revision.
@@ -50,6 +51,30 @@ export function IssueExecutionForm({
     };
   }, []);
   const selection = usePipelineTarget(issue.project_id, sources);
+  const [usePredecessor, setUsePredecessor] = useState(false);
+  const [selectedRun, setSelectedRun] = useState('');
+  const history = useCursorPage(
+    [...queryKeys.issueExecutionsRoot(issue.project_id, issue.id), 'predecessors'],
+    (cursor, signal) => api.list(issue.project_id, issue.id, cursor, signal),
+    { enabled: usePredecessor },
+  );
+  const predecessorOptions = new Map(
+    (history.data?.pages.flatMap((page) => page.items) ?? []).flatMap((entry) => {
+      const link = entry.association;
+      return entry.state === 'admitted' &&
+        link?.project_id === issue.project_id &&
+        link.issue_id === issue.id &&
+        entry.intent.target.repository_id === selection.repository?.id
+        ? [
+            [
+              link.run_id,
+              `${new Date(entry.requested_at).toLocaleString(locale)} · ${entry.id}`,
+            ] as const,
+          ]
+        : [];
+    }),
+  );
+  const predecessor = usePredecessor && predecessorOptions.has(selectedRun) ? selectedRun : '';
   const [priority, setPriority] = useState<number>(classification.priority.minimum);
   const [risk, setRisk] = useState<IssueExecutionRequest['classification']['risk']>(
     classification.risk.enum[0],
@@ -63,6 +88,7 @@ export function IssueExecutionForm({
   const valid =
     ready &&
     selection.target !== null &&
+    (!usePredecessor || (!!predecessor && !history.isFetching && !history.error)) &&
     !!issue.content.acceptance?.trim() &&
     Number.isSafeInteger(priority) &&
     priority >= classification.priority.minimum &&
@@ -82,6 +108,45 @@ export function IssueExecutionForm({
       </p>
       <fieldset disabled={review !== null}>
         <PipelineTargetFields selection={selection} />
+        <label>
+          <input
+            type="checkbox"
+            checked={usePredecessor}
+            onChange={(event) => {
+              setUsePredecessor(event.target.checked);
+              setSelectedRun('');
+            }}
+          />
+          {t('issues.usePredecessor')}
+        </label>
+        {usePredecessor ? (
+          <PagedExplorerBranch
+            query={history}
+            empty={t('issues.noPredecessors')}
+            labels={{
+              loading: t('issues.predecessorRun'),
+              failure: t('issues.predecessorRun'),
+              stale: t('issues.predecessorRun'),
+              loadMore: t('issues.nextPage'),
+              loadingMore: t('issues.predecessorRun'),
+            }}
+          >
+            {() => (
+              <>
+                <p>{t('issues.predecessorHelp')}</p>
+                <SelectMenu
+                  ariaLabel={t('issues.predecessorRun')}
+                  value={predecessor}
+                  options={[
+                    { value: '', label: t('factory.chooseInput') },
+                    ...Array.from(predecessorOptions, ([value, label]) => ({ value, label })),
+                  ]}
+                  onValueChange={setSelectedRun}
+                />
+              </>
+            )}
+          </PagedExplorerBranch>
+        ) : null}
         <label>
           {t('factory.workPriority')}
           <input
@@ -107,12 +172,16 @@ export function IssueExecutionForm({
             if (!selection.target) return;
             setReview({
               request: {
-                target: { ...selection.target, mapping: 'title_description_acceptance_v1' },
+                target: {
+                  ...selection.target,
+                  mapping: 'title_description_acceptance_v1',
+                  ...(predecessor ? { predecessor_run: predecessor } : {}),
+                },
                 classification: { priority, risk, metadata: {} },
               },
               version: issue.version,
               returnFocus: event.currentTarget,
-              consequence: `${t('issues.executionReview', { version: issue.version })} ${selection.summary}; ${t('factory.workPriority')}: ${priority}; ${t('factory.workRisk')}: ${risk}\n${issue.content.title}\n${issue.content.description}\n${issue.content.acceptance}`,
+              consequence: `${t('issues.executionReview', { version: issue.version })} ${selection.summary}; ${t('factory.workPriority')}: ${priority}; ${t('factory.workRisk')}: ${risk}${predecessor ? `\n${t('issues.predecessorRun')} · ${predecessor}` : ''}\n${issue.content.title}\n${issue.content.description}\n${issue.content.acceptance}`,
             });
           }}
         >

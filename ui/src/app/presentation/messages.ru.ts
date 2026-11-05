@@ -1240,6 +1240,11 @@ export const ruMessages = {
   'issues.startHelp':
     'Сохранение требований не запускает выполнение. Входы pipeline подтверждаются отдельно.',
   'issues.executionAcceptanceRequired': 'Добавьте критерии приёмки перед запуском pipeline.',
+  'issues.usePredecessor': 'Использовать результат предыдущего запуска',
+  'issues.predecessorRun': 'Предыдущий запуск задачи',
+  'issues.noPredecessors': 'Для этого репозитория нет предыдущих запусков.',
+  'issues.predecessorHelp':
+    'Factory проверит, что выбранный запуск сохранил подходящий результат для текущей задачи.',
   'issues.start': 'Запустить pipeline',
   'issues.executionUnavailable':
     'Запуски и их результаты пока недоступны в базовой карточке. Существующие запуски доступны в Factory.',
