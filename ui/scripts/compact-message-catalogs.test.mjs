@@ -12,11 +12,19 @@ test('compacts both catalogs while preserving message keys, escapes and Unicode'
   try {
     const directory = path.join(root, 'src/app/presentation');
     await mkdir(directory, { recursive: true });
+    const repeatedEnglish = 'Review the retained result and confirm the selection.';
     const english = Object.fromEntries(
-      Array.from({ length: 200 }, (_, index) => [`example.item${index}`, `Message ${index}`]),
+      Array.from({ length: 200 }, (_, index) => [
+        `example.item${index}`,
+        index === 0 ? '~example' : index % 2 ? repeatedEnglish : `Message ${index}`,
+      ]),
     );
+    const repeated = 'Прочитайте сохранённый результат и подтвердите выбор.';
     const russian = Object.fromEntries(
-      Array.from({ length: 200 }, (_, index) => [`example.item${index}`, `Текст ${index}`]),
+      Array.from({ length: 200 }, (_, index) => [
+        `example.item${index}`,
+        index === 0 ? '~42' : index % 2 ? repeated : `Текст ${index}`,
+      ]),
     );
     const entries = (messages) => JSON.stringify(messages).slice(1, -1);
     await writeFile(
@@ -50,6 +58,8 @@ test('compacts both catalogs while preserving message keys, escapes and Unicode'
     assert(code);
     const bytes = Buffer.byteLength(code);
     assert(bytes < 8500, `packed catalog exceeds 8500 bytes: ${bytes}`);
+    assert.equal(code.split(repeated).length - 1, 1);
+    assert.equal(code.split(repeatedEnglish).length - 1, 1);
     const { enMessages, ruMessages } = await import(
       `data:text/javascript;base64,${Buffer.from(code).toString('base64')}`
     );

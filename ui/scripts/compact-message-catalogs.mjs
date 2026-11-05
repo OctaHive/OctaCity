@@ -35,6 +35,22 @@ const separator = '|';
 const pack = (values) =>
   values.some((value) => value.includes(separator)) ? values : values.join(separator);
 
+// Message lists follow English key order. Reference an earlier literal only
+// when it saves space, and double the marker on a literal that starts with it.
+function packTranslations(values) {
+  const first = new Map();
+  return pack(
+    values.map((value, index) => {
+      const earlier = first.get(value);
+      if (earlier === undefined) first.set(value, index);
+      const literal = value.startsWith('~') ? `~${value}` : value;
+      if (earlier === undefined) return literal;
+      const reference = `~${earlier.toString(36)}`;
+      return reference.length < literal.length ? reference : literal;
+    }),
+  );
+}
+
 /** @returns {import('vite').Plugin} */
 export function compactMessageCatalogs() {
   return {
@@ -44,20 +60,28 @@ export function compactMessageCatalogs() {
     async transform(code, id) {
       const file = id.replaceAll('\\', '/');
       if (file.endsWith('/app/presentation/messages.en.ts')) {
+        const english = catalog(code, 'enMessages');
         const groups = [];
-        for (const [key, value] of catalog(code, 'enMessages')) {
+        for (const key of english.keys()) {
           const boundary = key.indexOf('.') + 1;
           const prefix = key.slice(0, boundary);
           if (groups.at(-1)?.[0] !== prefix) groups.push([prefix, []]);
-          groups.at(-1)[1].push([key.slice(boundary), value]);
+          groups.at(-1)[1].push(key.slice(boundary));
         }
-        const packed = groups.map(([prefix, items]) => [
-          prefix,
-          pack(items.map(([key]) => key)),
-          pack(items.map(([, value]) => value)),
-        ]);
+        const packed = groups.map(([prefix, keys]) => [prefix, pack(keys)]);
         return {
-          code: `const groups=${JSON.stringify(packed)};export const unpackMessages=values=>typeof values==='string'?values.split(${JSON.stringify(separator)}):values;export const enMessages=Object.fromEntries(groups.flatMap(([prefix,keys,text])=>{const values=unpackMessages(text);return unpackMessages(keys).map((key,index)=>[prefix+key,values[index]])}));`,
+          code: `const groups=${JSON.stringify(packed)};
+const unpack=values=>typeof values==='string'?values.split(${JSON.stringify(separator)}):values;
+export function unpackMessages(packed){
+  const values=unpack(packed);
+  for(let i=0;i<values.length;i++){
+    const value=values[i];
+    if(value[0]==='~')values[i]=value[1]==='~'?value.slice(1):values[parseInt(value.slice(1),36)];
+  }
+  return values;
+}
+const english=unpackMessages(${JSON.stringify(packTranslations([...english.values()]))});
+export const enMessages=Object.fromEntries(groups.flatMap(([prefix,keys])=>unpack(keys).map(key=>prefix+key)).map((key,index)=>[key,english[index]]));`,
           map: null,
         };
       }
@@ -69,7 +93,7 @@ export function compactMessageCatalogs() {
       if (english.size !== russian.size || [...english.keys()].some((key) => !russian.has(key)))
         throw new Error('Translation catalog keys differ');
       return {
-        code: `import {enMessages,unpackMessages} from './messages.en';const translations=unpackMessages(${JSON.stringify(pack([...english.keys()].map((key) => russian.get(key))))});export const ruMessages=Object.fromEntries(Object.keys(enMessages).map((key,index)=>[key,translations[index]]));`,
+        code: `import {enMessages,unpackMessages} from './messages.en';const translations=unpackMessages(${JSON.stringify(packTranslations([...english.keys()].map((key) => russian.get(key))))});export const ruMessages=Object.fromEntries(Object.keys(enMessages).map((key,index)=>[key,translations[index]]));`,
         map: null,
       };
     },
