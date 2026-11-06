@@ -193,6 +193,7 @@ pub(super) async fn insert_lifecycle(
   .bind(version_number(lifecycle.run_version)?)
   .bind(Json(LifecycleDocument {
     progress: lifecycle.progress.clone(),
+    awaiting_terminal_usage: lifecycle.awaiting_terminal_usage,
   }))
   .bind(lifecycle.cancellation_requested)
   .bind(lifecycle.recorded_at.unix_millis())

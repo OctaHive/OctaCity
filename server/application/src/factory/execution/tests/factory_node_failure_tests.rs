@@ -418,14 +418,13 @@ pub(crate) async fn verify_failed_node_owner<S: FactoryRunStore + 'static>(
     FactoryNodeStep::Advanced
   );
   let running = store.factory_run_snapshot(run.id()).await.unwrap();
-  assert_eq!(
-    serde_json::to_value(FactoryNodeAttemptProjection::from_snapshot(
-      &running.flow.attempts[0],
-      &running
-    ))
-    .unwrap()["active"],
-    true
-  );
+  let projection = serde_json::to_value(FactoryNodeAttemptProjection::from_snapshot(
+    &running.flow.attempts[0],
+    &running,
+  ))
+  .unwrap();
+  assert_eq!(projection["active"], true);
+  assert!(projection.get("wait_reason").is_none());
   let awaiting_usage = FactoryNodeRunner::new(
     store.clone(),
     Arc::new(StoppedWithoutUsage(ids)),
@@ -445,6 +444,14 @@ pub(crate) async fn verify_failed_node_owner<S: FactoryRunStore + 'static>(
   assert_eq!(waiting.run.version().get(), running.run.version().get() + 1);
   assert!(waiting.flow.data.stops.is_empty());
   assert_eq!(waiting.flow.data.build_executions.len(), 1);
+  assert_eq!(
+    serde_json::to_value(FactoryNodeAttemptProjection::from_snapshot(
+      &waiting.flow.attempts[0],
+      &waiting
+    ))
+    .unwrap()["wait_reason"],
+    "awaiting_terminal_usage"
+  );
   let current_usage = |snapshot: &octacity_server_store::FactoryRunSnapshot| {
     snapshot
       .budgets
@@ -463,14 +470,13 @@ pub(crate) async fn verify_failed_node_owner<S: FactoryRunStore + 'static>(
   );
   let stopped = store.factory_run_snapshot(run.id()).await.unwrap();
   assert_eq!(stopped.run.state(), octacity_server_factory::FactoryRunState::Waiting);
-  assert_eq!(
-    serde_json::to_value(FactoryNodeAttemptProjection::from_snapshot(
-      &stopped.flow.attempts[0],
-      &stopped
-    ))
-    .unwrap()["active"],
-    false
-  );
+  let projection = serde_json::to_value(FactoryNodeAttemptProjection::from_snapshot(
+    &stopped.flow.attempts[0],
+    &stopped,
+  ))
+  .unwrap();
+  assert_eq!(projection["active"], false);
+  assert!(projection.get("wait_reason").is_none());
   assert_eq!(stopped.flow.data.stops.len(), 1);
   assert_eq!(stopped.flow.data.stops[0].reason(), FlowNodeStopReason::ExecutionFailed);
   assert_eq!(stopped.flow.data.build_executions[0].build_id(), ids.0);

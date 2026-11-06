@@ -2,14 +2,17 @@
 use crate::*;
 mod build;
 mod contracts;
+mod delivery;
 mod effects;
 mod input;
 mod release;
+#[cfg(test)]
+mod tests;
 pub use contracts::*;
 use octacity_server_factory::*;
 use octacity_server_store::FactoryConfigurationStore;
 pub use octacity_server_store::MAX_SOURCE_BODY_BYTES;
-use release::released_triage;
+use release::RELEASES;
 use std::sync::Arc;
 
 /// Shared read-only setup owner; publication remains in the ordinary versioned handlers.
@@ -19,6 +22,7 @@ pub struct FactoryPresetHandlers<S> {
   sources: Option<Arc<dyn AuthorizedManagementQueryHandler<ListWorkSourceInputChoicesQuery, Error = ApplicationError>>>,
   artifacts: Option<Arc<dyn IssueArtifactReader>>,
   repositories: Option<Arc<dyn AuthorizedManagementQueryHandler<GetRepositoryQuery, Error = ApplicationError>>>,
+  flows: Option<Arc<dyn AuthorizedManagementQueryHandler<GetFactoryFlowDefinitionQuery, Error = ApplicationError>>>,
   policy: Arc<dyn ManagementAuthorizationPolicy>,
 }
 impl<S> FactoryPresetHandlers<S> {
@@ -28,6 +32,7 @@ impl<S> FactoryPresetHandlers<S> {
       store,
       policy,
       repositories: None,
+      flows: None,
       artifacts: None,
       sources: None,
       source_actions: None,
@@ -59,6 +64,14 @@ impl<S> FactoryPresetHandlers<S> {
     self.repositories = Some(repositories);
     self
   }
+  /// Reuses exact, authorized Flow metadata to resolve a published predecessor.
+  pub fn with_flows(
+    mut self,
+    flows: Arc<dyn AuthorizedManagementQueryHandler<GetFactoryFlowDefinitionQuery, Error = ApplicationError>>,
+  ) -> Self {
+    self.flows = Some(flows);
+    self
+  }
 }
 #[async_trait::async_trait]
 impl<S: FactoryConfigurationStore> ManagementQueryUseCase<ListFactoryPresetsQuery> for FactoryPresetHandlers<S> {
@@ -81,67 +94,116 @@ impl<S: FactoryConfigurationStore> ManagementQueryUseCase<ListFactoryPresetsQuer
       query.page.project_id(),
     )
     .await?;
-    let (template, reference) = released_triage()?;
-    let mut parameters = vec![
-      parameter("/flow_id", FactoryPresetParameterKind::Identity),
-      parameter("/configuration_id", FactoryPresetParameterKind::Identity),
-      parameter("/repository", FactoryPresetParameterKind::Repository),
-      parameter("/execution", FactoryPresetParameterKind::ExecutionPolicy),
-      parameter("/configuration", FactoryPresetParameterKind::ConfigurationPolicy),
-    ];
-    parameters.push(FactoryPresetParameter {
-      path: "/input".into(),
-      kind: FactoryPresetParameterKind::SourceInput,
-      required: false,
-    });
-    let mut required_node_kinds = Vec::new();
-    for node in &template.nodes {
-      if !required_node_kinds.contains(&node.kind) {
-        required_node_kinds.push(node.kind);
+    let mut items = Vec::new();
+    for release in RELEASES {
+      let (template, reference) = release.load()?;
+      if query.page.after().is_none_or(|after| reference.identity() > after) {
+        items.push(summary(template, reference, release.name)?);
       }
-      if node.kind == FlowNodeKind::DeterministicGate {
-        parameters.push(FactoryPresetParameter {
-          path: format!("/effects/{}", node.key),
-          kind: FactoryPresetParameterKind::ReportingEffects,
-          required: false,
-        });
-      }
-      if let Some(alias) = &node.build_profile {
+    }
+    let limit = usize::from(query.page.limit());
+    let next_cursor = (items.len() > limit).then(|| items[limit - 1].reference.identity().clone());
+    items.truncate(limit);
+    Ok(FactoryPresetPage {
+      total: RELEASES.len() as u64,
+      items,
+      next_cursor,
+    })
+  }
+}
+
+fn summary(
+  template: FlowDefinitionTemplate,
+  reference: ImmutableReference,
+  name: Option<&'static str>,
+) -> Result<FactoryPresetSummary, ApplicationError> {
+  let delivery = name.is_some();
+  let mut parameters = vec![
+    parameter("/flow_id", FactoryPresetParameterKind::Identity),
+    parameter("/configuration_id", FactoryPresetParameterKind::Identity),
+    parameter("/repository", FactoryPresetParameterKind::Repository),
+    parameter("/execution", FactoryPresetParameterKind::ExecutionPolicy),
+    parameter("/configuration", FactoryPresetParameterKind::ConfigurationPolicy),
+  ];
+  parameters.push(FactoryPresetParameter {
+    path: "/input".into(),
+    kind: FactoryPresetParameterKind::SourceInput,
+    required: false,
+  });
+  let mut required_node_kinds = Vec::new();
+  let mut profile_aliases = Vec::new();
+  if delivery {
+    parameters.push(parameter("/publication", FactoryPresetParameterKind::Publication));
+    parameters.push(parameter(
+      "/accepted_predecessor",
+      FactoryPresetParameterKind::AcceptedPredecessor,
+    ));
+  }
+  for node in &template.nodes {
+    if !required_node_kinds.contains(&node.kind) {
+      required_node_kinds.push(node.kind);
+    }
+    if node.kind == FlowNodeKind::DeterministicGate {
+      parameters.push(FactoryPresetParameter {
+        path: format!("/effects/{}", node.key),
+        kind: FactoryPresetParameterKind::ReportingEffects,
+        required: false,
+      });
+    }
+    if let Some(alias) = &node.build_profile {
+      if delivery && node.kind == FlowNodeKind::BuildCommand {
         parameters.push(parameter(
-          &format!("/profiles/{alias}"),
-          FactoryPresetParameterKind::RoleProfile,
+          &format!("/commands/{alias}"),
+          FactoryPresetParameterKind::Command,
         ));
+        continue;
+      }
+      profile_aliases.push(alias.clone());
+      parameters.push(parameter(
+        &format!("/profiles/{alias}"),
+        FactoryPresetParameterKind::RoleProfile,
+      ));
+      if !delivery {
         parameters.push(parameter(
           &format!("/context/{alias}"),
           FactoryPresetParameterKind::ProjectContext,
         ));
       }
     }
-    let summary = FactoryPresetSummary {
-      parameters,
-      required_node_kinds,
-      reference,
-      profile_aliases: template
+  }
+  let editor = if let Some(name) = name {
+    let schemas = template.data_schemas().map_err(|_| ApplicationError::invalid())?;
+    Some(FactoryPresetEditor {
+      name,
+      budget: template.execution.budget(),
+      max_active_nodes: template.execution.max_active_nodes(),
+      steps: template
         .nodes
         .iter()
-        .filter_map(|node| node.build_profile.clone())
+        .filter_map(|node| {
+          let alias = node.build_profile.clone()?;
+          let [outcome] = node.outcomes.as_slice() else {
+            return None;
+          };
+          Some(FactoryPresetEditorStep {
+            alias,
+            kind: node.kind,
+            outcome: outcome.key.clone(),
+            result: schemas.get(&outcome.schema).cloned(),
+          })
+        })
         .collect(),
-    };
-    let items = if query
-      .page
-      .after()
-      .is_none_or(|after| summary.reference.identity() > after)
-    {
-      vec![summary]
-    } else {
-      vec![]
-    };
-    Ok(FactoryPresetPage {
-      total: 1,
-      items,
-      next_cursor: None,
     })
-  }
+  } else {
+    None
+  };
+  Ok(FactoryPresetSummary {
+    parameters,
+    required_node_kinds,
+    reference,
+    profile_aliases,
+    editor,
+  })
 }
 #[async_trait::async_trait]
 impl<S: FactoryConfigurationStore + octacity_server_store::FactoryRoleProfileStore>
@@ -163,13 +225,17 @@ impl<S: FactoryConfigurationStore + octacity_server_store::FactoryRoleProfileSto
       query.project_id,
     )
     .await?;
-    let (mut template, preset) = released_triage()?;
+    let release = RELEASES
+      .into_iter()
+      .find(|release| release.matches(&query.selection.preset))
+      .ok_or_else(|| FactoryValidationDiagnostics::invalid("/preset"))?;
+    let (mut template, preset) = release.load()?;
     if preset != query.selection.preset {
       return Err(FactoryValidationDiagnostics::invalid("/preset"));
     }
     let mut result = FactoryPresetResolution {
       preset,
-      completion: SourceCompletionDocument::review_preset(query.project_id, TRIAGE_COMPLETION_PRESET)
+      completion: SourceCompletionDocument::review_preset(query.project_id, release.completion)
         .map_err(|_| ApplicationError::invalid())?,
       diagnostics: vec![],
       flow: None,
@@ -178,26 +244,50 @@ impl<S: FactoryConfigurationStore + octacity_server_store::FactoryRoleProfileSto
       dependencies: vec![],
     };
     let p = query.selection;
+    let delivery = release.is_delivery();
+    if p.flow_only && (!delivery || p.input.is_some() || p.configuration.is_some() || p.configuration_id.is_some()) {
+      return Err(FactoryValidationDiagnostics::invalid("/flow_only"));
+    }
+    let commands: std::collections::BTreeSet<_> = template
+      .nodes
+      .iter()
+      .filter(|node| delivery && node.kind == FlowNodeKind::BuildCommand)
+      .filter_map(|node| node.build_profile.clone())
+      .collect();
     let aliases: std::collections::BTreeSet<_> = template
       .nodes
       .iter()
       .filter_map(|node| node.build_profile.clone())
+      .filter(|alias| !commands.contains(alias))
       .collect();
-    if p.profiles.keys().any(|key| !aliases.contains(key)) || p.context.keys().any(|key| !aliases.contains(key)) {
+    if p.profiles.keys().any(|key| !aliases.contains(key)) {
       return Err(FactoryValidationDiagnostics::invalid("/profiles"));
+    }
+    if p.context.keys().any(|key| delivery || !aliases.contains(key)) {
+      return Err(FactoryValidationDiagnostics::invalid("/context"));
     }
     for alias in &aliases {
       if !p.profiles.contains_key(alias) {
         result.diagnostics.push(required(format!("/profiles/{alias}")));
       }
     }
+    if p.commands.keys().any(|alias| !commands.contains(alias)) {
+      return Err(FactoryValidationDiagnostics::invalid("/commands"));
+    }
+    for alias in &commands {
+      if !p.commands.contains_key(alias) {
+        result.diagnostics.push(required(format!("/commands/{alias}")));
+      }
+    }
     for (missing, path) in [
-      (p.repository.is_none(), "/repository"),
-      (p.context.is_empty(), "/context"),
+      (!p.flow_only && p.repository.is_none(), "/repository"),
+      (!delivery && p.context.is_empty(), "/context"),
+      (delivery && p.publication.is_none(), "/publication"),
+      (delivery && p.accepted_predecessor.is_none(), "/accepted_predecessor"),
       (p.flow_id.is_none(), "/flow_id"),
-      (p.configuration_id.is_none(), "/configuration_id"),
+      (!p.flow_only && p.configuration_id.is_none(), "/configuration_id"),
       (p.execution.is_none(), "/execution"),
-      (p.configuration.is_none(), "/configuration"),
+      (!p.flow_only && p.configuration.is_none(), "/configuration"),
     ] {
       if missing {
         result.diagnostics.push(required(path.into()));
@@ -206,48 +296,49 @@ impl<S: FactoryConfigurationStore + octacity_server_store::FactoryRoleProfileSto
     if !result.diagnostics.is_empty() {
       return Ok(result);
     }
-    let repository = p.repository.as_ref().unwrap();
-    if repository.project_id != query.project_id {
-      return Err(FactoryValidationDiagnostics::invalid("/repository"));
-    }
-    if crate::factory::authoring::factory_configuration_choices::require_visible_reference(
-      self.policy.as_ref(),
-      context,
-      ManagementResourceKind::Repository,
-      repository.id,
-    )
-    .await
-    .is_err()
-    {
-      return Ok(result.unavailable("/repository"));
-    }
-    let selected_repository = match &self.repositories {
-      Some(reader) => reader
-        .handle_authorized_query(
-          context,
-          GetRepositoryQuery {
-            repository_id: repository.id,
-            version: repository.version,
-          },
-        )
-        .await
-        .ok(),
-      None => None,
-    };
-    if !selected_repository.as_ref().is_some_and(|r| {
-      r.project_id == query.project_id
-        && r.id == repository.id
-        && r.version == repository.version
-        && r.definition_digest().ok().as_ref() == Some(&repository.definition_digest)
-    }) {
-      result.diagnostics.push(FactoryPresetDependencyProblem {
-        path: "/repository".into(),
-        reason: FactoryPresetDependencyReason::Unavailable,
-      });
-      return Ok(result);
+    if let Some(repository) = &p.repository {
+      if repository.project_id != query.project_id {
+        return Err(FactoryValidationDiagnostics::invalid("/repository"));
+      }
+      if crate::factory::authoring::factory_configuration_choices::require_visible_reference(
+        self.policy.as_ref(),
+        context,
+        ManagementResourceKind::Repository,
+        repository.id,
+      )
+      .await
+      .is_err()
+      {
+        return Ok(result.unavailable("/repository"));
+      }
+      let selected_repository = match &self.repositories {
+        Some(reader) => reader
+          .handle_authorized_query(
+            context,
+            GetRepositoryQuery {
+              repository_id: repository.id,
+              version: repository.version,
+            },
+          )
+          .await
+          .ok(),
+        None => None,
+      };
+      if !selected_repository.as_ref().is_some_and(|r| {
+        r.project_id == query.project_id
+          && r.id == repository.id
+          && r.version == repository.version
+          && r.definition_digest().ok().as_ref() == Some(&repository.definition_digest)
+      }) {
+        result.diagnostics.push(FactoryPresetDependencyProblem {
+          path: "/repository".into(),
+          reason: FactoryPresetDependencyReason::Unavailable,
+        });
+        return Ok(result);
+      }
     }
     let now = SystemFactoryExecutionClock.now()?;
-    for alias in &aliases {
+    for alias in aliases.iter().filter(|_| !delivery) {
       let Some(selection) = p.context.get(alias) else {
         result.diagnostics.push(required(format!("/context/{alias}")));
         continue;
@@ -317,12 +408,72 @@ impl<S: FactoryConfigurationStore + octacity_server_store::FactoryRoleProfileSto
       Ok(choices) => choices,
       Err(_) => return Ok(result.unavailable("/execution")),
     };
+    let publication = if delivery {
+      let publication = p.publication.as_ref().expect("required selection");
+      let Some(publisher) = choices.candidate_publications().iter().find(|choice| {
+        choice.plugin == publication.plugin
+          && choice.target == publication.target
+          && choice.review_url
+          && choice.receipt_schema.is_some()
+      }) else {
+        return Ok(result.unavailable("/publication/target"));
+      };
+      Some((publication, publisher))
+    } else {
+      None
+    };
+    if let Some((alias, _)) = p.commands.iter().find(|(_, selection)| {
+      !choices.supports_build_binding(&selection.build)
+        || choices
+          .build_pipeline_contract(&selection.build)
+          .is_none_or(|contract| !contract.matches_command(&selection.build, selection.result.reference()))
+    }) {
+      return Ok(result.unavailable(format!("/commands/{alias}")));
+    }
+    let command_bindings = match publication {
+      Some((publication, publisher)) => {
+        match delivery::bind_installed_steps(&mut template, &p.commands, publication, publisher) {
+          Ok(builds) => builds,
+          Err(path) => return Ok(result.unavailable(path)),
+        }
+      }
+      None => Default::default(),
+    };
+    if let Some(predecessor) = p.accepted_predecessor.as_ref().filter(|_| delivery) {
+      let Some(reader) = &self.flows else {
+        return Ok(result.unavailable("/accepted_predecessor"));
+      };
+      let Ok(published) = reader
+        .handle_authorized_query(
+          context,
+          GetFactoryFlowDefinitionQuery {
+            id: predecessor.definition.id(),
+            version: Some(predecessor.definition.version()),
+          },
+        )
+        .await
+      else {
+        return Ok(result.unavailable("/accepted_predecessor"));
+      };
+      let Some(schema) = super::factory_flow_definition::predecessor_schema(&published, query.project_id, predecessor)
+      else {
+        return Ok(result.unavailable("/accepted_predecessor"));
+      };
+      if delivery::bind_predecessor(&mut template, schema).is_err() {
+        return Ok(result.unavailable("/accepted_predecessor/schema"));
+      }
+    }
     template.execution = p.execution.unwrap();
     for node in &mut template.nodes {
       let Some(alias) = node.build_profile.clone() else {
         continue;
       };
-      let selected = &p.profiles[&alias];
+      if command_bindings.contains_key(&alias) {
+        continue;
+      }
+      let Some(selected) = p.profiles.get(&alias) else {
+        return Ok(result.unavailable(format!("/commands/{alias}")));
+      };
       let role = self
         .store
         .factory_role(query.project_id, selected.role.id, Some(selected.role.version))
@@ -347,13 +498,15 @@ impl<S: FactoryConfigurationStore + octacity_server_store::FactoryRoleProfileSto
           None => return Ok(result.unavailable(format!("/profiles/{alias}/build"))),
         },
       };
-      node.context_binding = Some(
-        p.context
-          .get(&alias)
-          .ok_or_else(|| FactoryValidationDiagnostics::invalid("/context"))?
-          .bind(query.project_id)
-          .map_err(|_| FactoryValidationDiagnostics::invalid("/context"))?,
-      );
+      if !delivery {
+        node.context_binding = Some(
+          p.context
+            .get(&alias)
+            .ok_or_else(|| FactoryValidationDiagnostics::invalid("/context"))?
+            .bind(query.project_id)
+            .map_err(|_| FactoryValidationDiagnostics::invalid("/context"))?,
+        );
+      }
       node.permissions = profile.definition().permissions.clone();
       node.budget = profile.definition().budget;
       node.build_profile = None;
@@ -369,9 +522,16 @@ impl<S: FactoryConfigurationStore + octacity_server_store::FactoryRoleProfileSto
     }
     let (template, children) = effects::compose(template, p.effects, p.flow_id.unwrap())?;
     let published = template
-      .instantiate(p.flow_id.unwrap(), FlowDefinitionVersion::INITIAL, &Default::default())
+      .instantiate(p.flow_id.unwrap(), FlowDefinitionVersion::INITIAL, &command_bindings)
       .map_err(|_| FactoryValidationDiagnostics::invalid("/profiles"))?;
-    let root = &published.definition;
+    let root = &match release.name {
+      Some(name) => published
+        .definition
+        .with_name(Some(FactoryText::new(name).map_err(|_| ApplicationError::invalid())?))
+        .and_then(FlowDefinition::without_code)
+        .map_err(|_| ApplicationError::invalid())?,
+      None => published.definition,
+    };
     let limits = FlowAdmissionLimits::product_defaults(
       template.execution.max_active_nodes(),
       template.execution.budget(),
@@ -394,8 +554,17 @@ impl<S: FactoryConfigurationStore + octacity_server_store::FactoryRoleProfileSto
       schemas.clone(),
       Default::default(),
     )
+    .and_then(|flow| match p.accepted_predecessor.as_ref().filter(|_| delivery) {
+      Some(predecessor) => flow.with_accepted_predecessor(predecessor.clone()),
+      None => Ok(flow),
+    })
     .map_err(|_| FactoryValidationDiagnostics::invalid("/execution"))?;
-    crate::factory::authoring::factory_configuration_choices::validate_flow_choices(&flow, &choices, "/flow")?;
+    crate::factory::authoring::factory_configuration_choices::validate_flow_choices(
+      &flow,
+      &choices,
+      "/flow",
+      super::factory_configuration_choices::FlowChoiceValidation::Authoring,
+    )?;
     if crate::factory::sources::factory_stage_source_update::validate_flow_source_updates(
       &flow,
       self.source_actions.as_deref(),
@@ -407,50 +576,60 @@ impl<S: FactoryConfigurationStore + octacity_server_store::FactoryRoleProfileSto
     {
       return Ok(result.unavailable("/effects"));
     }
-    let config = p.configuration.unwrap();
-    let configuration = FactoryConfigurationDraft {
-      flow: Some(flow),
-      admission_policy: config.admission_policy.into(),
-      wip_limits: config.wip_limits,
-      hard_budget: config.hard_budget,
-      permission_ceiling: config.permission_ceiling.into(),
-      enabled: false,
-    };
-    let target = FactoryConfiguration::publish(
-      p.configuration_id.unwrap(),
-      FactoryConfigurationVersion::INITIAL,
-      query.project_id,
-      FactoryDigest::content_sha256(&serde_json::to_vec(&configuration).map_err(|_| ApplicationError::invalid())?),
-      configuration.clone(),
-      &choices,
-    )
-    .map_err(FactoryValidationDiagnostics::from_factory_error)?;
-    if let Some(input) = p.input {
-      match self
-        .resolve_input(context, query.project_id, input, &target, repository)
-        .await
-      {
-        Ok(input) => {
-          if crate::factory::sources::factory_stage_source_update::validate_flow_source_updates_for_input(
-            &input.definition,
-            target.flow(),
+    if let Some(config) = p.configuration {
+      let configuration = FactoryConfigurationDraft {
+        flow: Some(flow.clone()),
+        admission_policy: config.admission_policy.into(),
+        wip_limits: config.wip_limits,
+        hard_budget: config.hard_budget,
+        permission_ceiling: config.permission_ceiling.into(),
+        enabled: false,
+      };
+      let target = FactoryConfiguration::publish(
+        p.configuration_id.unwrap(),
+        FactoryConfigurationVersion::INITIAL,
+        query.project_id,
+        FactoryDigest::content_sha256(&serde_json::to_vec(&configuration).map_err(|_| ApplicationError::invalid())?),
+        configuration.clone(),
+        &choices,
+      )
+      .map_err(FactoryValidationDiagnostics::from_factory_error)?;
+      if let Some(input) = p.input {
+        match self
+          .resolve_input(
+            context,
+            query.project_id,
+            input,
+            &target,
+            p.repository.as_ref().expect("required selection"),
           )
-          .is_err()
-          {
-            return Ok(result.unavailable("/effects"));
+          .await
+        {
+          Ok(input) => {
+            if crate::factory::sources::factory_stage_source_update::validate_flow_source_updates_for_input(
+              &input.definition,
+              target.flow(),
+            )
+            .is_err()
+            {
+              return Ok(result.unavailable("/effects"));
+            }
+            result.input = Some(input);
           }
-          result.input = Some(input);
-        }
-        Err(_) => {
-          result.diagnostics.push(FactoryPresetDependencyProblem {
-            path: "/input".into(),
-            reason: FactoryPresetDependencyReason::Unavailable,
-          });
-          return Ok(result);
+          Err(_) => {
+            result.diagnostics.push(FactoryPresetDependencyProblem {
+              path: "/input".into(),
+              reason: FactoryPresetDependencyReason::Unavailable,
+            });
+            return Ok(result);
+          }
         }
       }
+      result.configuration = Some(configuration);
     }
-    result.flow = Some(effects::ordinary_draft(root, limits, schemas));
+    let mut draft = effects::ordinary_draft(root, limits, schemas);
+    draft.accepted_predecessor = flow.accepted_predecessor;
+    result.flow = Some(draft);
     for child in children {
       let execution = child.definition.execution();
       let limits = FlowAdmissionLimits::product_defaults(
@@ -464,7 +643,6 @@ impl<S: FactoryConfigurationStore + octacity_server_store::FactoryRoleProfileSto
         definition: effects::ordinary_draft(&child.definition, limits, child.schemas),
       });
     }
-    result.configuration = Some(configuration);
     crate::factory::authoring::factory_configuration_choices::require_visible_reference(
       self.policy.as_ref(),
       context,

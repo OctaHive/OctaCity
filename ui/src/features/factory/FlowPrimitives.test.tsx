@@ -15,6 +15,11 @@ afterEach(cleanup);
 function setup(
   gate?: components['schemas']['FactoryFlowGate'],
   kind: components['schemas']['FactoryFlowNodeKind'] = 'deterministic_gate',
+  commandContract?: Partial<components['schemas']['FactoryCommandAuthoringContract']>,
+  issueCard?: {
+    shape: components['schemas']['FactoryFlowValueSchema'];
+    presentation: NonNullable<components['schemas']['FactoryFlowOutcome']['issue_presentation']>;
+  },
 ) {
   const policy = { identity: 'factory.declarative-gate', version: 'v1', digest: 'c'.repeat(64) };
   const api = {
@@ -37,6 +42,7 @@ function setup(
             result_output: 'observation.json',
             result_output_kind: 'report' as const,
           },
+          ...commandContract,
         },
       ],
       deterministic_gate: {
@@ -83,7 +89,7 @@ function setup(
   let observed = emptyFlowDraft();
   const schema = {
     reference: { identity: 'assessment', version: 'v1', digest: 'a'.repeat(64) },
-    shape: { type: 'boolean' as const },
+    shape: issueCard?.shape ?? { type: 'boolean' as const },
   };
   observed.data_schemas = [schema];
   observed.root.entry = 'check';
@@ -97,7 +103,12 @@ function setup(
       budget: observed.root.execution.budget,
       permissions: observed.root.execution.permissions,
       outcomes: [
-        { key: 'accepted', kind: 'success', schema: schema.reference },
+        {
+          key: 'accepted',
+          kind: 'success',
+          schema: schema.reference,
+          ...(issueCard ? { issue_presentation: issueCard.presentation } : {}),
+        },
         { key: 'review', kind: 'failure', schema: schema.reference },
       ],
     },
@@ -276,7 +287,11 @@ it('authors a command from exact installed compiler facts with explicit result r
   const editor = within(await screen.findByRole('group', { name: 'Command' }));
   expect(screen.queryByRole('combobox', { name: 'Execution profile' })).toBeNull();
   await userEvent.click(editor.getByRole('combobox', { name: 'Installed command' }));
-  await userEvent.click(screen.getByRole('option', { name: 'Check formatting · v3' }));
+  await userEvent.click(
+    screen.getByRole('option', {
+      name: 'Check formatting · v3 · observation.json · factory.declarative-gate',
+    }),
+  );
   expect(draft().root.nodes[0]!.build).toBeUndefined();
   await userEvent.click(editor.getByRole('button', { name: 'Use command' }));
   expect(draft().root.nodes[0]!.build).toEqual({
@@ -297,6 +312,162 @@ it('authors a command from exact installed compiler facts with explicit result r
   expect(api.createFlow).not.toHaveBeenCalled();
   expect(api.normalizeGateProgram).not.toHaveBeenCalled();
   expect(screen.queryByRole('textbox', { name: /digest|argv|json/i })).toBeNull();
+});
+
+it('distinguishes and binds the selected primary output of the same installed Build', async () => {
+  const { api, client, draft } = setup(undefined, 'build_command');
+  const editor = within(await screen.findByRole('group', { name: 'Command' }));
+  const capabilities = await api.getAuthoringCapabilities();
+  const command = capabilities.commands[0]!;
+  await act(async () => {
+    client.setQueryData(queryKeys.factoryAuthoringCapabilities('delivery'), {
+      ...capabilities,
+      commands: [
+        command,
+        { ...command, execution: { ...command.execution, result_output: 'audit.json' } },
+      ],
+    });
+  });
+  await userEvent.click(editor.getByRole('combobox', { name: 'Installed command' }));
+  expect(screen.getByRole('option', { name: /Check formatting.*observation\.json/ })).toBeTruthy();
+  await userEvent.click(screen.getByRole('option', { name: /Check formatting.*audit\.json/ }));
+  await userEvent.click(editor.getByRole('button', { name: 'Use command' }));
+  expect(draft().root.nodes[0]!.build?.result_output).toBe('audit.json');
+});
+
+it('sets and removes a bounded candidate capture policy on an installed Build without changing its identity', async () => {
+  const { draft } = setup(undefined, 'build_command');
+  const editor = within(await screen.findByRole('group', { name: 'Command' }));
+  await userEvent.click(editor.getByRole('combobox', { name: 'Installed command' }));
+  await userEvent.click(
+    screen.getByRole('option', {
+      name: 'Check formatting · v3 · observation.json · factory.declarative-gate',
+    }),
+  );
+  await userEvent.click(editor.getByRole('button', { name: 'Use command' }));
+  const before = draft().root.nodes[0]!.build!;
+  await userEvent.click(screen.getByText('Candidate capture'));
+  await userEvent.type(
+    screen.getByRole('textbox', { name: 'Writable directories' }),
+    'src{enter}docs/specs',
+  );
+  await userEvent.click(screen.getByRole('checkbox', { name: 'Require deliverables' }));
+  await userEvent.type(
+    screen.getByRole('textbox', { name: 'Selection path' }),
+    '/accepted_contract',
+  );
+  await userEvent.type(
+    screen.getByRole('textbox', { name: 'Permitted paths' }),
+    'src{enter}docs/specs',
+  );
+  await userEvent.type(screen.getByRole('textbox', { name: 'Forbidden paths' }), 'src/private ');
+  await userEvent.click(screen.getByRole('button', { name: 'Add deliverable requirement' }));
+  await userEvent.type(screen.getByRole('textbox', { name: 'Deliverable kind' }), 'specification');
+  await userEvent.type(screen.getByRole('textbox', { name: 'Required paths' }), 'docs/specs');
+  expect(draft().root.nodes[0]!.build).toEqual({
+    ...before,
+    capture_write_paths: ['docs/specs', 'src'],
+    capture_deliverables: {
+      accepted_contract: { value: { mapping: 'pointer', path: '/accepted_contract' } },
+      policy: {
+        permitted_paths: ['docs/specs', 'src'],
+        forbidden_paths: ['src/private '],
+        required: [{ kind: 'specification', min_files: 1, paths: ['docs/specs'] }],
+      },
+    },
+  });
+  await userEvent.click(screen.getByRole('checkbox', { name: 'Require deliverables' }));
+  expect(draft().root.nodes[0]!.build).toMatchObject({
+    ...before,
+    capture_write_paths: ['docs/specs', 'src'],
+    capture_deliverables: null,
+  });
+});
+
+it('keeps installed evidence when replacing a command through the ordinary editor', async () => {
+  const tool = { identity: 'verified-command', version: 'v1', digest: 'c'.repeat(64) };
+  const schema = { identity: 'assessment', version: 'v1', digest: 'a'.repeat(64) };
+  const evidence = {
+    kind: 'execution-facts',
+    output_kind: 'report' as const,
+    tool,
+    plugin: tool,
+    schema,
+  };
+  const { draft } = setup(undefined, 'build_command', {
+    output_schema: schema,
+    result_tool: tool,
+    evidence: [evidence],
+  });
+  const editor = within(await screen.findByRole('group', { name: 'Command' }));
+  await userEvent.click(editor.getByRole('combobox', { name: 'Installed command' }));
+  await userEvent.click(
+    screen.getByRole('option', {
+      name: 'Check formatting · v3 · observation.json · factory.declarative-gate',
+    }),
+  );
+  await userEvent.click(editor.getByRole('button', { name: 'Use command' }));
+  expect(draft().root.nodes[0]!.build).toMatchObject({
+    result_tool: tool,
+    evidence: [evidence],
+  });
+});
+
+it('binds the installed report format to a named command result without recreating the schema', async () => {
+  const schema = {
+    reference: { identity: 'protected-checks', version: 'v1', digest: 'e'.repeat(64) },
+    shape: { type: 'boolean' as const },
+  };
+  const { api, draft } = setup(undefined, 'build_command', {
+    output_schema: schema.reference,
+    output_definition: schema,
+  });
+  const editor = within(await screen.findByRole('group', { name: 'Command' }));
+  await userEvent.click(editor.getByRole('combobox', { name: 'Installed command' }));
+  await userEvent.click(screen.getByRole('option', { name: /^Check formatting ·/ }));
+  await userEvent.click(editor.getByRole('button', { name: 'Use command' }));
+  expect(draft().root.nodes[0]!.build?.result_outcome).toBe('accepted');
+  expect(draft().root.nodes[0]!.outcomes).toMatchObject([
+    { key: 'accepted', schema: schema.reference },
+    { key: 'review', schema: { identity: 'assessment' } },
+  ]);
+  expect(draft().data_schemas).toContainEqual(schema);
+  expect(api.normalizeSchema).not.toHaveBeenCalled();
+});
+
+it('preserves the configured Issue card when using the installed command format', async () => {
+  const shape = {
+    type: 'object',
+    fields: {
+      summary: { required: true, value: { type: 'string', min_bytes: 1, max_bytes: 128 } },
+    },
+  } as const;
+  const presentation = {
+    kind: 'custom_v1',
+    title: 'Formatting result',
+    conclusion_field: 'summary',
+  } as const;
+  const schema = {
+    reference: { identity: 'protected-checks', version: 'v1', digest: 'e'.repeat(64) },
+    shape,
+  };
+  const { draft } = setup(
+    undefined,
+    'build_command',
+    {
+      output_schema: schema.reference,
+      output_definition: schema,
+    },
+    { shape, presentation },
+  );
+  const editor = within(await screen.findByRole('group', { name: 'Command' }));
+  await userEvent.click(editor.getByRole('combobox', { name: 'Installed command' }));
+  await userEvent.click(screen.getByRole('option', { name: /^Check formatting ·/ }));
+  await userEvent.click(editor.getByRole('button', { name: 'Use command' }));
+  expect(draft().root.nodes[0]!.outcomes[0]).toMatchObject({
+    schema: schema.reference,
+    issue_presentation: presentation,
+  });
 });
 
 it('retains the configured condition and draft text when normalization fails without leaking error details', async () => {
@@ -334,7 +505,11 @@ it('requires re-selection when a command contract changes in the installed catal
   const { api, client, draft } = setup(undefined, 'build_command');
   const editor = within(await screen.findByRole('group', { name: 'Command' }));
   await userEvent.click(editor.getByRole('combobox', { name: 'Installed command' }));
-  await userEvent.click(screen.getByRole('option', { name: 'Check formatting · v3' }));
+  await userEvent.click(
+    screen.getByRole('option', {
+      name: 'Check formatting · v3 · observation.json · factory.declarative-gate',
+    }),
+  );
   const refreshed = await api.getAuthoringCapabilities();
   refreshed.commands[0]!.execution.build_configuration.version = 4;
   await act(async () => {

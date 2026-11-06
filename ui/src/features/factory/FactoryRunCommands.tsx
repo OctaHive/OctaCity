@@ -143,6 +143,17 @@ export function FactoryRunCommands({
               label: `${attempt.node_key} · ${attempt.number} · ${attempt.cycle_id}`,
             }))}
           />
+          {selected?.node_kind === 'human_gate' &&
+          selected.input_summary?.accepted_results.length ? (
+            <div>
+              <p>{t('factory.acceptedResults')}</p>
+              <ul>
+                {selected.input_summary.accepted_results.map(({ node, outcome, digest }) => (
+                  <li key={digest}>{`${node} · ${outcome}`}</li>
+                ))}
+              </ul>
+            </div>
+          ) : null}
           {selected && node?.kind === 'human_gate' && !node.operator_requests && configuration ? (
             <HumanGateResponse
               key={selected.id}

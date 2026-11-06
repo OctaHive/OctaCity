@@ -187,6 +187,7 @@ pub(super) fn management_application(
     octacity_server_application::FactoryConfigurationHandlers::with_policy(store.clone(), management_policy.clone())
       .with_project_policies(store.clone())
       .with_repositories(store.clone())
+      .with_published_flows(store.clone())
       .with_issue_status_actions(workflow_queries.clone())
       .with_issue_properties(store.clone());
   let factory = Arc::new(match &source_queries {
@@ -354,6 +355,7 @@ pub(super) fn management_application(
   });
   let presets = octacity_server_application::FactoryPresetHandlers::new(store.clone(), management_policy.clone())
     .with_repositories(configuration_queries.clone())
+    .with_flows(flow_queries.clone())
     .with_artifacts(retained_artifacts.clone());
   let presets = Arc::new(match source_queries {
     Some(sources) => presets.with_sources(sources.clone()).with_source_actions(sources),

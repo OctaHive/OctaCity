@@ -6,17 +6,88 @@ use crate::{
 use async_trait::async_trait;
 use octacity_server_domain::ProjectId;
 use octacity_server_factory::{
-  FactoryFlowConfiguration, FactoryKey, FlowAdmissionLimits, FlowContextProjection, FlowDataProjection, FlowDataSchema,
-  FlowDefinition, FlowDefinitionId, FlowDefinitionInput, FlowDefinitionVersion, FlowExecutionPolicy,
-  FlowNodeDefinition, FlowPoolSettings, FlowTerminalDefinition, FlowTransition, ImmutableReference,
-  PinnedFlowDefinitionClosure,
+  FactoryFlowConfiguration, FactoryKey, FlowAcceptedPredecessor, FlowAdmissionLimits, FlowContextProjection,
+  FlowDataProjection, FlowDataSchema, FlowDefinition, FlowDefinitionId, FlowDefinitionInput, FlowDefinitionVersion,
+  FlowExecutionPolicy, FlowNodeDefinition, FlowOutcomeKind, FlowPoolSettings, FlowTerminalDefinition, FlowTransition,
+  FlowTransitionTarget, ImmutableReference, PinnedFlowDefinitionClosure,
 };
-use octacity_server_store::FactoryFlowDefinitionStore;
+use octacity_server_store::{FactoryFlowDefinitionStore, PublishedFactoryFlowDefinition, StoreError};
 use serde::{Deserialize, Serialize};
 use std::{
   collections::{BTreeMap, BTreeSet},
   sync::Arc,
 };
+
+/// Resolves a successful completion contract from the exact published predecessor.
+pub(super) fn predecessor_schema<'a>(
+  published: &'a PublishedFactoryFlowDefinition,
+  project: ProjectId,
+  selected: &FlowAcceptedPredecessor,
+) -> Option<&'a FlowDataSchema> {
+  let flow = &published.flow;
+  if published.project_id != project || flow.closure.root() != selected.definition || selected.outcomes.is_empty() {
+    return None;
+  }
+  let definition = flow.closure.definition(selected.definition)?;
+  let terminal = definition
+    .terminals()
+    .iter()
+    .find(|terminal| terminal.key() == &selected.terminal)?;
+  if !selected.outcomes.iter().all(|outcome| {
+    definition.transitions().iter().any(|edge| {
+      edge.outcome() == outcome
+        && (matches!(edge.target(), FlowTransitionTarget::Terminal(key) if key == &selected.terminal)
+          || edge.exhausted_terminal() == Some(&selected.terminal))
+        && definition
+          .node(edge.predecessor())
+          .and_then(|node| node.outcome(outcome))
+          .is_some_and(|outcome| outcome.kind() == FlowOutcomeKind::Success && outcome.schema() == terminal.schema())
+    })
+  }) {
+    return None;
+  }
+  flow
+    .data_schemas
+    .iter()
+    .find(|schema| schema.reference() == terminal.schema())
+}
+
+/// Checks the selected producer and consumer together at either publication boundary.
+pub(super) async fn validate_accepted_predecessor(
+  flow: &FactoryFlowConfiguration,
+  project: ProjectId,
+  store: Option<&dyn FactoryFlowDefinitionStore>,
+  policy: &dyn crate::ManagementAuthorizationPolicy,
+  context: &crate::ManagementRequestContext,
+) -> Result<(), ApplicationError> {
+  let Some(selected) = &flow.accepted_predecessor else {
+    return Ok(());
+  };
+  let unavailable = || crate::FactoryValidationDiagnostics::unavailable("/accepted_predecessor");
+  let store = store.ok_or_else(unavailable)?;
+  super::factory_configuration_choices::require_visible_reference(
+    policy,
+    context,
+    ManagementResourceKind::FlowDefinition,
+    selected.definition.id(),
+  )
+  .await
+  .map_err(|_| unavailable())?;
+  let published = store
+    .factory_flow_definition(selected.definition.id(), Some(selected.definition.version()))
+    .await
+    .map_err(|error| match error {
+      StoreError::NotFound { .. } => unavailable(),
+      other => other.into(),
+    })?;
+  let schema = predecessor_schema(&published, project, selected).ok_or_else(unavailable)?;
+  if flow.incoming_schemas().next() != Some(schema.reference()) {
+    return Err(crate::FactoryValidationDiagnostics::invalid(
+      "/accepted_predecessor/schema",
+    ));
+  }
+  Ok(())
+}
 
 /// Exact native gate policies recognized in an already validated published closure.
 /// This discovery fact grants no execution authority and requires no deployment alias.
@@ -316,7 +387,13 @@ impl<S: FactoryFlowDefinitionStore + octacity_server_store::FactoryConfiguration
     .map_err(|error| {
       crate::FactoryValidationDiagnostics::flow_validation_error(&error).unwrap_or_else(ApplicationError::invalid)
     })?;
-    crate::factory::authoring::factory_configuration_choices::validate_flow_choices(&flow, &choices, "")?;
+    crate::factory::authoring::factory_configuration_choices::validate_flow_choices(
+      &flow,
+      &choices,
+      "",
+      super::factory_configuration_choices::FlowChoiceValidation::Authoring,
+    )?;
+    validate_accepted_predecessor(&flow, project, Some(self.store.as_ref()), self.policy.as_ref(), context).await?;
     crate::factory::execution::factory_code_sources::validate_sources(
       &flow.closure,
       project,

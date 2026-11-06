@@ -1,8 +1,14 @@
+import { useState } from 'react';
+import { useQuery } from '@tanstack/react-query';
 import type { components } from '../../../.generated/api/schema';
+import { queryKeys } from '../../app/query';
 import { usePresentation } from '../../app/presentation/PresentationProvider';
+import { QueryFailureNotice, QueryLoadingNotice } from '../../shared/QueryStateNotice';
 import { SelectMenu } from '../../shared/SelectMenu';
 import { sourceReferenceKey } from '../../shared/sourceReferences';
+import type { FactoryApi } from './api';
 import { flowLabel } from './flowLabels';
+import { VersionPicker } from './VersionPicker';
 
 type S = components['schemas'];
 type Draft = S['FactoryFlowDefinitionDraft'];
@@ -12,16 +18,95 @@ type Handoff = S['FactoryFlowAcceptedPredecessor'];
 const completionKey = ({ definition, terminal }: Pick<Handoff, 'definition' | 'terminal'>) =>
   JSON.stringify([definition.id, definition.version, definition.digest, terminal]);
 
-/** The exact published completion supplies the selectable incoming schema, never an automatic edge. */
-export function FlowIncomingCompletion({
-  value,
-  flows,
-  onChange,
-}: {
+type Props = {
   value: Draft;
   flows: readonly Flow[];
   onChange: (draft: Draft) => void;
-}) {
+  empty?: string;
+  flowApi?: Pick<FactoryApi, 'getFlow'> | undefined;
+};
+
+/** The exact published completion supplies the selectable incoming schema, never an automatic edge. */
+export function FlowIncomingCompletion({ flowApi, ...props }: Props) {
+  return flowApi ? <VersionedCompletion {...props} api={flowApi} /> : <Completion {...props} />;
+}
+
+function VersionedCompletion({ api, ...props }: Props & { api: Pick<FactoryApi, 'getFlow'> }) {
+  const { t } = usePresentation();
+  const { value, flows } = props;
+  const [selection, setSelection] = useState<{ id: string; version: number }>();
+  const pinned = value.accepted_predecessor?.definition;
+  const previous = flows.filter(({ flow }) => flow.closure.root.version > 1);
+  const selected = previous.find(({ flow }) => flow.closure.root.id === selection?.id);
+  const needsLoad = (reference: { id: string; version: number } | undefined) =>
+    reference &&
+    !flows.some(
+      ({ flow }) =>
+        flow.closure.root.id === reference.id && flow.closure.root.version === reference.version,
+    );
+  const pinnedQuery = useQuery({
+    queryKey: queryKeys.factoryFlow(pinned?.id ?? '', pinned?.version ?? 0),
+    queryFn: ({ signal }) => api.getFlow(pinned!.id, pinned!.version, signal),
+    enabled: needsLoad(pinned) === true,
+  });
+  const historyQuery = useQuery({
+    queryKey: queryKeys.factoryFlow(selection?.id ?? '', selection?.version ?? 0),
+    queryFn: ({ signal }) => api.getFlow(selection!.id, selection!.version, signal),
+    enabled: needsLoad(selection) === true,
+  });
+  const versions = [...flows];
+  for (const detail of [pinnedQuery.data, historyQuery.data]) {
+    if (
+      detail &&
+      !versions.some(
+        ({ flow }) =>
+          flow.closure.root.id === detail.flow.closure.root.id &&
+          flow.closure.root.version === detail.flow.closure.root.version,
+      )
+    ) {
+      versions.push(detail);
+    }
+  }
+  return (
+    <>
+      {previous.length ? (
+        <details>
+          <summary>{t('factory.previousFlowVersion')}</summary>
+          <SelectMenu
+            ariaLabel={t('factory.flows')}
+            value={selection?.id ?? ''}
+            options={previous.map(({ flow }) => ({
+              value: flow.closure.root.id,
+              label: flowLabel(flow, t('factory.immutableFlow')),
+            }))}
+            onValueChange={(id) => {
+              const flow = previous.find(({ flow }) => flow.closure.root.id === id);
+              if (flow) setSelection(flow.flow.closure.root);
+            }}
+          />
+          {selected && selection ? (
+            <VersionPicker
+              current={selected.flow.closure.root.version}
+              selected={selection.version}
+              onChange={(version) => setSelection({ id: selection.id, version })}
+            />
+          ) : null}
+          {historyQuery.isFetching ? <QueryLoadingNotice label={t('factory.version')} /> : null}
+          {historyQuery.isError ? (
+            <QueryFailureNotice
+              title={t('factory.version')}
+              error={historyQuery.error}
+              onRetry={historyQuery.refetch}
+            />
+          ) : null}
+        </details>
+      ) : null}
+      <Completion {...props} flows={versions} />
+    </>
+  );
+}
+
+function Completion({ value, flows, onChange, empty }: Props) {
   const { t } = usePresentation();
   const current = value.accepted_predecessor;
   const choices = flows.flatMap(({ flow }) => {
@@ -68,7 +153,7 @@ export function FlowIncomingCompletion({
   });
   const currentKey = current ? completionKey(current) : '';
   const selected = choices.find(({ key }) => key === currentKey);
-  if (!choices.length && !current) return null;
+  if (!choices.length && !current) return empty ? <p>{empty}</p> : null;
   return (
     <fieldset>
       <legend>{t('factory.incomingCompletion')}</legend>

@@ -306,6 +306,11 @@ fn manual_delivery_admits_the_original_issue_and_exact_triage_result() {
   use crate::factory::admission::tests::factory_admission_tests::{
     configuration_with_flow, incoming_result_configuration, seed_permitted_configuration,
   };
+  use crate::factory::authoring::tests::factory_configuration_cqrs_tests::PublicationChoices;
+  use crate::{
+    CreateFactoryConfigurationCommand, CreateFactoryFlowDefinitionCommand, FactoryConfigurationHandlers,
+    FactoryFlowDefinitionDraft, FactoryFlowDefinitionHandlers, FactoryFlowRootDraft, ValidateFactoryConfigurationQuery,
+  };
   use octacity_server_factory::*;
 
   run_ready(async {
@@ -379,26 +384,210 @@ fn manual_delivery_admits_the_original_issue_and_exact_triage_result() {
     .unwrap();
     let producing_flow = definition.reference();
     triage.closure = PinnedFlowDefinitionClosure::new(producing_flow, vec![definition]).unwrap();
-    let downstream = delivery
-      .flow()
-      .clone()
-      .with_accepted_predecessor(FlowAcceptedPredecessor {
+    let policy = Arc::new(TrustedNetworkManagementPolicy);
+    let schema = triage.data_schemas[0].reference();
+    let entry = key("reviewed-input");
+    let node = FlowNodeDefinition::new(FlowNodeDefinitionInput {
+      key: entry.clone(),
+      kind: FlowNodeKind::DeterministicGate,
+      input_schema: Some(schema.clone()),
+      outcomes: vec![FlowOutcomeDefinition::new(
+        accepted.clone(),
+        FlowOutcomeKind::Success,
+        schema.clone(),
+      )],
+      budget,
+      permissions: FactoryPermissionSet::deny_all(),
+      required: true,
+      subflow: None,
+    })
+    .unwrap()
+    .with_input_binding(
+      FlowInputBinding::new(
+        [(
+          key("triage"),
+          FlowInputSource::Incoming {
+            schema: schema.clone(),
+            path: String::new(),
+          },
+        )]
+        .into(),
+        FlowDataMapping::new(FlowValueMapping::Pointer { path: "/triage".into() }).unwrap(),
+      )
+      .unwrap(),
+    )
+    .unwrap()
+    .with_gate(
+      FlowGateProgram::new(vec![], accepted.clone())
+        .unwrap()
+        .with_default_output_mapping(FlowDataMapping::new(FlowValueMapping::Pointer { path: String::new() }).unwrap())
+        .unwrap()
+        .binding()
+        .unwrap(),
+    )
+    .unwrap();
+    let draft = FactoryFlowDefinitionDraft {
+      root: FactoryFlowRootDraft {
+        name: Some(FactoryText::new("Manually authored delivery").unwrap()),
+        code_sources: None,
+        process: None,
+        input_schema: Some(schema.clone()),
+        entry: entry.clone(),
+        nodes: vec![node],
+        transitions: vec![FlowTransition::new(
+          entry,
+          accepted.clone(),
+          FlowTransitionTarget::Terminal(terminal.clone()),
+        )],
+        terminals: vec![FlowTerminalDefinition::new(terminal.clone(), schema.clone())],
+        context_projections: vec![],
+        data_projections: vec![],
+        execution: FlowExecutionPolicy::new(budget, FactoryPermissionSet::deny_all(), 1).unwrap(),
+      },
+      limits: triage.limits.clone(),
+      data_schemas: triage.data_schemas.clone(),
+      pools: Default::default(),
+      accepted_predecessor: Some(FlowAcceptedPredecessor {
         definition: producing_flow,
         terminal,
         outcomes: [accepted].into(),
+      }),
+    };
+    let predecessor = PublishedFactoryFlowDefinition {
+      project_id: issue.project_id,
+      flow: triage.clone(),
+      published_at: at(10),
+    };
+    seed_permitted_configuration(
+      &factory,
+      PublishedFactoryConfiguration {
+        configuration: configuration_with_flow(issue.project_id, triage_id, Some(triage)),
+        published_at: at(10),
+      },
+    )
+    .unwrap();
+    let choices = FactoryConfigurationChoices::try_new(FactoryConfigurationChoiceEntries {
+      references: [
+        (
+          FactoryChoiceKind::AdmissionPolicy,
+          key("launch"),
+          delivery.admission_policy().legacy().unwrap(),
+        ),
+        (
+          FactoryChoiceKind::PermissionCeiling,
+          key("access"),
+          delivery.permission_ceiling().legacy().unwrap(),
+        ),
+      ]
+      .into_iter()
+      .map(|(kind, alias, selection)| FactoryReferenceChoice {
+        kind,
+        alias,
+        reference: selection.clone(),
       })
-      .unwrap();
-    for (id, flow) in [(triage_id, triage), (delivery_id, downstream)] {
-      seed_permitted_configuration(
-        &factory,
-        PublishedFactoryConfiguration {
-          configuration: configuration_with_flow(issue.project_id, id, Some(flow)),
+      .collect(),
+      build_configurations: vec![],
+    })
+    .unwrap();
+    let flow_store = Arc::new(PublicationChoices::for_publication(choices.clone()).with_predecessor(predecessor));
+    let flow_commands = AuthorizedCommandHandler::new(
+      policy.clone(),
+      Arc::new(FactoryFlowDefinitionHandlers::new(flow_store.clone(), policy.clone())),
+    );
+    let mut missing_terminal = draft.clone();
+    missing_terminal.accepted_predecessor.as_mut().unwrap().terminal = key("missing");
+    let rejected_flow = flow_commands
+      .handle_command(
+        &context(),
+        CreateFactoryFlowDefinitionCommand {
+          id: FlowDefinitionId::generate(),
+          project_id: issue.project_id,
+          draft: missing_terminal,
+          idempotency_key: "reject-missing-triage-terminal".parse().unwrap(),
           published_at: at(10),
         },
       )
+      .await;
+    let authored = flow_commands
+      .handle_command(
+        &context(),
+        CreateFactoryFlowDefinitionCommand {
+          id: FlowDefinitionId::generate(),
+          project_id: issue.project_id,
+          draft,
+          idempotency_key: "author-manual-delivery".parse().unwrap(),
+          published_at: at(10),
+        },
+      )
+      .await
+      .unwrap()
+      .publication
+      .flow;
+    factory.enable_project(issue.project_id, choices).unwrap();
+    let selected_flow = authored.closure.root();
+    let configuration_draft = FactoryConfigurationDraft {
+      admission_policy: key("launch").into(),
+      permission_ceiling: key("access").into(),
+      wip_limits: delivery.wip_limits(),
+      hard_budget: budget,
+      flow: Some(authored),
+      enabled: true,
+    };
+    let mut invalid_configuration = configuration_draft.clone();
+    invalid_configuration
+      .flow
+      .as_mut()
+      .unwrap()
+      .accepted_predecessor
+      .as_mut()
+      .unwrap()
+      .terminal = key("missing");
+    let config_handlers = Arc::new(
+      FactoryConfigurationHandlers::with_policy(factory.clone(), policy.clone()).with_published_flows(flow_store),
+    );
+    let rejected_configuration = crate::AuthorizedQueryHandler::new(policy.clone(), config_handlers.clone())
+      .handle_query(
+        &context(),
+        ValidateFactoryConfigurationQuery {
+          id: delivery_id,
+          project_id: issue.project_id,
+          definition_digest: FactoryDigest::from_bytes([12; 32]),
+          draft: invalid_configuration,
+        },
+      )
+      .await;
+    let rejected = [rejected_flow.err(), rejected_configuration.err()].map(|error| {
+      matches!(error, Some(ManagementHandlerError::Application(ApplicationError::FactoryValidation(report)))
+        if report.errors[0].field.ends_with("/accepted_predecessor"))
+    });
+    assert_eq!(
+      rejected,
+      [true, true],
+      "Flow and Configuration must reject a missing predecessor terminal"
+    );
+    let published = AuthorizedCommandHandler::new(policy.clone(), config_handlers)
+      .handle_command(
+        &context(),
+        CreateFactoryConfigurationCommand {
+          id: delivery_id,
+          project_id: issue.project_id,
+          definition_digest: FactoryDigest::from_bytes([12; 32]),
+          draft: configuration_draft,
+          idempotency_key: "publish-manual-delivery".parse().unwrap(),
+          published_at: at(10),
+        },
+      )
+      .await
+      .unwrap()
+      .configuration
+      .configuration;
+    assert_eq!(published.flow().closure.root(), selected_flow);
+    factory
+      .seed_factory_configuration_policies(
+        published.reference(),
+        octacity_server_store::testing::factory_project_policies(issue.project_id, true, true),
+      )
       .unwrap();
-    }
-    let policy = Arc::new(TrustedNetworkManagementPolicy);
     let commands = AuthorizedCommandHandler::new(
       policy.clone(),
       Arc::new(IssueExecutionHandlers::new(

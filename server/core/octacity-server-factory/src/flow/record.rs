@@ -80,11 +80,7 @@ impl FlowNodeRecord {
     }
     let build = self.build.as_ref().map(|build| BuildMetadata {
       profile: build.profile(),
-      primary_fresh_until: build
-        .outputs()
-        .iter()
-        .find(|output| output.name == build.profile().result_output)
-        .map(|output| output.fresh_until),
+      primary_fresh_until: self.primary_build_output().map(|output| output.fresh_until),
       outputs: build.outputs().iter().map(|output| (&output.name, output)).collect(),
     });
     let subject = self.input.task_subject()?;
@@ -103,6 +99,14 @@ impl FlowNodeRecord {
       build,
     })
     .map_err(|_| invalid())
+  }
+  /// Independently verified output selected by the pinned Build profile as the result.
+  pub fn primary_build_output(&self) -> Option<&crate::FlowVerifiedBuildOutput> {
+    let build = self.build_provenance()?;
+    build
+      .outputs()
+      .iter()
+      .find(|output| output.name == build.profile().result_output)
   }
   /// Binds one retained result to its exact frozen input and persisted node attempt.
   pub fn new(

@@ -78,6 +78,7 @@ enum Presentation {
     classification: IssueOutcomeClassification,
   },
   Specifications,
+  Publication,
   Review {
     verdict: String,
   },
@@ -104,6 +105,7 @@ impl From<IssueOutcomeContent> for Presentation {
         classification,
       },
       IssueOutcomeContent::Specifications => Self::Specifications,
+      IssueOutcomeContent::Publication => Self::Publication,
       IssueOutcomeContent::Review { verdict } => Self::Review {
         verdict: verdict.to_string(),
       },
@@ -128,6 +130,7 @@ enum LinkTarget {
   Artifact { artifact_id: String },
   WorkArtifact { work_id: String, artifact_id: String },
   Review { review_id: String },
+  PullRequest { url: String },
   Unavailable,
 }
 impl From<IssueOutcomeLink> for Link {
@@ -146,6 +149,7 @@ impl From<IssueOutcomeLink> for Link {
       IssueOutcomeLinkTarget::Review(review_id) => LinkTarget::Review {
         review_id: review_id.to_string(),
       },
+      IssueOutcomeLinkTarget::PullRequest(url) => LinkTarget::PullRequest { url },
       IssueOutcomeLinkTarget::Unavailable => LinkTarget::Unavailable,
     };
     Self {

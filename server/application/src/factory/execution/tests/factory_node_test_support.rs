@@ -792,3 +792,6 @@ pub(crate) fn capture_outputs(intent: &FlowBuildIntent, builds: &Builds, base: &
     fresh_until: time(1000),
   }
 }
+
+#[path = "../../authoring/tests/factory_flow_publication_fixture.rs"]
+pub(crate) mod publication;

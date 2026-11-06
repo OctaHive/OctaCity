@@ -545,7 +545,12 @@ async fn reviewed_result_delivery_keeps_original_decision_and_operation_through_
       // The next Source scan sees the actual Reporter mutation on the same ticket.
       let provider: serde_json::Value =
         serde_json::from_slice(&std::fs::read(directory.join("mode.json")).unwrap()).unwrap();
-      assert!(provider["candidates"][0]["labels"].as_array().unwrap().contains(&serde_json::json!("need reproduce")));
+      assert!(
+        provider["candidates"][0]["labels"]
+          .as_array()
+          .unwrap()
+          .contains(&serde_json::json!("need reproduce"))
+      );
       let source_requests = directory.join("requests.jsonl");
       let before_repoll = std::fs::read_to_string(&source_requests).unwrap();
       fixture.clock.0.store(500, Ordering::SeqCst);

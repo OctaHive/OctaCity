@@ -385,7 +385,7 @@ impl FlowValueSchema {
       _ => false,
     }
   }
-  fn accepts(&self, value: &Value) -> bool {
+  pub(super) fn accepts(&self, value: &Value) -> bool {
     match self {
       Self::Reference { .. } => false,
       Self::Boolean => value.is_boolean(),

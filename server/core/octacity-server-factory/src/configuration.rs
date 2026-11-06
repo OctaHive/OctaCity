@@ -192,12 +192,18 @@ pub struct FactoryCandidatePublicationChoice {
   pub plugin: ImmutableReference,
   /// Immutable delivery target, without its private connector configuration.
   pub target: ImmutableReference,
+  /// The Project repository admitted by the installed target policy.
+  #[serde(skip)]
+  pub repository_id: octacity_server_domain::RepositoryId,
   /// The installed publisher's successful outcome.
   pub outcome: crate::FlowOutcomeDefinition,
-  /// The exact schema named by the successful outcome.
-  pub receipt_schema: crate::FlowDataSchema,
+  /// Schema definition supplied for new authoring. Older installations retain the exact outcome reference.
+  #[serde(skip_serializing_if = "Option::is_none")]
+  pub receipt_schema: Option<crate::FlowDataSchema>,
   /// Whether the trusted target can return a verified review URL.
   pub review_url: bool,
+  /// Minimum logical permissions requested by this target. Contains no credential values.
+  pub permissions: crate::FactoryPermissionSet,
 }
 
 /// Safe deployment-declared capabilities. Absence means no declaration is available;
@@ -306,7 +312,10 @@ impl FactoryConfigurationChoices {
       .references
       .iter()
       .any(|((kind, _), reference)| *kind == FactoryChoiceKind::NodeCapability && reference == &choice.plugin)
-      || choice.receipt_schema.reference() != choice.outcome.schema()
+      || choice
+        .receipt_schema
+        .as_ref()
+        .is_some_and(|schema| schema.reference() != choice.outcome.schema())
       || choice.outcome.kind() != crate::FlowOutcomeKind::Success
       || self.candidate_publications.len() >= MAX_CONFIGURATION_CHOICES_PER_KIND
       || self
@@ -364,10 +373,30 @@ impl FactoryConfigurationChoices {
     &self,
     binding: &crate::FlowBuildBinding,
   ) -> Option<&crate::FactoryBuildPipelineContract> {
-    let mut contracts = self
+    self.unique_build_pipeline_contract(|contract| contract.matches_binding(binding))
+  }
+  /// Lists only declarations whose exact selection resolves to one installed contract.
+  pub fn unambiguous_build_pipeline_contracts(&self) -> impl Iterator<Item = &crate::FactoryBuildPipelineContract> {
+    self.build_pipelines.iter().filter(|contract| {
+      self
+        .unique_build_pipeline_contract(|other| other.shares_selection(contract))
+        .is_some()
+    })
+  }
+
+  /// Whether this toolchain has metadata requiring validation, even for an unknown task digest.
+  pub fn has_build_pipeline_contract(&self, binding: &crate::FlowBuildBinding) -> bool {
+    self
       .build_pipelines
       .iter()
-      .filter(|contract| contract.matches_binding(binding));
+      .any(|contract| contract.matches_toolchain(binding))
+  }
+
+  fn unique_build_pipeline_contract(
+    &self,
+    matches: impl Fn(&crate::FactoryBuildPipelineContract) -> bool,
+  ) -> Option<&crate::FactoryBuildPipelineContract> {
+    let mut contracts = self.build_pipelines.iter().filter(|contract| matches(contract));
     let first = contracts.next()?;
     contracts.next().is_none().then_some(first)
   }

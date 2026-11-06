@@ -74,8 +74,10 @@
             "mapping": "object",
             "fields": {
               "summary": {
-                "mapping": "pointer",
-                "path": "/summary"
+                "mapping": "if_present",
+                "path": "/summary/summary",
+                "then": {"mapping": "pointer", "path": "/summary/summary"},
+                "otherwise": {"mapping": "pointer", "path": "/summary"}
               },
               "candidate_bundle": {
                 "mapping": "pointer",

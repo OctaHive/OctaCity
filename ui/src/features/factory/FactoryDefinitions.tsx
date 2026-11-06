@@ -19,6 +19,7 @@ import { useFactoryChoices } from './useFactoryChoices';
 import styles from './Factory.module.css';
 import { aiSettingsPath } from '../../app/routes';
 import { flowLabel } from './flowLabels';
+import { VersionPicker } from './VersionPicker';
 import { BUDGET_LABELS } from './ResourceEditors';
 import { formatBytes } from '../../shared/display';
 
@@ -526,46 +527,6 @@ function FlowDetails({
         </section>
       ))}
     </section>
-  );
-}
-
-function VersionPicker({
-  current,
-  selected,
-  onChange,
-}: {
-  current: number;
-  selected: number;
-  onChange: (version: number) => void;
-}) {
-  const { t } = usePresentation();
-  const [search, setSearch] = useState('');
-  const requested = Number(search);
-  const head = !search.trim()
-    ? current
-    : Number.isSafeInteger(requested) && requested > 0 && requested <= current
-      ? requested
-      : 0;
-  const values = Array.from({ length: Math.min(head, 100) }, (_, index) => head - index);
-  if (!values.includes(selected)) values.push(selected);
-  return (
-    <div className={styles.versionPicker}>
-      <span>{t('factory.version')}</span>
-      <SelectMenu
-        search={
-          current > 100
-            ? { label: t('factory.findVersion'), value: search, onChange: setSearch }
-            : undefined
-        }
-        ariaLabel={t('factory.version')}
-        value={String(selected)}
-        onValueChange={(value) => onChange(Number(value))}
-        options={values.map((value) => ({
-          value: String(value),
-          label: t('factory.versionLabel', { version: value }),
-        }))}
-      />
-    </div>
   );
 }
 

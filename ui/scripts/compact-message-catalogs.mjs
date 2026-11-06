@@ -3,7 +3,9 @@ import path from 'node:path';
 import ts from 'typescript';
 
 // Keep complete, type-checked source catalogs. Production stores English key prefixes
-// once per run and translated values in the reconstructed English key order.
+// once per section and translated values in the reconstructed English key order.
+const prefixOf = (key) => key.slice(0, key.lastIndexOf('.') + 1);
+
 function catalog(code, name) {
   const source = ts.createSourceFile(`${name}.ts`, code, ts.ScriptTarget.Latest, true);
   const declaration = source.statements
@@ -26,7 +28,7 @@ function catalog(code, name) {
       throw new Error(`Unsupported or duplicate entry in ${name}`);
     entries.set(item.name.text, item.initializer.text);
   }
-  return entries;
+  return new Map([...Map.groupBy(entries, ([key]) => prefixOf(key)).values()].flat());
 }
 
 // A packed list avoids repeated string delimiters. Keep the array whenever
@@ -34,6 +36,20 @@ function catalog(code, name) {
 const separator = '|';
 const pack = (values) =>
   values.some((value) => value.includes(separator)) ? values : values.join(separator);
+
+// Within a section, a suffix can reuse the beginning of its preceding suffix.
+function packKeys(keys) {
+  return pack(
+    keys.map((key, index) => {
+      const previous = keys[index - 1] ?? '';
+      let length = 0;
+      while (length < key.length && key[length] === previous[length]) length++;
+      const reference = `~${length.toString(36)}:${key.slice(length)}`;
+      const literal = key.startsWith('~') ? `~${key}` : key;
+      return reference.length < literal.length ? reference : literal;
+    }),
+  );
+}
 
 // Message lists follow English key order. Reference an earlier literal only
 // when it saves space, and double the marker on a literal that starts with it.
@@ -63,12 +79,11 @@ export function compactMessageCatalogs() {
         const english = catalog(code, 'enMessages');
         const groups = [];
         for (const key of english.keys()) {
-          const boundary = key.indexOf('.') + 1;
-          const prefix = key.slice(0, boundary);
+          const prefix = prefixOf(key);
           if (groups.at(-1)?.[0] !== prefix) groups.push([prefix, []]);
-          groups.at(-1)[1].push(key.slice(boundary));
+          groups.at(-1)[1].push(key.slice(prefix.length));
         }
-        const packed = groups.map(([prefix, keys]) => [prefix, pack(keys)]);
+        const packed = groups.map(([prefix, keys]) => [prefix, packKeys(keys)]);
         return {
           code: `const groups=${JSON.stringify(packed)};
 const unpack=values=>typeof values==='string'?values.split(${JSON.stringify(separator)}):values;
@@ -81,7 +96,17 @@ export function unpackMessages(packed){
   return values;
 }
 const english=unpackMessages(${JSON.stringify(packTranslations([...english.values()]))});
-export const enMessages=Object.fromEntries(groups.flatMap(([prefix,keys])=>unpack(keys).map(key=>prefix+key)).map((key,index)=>[key,english[index]]));`,
+const keys=packed=>{
+  let previous='';
+  return unpack(packed).map(key=>{
+    if(key[0]==='~'){
+      const boundary=key.indexOf(':',1);
+      key=key[1]==='~'?key.slice(1):previous.slice(0,parseInt(key.slice(1,boundary),36))+key.slice(boundary+1);
+    }
+    return previous=key;
+  });
+};
+export const enMessages=Object.fromEntries(groups.flatMap(([prefix,suffixes])=>keys(suffixes).map(key=>prefix+key)).map((key,index)=>[key,english[index]]));`,
           map: null,
         };
       }

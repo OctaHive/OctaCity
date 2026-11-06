@@ -11,7 +11,8 @@ export type IssuePresentation = Schema['FactoryFlowIssuePresentation'];
 type DisplayKind = IssuePresentation['kind'] | 'off';
 type Shape = Schema['FactoryFlowValueSchema'];
 
-const builtIns = FACTORY_AUTHORING_SCHEMAS.FactoryFlowIssuePresentation['x-built-in-contracts'];
+const presentationSchema = FACTORY_AUTHORING_SCHEMAS.FactoryFlowIssuePresentation;
+const builtIns = presentationSchema['x-built-in-contracts'];
 const keySchema = FACTORY_AUTHORING_SCHEMAS.FactoryFlowOutcome.properties.key;
 const factoryKey = new RegExp(keySchema.pattern);
 
@@ -20,6 +21,7 @@ const displayLabels = {
   triage_v1: 'factory.issueCardTriage',
   specifications_v1: 'factory.issueCardSpecifications',
   review_v1: 'factory.issueCardReview',
+  publication_v1: 'issueOutcomes.pullRequest',
   custom_v1: 'factory.issueCardCustom',
 } satisfies Record<DisplayKind, MessageKey>;
 
@@ -38,7 +40,7 @@ const fieldLabels = {
 const builtInKinds = Object.keys(builtIns) as (keyof typeof builtIns)[];
 const maxConclusionBytes = ISSUE_CONSTRAINTS.outcomeConclusionMaximumBytes;
 const conclusionShape = { type: 'string', min_bytes: 1, max_bytes: maxConclusionBytes } as const;
-const customProperties = FACTORY_AUTHORING_SCHEMAS.FactoryFlowIssuePresentation.oneOf
+const customProperties = presentationSchema.oneOf
   .map(({ properties }) => properties)
   .find((properties) => 'title' in properties)!;
 const maxTitleBytes = customProperties.title['x-max-utf8-bytes'];
@@ -50,7 +52,12 @@ function conclusionFields(shape: Shape): string[] {
   });
 }
 
-function supportsBuiltIn(shape: Shape, kind: keyof typeof builtIns): boolean {
+function supportsBuiltIn(
+  shape: Shape,
+  kind: keyof typeof builtIns,
+  canShowPublication: boolean,
+): boolean {
+  if (kind === 'publication_v1') return canShowPublication;
   if (shape.type !== 'object') return false;
   return builtIns[kind].fields.every((rule) => {
     const field = Object.hasOwn(shape.fields, rule.name) ? shape.fields[rule.name] : undefined;
@@ -72,18 +79,32 @@ function supportsBuiltIn(shape: Shape, kind: keyof typeof builtIns): boolean {
   });
 }
 
+const artifactReference = presentationSchema['x-artifact-reference-shape'];
+
+function artifactFields(shape: Shape): string[] {
+  if (shape.type !== 'object') return [];
+  return Object.entries(shape.fields).flatMap(([name, { value }]) =>
+    compatibleFactoryShape(value, artifactReference) ? [name] : [],
+  );
+}
+
 /** The editor guides field selection. Flow publication validates the complete binding. */
 export function canSaveIssuePresentation(
   shape: Shape,
   presentation: IssuePresentation | undefined,
+  canShowPublication: boolean,
 ) {
   if (!presentation) return true;
-  if (presentation.kind !== 'custom_v1') return supportsBuiltIn(shape, presentation.kind);
+  if (presentation.kind !== 'custom_v1')
+    return supportsBuiltIn(shape, presentation.kind, canShowPublication);
   const title = presentation.title.trim();
   return (
     title.length > 0 &&
     new TextEncoder().encode(title).length <= maxTitleBytes &&
-    conclusionFields(shape).includes(presentation.conclusion_field)
+    conclusionFields(shape).includes(presentation.conclusion_field) &&
+    (presentation.references ?? []).every(
+      ({ field, kind }) => kind !== 'artifact' || artifactFields(shape).includes(field),
+    )
   );
 }
 
@@ -91,16 +112,21 @@ export function OutcomeIssuePresentationEditor({
   shape,
   value,
   onChange,
+  canShowPublication,
 }: {
   shape: Shape;
+  canShowPublication: boolean;
   value: IssuePresentation | undefined;
   onChange: (value: IssuePresentation | undefined) => void;
 }) {
   const { t } = usePresentation();
   const fields = conclusionFields(shape);
+  const artifacts = value?.kind === 'custom_v1' ? artifactFields(shape) : [];
+  const maxReferences = customProperties.references.maxItems;
   const options: DisplayKind[] = ['off'];
   for (const kind of builtInKinds) {
-    if (value?.kind === kind || supportsBuiltIn(shape, kind)) options.push(kind);
+    if (value?.kind === kind || supportsBuiltIn(shape, kind, canShowPublication))
+      options.push(kind);
   }
   if (fields.length || value?.kind === 'custom_v1') options.push('custom_v1');
   return (
@@ -142,6 +168,33 @@ export function OutcomeIssuePresentationEditor({
               onValueChange={(field) => onChange({ ...value, conclusion_field: field })}
             />
           </fieldset>
+          {artifacts.length > 0 ? (
+            <fieldset>
+              <legend>{t('factory.issueCardArtifacts')}</legend>
+              {artifacts.map((field) => {
+                const references = value.references ?? [];
+                const selected = references.some((reference) => reference.field === field);
+                return (
+                  <label key={field}>
+                    <input
+                      type="checkbox"
+                      checked={selected}
+                      disabled={!selected && references.length >= maxReferences}
+                      onChange={() =>
+                        onChange({
+                          ...value,
+                          references: selected
+                            ? references.filter((reference) => reference.field !== field)
+                            : [...references, { field, kind: 'artifact' }],
+                        })
+                      }
+                    />
+                    {field}
+                  </label>
+                );
+              })}
+            </fieldset>
+          ) : null}
         </>
       ) : null}
     </fieldset>
@@ -208,6 +261,8 @@ export function OutcomeIssuePresentationReview({
                     <li key={field}>{field}</li>
                   ))}
                 </>
+              ) : binding.kind === 'publication_v1' ? (
+                <li>{t('issueOutcomes.publicationForManualMerge')}</li>
               ) : (
                 <>
                   {builtIns[binding.kind].fields

@@ -7,7 +7,8 @@ use octacity_server_factory::{
 };
 use octacity_server_store::{
   CreateFactoryConfiguration, FactoryConfigurationAvailability, FactoryConfigurationMutationIntent,
-  FactoryConfigurationStore, IdempotencyKey, ReplaceFactoryConfiguration, ReplayFactoryConfigurationMutation,
+  FactoryConfigurationStore, FactoryFlowDefinitionStore, IdempotencyKey, ReplaceFactoryConfiguration,
+  ReplayFactoryConfigurationMutation,
 };
 
 pub use octacity_server_store::{
@@ -591,6 +592,7 @@ pub struct FactoryConfigurationHandlers<S> {
   store: Arc<S>,
   project_policies: Option<Arc<dyn octacity_server_store::FactoryProjectPolicyStore>>,
   repositories: Option<Arc<dyn octacity_server_store::ConfigurationStore>>,
+  published_flows: Option<Arc<dyn FactoryFlowDefinitionStore>>,
   policy: Arc<dyn crate::ManagementAuthorizationPolicy>,
   source_actions: Option<Arc<dyn crate::FactoryStageSourceAuthorizer>>,
   issue_status_actions: Option<Arc<dyn crate::FactoryIssueStatusAuthorizer>>,
@@ -605,6 +607,7 @@ impl<S> FactoryConfigurationHandlers<S> {
       store,
       project_policies: None,
       repositories: None,
+      published_flows: None,
       policy,
       source_actions: None,
       issue_status_actions: None,
@@ -623,6 +626,13 @@ impl<S> FactoryConfigurationHandlers<S> {
   #[must_use]
   pub fn with_repositories(mut self, repositories: Arc<dyn octacity_server_store::ConfigurationStore>) -> Self {
     self.repositories = Some(repositories);
+    self
+  }
+
+  /// Reads exact predecessor contracts from the existing published Flow owner.
+  #[must_use]
+  pub fn with_published_flows(mut self, flows: Arc<dyn FactoryFlowDefinitionStore>) -> Self {
+    self.published_flows = Some(flows);
     self
   }
 
@@ -715,7 +725,20 @@ where
     )
     .await?;
     if let Some(flow) = &draft.flow {
-      crate::factory::authoring::factory_configuration_choices::validate_flow_choices(flow, &choices, "/flow")?;
+      crate::factory::authoring::factory_configuration_choices::validate_flow_choices(
+        flow,
+        &choices,
+        "/flow",
+        super::factory_configuration_choices::FlowChoiceValidation::Authoring,
+      )?;
+      super::factory_flow_definition::validate_accepted_predecessor(
+        flow,
+        project_id,
+        self.published_flows.as_deref(),
+        self.policy.as_ref(),
+        context,
+      )
+      .await?;
       crate::factory::execution::factory_code_sources::validate_sources(
         &flow.closure,
         project_id,

@@ -7,6 +7,7 @@
 #![forbid(unsafe_code)]
 #![deny(missing_docs)]
 
+pub use flow::PUBLISH_CANDIDATE_ACTION;
 pub use flow::{
   FlowIssueOutcomeLocation, FlowIssuePresentation, FlowIssuePresentationViolation, FlowIssueReferenceBinding,
   FlowIssueReferenceKind, FlowIssueSlot, FlowIssueSlotConflict, ISSUE_OUTCOME_DUPLICATE_COVERAGE,
@@ -19,7 +20,7 @@ pub use flow::{FlowProfileAdmissionOverride, FlowProfileAdmissionOverrides, Flow
 pub const MAX_FACTORY_EXECUTOR_BINDINGS: usize = 256;
 
 mod build_pipeline;
-pub use build_pipeline::{FactoryBuildCompilationContract, FactoryBuildPipelineContract};
+pub use build_pipeline::{FactoryBuildCommandContract, FactoryBuildCompilationContract, FactoryBuildPipelineContract};
 mod assessment;
 mod budget;
 mod budget_cost;

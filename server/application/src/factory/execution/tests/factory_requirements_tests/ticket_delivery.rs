@@ -1,6 +1,10 @@
 //! Ticket-delivery qualification against the common Factory owner.
 use super::*;
 
+fn delivery_context() -> ManagementRequestContext {
+  ManagementRequestContext::trusted_network(ManagementRequestId::new(uuid::Uuid::new_v4()).unwrap())
+}
+
 fn delivery_requirements_template(extra_parts: &[&str]) -> FlowDefinitionTemplate {
   let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../config/factory");
   let manifest = std::fs::read(root.join("presets/ticket-delivery/requirements-v1.json"))
@@ -81,14 +85,29 @@ fn ticket_delivery_freezes_requirements_from_the_accepted_triage_size() {
         "recommended_route": "requirements", "research_required": false, "research_accepted": false,
         "component": "api", "severity": "high", "dependencies": [],
       });
-      let (admission, execution, registry) =
-        delivery_requirements_fixture(template.clone(), json!({"summary": summary, "priority_assessment": 69}));
+      let (admission, execution, registry) = delivery_fixture_with_profiles(
+        template.clone(),
+        json!({"summary": summary, "priority_assessment": 69}),
+        |node, build| {
+          if kind == "feature_request" && node.key == key("specification_author") {
+            pin_delivery_profile(node, build);
+          }
+        },
+      );
       let store = Arc::new(testing::InMemoryFactoryConfigurationStore::new());
       let audit = testing::management_mutation_with_request((), "delivery-requirements")
         .audit()
         .clone();
       store
         .seed_factory_run(admission.clone(), FactoryDigest::from_bytes([1; 32]), &audit)
+        .unwrap();
+      let project = admission.work.subject().project_id();
+      store.seed_project(project).unwrap();
+      store
+        .enable_project(
+          project,
+          testing::factory_profile_selection_capabilities(&admission.flow),
+        )
         .unwrap();
       let run = admission.run.id();
       let claim = claim_run(store.as_ref(), run, 10).await;
@@ -97,7 +116,8 @@ fn ticket_delivery_freezes_requirements_from_the_accepted_triage_size() {
         registry,
         Arc::new(Inputs),
         crate::factory_node_test_support::clock(),
-      );
+      )
+      .with_profile_catalog(store.clone());
       let mut terminal = None;
       for tick in 31..70 {
         execution.clock.store(tick, Ordering::SeqCst);
@@ -161,6 +181,22 @@ fn ticket_delivery_freezes_requirements_from_the_accepted_triage_size() {
           .iter()
           .find(|record| record.input().node() == &key("specification_author"))
           .unwrap();
+        let accepted = snapshot
+          .flow
+          .data
+          .records
+          .iter()
+          .find(|record| record.input().node() == &key("specification_accepted"))
+          .unwrap();
+        assert_delivery_card(
+          &snapshot,
+          accepted,
+          "Specifications",
+          &[
+            author.metadata().unwrap()["build"]["outputs"]["change-set-manifest.json"]["artifact"].clone(),
+            author.metadata().unwrap()["build"]["outputs"]["change-set.bundle"]["artifact"].clone(),
+          ],
+        );
         for (field, output) in [
           ("manifest", "change-set-manifest.json"),
           ("bundle", "change-set.bundle"),
@@ -245,11 +281,20 @@ fn ticket_delivery_requirements_approval_pins_the_review_before_protected_tests(
       let (admission, execution, registry) =
         delivery_requirements_fixture(selected, json!({"summary": summary, "priority_assessment": priority}));
       let store = Arc::new(testing::InMemoryFactoryConfigurationStore::new());
+      store.seed_project(admission.run.configuration().project_id()).unwrap();
       let audit = testing::management_mutation_with_request((), "delivery-requirements-approval")
         .audit()
         .clone();
       store
-        .seed_factory_run(admission.clone(), FactoryDigest::from_bytes([1; 32]), &audit)
+        .seed_factory_admission(
+          admission.clone(),
+          octacity_server_store::FactoryWorkSourceScope {
+            source: key("manual"),
+            security_scope: octacity_server_store::ManagementSecurityScope::trusted_network(),
+          },
+          FactoryDigest::from_bytes([1; 32]),
+          &audit,
+        )
         .unwrap();
       let run = admission.run.id();
       let mut claim = claim_run(store.as_ref(), run, 10).await;
@@ -307,6 +352,36 @@ fn ticket_delivery_requirements_approval_pins_the_review_before_protected_tests(
           assert_eq!(input.payload().value()["size"], size);
           assert_eq!(input.payload().value()["component"], component);
           assert_eq!(input.payload().value().get("specification").is_some(), size == "large");
+          let page = crate::AuthorizedQueryHandler::new(
+            Arc::new(crate::TrustedNetworkManagementPolicy),
+            Arc::new(crate::FactoryDiscoveryHandlers::new(store.clone())),
+          )
+          .handle_query(
+            &delivery_context(),
+            crate::ListFactoryDiagnosticsQuery::try_new(
+              run,
+              crate::FactoryDiagnosticCollection::NodeAttempts,
+              None,
+              crate::MAX_FACTORY_DIAGNOSTIC_PAGE_SIZE,
+            )
+            .unwrap(),
+          )
+          .await
+          .unwrap();
+          let wire = serde_json::to_value(page).unwrap();
+          let gate = wire["items"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|item| item["record"]["id"] == json!(attempt.id()))
+            .unwrap();
+          let sources = gate["record"]["input_summary"]["accepted_results"]
+            .as_array()
+            .expect("pending requirements approval exposes a safe summary of its frozen input");
+          assert_eq!(sources.len(), 1);
+          assert_eq!(sources[0]["node"], "requirements_review_policy");
+          assert_eq!(sources[0]["digest"], json!(input.sources()[0].digest()));
+          assert!(sources[0].get("payload").is_none());
           owner = make_owner();
           assert_eq!(
             owner.reconcile_flow(run, claim.id, at(tick)).await.unwrap(),
@@ -780,8 +855,10 @@ fn ticket_delivery_reviews_each_candidate_before_protected_validation() {
         review,
         repository,
         candidates: Mutex::default(),
+        review_ttl_millis: None,
+        validation_ttl_millis: None,
       };
-      let (snapshot, terminal) = ticket_delivery_development_snapshot(template.clone(), outputs, None).await;
+      let (snapshot, terminal, _) = ticket_delivery_development_snapshot(template.clone(), outputs, None).await;
       assert_eq!(terminal, key(expected), "{review:?}/{repository:?}");
       if expected == "verified_candidate" {
         assert_eq!(snapshot.run.state(), FactoryRunState::Completed);
@@ -814,6 +891,42 @@ fn ticket_delivery_reviews_each_candidate_before_protected_validation() {
           "implementation_rework_exhausted" => assert_eq!(data["remediation"], json!(["Preserve the public contract"])),
           _ => unreachable!(),
         }
+      }
+      for accepted in snapshot
+        .flow
+        .data
+        .records
+        .iter()
+        .filter(|record| record.input().node() == &key("code_review_gate") && record.outcome() == &key("accepted"))
+      {
+        let review = snapshot
+          .flow
+          .data
+          .records
+          .iter()
+          .find(|record| {
+            record.input().node() == &key("review")
+              && record.payload().value()["candidate_revision"]
+                == accepted.input().payload().value()["review"]["candidate_revision"]
+          })
+          .unwrap();
+        let build = review.build_provenance().unwrap();
+        assert_eq!(
+          review.metadata().unwrap()["build"]
+            .as_object()
+            .unwrap()
+            .keys()
+            .map(String::as_str)
+            .collect::<Vec<_>>(),
+          ["outputs", "primary_fresh_until", "profile"],
+          "the entire Build metadata is a supported input projection for existing Runs"
+        );
+        let output = build
+          .outputs()
+          .iter()
+          .find(|output| output.name == build.profile().result_output)
+          .unwrap();
+        assert_delivery_card(&snapshot, accepted, "Code review", &[json!(output.artifact)]);
       }
       let attempts = &snapshot.flow.data.build_intents;
       let stages = |name| {
@@ -929,6 +1042,8 @@ struct TicketDeliveryChecks {
   review: [&'static str; 2],
   repository: [&'static str; 2],
   candidates: Mutex<Vec<Value>>,
+  review_ttl_millis: Option<i64>,
+  validation_ttl_millis: Option<i64>,
 }
 
 impl FactoryTestOutputBuilder for TicketDeliveryChecks {
@@ -986,11 +1101,26 @@ impl FactoryTestOutputBuilder for TicketDeliveryChecks {
       })),
       _ => None,
     };
-    QualifiedOutputs {
+    let mut outputs = QualifiedOutputs {
       feedback: None,
       validation: None,
     }
-    .outputs_with_report(request, builds, schema, requirements, report)
+    .outputs_with_report(
+      request,
+      builds,
+      schema,
+      requirements,
+      report,
+      self
+        .validation_ttl_millis
+        .map(|ttl| at(builds.created_at.unix_millis() + ttl)),
+    )?;
+    if schema.identity().as_str() == "factory.base.code_review"
+      && let Some(ttl) = self.review_ttl_millis
+    {
+      outputs.fresh_until = at(builds.created_at.unix_millis() + ttl);
+    }
+    Some(outputs)
   }
 }
 
@@ -998,7 +1128,11 @@ async fn ticket_delivery_development_snapshot(
   template: FlowDefinitionTemplate,
   outputs: TicketDeliveryChecks,
   publisher: Option<Arc<Publisher>>,
-) -> (FactoryRunSnapshot, FactoryKey) {
+) -> (
+  FactoryRunSnapshot,
+  FactoryKey,
+  Arc<testing::InMemoryFactoryConfigurationStore>,
+) {
   let summary = json!({"work_kind":"defect","size":"small","risk":"low","admission_risk":"low",
     "recommended_route":"requirements","research_required":false,"research_accepted":false,
     "component":"api","severity":"low","dependencies":[]});
@@ -1009,7 +1143,29 @@ async fn ticket_delivery_development_snapshot(
       if node.key == key("prepare_pull_request") {
         pin_delivery_profile(node, profile);
       }
-      if node.key == key("implementation") {
+      if node.key == key("replacement") {
+        let schemas = crate::factory_node_test_support::fixtures::supplied_base_flow_template()
+          .data_schemas()
+          .unwrap();
+        for name in ["change-set.bundle", "change-set-manifest.json", "candidate_facts"] {
+          let (kind, schema) = if name == "candidate_facts" {
+            (
+              EvidenceOutputKind::Report,
+              schemas[&key("candidate_capture_facts")].reference().clone(),
+            )
+          } else {
+            (EvidenceOutputKind::Artifact, reference("capture.artifacts"))
+          };
+          profile.evidence.push(EvidenceRequirement::new(
+            key(name),
+            kind,
+            schema,
+            reference("git.capture"),
+            profile.plugin.clone(),
+          ));
+        }
+      }
+      if matches!(node.key.as_str(), "implementation" | "replacement") {
         profile.result_output = key("codex-run-result");
         profile
           .evidence
@@ -1027,6 +1183,7 @@ async fn ticket_delivery_development_snapshot(
   let mut execution = Arc::try_unwrap(execution).ok().unwrap();
   execution.output_builder = Some(Arc::new(outputs));
   let exact = admission.work.subject().repository().unwrap();
+  let qualifies_publication = publisher.is_some();
   execution
     .reports
     .insert(key("tests_on_base"), baseline_report(exact, "completed", "matched"));
@@ -1038,6 +1195,7 @@ async fn ticket_delivery_development_snapshot(
   let expects_delayed_observation = restart_after_write
     .as_ref()
     .is_some_and(|publisher| publisher.lose_first_recovery_probe.load(Ordering::SeqCst));
+  let store = Arc::new(testing::InMemoryFactoryConfigurationStore::new());
   let registry = if let Some(publisher) = publisher {
     let definition = admission
       .flow
@@ -1046,11 +1204,14 @@ async fn ticket_delivery_development_snapshot(
       .unwrap();
     let node = definition.node(&key("publish_pull_request")).unwrap();
     let identity = node.action().unwrap().plugin().clone();
-    let publication = FactoryFlowActionAdapter::new(Arc::new(FactoryCandidatePublicationAction::new(
-      identity.clone(),
-      publisher,
-      node.outcome(&key("published")).unwrap().clone(),
-    )));
+    let publication = FactoryFlowActionAdapter::new(Arc::new(
+      FactoryCandidatePublicationAction::new(
+        identity.clone(),
+        publisher,
+        node.outcome(&key("published")).unwrap().clone(),
+      )
+      .with_run_store(store.clone()),
+    ));
     let adapter = Arc::new(FactoryNodeBuildAdapter::new(execution.clone(), execution.clone()));
     let tool = NodeExecutionIdentity::External(fixtures_build_tool(&admission));
     Arc::new(
@@ -1072,19 +1233,30 @@ async fn ticket_delivery_development_snapshot(
   } else {
     delivery_execution_registry(&admission, &execution)
   };
-  let store = Arc::new(testing::InMemoryFactoryConfigurationStore::new());
+  let project = admission.work.subject().project_id();
+  store.seed_project(project).unwrap();
+  if qualifies_publication {
+    publish_manual_delivery_configuration(&admission, &store).await;
+  } else {
+    store
+      .enable_project(
+        project,
+        testing::factory_profile_selection_capabilities(&admission.flow),
+      )
+      .unwrap();
+  }
   let audit = testing::management_mutation_with_request((), "ticket-delivery-development")
     .audit()
     .clone();
   store
-    .seed_factory_run(admission.clone(), FactoryDigest::from_bytes([1; 32]), &audit)
-    .unwrap();
-  let project = admission.work.subject().project_id();
-  store.seed_project(project).unwrap();
-  store
-    .enable_project(
-      project,
-      testing::factory_profile_selection_capabilities(&admission.flow),
+    .seed_factory_admission(
+      admission.clone(),
+      octacity_server_store::FactoryWorkSourceScope {
+        source: key("manual"),
+        security_scope: octacity_server_store::ManagementSecurityScope::trusted_network(),
+      },
+      FactoryDigest::from_bytes([1; 32]),
+      &audit,
     )
     .unwrap();
   let run = admission.run.id();
@@ -1155,7 +1327,7 @@ async fn ticket_delivery_development_snapshot(
     }
     match step.unwrap() {
       FactoryFlowStep::Advanced => {}
-      FactoryFlowStep::Resolved(outcome) => return (store.factory_run_snapshot(run).await.unwrap(), outcome),
+      FactoryFlowStep::Resolved(outcome) => return (store.factory_run_snapshot(run).await.unwrap(), outcome, store),
       FactoryFlowStep::Waiting => {
         let snapshot = store.factory_run_snapshot(run).await.unwrap();
         if snapshot.run.state() == FactoryRunState::Waiting {
@@ -1167,7 +1339,7 @@ async fn ticket_delivery_development_snapshot(
             .find(|attempt| attempt.node_kind() == FlowNodeKind::HumanGate)
             .unwrap();
           let gate = gate.node_key().clone();
-          return (snapshot, gate);
+          return (snapshot, gate, store);
         }
       }
       other => panic!("unexpected delivery development progress {other:?}"),
@@ -1267,6 +1439,210 @@ fn pull_request_template() -> (FlowDefinitionTemplate, FactoryKey, octacity_serv
   (template, writer, host)
 }
 
+async fn publish_manual_delivery_configuration(
+  admission: &PublishedFactoryAdmission,
+  store: &Arc<testing::InMemoryFactoryConfigurationStore>,
+) {
+  use crate::factory_node_test_support::publication::PublicationChoices;
+  use crate::{
+    AuthorizedCommandHandler, CreateFactoryConfigurationCommand, CreateFactoryFlowDefinitionCommand,
+    FactoryConfigurationHandlers, FactoryFlowDefinitionDraft, FactoryFlowDefinitionHandlers,
+    TrustedNetworkManagementPolicy,
+  };
+  let admitted = &admission.flow;
+  let configuration = admission.work.configuration();
+  let project = configuration.project_id();
+  let root = admitted.closure().definition(admitted.closure().root()).unwrap();
+  let original = testing::factory_profile_selection_capabilities(admitted);
+  let mut entries = original.entries();
+  let mut register = |kind, reference: &ImmutableReference| {
+    if !entries
+      .references
+      .iter()
+      .any(|entry| entry.kind == kind && &entry.reference == reference)
+    {
+      entries.references.push(FactoryReferenceChoice {
+        kind,
+        alias: key(&format!("installed.{}", entries.references.len())),
+        reference: reference.clone(),
+      });
+    }
+  };
+  let installed = FactoryChoiceKind::NodeCapability;
+  for node in root.nodes() {
+    for build in node.build_bindings() {
+      for reference in [&build.tool, &build.plugin, &build.model_or_tool, build.result_tool()] {
+        register(installed, reference);
+      }
+      for evidence in &build.evidence {
+        register(installed, evidence.tool());
+        register(installed, evidence.plugin());
+      }
+      if !entries
+        .build_configurations
+        .iter()
+        .any(|(_, reference)| reference == &build.build_configuration)
+      {
+        entries.build_configurations.push((
+          key(&format!("installed.build.{}", entries.build_configurations.len())),
+          build.build_configuration.clone(),
+        ));
+      }
+    }
+    if let Some(action) = node.action() {
+      register(installed, action.plugin());
+    }
+  }
+  for name in root.execution().permissions().secret_profiles() {
+    entries.references.push(FactoryReferenceChoice {
+      kind: FactoryChoiceKind::SecretProfile,
+      alias: name.clone(),
+      reference: reference(name.as_str()),
+    });
+  }
+  for (kind, name) in [
+    (FactoryChoiceKind::AdmissionPolicy, "manual-launch"),
+    (FactoryChoiceKind::PermissionCeiling, "delivery-access"),
+  ] {
+    entries.references.push(FactoryReferenceChoice {
+      kind,
+      alias: key(name),
+      reference: reference(name),
+    });
+  }
+  let publisher = root.node(&key("publish_pull_request")).unwrap();
+  let action = publisher.action().unwrap();
+  let outcome = publisher.outcome(&key("published")).unwrap().clone();
+  let mut choices = FactoryConfigurationChoices::try_new(entries)
+    .unwrap()
+    .with_candidate_publication(FactoryCandidatePublicationChoice {
+      plugin: action.plugin().clone(),
+      target: ImmutableReference::new(
+        key("production.review"),
+        key("v1"),
+        FactoryDigest::from_bytes([0xaa; 32]),
+      ),
+      receipt_schema: Some(admitted.data_schema(outcome.schema()).unwrap().clone()),
+      repository_id: admission.work.subject().repository().unwrap().repository_id(),
+      outcome,
+      review_url: true,
+      permissions: Default::default(),
+    })
+    .unwrap();
+  for (alias, capability) in original.role_profile_capabilities() {
+    choices = choices
+      .with_role_profile_capability(alias.clone(), capability.clone())
+      .unwrap();
+  }
+  let policy = Arc::new(TrustedNetworkManagementPolicy);
+  let authoring = AuthorizedCommandHandler::new(
+    policy.clone(),
+    Arc::new(FactoryFlowDefinitionHandlers::new(
+      Arc::new(PublicationChoices::for_publication(choices.clone())),
+      policy.clone(),
+    )),
+  );
+  let mut wire = serde_json::to_value(root).unwrap();
+  wire.as_object_mut().unwrap().remove("reference");
+  let context = delivery_context();
+  let published = authoring
+    .handle_command(
+      &context,
+      CreateFactoryFlowDefinitionCommand {
+        id: root.reference().id(),
+        project_id: project,
+        draft: FactoryFlowDefinitionDraft {
+          accepted_predecessor: None,
+          root: serde_json::from_value(wire).unwrap(),
+          limits: admitted.limits().clone(),
+          data_schemas: admitted.data_schemas().to_vec(),
+          pools: admitted.pool_settings().clone(),
+        },
+        idempotency_key: "manual-delivery-flow".parse().unwrap(),
+        published_at: at(1),
+      },
+    )
+    .await
+    .unwrap();
+  assert_eq!(&published.publication.flow.closure, admitted.closure());
+  store.enable_project(project, choices).unwrap();
+  let configurations = AuthorizedCommandHandler::new(
+    policy.clone(),
+    Arc::new(FactoryConfigurationHandlers::with_policy(store.clone(), policy.clone())),
+  );
+  let saved = configurations
+    .handle_command(
+      &context,
+      CreateFactoryConfigurationCommand {
+        id: configuration.id(),
+        project_id: project,
+        definition_digest: configuration.definition_digest(),
+        draft: FactoryConfigurationDraft {
+          admission_policy: key("manual-launch").into(),
+          permission_ceiling: key("delivery-access").into(),
+          flow: Some(published.publication.flow),
+          wip_limits: admitted.wip_limits(),
+          hard_budget: admitted.limits().budget(),
+          enabled: true,
+        },
+        idempotency_key: "manual-delivery-configuration".parse().unwrap(),
+        published_at: at(1),
+      },
+    )
+    .await
+    .unwrap();
+  let saved = saved.configuration.configuration;
+  assert_eq!(saved.reference(), configuration);
+  assert_eq!(&saved.flow().closure, admitted.closure());
+  let readiness = crate::AuthorizedQueryHandler::new(
+    policy.clone(),
+    Arc::new(
+      crate::FactoryReadinessHandlers::new(
+        store.clone(),
+        policy,
+        crate::factory_node_test_support::clock(),
+        std::time::Duration::from_secs(30),
+      )
+      .unwrap(),
+    ),
+  );
+  let candidate_repository = admission.work.subject().repository().unwrap().repository_id();
+  for (id, expected) in [
+    (candidate_repository, crate::FactoryReadinessState::Ready),
+    (
+      octacity_server_domain::RepositoryId::generate(),
+      crate::FactoryReadinessState::Blocked,
+    ),
+  ] {
+    let report = readiness
+      .handle_query(
+        &context,
+        crate::GetFactoryReadinessQuery {
+          id: configuration.id(),
+          version: configuration.version(),
+          selection: crate::FactoryReadinessSelection {
+            repository: WorkSourceRepositoryRef {
+              project_id: project,
+              id,
+              version: octacity_server_domain::RepositoryVersion::INITIAL,
+              definition_digest: FactoryDigest::from_bytes([9; 32]),
+            },
+            input: None,
+          },
+        },
+      )
+      .await
+      .unwrap();
+    assert!(
+      report
+        .checks
+        .iter()
+        .any(|check| check.aspect == "publication_target" && check.state == expected),
+      "readiness must evaluate the installed target against the selected repository"
+    );
+  }
+}
+
 #[test]
 fn ticket_delivery_retains_publication_conflict_without_success() {
   crate::factory_flow_tests::run_ready(async {
@@ -1282,8 +1658,10 @@ fn ticket_delivery_retains_publication_conflict_without_success() {
       review: ["satisfied"; 2],
       repository: ["passed"; 2],
       candidates: Mutex::default(),
+      review_ttl_millis: None,
+      validation_ttl_millis: None,
     };
-    let (snapshot, terminal) = ticket_delivery_development_snapshot(template, checks, Some(publisher.clone())).await;
+    let (snapshot, terminal, _) = ticket_delivery_development_snapshot(template, checks, Some(publisher.clone())).await;
     assert_eq!(terminal, key("publication_blocked"));
     let publication = snapshot
       .flow
@@ -1312,19 +1690,7 @@ fn ticket_delivery_retains_final_rejections_without_a_forge_write() {
       (PublicationCase::ProviderRejected, "provider_rejected"),
       (PublicationCase::Normal, "validation_expired"),
     ] {
-      let (mut template, _, _) = pull_request_template();
-      if behavior == PublicationCase::Normal {
-        let publication = template
-          .nodes
-          .iter_mut()
-          .find(|node| node.key == key("publish_pull_request"))
-          .unwrap();
-        let binding = publication.action.as_ref().unwrap();
-        let mut parameters = binding.parameters().clone();
-        parameters["valid_until"] = json!({"value":{"mapping":"constant","value":0}});
-        publication.action =
-          Some(FlowActionBinding::new(binding.plugin().clone(), binding.action().clone(), parameters).unwrap());
-      }
+      let (template, _, _) = pull_request_template();
       let publisher = Arc::new(Publisher {
         behavior,
         lost: AtomicBool::new(false),
@@ -1336,9 +1702,15 @@ fn ticket_delivery_retains_final_rejections_without_a_forge_write() {
         review: ["satisfied"; 2],
         repository: ["passed"; 2],
         candidates: Mutex::default(),
+        review_ttl_millis: None,
+        validation_ttl_millis: (behavior == PublicationCase::Normal).then_some(4),
       };
-      let (snapshot, terminal) = ticket_delivery_development_snapshot(template, checks, Some(publisher.clone())).await;
+      let (snapshot, terminal, _) =
+        ticket_delivery_development_snapshot(template, checks, Some(publisher.clone())).await;
       assert_eq!(terminal, key("publication_blocked"));
+      assert!(snapshot.flow.data.records.iter().any(|record| {
+        record.input().node() == &key("protected_validation_gate") && record.outcome() == &key("passed")
+      }));
       let publication = snapshot
         .flow
         .data
@@ -1347,8 +1719,41 @@ fn ticket_delivery_retains_final_rejections_without_a_forge_write() {
         .find(|row| row.input().node() == &key("publish_pull_request"))
         .unwrap();
       assert_eq!(publication.payload().value(), &json!({"reason":reason}));
+      assert!(
+        publication
+          .discovery()
+          .and_then(FlowDiscoveryFacts::confirmed_candidate_review)
+          .is_none()
+      );
       assert!(publisher.requests.lock().unwrap().is_empty());
     }
+  });
+}
+
+#[test]
+fn ticket_delivery_blocks_new_pr_when_review_expires_after_its_gate() {
+  crate::factory_flow_tests::run_ready(async {
+    let (template, _, _) = pull_request_template();
+    let publisher = Arc::new(Publisher {
+      behavior: PublicationCase::Normal,
+      lost: AtomicBool::new(false),
+      lose_first_recovery_probe: AtomicBool::new(false),
+      writes: Mutex::default(),
+      requests: Mutex::default(),
+    });
+    let checks = TicketDeliveryChecks {
+      review: ["satisfied"; 2],
+      repository: ["passed"; 2],
+      candidates: Mutex::default(),
+      review_ttl_millis: Some(8),
+      validation_ttl_millis: None,
+    };
+    let (snapshot, terminal, _) = ticket_delivery_development_snapshot(template, checks, Some(publisher.clone())).await;
+    assert!(snapshot.flow.data.records.iter().any(|record| {
+      record.input().node() == &key("protected_validation_gate") && record.outcome() == &key("passed")
+    }));
+    assert_eq!(terminal, key("publication_blocked"));
+    assert!(publisher.writes.lock().unwrap().is_empty());
   });
 }
 
@@ -1368,8 +1773,11 @@ fn ticket_delivery_recovers_the_original_pr_after_the_publish_response_is_lost()
         review: ["satisfied"; 2],
         repository: ["passed"; 2],
         candidates: Mutex::default(),
+        review_ttl_millis: None,
+        validation_ttl_millis: None,
       };
-      let (snapshot, terminal) = ticket_delivery_development_snapshot(template, checks, Some(publisher.clone())).await;
+      let (snapshot, terminal, _) =
+        ticket_delivery_development_snapshot(template, checks, Some(publisher.clone())).await;
       assert!(publisher.lost.load(Ordering::SeqCst));
       assert_eq!(terminal, key("delivered_for_review"));
       let attempts = snapshot
@@ -1395,6 +1803,11 @@ fn ticket_delivery_recovers_the_original_pr_after_the_publish_response_is_lost()
       assert_eq!(requests.len(), 1);
       assert_eq!(publisher.writes.lock().unwrap().len(), 1);
       let retained = receipts[0].payload().value();
+      let verified_facts = serde_json::to_value(receipts[0].discovery()).unwrap();
+      assert_eq!(
+        verified_facts["review_url"], "https://forge.example/team/repository/pull/23",
+        "Issue links need trusted facts independent of the outcome payload"
+      );
       assert_eq!(retained["receipt"], json!(requests[0].operation_id));
       assert_eq!(retained["external"]["review_identity"], "23");
       assert_eq!(retained["external"]["review_state"], "open");
@@ -1406,6 +1819,152 @@ fn ticket_delivery_recovers_the_original_pr_after_the_publish_response_is_lost()
         retained["external"]["remote_head"],
         json!(requests[0].candidate.candidate_revision())
       );
+    }
+  });
+}
+
+#[test]
+fn ticket_delivery_blocks_a_replacement_candidate_without_its_own_checks() {
+  crate::factory_flow_tests::run_ready(async {
+    let (mut template, _, _) = pull_request_template();
+    let mut replacement = template
+      .nodes
+      .iter()
+      .find(|node| node.key == key("implementation"))
+      .unwrap()
+      .clone();
+    replacement.key = key("replacement");
+    replacement.build_profile = Some(key("replacement"));
+    replacement.input_binding = serde_json::from_value(json!({
+      "sources": {"original": {"source":"record", "node":"implementation", "outcome":"observed", "view":"input_payload", "path":""}},
+      "mapping": {"value": {"mapping":"pointer", "path":"/original"}}
+    })).unwrap();
+    template.nodes.push(replacement);
+    template.transitions.retain(
+      |edge| !matches!(edge.target(), FlowTransitionTarget::Node(node) if node == &key("publish_pull_request")),
+    );
+    for (from, to) in [
+      ("prepare_pull_request", "replacement"),
+      ("replacement", "publish_pull_request"),
+    ] {
+      template.transitions.push(FlowTransition::new(
+        key(from),
+        key("observed"),
+        FlowTransitionTarget::Node(key(to)),
+      ));
+    }
+    let publisher_node = template
+      .nodes
+      .iter_mut()
+      .find(|node| node.key == key("publish_pull_request"))
+      .unwrap();
+    let mut binding = serde_json::to_value(&publisher_node.input_binding).unwrap();
+    binding["sources"]["metadata"] =
+      json!({"source":"record", "node":"prepare_pull_request", "outcome":"observed", "view":"payload", "path":""});
+    for alias in ["bundle", "manifest"] {
+      binding["sources"][alias]["node"] = json!("replacement");
+    }
+    binding["sources"]["replacement"] = json!({"source":"record", "node":"replacement", "outcome":"observed", "view":"metadata", "path":"/build/outputs/candidate_facts/data/payload/value"});
+    for field in ["candidate_revision", "candidate_digest"] {
+      binding["mapping"]["value"]["fields"][field] =
+        json!({"mapping":"pointer", "path":format!("/replacement/{field}")});
+    }
+    publisher_node.input_binding = serde_json::from_value(binding).unwrap();
+    let publisher = Arc::new(Publisher {
+      behavior: PublicationCase::Normal,
+      lost: AtomicBool::new(false),
+      lose_first_recovery_probe: AtomicBool::new(false),
+      writes: Mutex::default(),
+      requests: Mutex::default(),
+    });
+    let (snapshot, terminal, _) = ticket_delivery_development_snapshot(
+      template,
+      TicketDeliveryChecks {
+        review: ["satisfied"; 2],
+        repository: ["passed"; 2],
+        candidates: Mutex::default(),
+        review_ttl_millis: None,
+        validation_ttl_millis: None,
+      },
+      Some(publisher.clone()),
+    )
+    .await;
+    let records = &snapshot.flow.data.records;
+    let reviewed = records
+      .iter()
+      .find(|record| record.input().node() == &key("review"))
+      .unwrap();
+    let attempted = records
+      .iter()
+      .find(|record| record.input().node() == &key("publish_pull_request"))
+      .unwrap();
+    assert_ne!(
+      reviewed.payload().value()["candidate_revision"],
+      attempted.input().payload().value()["candidate_revision"]
+    );
+    assert_eq!(terminal, key("publication_blocked"));
+    assert!(publisher.writes.lock().unwrap().is_empty());
+  });
+}
+
+#[test]
+fn ticket_delivery_blocks_publication_with_a_negative_review_or_validation_report() {
+  crate::factory_flow_tests::run_ready(async {
+    for (review, validation) in [("violated", "passed"), ("satisfied", "failed")] {
+      let (mut template, _, _) = pull_request_template();
+      // A hand-authored gate can route a completed report regardless of its verdict.
+      for (node, outcome) in [
+        ("code_review_gate", "accepted"),
+        ("protected_validation_gate", "passed"),
+      ] {
+        let gate = template
+          .nodes
+          .iter_mut()
+          .find(|step| step.key == key(node))
+          .unwrap()
+          .gate
+          .as_mut()
+          .unwrap();
+        let mut program = serde_json::to_value(&*gate).unwrap();
+        let rule = program["rules"]
+          .as_array_mut()
+          .unwrap()
+          .iter_mut()
+          .find(|rule| rule["outcome"] == outcome)
+          .unwrap();
+        rule["when"] = json!({
+          "operation": "compare",
+          "left": {"source": "literal", "value": true},
+          "comparison": "equal",
+          "right": {"source": "literal", "value": true}
+        });
+        *gate = serde_json::from_value(program).unwrap();
+      }
+      let publisher = Arc::new(Publisher {
+        behavior: PublicationCase::Normal,
+        lost: AtomicBool::new(false),
+        lose_first_recovery_probe: AtomicBool::new(false),
+        writes: Mutex::default(),
+        requests: Mutex::default(),
+      });
+      let (_, terminal, _) = ticket_delivery_development_snapshot(
+        template,
+        TicketDeliveryChecks {
+          review: [review; 2],
+          repository: [validation; 2],
+          candidates: Mutex::default(),
+          review_ttl_millis: None,
+          validation_ttl_millis: None,
+        },
+        Some(publisher.clone()),
+      )
+      .await;
+      assert_eq!(
+        terminal,
+        key("publication_blocked"),
+        "review {review}, validation {validation}"
+      );
+      assert!(publisher.writes.lock().unwrap().is_empty());
     }
   });
 }
@@ -1425,8 +1984,11 @@ fn devops_prepares_an_exact_candidate_for_trusted_production_pr_publication() {
       review: ["violated", "satisfied"],
       repository: ["passed"; 2],
       candidates: Mutex::default(),
+      review_ttl_millis: None,
+      validation_ttl_millis: None,
     };
-    let (snapshot, terminal) = ticket_delivery_development_snapshot(template, checks, Some(publisher.clone())).await;
+    let (snapshot, terminal, store) =
+      ticket_delivery_development_snapshot(template, checks, Some(publisher.clone())).await;
     assert_eq!(terminal, key("delivered_for_review"));
     let attempts = &snapshot.flow.data.build_intents;
     let devops = attempts
@@ -1549,6 +2111,48 @@ fn devops_prepares_an_exact_candidate_for_trusted_production_pr_publication() {
         .iter()
         .all(|row| row.kind.as_str() != "work.status.projection")
     );
+    let queries = crate::AuthorizedQueryHandler::new(
+      Arc::new(crate::TrustedNetworkManagementPolicy),
+      Arc::new(crate::FactoryDiscoveryHandlers::new(store)),
+    );
+    let page = queries
+      .handle_query(
+        &delivery_context(),
+        crate::ListFactoryDiagnosticsQuery::try_new(
+          snapshot.run.id(),
+          crate::FactoryDiagnosticCollection::NodeCompletions,
+          None,
+          crate::MAX_FACTORY_DIAGNOSTIC_PAGE_SIZE,
+        )
+        .unwrap(),
+      )
+      .await
+      .unwrap();
+    let wire = serde_json::to_value(page).unwrap();
+    for name in ["review", "protected_validation"] {
+      let row = record(name);
+      let result = wire["items"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|item| item["record"]["node_attempt_id"] == json!(row.node_attempt_id()))
+        .unwrap();
+      let build = row.build_provenance().unwrap();
+      let report = build
+        .outputs()
+        .iter()
+        .find(|output| output.name == build.profile().result_output)
+        .unwrap();
+      assert_eq!(
+        result["record"]["verified_report"],
+        json!({
+          "content_digest": report.artifact.content_digest(),
+          "verified_at": report.verified_at,
+          "fresh_until": report.fresh_until,
+        })
+      );
+      assert!(result["record"].get("public_result").is_none());
+    }
     assert_eq!(snapshot.run.state(), FactoryRunState::Completed);
   });
 }
@@ -1584,4 +2188,36 @@ fn delivery_execution_registry(
     ])
     .unwrap(),
   )
+}
+
+fn assert_delivery_card(snapshot: &FactoryRunSnapshot, record: &FlowNodeRecord, title: &str, artifacts: &[Value]) {
+  let definition = snapshot
+    .admitted_flow
+    .closure()
+    .definition(snapshot.admitted_flow.root_run().definition())
+    .unwrap();
+  let presentation = definition
+    .node(record.input().node())
+    .unwrap()
+    .outcome(record.outcome())
+    .unwrap()
+    .issue_presentation()
+    .expect("the accepted result must offer a card on its Issue");
+  let value = record.payload().value();
+  let references = octacity_server_store::IssueOutcomeReference::from_accepted(presentation, value);
+  let expected: Vec<_> = artifacts
+    .iter()
+    .map(|value| octacity_server_store::IssueOutcomeReference::Artifact(serde_json::from_value(value.clone()).unwrap()))
+    .collect();
+  assert_eq!(references, expected);
+  let (conclusion, content) = octacity_server_store::IssueOutcomeContent::project(
+    presentation.clone(),
+    value,
+    octacity_server_store::IssueOutcomeClassification::Recommended,
+  )
+  .unwrap();
+  assert!(!conclusion.is_empty());
+  assert!(
+    matches!(content, octacity_server_store::IssueOutcomeContent::Custom { title: name } if name.as_str() == title)
+  );
 }

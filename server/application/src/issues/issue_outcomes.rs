@@ -119,20 +119,34 @@ impl<S: IssueCodeReviewStore + IssueOutcomeStore> ManagementQueryUseCase<GetIssu
           octacity_server_store::IssueOutcomeReference::from_accepted(&candidate.presentation, &record.value);
         let (conclusion, content) =
           IssueOutcomeContent::project(candidate.presentation, &record.value, record.classification)?;
-        let links = self
-          .links
-          .resolve(
+        let links = if content == IssueOutcomeContent::Publication {
+          let Some(link) = crate::issues::issue_outcome_links::confirmed_publication(
             context,
             self.policy.as_ref(),
-            crate::issues::issue_outcome_links::IssueOutcomeLinkScope {
-              project: query.project_id,
-              issue: query.issue_id,
-              work_id: candidate.work_id,
-              inputs: &record.inputs,
-            },
-            &references,
+            query.project_id,
+            record.publication.as_ref(),
           )
-          .await?;
+          .await
+          else {
+            continue;
+          };
+          vec![link]
+        } else {
+          self
+            .links
+            .resolve(
+              context,
+              self.policy.as_ref(),
+              crate::issues::issue_outcome_links::IssueOutcomeLinkScope {
+                project: query.project_id,
+                issue: query.issue_id,
+                work_id: candidate.work_id,
+                inputs: &record.inputs,
+              },
+              &references,
+            )
+            .await?
+        };
         slots.insert(candidate.slot.clone());
         cards.push(IssueOutcomeCard {
           summary: octacity_server_store::IssueOutcomeCard {

@@ -30,7 +30,11 @@
           "priority": {"source": "predecessor", "view": "input_payload", "path": "/priority_assessment"}
         },
         "mapping": {"value": {"mapping": "object", "fields": {
-          "summary": {"mapping": "pointer", "path": "/summary"},
+          "summary": {
+            "mapping": "if_present", "path": "/summary/summary",
+            "then": {"mapping": "pointer", "path": "/summary/summary"},
+            "otherwise": {"mapping": "pointer", "path": "/summary"}
+          },
           "priority_assessment": {"mapping": "pointer", "path": "/priority"}
         }}}
       },

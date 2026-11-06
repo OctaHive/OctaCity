@@ -31,6 +31,8 @@ pub enum IssueOutcomeLinkTarget {
   },
   /// Exact review association on the selected Issue.
   Review(FactoryDigest),
+  /// Verified pull request from the retained publication receipt.
+  PullRequest(String),
   /// Visible metadata survives after content expiry.
   Unavailable,
 }
@@ -188,6 +190,36 @@ impl<S: IssueCodeReviewStore> IssueOutcomeLinkReaders<S> {
       metadata.availability == IssueArtifactAvailability::Expired || metadata.expires_at.is_some_and(|end| now >= end);
     Ok(Some(named_link(metadata.name, target, expired)))
   }
+}
+
+/// The publication link is visible only with access to its exact repository.
+pub(crate) async fn confirmed_publication(
+  context: &ManagementRequestContext,
+  policy: &dyn ManagementAuthorizationPolicy,
+  project: ProjectId,
+  facts: Option<&octacity_server_factory::FlowDiscoveryFacts>,
+) -> Option<IssueOutcomeLink> {
+  use crate::factory::{
+    artifacts::factory_candidate_publication::FactoryPublicationFacts,
+    authoring::factory_configuration_choices::require_visible_reference,
+  };
+  let (subject, url) = facts?.confirmed_candidate_review()?;
+  let parsed = url::Url::parse(url).ok()?;
+  if subject.project_id() != project || !FactoryPublicationFacts::is_safe_review_url(&parsed) {
+    return None;
+  }
+  require_visible_reference(
+    policy,
+    context,
+    ManagementResourceKind::Repository,
+    subject.repository_id(),
+  )
+  .await
+  .ok()?;
+  Some(IssueOutcomeLink {
+    title: None,
+    target: IssueOutcomeLinkTarget::PullRequest(parsed.into()),
+  })
 }
 
 async fn artifact_visible(

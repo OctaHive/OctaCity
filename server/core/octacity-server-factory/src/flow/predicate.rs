@@ -306,6 +306,15 @@ impl FlowGateProgram {
     program.validate_outcomes(node)?;
     Ok(program)
   }
+  /// Checks every mapping that can produce a field of the declared outcome.
+  pub fn outcome_selects_only(&self, outcome: &FactoryKey, path: &str, check: &mut impl FnMut(&str) -> bool) -> bool {
+    let output = self.outputs.get(outcome).or(self.default_output.as_ref());
+    let failed = (outcome == &self.fallback)
+      .then_some(self.precondition_failure_output.as_ref())
+      .flatten();
+    output.is_some_and(|mapping| mapping.selects_only(path, check))
+      && failed.is_none_or(|mapping| mapping.selects_only(path, check))
+  }
   pub(crate) fn validate_outcomes(&self, node: &FlowNodeDefinition) -> Result<(), FactoryError> {
     if node.outcome(&self.fallback).is_none() || self.rules.iter().any(|rule| node.outcome(&rule.outcome).is_none()) {
       return Err(invalid());

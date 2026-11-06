@@ -35,3 +35,64 @@ it('requires manual reconciliation for overlapping mount scopes instead of widen
   expect(onChange).not.toHaveBeenCalled();
   expect(node.permissions.mounts).toEqual([{ root: '/workspace', mode: 'read_only' }]);
 });
+
+it('reviews only the selected publication target permissions before applying them', async () => {
+  const { configuration } = factoryProfileConfigurationFixture();
+  const { reference: _reference, ...root } = configuration.flow.closure.definitions[0]!;
+  void _reference;
+  const plugin = { identity: 'publisher', version: 'v1', digest: 'a'.repeat(64) };
+  const adapter = { ...plugin, identity: 'forge-adapter' };
+  const target = { ...plugin, identity: 'review-target' };
+  const node = {
+    ...root.nodes[0]!,
+    profile_selection: null,
+    action: { plugin, action: 'publish_candidate', parameters: { target } },
+    permissions: emptyFactoryPermissions(),
+  };
+  const permissions = {
+    ...emptyFactoryPermissions(),
+    plugins: [adapter, plugin],
+    network_hosts: ['forge.example'],
+    secret_profiles: ['delivery-writer'],
+  };
+  const choice = {
+    plugin,
+    target,
+    outcome: node.outcomes[0]!,
+    receipt_schema: configuration.flow.data_schemas[0]!,
+    review_url: true,
+    permissions,
+  };
+  const publications = [
+    choice,
+    {
+      ...choice,
+      target: { ...target, identity: 'different-target' },
+      permissions: { ...permissions, secret_profiles: ['different-writer'] },
+    },
+  ];
+  const onChange = vi.fn();
+  render(
+    <AccessRequirements
+      value={{
+        root: { ...root, nodes: [node] },
+        limits: configuration.flow.limits,
+        data_schemas: configuration.flow.data_schemas,
+      }}
+      publications={publications}
+      onChange={onChange}
+    />,
+  );
+  await userEvent.click(screen.getByRole('button', { name: 'Review required access' }));
+  expect(onChange).not.toHaveBeenCalled();
+  await userEvent.click(
+    within(screen.getByRole('dialog')).getByRole('button', { name: 'Apply to draft' }),
+  );
+  expect(onChange.mock.lastCall?.[0].root.nodes[0].permissions).toEqual(permissions);
+  expect(onChange.mock.lastCall?.[0].limits.permissions.secret_profiles).toContain(
+    'delivery-writer',
+  );
+  expect(onChange.mock.lastCall?.[0].limits.permissions.secret_profiles).not.toContain(
+    'different-writer',
+  );
+});

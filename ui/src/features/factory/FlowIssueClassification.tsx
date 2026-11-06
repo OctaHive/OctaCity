@@ -1,7 +1,7 @@
+import { useFactoryAuthoringCapabilities } from './useFactoryAuthoringCapabilities';
 import { useEffect, useRef, useState } from 'react';
-import { replaceEqualDeep, useQuery } from '@tanstack/react-query';
+import { replaceEqualDeep } from '@tanstack/react-query';
 import type { components } from '../../../.generated/api/schema';
-import { queryKeys } from '../../app/query';
 import { usePresentation } from '../../app/presentation/PresentationProvider';
 import { QueryFailureNotice } from '../../shared/QueryStateNotice';
 import { SelectMenu } from '../../shared/SelectMenu';
@@ -91,12 +91,7 @@ export function FlowIssueClassification({
     },
     [onPendingChange],
   );
-  const capabilities = useQuery({
-    queryKey: queryKeys.factoryAuthoringCapabilities(services.projectId),
-    queryFn: ({ signal }) => services.api.getAuthoringCapabilities(services.projectId, signal),
-    enabled: enabled || configured,
-    staleTime: 0,
-  });
+  const capabilities = useFactoryAuthoringCapabilities(services, enabled || configured, 0);
   const choices = capabilities.data?.issue_classification;
   const producers = root.transitions.flatMap((edge) => {
     if (

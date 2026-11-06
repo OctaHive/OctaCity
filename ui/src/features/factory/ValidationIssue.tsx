@@ -7,6 +7,7 @@ import { BUDGET_LABELS } from './ResourceEditors';
 const fields: Record<string, MessageKey> = {
   key: 'factory.nodeName',
   input_schema: 'factory.inputSchema',
+  data_schemas: 'factory.advancedContracts',
   build: 'factory.executor',
   gate: 'factory.conditionCheck',
   profile_selection: 'factory.executor',

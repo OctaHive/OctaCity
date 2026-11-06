@@ -62,6 +62,11 @@ pub(super) fn insert(schemas: &mut Map<String, Value>) {
         ("outcome", key()),
         ("output_schema", schema_ref("FactoryImmutableReferenceResource")),
         ("output_digest", schema_ref("FactoryDigest")),
+        ("verified_report", object([
+          ("content_digest", schema_ref("FactoryDigest")),
+          ("verified_at", integer()),
+          ("fresh_until", integer()),
+        ], &["content_digest", "verified_at", "fresh_until"])),
         ("result_provenance", json!({"type":"array","description":"Exact retained executing or explicitly selected producer calls, without Context bytes.","items":schema_ref("FactoryCallDiagnostic")})),
         ("public_result", json!({
           "description":"Original result value, validated by output_schema, present only for an explicitly public admitted outcome.",
@@ -177,6 +182,28 @@ pub(super) fn insert(schemas: &mut Map<String, Value>) {
       node_fields.into_iter().chain([
         ("retryable", json!({"type":"boolean"})),
         ("active", json!({"type":"boolean"})),
+        (
+          "input_summary",
+          object(
+            [
+              (
+                "accepted_results",
+                json!({"type":"array","items":object([
+            ("node", key()), ("outcome", key()), ("digest", schema_ref("FactoryDigest")),
+          ], &["node", "outcome", "digest"])}),
+              ),
+              ("context_sources", json!({"type":"array","items":{"type":"string"}})),
+              ("work_task", json!({"type":"boolean"})),
+              ("work_acceptance", json!({"type":"boolean"})),
+              ("incoming_digest", schema_ref("FactoryDigest")),
+            ],
+            &["accepted_results", "context_sources", "work_task", "work_acceptance"],
+          ),
+        ),
+        (
+          "wait_reason",
+          json!({"type":"string","enum":["awaiting_terminal_usage"]}),
+        ),
       ]),
       &node_required
         .into_iter()

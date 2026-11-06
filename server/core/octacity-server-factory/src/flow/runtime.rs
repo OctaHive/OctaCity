@@ -855,7 +855,7 @@ pub(crate) fn validate_data_catalogue(
             .find(|schema| schema.reference() == outcome.schema())
             .ok_or_else(invalid)?;
           presentation
-            .validate(schema.shape())
+            .validate(schema.shape(), node, outcome.kind())
             .map_err(|field| FactoryError::InvalidIssuePresentation {
               context: Box::new(crate::FlowIssuePresentationViolation {
                 definition: definition.reference(),

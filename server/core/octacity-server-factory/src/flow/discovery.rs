@@ -132,6 +132,8 @@ enum DiscoveryFact {
   },
   Candidate {
     subject: CandidateSubject,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    review_url: Option<String>,
   },
   Decision {
     subject: CandidateSubject,
@@ -189,7 +191,7 @@ impl FlowDiscoveryFacts {
       | DiscoveryFact::DecisionSignal { subject, .. } => subject == input.subject(),
       // Trusted capture/publication may produce a new candidate from the selected
       // base. Consumer facts below must instead describe the exact selected candidate.
-      DiscoveryFact::Candidate { subject } | DiscoveryFact::ChangeSet { subject, .. } => {
+      DiscoveryFact::Candidate { subject, .. } | DiscoveryFact::ChangeSet { subject, .. } => {
         input.exact_resource().is_ok_and(|resource| resource == subject.exact())
       }
       _ => self
@@ -315,7 +317,37 @@ impl FlowDiscoveryFacts {
   /// Projects an exact candidate verified by the trusted capture/publication owner.
   #[must_use]
   pub fn candidate(subject: CandidateSubject) -> Self {
-    Self(DiscoveryFact::Candidate { subject })
+    Self(DiscoveryFact::Candidate {
+      subject,
+      review_url: None,
+    })
+  }
+  /// Projects the review URL verified by the trusted publication owner, separate from result data.
+  #[must_use]
+  pub fn candidate_with_review(subject: CandidateSubject, review_url: String) -> Self {
+    Self(DiscoveryFact::Candidate {
+      subject,
+      review_url: Some(review_url),
+    })
+  }
+  /// Reads a confirmed review location with its exact repository subject.
+  #[must_use]
+  pub fn confirmed_candidate_review(&self) -> Option<(&ExactSubject, &str)> {
+    match &self.0 {
+      DiscoveryFact::Candidate {
+        subject,
+        review_url: Some(url),
+      } => Some((subject.exact(), url)),
+      _ => None,
+    }
+  }
+  /// Removes the repository-authorized link from the general Run diagnostic projection.
+  #[must_use]
+  pub fn into_run_diagnostics(mut self) -> Self {
+    if let DiscoveryFact::Candidate { review_url, .. } = &mut self.0 {
+      *review_url = None;
+    }
+    self
   }
   /// Projects authoritative links and typed policy reasons, excluding private findings.
   #[must_use]
@@ -358,7 +390,7 @@ impl FlowDiscoveryFacts {
   #[must_use]
   pub fn published_candidate(&self) -> Option<&CandidateSubject> {
     match &self.0 {
-      DiscoveryFact::Candidate { subject } | DiscoveryFact::ChangeSet { subject, .. } => Some(subject),
+      DiscoveryFact::Candidate { subject, .. } | DiscoveryFact::ChangeSet { subject, .. } => Some(subject),
       _ => None,
     }
   }
@@ -378,7 +410,7 @@ impl FlowDiscoveryFacts {
       DiscoveryFact::Escalation { subject, .. }
       | DiscoveryFact::Reporting { subject, .. }
       | DiscoveryFact::DecisionSignal { subject, .. } => subject.repository().ok(),
-      DiscoveryFact::Candidate { subject }
+      DiscoveryFact::Candidate { subject, .. }
       | DiscoveryFact::ChangeSet { subject, .. }
       | DiscoveryFact::Evidence { subject, .. }
       | DiscoveryFact::ReviewPlan { subject, .. }
@@ -392,7 +424,7 @@ impl FlowDiscoveryFacts {
   #[must_use]
   pub fn candidate_subject(&self) -> Option<&CandidateSubject> {
     match &self.0 {
-      DiscoveryFact::Candidate { subject }
+      DiscoveryFact::Candidate { subject, .. }
       | DiscoveryFact::ChangeSet { subject, .. }
       | DiscoveryFact::Evidence { subject, .. }
       | DiscoveryFact::ReviewPlan { subject, .. }

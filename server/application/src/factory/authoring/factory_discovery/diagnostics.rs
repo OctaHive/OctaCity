@@ -190,7 +190,10 @@ impl TryFrom<FactoryRunDiagnosticRecord> for FactoryDiagnosticRecord {
       FactoryRunDiagnosticRecord::BuildExecution(build) => Ok(FactoryDiagnosticRecord::Build(*build)),
       FactoryRunDiagnosticRecord::Budget(budget) => Ok(FactoryDiagnosticRecord::Budget(*budget)),
       FactoryRunDiagnosticRecord::Audit(audit) => Ok(FactoryDiagnosticRecord::Audit((&*audit).into())),
-      FactoryRunDiagnosticRecord::DomainFact(fact) => Ok(FactoryDiagnosticRecord::DomainFact(fact)),
+      FactoryRunDiagnosticRecord::DomainFact(mut fact) => {
+        fact.facts = fact.facts.into_run_diagnostics();
+        Ok(FactoryDiagnosticRecord::DomainFact(fact))
+      }
       FactoryRunDiagnosticRecord::Call { node, profile } => {
         Ok(FactoryDiagnosticRecord::Call(Box::new(FactoryCallProjection {
           node: (&*node).into(),
@@ -243,6 +246,9 @@ pub struct FactoryNodeCompletionProjection {
   pub output_schema: octacity_server_factory::ImmutableReference,
   /// Complete retained record identity, without its bytes.
   pub output_digest: octacity_server_factory::FactoryDigest,
+  /// Exact verified report identity and validity, without the report bytes or artifact handle.
+  #[serde(default, skip_serializing_if = "Option::is_none")]
+  pub verified_report: Option<FactoryVerifiedReportProjection>,
   /// Original schema-checked payload only when the admitted outcome explicitly permits disclosure.
   /// Inputs, Context and Build evidence are never expanded by this read.
   #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -254,6 +260,17 @@ pub struct FactoryNodeCompletionProjection {
   pub usage: octacity_server_factory::BudgetUsage,
   /// Trusted completion time.
   pub observed_at: octacity_server_domain::Timestamp,
+}
+/// Safe proof metadata for a configured Build's verified primary report.
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(deny_unknown_fields)]
+pub struct FactoryVerifiedReportProjection {
+  /// Digest of the exact report checked by the output verifier.
+  pub content_digest: octacity_server_factory::FactoryDigest,
+  /// Trusted verification time.
+  pub verified_at: octacity_server_domain::Timestamp,
+  /// Exclusive freshness limit of the retained evidence.
+  pub fresh_until: octacity_server_domain::Timestamp,
 }
 /// Allowlisted immutable facts; protected material and worker ownership remain private.
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
@@ -295,6 +312,7 @@ impl From<&octacity_server_factory::NodeAttemptCompletion> for FactoryNodeComple
       outcome: row.outcome().clone(),
       output_schema: row.output_schema().clone(),
       output_digest: row.output_digest(),
+      verified_report: None,
       public_result: None,
       result_provenance: vec![],
       usage: row.usage(),
@@ -358,6 +376,49 @@ pub struct FactoryNodeAttemptProjection {
   /// Current activity, absent from immutable Call identities rather than guessed.
   #[serde(default, skip_serializing_if = "Option::is_none")]
   pub active: Option<bool>,
+  /// Retained technical reason for an active execution to wait.
+  #[serde(default, skip_serializing_if = "Option::is_none")]
+  pub wait_reason: Option<FactoryNodeWaitReason>,
+  /// Sources selected for this exact attempt, without document bodies or Artifact handles.
+  #[serde(default, skip_serializing_if = "Option::is_none")]
+  pub input_summary: Option<FactoryNodeInputSummary>,
+}
+
+/// Safe provenance of the immutable input prepared for a node, including human decisions.
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(deny_unknown_fields)]
+pub struct FactoryNodeInputSummary {
+  /// Exact accepted outcomes used to prepare this input.
+  pub accepted_results: Vec<FactoryInputResultSummary>,
+  /// Kinds of Context entries. Their names, references and content are private here.
+  pub context_sources: Vec<octacity_server_factory::ContextSourceKind>,
+  /// Whether the admitted task was selected.
+  pub work_task: bool,
+  /// Whether the admitted implementation acceptance was selected.
+  pub work_acceptance: bool,
+  /// Exact retained incoming input identity, if selected by this step.
+  #[serde(default, skip_serializing_if = "Option::is_none")]
+  pub incoming_digest: Option<octacity_server_factory::FactoryDigest>,
+}
+
+/// Identifies an accepted result without exposing its input, payload or attachments.
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(deny_unknown_fields)]
+pub struct FactoryInputResultSummary {
+  /// Producing step in its Flow.
+  pub node: FactoryKey,
+  /// Accepted outcome of that step.
+  pub outcome: FactoryKey,
+  /// Exact retained result identity, distinguishing repeated executions.
+  pub digest: octacity_server_factory::FactoryDigest,
+}
+
+/// A technical wait observed by the execution owner.
+#[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum FactoryNodeWaitReason {
+  /// The Build stopped but its verified terminal usage has yet to be recorded.
+  AwaitingTerminalUsage,
 }
 impl From<&octacity_server_factory::NodeAttempt> for FactoryNodeAttemptProjection {
   fn from(node: &octacity_server_factory::NodeAttempt) -> Self {
@@ -376,6 +437,8 @@ impl From<&octacity_server_factory::NodeAttempt> for FactoryNodeAttemptProjectio
       retry_of: node.retry_of(),
       retryable: None,
       active: None,
+      wait_reason: None,
+      input_summary: None,
     }
   }
 }
@@ -392,6 +455,9 @@ impl FactoryNodeAttemptProjection {
         && history.is_current_cycle(node.workflow_cycle_id())
         && history.active_nodes().any(|attempt| attempt.id() == node.id()),
     );
+    if projection.active == Some(true) && snapshot.observed_waiting_for_terminal_usage(node.id()) {
+      projection.wait_reason = Some(FactoryNodeWaitReason::AwaitingTerminalUsage);
+    }
     projection.retryable = Some(
       snapshot
         .budgets
@@ -566,8 +632,37 @@ impl<S: FactoryDiscoveryStore + FactoryRunStore + 'static> crate::ManagementQuer
         row => FactoryDiagnosticRecord::try_from(row)?,
       });
     }
-    if query.collection() == FactoryDiagnosticCollection::NodeAttempts {
+    if query.collection() == FactoryDiagnosticCollection::NodeAttempts && !items.is_empty() {
       let snapshot = self.store.factory_run_snapshot(query.run_id()).await?;
+      // Filter by the page's frozen coordinates before serializing inputs for their digest.
+      let coordinates: std::collections::HashSet<_> = items
+        .iter()
+        .filter_map(|item| match item {
+          FactoryDiagnosticRecord::NodeAttempt(node) => Some((node.flow_run_id, node.cycle_id, &node.node_key)),
+          _ => None,
+        })
+        .collect();
+      let inputs = snapshot
+        .flow
+        .data
+        .inputs
+        .iter()
+        .filter(|input| coordinates.contains(&(input.flow_run_id(), input.cycle_id(), input.node())))
+        .map(|input| input.digest().map(|digest| (digest, input)))
+        .collect::<Result<std::collections::HashMap<_, _>, _>>()
+        .map_err(|_| ApplicationError::invalid())?;
+      let source_attempts: std::collections::HashSet<_> = inputs
+        .values()
+        .flat_map(|input| input.sources().iter().map(|source| source.node_attempt_id()))
+        .collect();
+      let records = snapshot
+        .flow
+        .data
+        .records
+        .iter()
+        .filter(|record| source_attempts.contains(&record.node_attempt_id()))
+        .map(|record| (record.node_attempt_id(), record))
+        .collect::<std::collections::HashMap<_, _>>();
       for item in &mut items {
         if let FactoryDiagnosticRecord::NodeAttempt(projection) = item {
           let node = snapshot
@@ -577,6 +672,29 @@ impl<S: FactoryDiscoveryStore + FactoryRunStore + 'static> crate::ManagementQuer
             .find(|node| node.id() == projection.id)
             .ok_or(ApplicationError::Store(octacity_server_store::StoreError::Unavailable))?;
           *projection = FactoryNodeAttemptProjection::from_snapshot(node, &snapshot);
+          projection.input_summary = inputs.get(&node.input_digest()).map(|input| FactoryNodeInputSummary {
+            accepted_results: input
+              .sources()
+              .iter()
+              .filter_map(|source| {
+                let record = records.get(&source.node_attempt_id())?;
+                Some(FactoryInputResultSummary {
+                  node: record.input().node().clone(),
+                  outcome: record.outcome().clone(),
+                  digest: source.digest(),
+                })
+              })
+              .collect(),
+            context_sources: input
+              .context()
+              .into_iter()
+              .flat_map(|context| context.entries())
+              .map(|entry| entry.source_kind())
+              .collect(),
+            work_task: input.work_task().is_some(),
+            work_acceptance: input.work_acceptance().is_some(),
+            incoming_digest: input.incoming_digest(),
+          });
         }
       }
     }
@@ -584,8 +702,42 @@ impl<S: FactoryDiscoveryStore + FactoryRunStore + 'static> crate::ManagementQuer
       let snapshot = self.store.factory_run_snapshot(query.run_id()).await?;
       for item in &mut items {
         if let FactoryDiagnosticRecord::NodeCompletion(projection) = item
-          && let Some(record) = public_result_record(projection, &snapshot)?
+          && let Some((record, node)) = completion_record(projection, &snapshot)?
         {
+          projection.verified_report = record
+            .primary_build_output()
+            .filter(|output| output.output_kind == octacity_server_factory::EvidenceOutputKind::Report)
+            .map(|output| FactoryVerifiedReportProjection {
+              content_digest: output.artifact.content_digest(),
+              verified_at: output.verified_at,
+              fresh_until: output.fresh_until,
+            });
+          if !node
+            .outcome(record.outcome())
+            .is_some_and(|outcome| outcome.public_result())
+          {
+            continue;
+          }
+          // Check the repository even for receipts retained before trusted publication facts.
+          let publication = node
+            .action()
+            .is_some_and(|action| action.action().as_str() == octacity_server_factory::PUBLISH_CANDIDATE_ACTION);
+          if publication && record.payload().value().pointer("/external/review_url").is_some() {
+            let Ok(subject) = record.input().exact_resource() else {
+              continue;
+            };
+            if crate::factory::authoring::factory_configuration_choices::require_visible_reference(
+              self.policy.as_ref(),
+              context,
+              ManagementResourceKind::Repository,
+              subject.repository_id(),
+            )
+            .await
+            .is_err()
+            {
+              continue;
+            }
+          }
           projection.public_result = Some(record.payload().value().clone());
           let ids: std::collections::BTreeSet<_> = std::iter::once(record.node_attempt_id())
             .chain(record.input().sources().iter().map(|source| source.node_attempt_id()))
@@ -618,10 +770,16 @@ impl<S: FactoryDiscoveryStore + FactoryRunStore + 'static> crate::ManagementQuer
   }
 }
 
-fn public_result_record<'a>(
+fn completion_record<'a>(
   completion: &FactoryNodeCompletionProjection,
   snapshot: &'a octacity_server_store::FactoryRunSnapshot,
-) -> Result<Option<&'a octacity_server_factory::FlowNodeRecord>, ApplicationError> {
+) -> Result<
+  Option<(
+    &'a octacity_server_factory::FlowNodeRecord,
+    &'a octacity_server_factory::FlowNodeDefinition,
+  )>,
+  ApplicationError,
+> {
   let unavailable = ApplicationError::unavailable;
   let Some(record) = snapshot
     .flow
@@ -632,16 +790,13 @@ fn public_result_record<'a>(
   else {
     return Ok(None);
   };
-  let outcome = snapshot
+  let node = snapshot
     .admitted_flow
     .closure()
     .definition(record.input().definition())
     .and_then(|definition| definition.node(&completion.node_key))
-    .and_then(|node| node.outcome(&completion.outcome))
     .ok_or_else(unavailable)?;
-  if !outcome.public_result() {
-    return Ok(None);
-  }
+  let outcome = node.outcome(&completion.outcome).ok_or_else(unavailable)?;
   if record.input().factory_run_id() != snapshot.run.id()
     || record.outcome() != &completion.outcome
     || record.input().node() != &completion.node_key
@@ -651,7 +806,7 @@ fn public_result_record<'a>(
   {
     return Err(unavailable());
   }
-  Ok(Some(record))
+  Ok(Some((record, node)))
 }
 
 #[cfg(test)]

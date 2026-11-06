@@ -65,9 +65,18 @@ fn factory_outcome_presentation_is_an_optional_closed_authoring_contract() {
     .iter()
     .map(|variant| &variant["properties"]["kind"]["const"])
     .collect::<Vec<_>>();
-  assert_eq!(kinds, vec!["triage_v1", "specifications_v1", "review_v1", "custom_v1"]);
+  assert_eq!(
+    kinds,
+    vec![
+      "triage_v1",
+      "specifications_v1",
+      "review_v1",
+      "publication_v1",
+      "custom_v1"
+    ]
+  );
   assert!(variants.iter().all(|variant| variant["additionalProperties"] == false));
-  let custom = &variants[3];
+  let custom = &variants[4];
   assert_eq!(custom["required"], json!(["kind", "title", "conclusion_field"]));
   assert_eq!(custom["properties"]["title"]["x-max-utf8-bytes"], 128);
   assert_eq!(custom["properties"]["references"]["maxItems"], 8);
@@ -199,6 +208,9 @@ fn openapi_describes_bounded_read_only_issue_outcomes() {
     "#/components/schemas/IssueOutcomes"
   );
   let schemas = &api["components"]["schemas"];
+  let artifact = &schemas["FactoryFlowIssuePresentation"]["x-artifact-reference-shape"];
+  assert_eq!(artifact["type"], "object");
+  assert_eq!(artifact["fields"]["content_digest"]["required"], true);
   assert_eq!(schemas["IssueOutcomes"]["properties"]["items"]["maxItems"], 32);
   let card = &schemas["IssueOutcomeCard"]["properties"];
   assert_eq!(card["run_id"]["format"], "uuid");
@@ -214,11 +226,18 @@ fn openapi_describes_bounded_read_only_issue_outcomes() {
   };
   assert_eq!(
     variants("IssueOutcomePresentation"),
-    ["triage", "specifications", "review", "custom"]
+    ["triage", "specifications", "publication", "review", "custom"]
   );
   assert_eq!(
     variants("IssueOutcomeLink"),
-    ["document", "artifact", "work_artifact", "review", "unavailable"]
+    [
+      "document",
+      "artifact",
+      "work_artifact",
+      "review",
+      "pull_request",
+      "unavailable"
+    ]
   );
   let triage = &schemas["IssueOutcomePresentation"]["oneOf"][0]["properties"];
   assert_eq!(triage["recommended_priority"]["maximum"], 100);
@@ -230,12 +249,12 @@ fn openapi_describes_bounded_read_only_issue_outcomes() {
     triage["duplicate_coverage"]["enum"],
     json!(["complete", "partial", "unknown", "not_checked"])
   );
-  let review = &schemas["IssueOutcomePresentation"]["oneOf"][2]["properties"];
+  let review = &schemas["IssueOutcomePresentation"]["oneOf"][3]["properties"];
   assert_eq!(
     review["verdict"]["enum"],
     json!(["approved", "changes_required", "needs_review"])
   );
-  let unavailable = &schemas["IssueOutcomeLink"]["oneOf"][4];
+  let unavailable = &schemas["IssueOutcomeLink"]["oneOf"][5];
   assert!(unavailable["properties"].get("artifact_id").is_none());
   assert!(unavailable["properties"].get("review_id").is_none());
 }

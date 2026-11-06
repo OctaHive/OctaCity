@@ -200,13 +200,29 @@ pub fn validate_factory_transition(
   });
   let canonical_budget =
     FactoryBudgetRecord::new(request.run_id, next_version, request.budget.usage, request.committed_at);
-  let canonical_lifecycle = FactoryLifecycleCheckpoint::new(
+  let mut canonical_lifecycle = FactoryLifecycleCheckpoint::new(
     request.run_id,
     next_version,
     request.lifecycle_checkpoint.progress.clone(),
     request.lifecycle_checkpoint.cancellation_requested,
     request.committed_at,
   );
+  if let Some(attempt_id) = request.lifecycle_checkpoint.awaiting_terminal_usage {
+    if request.next_run.state() != octacity_server_factory::FactoryRunState::Waiting
+      || !history
+        .active_nodes()
+        .any(|attempt| attempt.id() == attempt_id && history.is_current_cycle(attempt.workflow_cycle_id()))
+      || !baseline
+        .data
+        .build_executions
+        .iter()
+        .chain(&request.append.flow.data.build_executions)
+        .any(|execution| execution.node_attempt_id() == attempt_id)
+    {
+      return Err(invalid());
+    }
+    canonical_lifecycle.awaiting_terminal_usage = Some(attempt_id);
+  }
   let canonical_audit = FactoryAuditFact::new(
     request.audit.run_id,
     request.audit.actor_kind,

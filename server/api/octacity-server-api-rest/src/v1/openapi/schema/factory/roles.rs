@@ -75,6 +75,14 @@ pub(super) fn insert(schemas: &mut Map<String, Value>) {
       [
         ("alias", key()),
         ("execution", schema_ref("FactoryCommandExecutionContract")),
+        ("output_schema", reference()),
+        ("output_definition", schema_ref("FactoryFlowDataSchema")),
+        ("result_tool", reference()),
+        (
+          "evidence",
+          bounded_array(schema_ref("FactoryEvidenceRequirement"), b.evidence_items),
+        ),
+        ("permissions", schema_ref("FactoryPermissions")),
       ],
       &["alias", "execution"],
     ),
@@ -118,8 +126,16 @@ pub(super) fn insert(schemas: &mut Map<String, Value>) {
         ("outcome", schema_ref("FactoryFlowOutcome")),
         ("receipt_schema", schema_ref("FactoryFlowDataSchema")),
         ("review_url", boolean()),
+        ("permissions", schema_ref("FactoryPermissions")),
       ],
-      &["plugin", "target", "outcome", "receipt_schema", "review_url"],
+      &[
+        "plugin",
+        "target",
+        "outcome",
+        "receipt_schema",
+        "review_url",
+        "permissions",
+      ],
     ),
   );
   schemas.insert(

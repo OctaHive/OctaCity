@@ -176,6 +176,7 @@ impl FactoryCodexBuildProfile {
   /// Installation metadata shared with readiness and the materializer's shape check.
   pub fn pipeline_contract(&self) -> octacity_server_factory::FactoryBuildPipelineContract {
     octacity_server_factory::FactoryBuildPipelineContract {
+      command: None,
       build_configuration: self.build_configuration.clone(),
       tool: self.toolchain.executable.clone(),
       plugin: self.toolchain.plugin.clone(),

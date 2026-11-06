@@ -39,7 +39,7 @@ impl FactoryTestOutputBuilder for QualifiedOutputs {
     schema: &ImmutableReference,
     requirements: &[EvidenceRequirement],
   ) -> Option<FactoryNodeBuildOutputs> {
-    self.outputs_with_report(request, builds, schema, requirements, None)
+    self.outputs_with_report(request, builds, schema, requirements, None, None)
   }
 }
 impl QualifiedOutputs {
@@ -50,6 +50,7 @@ impl QualifiedOutputs {
     schema: &ImmutableReference,
     requirements: &[EvidenceRequirement],
     report: Option<Value>,
+    validation_fresh_until: Option<octacity_server_domain::Timestamp>,
   ) -> Option<FactoryNodeBuildOutputs> {
     let c = request.causality.as_ref();
     let p = &c.profile;
@@ -190,9 +191,14 @@ impl QualifiedOutputs {
       let doc = if let Some(doc) = extra.remove(requirement.kind()) {
         doc
       } else {
-        let facts = if let Some(value) =
+        let facts = if let Some(mut value) =
           crate::factory_flow_tests::fixture_capture_or_validation_value(request, requirement, report_digest)
         {
+          if requirement.kind() == &key("validation_facts")
+            && let Some(cutoff) = validation_fresh_until
+          {
+            value["fresh_until"] = json!(cutoff);
+          }
           value
         } else if requirement.kind() == &key("specification_review_facts") {
           json!({"accepted":true,"input_digest":c.input_digest,"report_digest":report_digest,"fresh_until":500})
@@ -807,7 +813,7 @@ fn fixtures_build_tool(admission: &PublishedFactoryAdmission) -> ImmutableRefere
     .unwrap()
     .nodes()
     .iter()
-    .find_map(|node| node.build().map(|build| build.tool.clone()))
+    .find_map(|node| node.build_bindings().next().map(|build| build.tool.clone()))
     .unwrap()
 }
 

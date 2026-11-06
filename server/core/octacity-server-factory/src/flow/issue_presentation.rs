@@ -1,8 +1,8 @@
 //! The Issue display allowlist retained on an immutable Flow outcome.
 
 use crate::{
-  FactoryKey, FactoryText, FlowDefinitionId, FlowDefinitionRef, FlowValueSchema, MAX_CONTEXT_ENTRY_BYTES,
-  MAX_WORK_PRIORITY,
+  FactoryKey, FactoryText, FlowDefinitionId, FlowDefinitionRef, FlowNodeDefinition, FlowNodeKind, FlowOutcomeKind,
+  FlowValueSchema, MAX_CONTEXT_ENTRY_BYTES, MAX_WORK_PRIORITY,
 };
 use serde::{Deserialize, Serialize};
 use std::{
@@ -42,6 +42,12 @@ pub enum FlowIssuePresentation {
   },
   /// Conclusion, verdict and a retained Issue review association.
   ReviewV1 {
+    /// Explicit shared slot, or the built-in slot when omitted.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    slot: Option<FactoryKey>,
+  },
+  /// A confirmed pull request from a trusted publication receipt.
+  PublicationV1 {
     /// Explicit shared slot, or the built-in slot when omitted.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     slot: Option<FactoryKey>,
@@ -229,6 +235,13 @@ static BUILT_INS: LazyLock<BTreeMap<&'static str, BuiltInContract>> = LazyLock::
       ),
     ),
     (
+      "publication_v1",
+      BuiltInContract {
+        slot: "publication",
+        fields: vec![],
+      },
+    ),
+    (
       "review_v1",
       contract(
         "review",
@@ -273,6 +286,7 @@ impl FlowIssuePresentation {
       Self::TriageV1 { .. } => "triage_v1",
       Self::SpecificationsV1 { .. } => "specifications_v1",
       Self::ReviewV1 { .. } => "review_v1",
+      Self::PublicationV1 { .. } => "publication_v1",
       Self::CustomV1 { .. } => return None,
     };
     Some(&BUILT_INS[kind])
@@ -285,6 +299,7 @@ impl FlowIssuePresentation {
       Self::TriageV1 { slot }
       | Self::SpecificationsV1 { slot }
       | Self::ReviewV1 { slot }
+      | Self::PublicationV1 { slot }
       | Self::CustomV1 { slot, .. } => slot,
     };
     if let Some(slot) = slot {
@@ -300,7 +315,22 @@ impl FlowIssuePresentation {
     }
   }
 
-  pub(super) fn validate(&self, shape: &FlowValueSchema) -> Result<(), &'static str> {
+  pub(super) fn validate(
+    &self,
+    shape: &FlowValueSchema,
+    node: &FlowNodeDefinition,
+    outcome: FlowOutcomeKind,
+  ) -> Result<(), &'static str> {
+    if matches!(self, Self::PublicationV1 { .. }) {
+      return check(
+        node.kind() == FlowNodeKind::TrustedAction
+          && outcome == FlowOutcomeKind::Success
+          && node
+            .action()
+            .is_some_and(crate::FlowActionBinding::requires_confirmed_publication_url),
+        "issue_presentation/kind",
+      );
+    }
     let FlowValueSchema::Object { fields } = shape else {
       return Err("schema/shape");
     };
@@ -347,7 +377,8 @@ impl FlowIssuePresentation {
 }
 
 impl FlowIssueReferenceKind {
-  fn reference_shape(self) -> FlowValueSchema {
+  /// Exact retained reference shape allowed in a displayed outcome.
+  pub fn reference_shape(self) -> FlowValueSchema {
     let exact_text = |length| FlowValueSchema::String {
       min_bytes: length,
       max_bytes: length,

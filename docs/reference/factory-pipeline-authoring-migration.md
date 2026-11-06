@@ -32,14 +32,10 @@ for the real clean-state execution journey.
 
 ## Headless and generated clients
 
-The read-only legacy operations `listFactoryPresets` and `resolveFactoryPreset`
-are **deprecated**, not removed. OpenAPI marks them `deprecated: true` and supplies
-migration guidance. They retain their original bounded request/response schemas,
-authorization and `no-store` behavior for existing clients. The stand launcher
-already uses the common contracts and does not require these operations. They
-still only assemble drafts; they never publish or activate them. This
-compatibility window is not a requirement or an entry point for common authoring.
-No removal date is implied.
+The optional read-only operations `listFactoryPresets` and `resolveFactoryPreset`
+list reviewed release examples and resolve them into editable drafts. They retain
+their existing bounded schemas, authorization and `no-store` behavior. Drafts
+from examples use the same validation and explicit publication as blank drafts.
 
 New clients use these existing contracts:
 
@@ -82,8 +78,9 @@ contract. These preconditions are not interchangeable. Sequential publication
 can retain a Flow or input even if a later step fails; keep successful receipts
 and recover through the original owners without enabling partial setup.
 
-The Console Factory adapter no longer exposes `listPresets` or `resolvePreset`.
-Generated management clients retain the deprecated operations for compatibility.
+Console uses `listPresets` and `resolvePreset` in **Add pipeline → Start from an
+example**. Blank construction and the stand launcher use the common contracts
+directly.
 
 ## Upgrade and rollback
 

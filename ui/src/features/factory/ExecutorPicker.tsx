@@ -11,7 +11,10 @@ import type { FlowAuthoringServices } from './FlowPrimitives';
 
 type Schema = components['schemas'];
 type Props = {
-  node: Schema['FactoryFlowNodeDefinition'];
+  node: Pick<
+    Schema['FactoryFlowNodeDefinition'],
+    'outcomes' | 'input_binding' | 'build' | 'profile_selection'
+  > & { input_schema?: Schema['FactoryFlowNodeDefinition']['input_schema'] };
   services: { api: FactoryRolesApi; projectId: string };
   authoring?: FlowAuthoringServices | undefined;
   requiredRole?: Schema['FactoryRoleReference'] | undefined;
@@ -63,6 +66,8 @@ export function ExecutorPicker({
   const [error, setError] = useState<Error | null>(null);
   const [problem, setProblem] = useState<'profile_incompatible' | 'build_unavailable' | null>(null);
   const requestRef = useRef<AbortController | null>(null);
+  const latestNodeRef = useRef(node);
+  latestNodeRef.current = node;
   useEffect(() => () => requestRef.current?.abort(), []);
   const roles = useCursorPage(
     queryKeys.factoryRoleCatalog(projectId, 'roles'),
@@ -172,7 +177,22 @@ export function ExecutorPicker({
             )
           : undefined;
       if (controller.signal.aborted) return;
-      onResolved(exact, resolved.build, input);
+      const current = latestNodeRef.current;
+      const configured =
+        current.build ?? Object.values(current.profile_selection?.candidates ?? {})[0]?.build;
+      onResolved(
+        exact,
+        {
+          ...resolved.build,
+          ...(configured?.capture_write_paths !== undefined
+            ? { capture_write_paths: configured.capture_write_paths }
+            : {}),
+          ...(configured?.capture_deliverables !== undefined
+            ? { capture_deliverables: configured.capture_deliverables }
+            : {}),
+        },
+        input,
+      );
     } catch (failure) {
       if (!controller.signal.aborted) setError(failure instanceof Error ? failure : new Error());
     } finally {

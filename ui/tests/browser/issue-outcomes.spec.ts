@@ -25,6 +25,48 @@ const triage: components['schemas']['IssueOutcomeCard'] = {
   links: [],
 };
 
+test('links to a confirmed pull request on browsers without URL.parse and keeps the original Run accessible', async ({
+  page,
+}) => {
+  await installOperatorFixture(page);
+  await page.addInitScript(() => Reflect.deleteProperty(URL, 'parse'));
+  const confirmed = 'https://forge.example/team/repository/pull/23';
+  await page.route(`**/api/v1${issueUrl}/outcomes`, (route) =>
+    route.fulfill({
+      json: {
+        items: [
+          { ...triage, conclusion: 'Unverified URL: https://untrusted.example/pull/7' },
+          {
+            slot: 'publication',
+            run_id: newerRun,
+            conclusion: 'Published for manual merge.',
+            presentation: { kind: 'publication' },
+            links: [
+              { kind: 'pull_request', url: confirmed },
+              { kind: 'pull_request', url: 'javascript:alert(1)' },
+            ],
+          },
+        ],
+      },
+    }),
+  );
+  await page.goto(issueUrl);
+  const cards = page.getByRole('region', { name: 'Outcomes' });
+  const card = cards.getByRole('article', { name: 'Pull request' });
+  await expect(card.getByText('Published for manual merge.')).toBeVisible();
+  await expect(card.getByRole('link', { name: 'Open pull request' })).toHaveAttribute(
+    'href',
+    confirmed,
+  );
+  await expect(card.getByRole('link', { name: 'Open Run' })).toHaveAttribute(
+    'href',
+    `/factory/${newerRun}`,
+  );
+  await expect(cards.locator('a[href*="untrusted.example"], a[href^="javascript:"]')).toHaveCount(
+    0,
+  );
+});
+
 for (const language of ['en', 'ru'] as const) {
   test(`shows current triage advice on the task at phone width in ${language}`, async ({
     page,

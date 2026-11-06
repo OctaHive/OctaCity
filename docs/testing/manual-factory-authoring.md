@@ -21,6 +21,16 @@ separately checks that the server accepts an empty typed input plus required Wor
 Context, and rejects either missing contract. The disposable end-to-end fixture
 below remains the execution and isolation qualification.
 
+For ticket delivery, `factory-ticket-delivery.spec.ts` checks the Console
+requests for authoring, configuration and manual Issue start against fixture
+responses. The application test
+`devops_prepares_an_exact_candidate_for_trusted_production_pr_publication`
+passes a directly assembled graph through ordinary Flow and Configuration
+publication and runs that graph with a hermetic
+publisher. It checks the retained review and validation proof metadata and the
+final receipt. Live Console qualification of the complete ticket delivery graph
+is tracked in the ticket delivery change.
+
 `factory_manual_authoring` qualifies tasks 5.1–5.4 of
 `enable-manual-factory-pipeline-authoring`. It starts the actual Server and Agent
 executables against PostgreSQL and S3 and executes ordinary Jobs in separate

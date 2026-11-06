@@ -123,6 +123,22 @@ impl FlowContextBinding {
         .get(name)
         .is_some_and(|selection| selection.when_present.is_none())
   }
+  /// Checks that a named Artifact is selected unconditionally. Dynamic references
+  /// are still resolved and verified against the frozen input at execution.
+  pub fn guarantees_artifact(&self, name: &FactoryKey) -> bool {
+    self.entries.get(name).is_some_and(|entry| {
+      entry.when_present.as_ref().is_none_or(String::is_empty)
+        && (!entry.source.is_input_independent()
+          || entry
+            .source
+            .project_raw(&serde_json::Value::Null)
+            .is_ok_and(|value| matches!(serde_json::from_value(value), Ok(FactoryContextReference::Artifact(_)))))
+    })
+  }
+  /// Whether the binding unconditionally selects a candidate revision from its input.
+  pub fn selects_candidate(&self) -> bool {
+    self.candidate_revision.is_some() && self.candidate_when_present.as_ref().is_none_or(String::is_empty)
+  }
   fn validate(&self) -> Result<(), FactoryError> {
     if self
       .work_task

@@ -47,6 +47,18 @@ impl FlowBuildBinding {
   pub fn result_tool(&self) -> &ImmutableReference {
     self.result_tool.as_ref().unwrap_or(&self.tool)
   }
+  /// Matches the installed primary result and the complete set of other outputs.
+  pub fn matches_outputs(&self, schema: &ImmutableReference, outputs: &[crate::EvidenceRequirement]) -> bool {
+    outputs.len() == self.evidence.len() + 1
+      && outputs.iter().any(|output| {
+        output.kind() == &self.result_output
+          && output.schema() == schema
+          && output.output_kind() == self.result_output_kind
+          && output.tool() == self.result_tool()
+          && output.plugin() == &self.plugin
+      })
+      && self.evidence.iter().all(|expected| outputs.contains(expected))
+  }
   pub(super) fn validate_node(&self, node: &crate::FlowNodeDefinition) -> Result<(), crate::FactoryError> {
     if !matches!(
       node.kind(),

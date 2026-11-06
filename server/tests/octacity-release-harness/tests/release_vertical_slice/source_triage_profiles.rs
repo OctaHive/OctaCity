@@ -574,6 +574,12 @@ async fn publish_preset(
   .await;
   let repository = json!({"project_id":project,"id":execution.resources.repository,"version":1,"definition_digest":repo["definition_digest"]});
   let preset = get_json(client, format!("{origin}/api/v1/projects/{project}/factory-presets")).await;
+  let triage = preset["items"]
+    .as_array()
+    .unwrap()
+    .iter()
+    .find(|item| item["reference"]["identity"] == "triage")
+    .unwrap();
   let flow_id = Uuid::new_v4();
   let configuration_id = Uuid::new_v4();
   let budget = BudgetLimit::new(
@@ -603,7 +609,7 @@ async fn publish_preset(
     |selected| json!({"classification_gate":selected["selection"]}),
   );
   let request = json!({
-    "preset":preset["items"][0]["reference"],"flow_id":flow_id,"configuration_id":configuration_id,"profiles":selections,"repository":repository,"context":context,
+    "preset":triage["reference"],"flow_id":flow_id,"configuration_id":configuration_id,"profiles":selections,"repository":repository,"context":context,
     "execution":{"budget":budget,"permissions":flow_permissions,"max_active_nodes":1},"effects":effects,
     "configuration":{"admission_policy":"source-admission","permission_ceiling":"source-ceiling","wip_limits":{"max_active_runs":1,"max_active_nodes":1},"hard_budget":budget}
   });

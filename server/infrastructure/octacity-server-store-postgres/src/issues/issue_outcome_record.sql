@@ -1,5 +1,6 @@
 SELECT convert_from(record.document, 'UTF8')::jsonb #> '{payload,value}' AS value, work.envelope->'artifacts' AS artifacts,
-  effect.classification, effect.rejected
+  effect.classification, effect.rejected,
+  CASE WHEN $8 THEN convert_from(record.document, 'UTF8')::jsonb->'discovery' END AS publication
 FROM issue_work_associations AS a
 JOIN factory_runs AS run ON run.id = a.run_id AND run.project_id = a.project_id
 JOIN factory_work_envelopes AS work ON work.id = run.work_envelope_id AND work.id = a.work_id

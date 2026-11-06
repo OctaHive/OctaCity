@@ -4,7 +4,7 @@ use octacity_server_domain::Timestamp;
 use octacity_server_factory::{
   AdmittedFlow, BudgetUsage, FactoryClaim, FactoryClaimFence, FactoryDigest, FactoryKey, FactoryLifecycleProgress,
   FactoryRun, FactoryRunId, FactoryRunVersion, FactoryWipUsage, FlowRun, NodeAttempt, NodeAttemptCompletion,
-  WorkEnvelope, WorkflowCycle,
+  NodeAttemptId, WorkEnvelope, WorkflowCycle,
 };
 
 use crate::{AuditActorKind, MutationDisposition, StoreError, StoreInputError, StoreOperation};
@@ -111,6 +111,8 @@ pub struct FactoryLifecycleCheckpoint {
   pub run_version: FactoryRunVersion,
   /// Technical root execution progress for the admitted graph.
   pub progress: FactoryLifecycleProgress,
+  /// Exact execution observed stopped before verified usage became available.
+  pub awaiting_terminal_usage: Option<NodeAttemptId>,
   /// Whether durable cancellation intent has been accepted.
   pub cancellation_requested: bool,
   /// Authoritative commit time.
@@ -138,6 +140,7 @@ impl FactoryLifecycleCheckpoint {
       run_id,
       run_version,
       progress,
+      awaiting_terminal_usage: None,
       cancellation_requested,
       recorded_at,
     }
@@ -700,6 +703,15 @@ pub struct FactoryRunSnapshot {
 }
 
 impl FactoryRunSnapshot {
+  /// Whether the retained lifecycle contains a stop observation for this attempt.
+  #[must_use]
+  pub fn observed_waiting_for_terminal_usage(&self, attempt: NodeAttemptId) -> bool {
+    self
+      .lifecycle_checkpoints
+      .iter()
+      .any(|row| row.awaiting_terminal_usage == Some(attempt))
+  }
+
   /// Returns the record that resolved the exact configured terminal of a completed Run.
   /// The caller must check visibility and applicability to the downstream Work.
   pub fn accepted_terminal_result(

@@ -237,7 +237,7 @@ impl crate::runtime::FactoryRuntimeInstaller for FileProfileInstaller {
             capture_tool: capture_tool.clone(),
           },
           binding.report.clone(),
-          facts.clone(),
+          facts.as_ref().clone(),
         )?,
         ProtectedValidationMode::BaseObservation => resources.protected_test_observation_executor(
           binding.profiles.clone(),
@@ -252,11 +252,21 @@ impl crate::runtime::FactoryRuntimeInstaller for FileProfileInstaller {
     for binding in &self.bindings.delivery {
       let (executor, publication_choices) = binding.install(&resources)?;
       for (project, choice) in publication_choices {
-        let (_, catalog_choices) = catalog
-          .projects
-          .iter_mut()
-          .find(|(owner, _)| *owner == project)
-          .ok_or(FactoryRuntimeInstallationError::Invalid)?;
+        let project_choices = catalog.projects.iter_mut().find(|(owner, _)| *owner == project);
+        // Publication-only profiles did not require a Console catalog entry.
+        // Register their target for validation whenever the plugin is selectable.
+        if choice.receipt_schema.is_none()
+          && project_choices.as_ref().is_none_or(|(_, choices)| {
+            !choices
+              .entries()
+              .references
+              .iter()
+              .any(|entry| entry.kind == FactoryChoiceKind::NodeCapability && entry.reference == choice.plugin)
+          })
+        {
+          continue;
+        }
+        let (_, catalog_choices) = project_choices.ok_or(FactoryRuntimeInstallationError::Invalid)?;
         *catalog_choices = catalog_choices
           .clone()
           .with_candidate_publication(choice)
@@ -404,7 +414,7 @@ struct ValidationCommandBinding {
 enum ProtectedValidationMode {
   Candidate {
     capture_tool: ImmutableReference,
-    facts: EvidenceRequirement,
+    facts: Box<EvidenceRequirement>,
   },
   BaseObservation,
 }
@@ -1313,7 +1323,10 @@ impl FactoryRuntimeProfileCatalog {
         validate_command_choices(&catalog, &profiles)?;
         let mode = match (entry.inputs.capture_tool, entry.facts) {
           (Some(capture_tool), Some(facts)) if profiles.iter().all(|profile| !profile.requires_protected_tests()) => {
-            ProtectedValidationMode::Candidate { capture_tool, facts }
+            ProtectedValidationMode::Candidate {
+              capture_tool,
+              facts: Box::new(facts),
+            }
           }
           (None, None)
             if profiles.iter().all(|profile| {

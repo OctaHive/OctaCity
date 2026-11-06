@@ -1,13 +1,124 @@
+import { emptyFactoryPermissions } from './emptyFlowDraft';
 // @vitest-environment jsdom
 import { cleanup, render, screen, within } from '@testing-library/react';
+import { QueryClientProvider } from '@tanstack/react-query';
 import userEvent from '@testing-library/user-event';
 import { useState } from 'react';
 import { afterEach, expect, it, vi } from 'vitest';
 import { configurationFixture } from '../../../tests/fixtures/factory';
+import { createConsoleQueryClient } from '../../app/query';
 import { factoryApi, type FactoryApi } from './api';
 import { StepResults, type ResultDraft } from './StepResults';
 
 afterEach(cleanup);
+it('does not offer a confirmed publication card for an unrelated success result', async () => {
+  const sample = configurationFixture().configuration.flow.closure.definitions[0]!.nodes[0]!;
+  const draft: ResultDraft = {
+    index: 0,
+    name: 'published',
+    kind: 'success',
+    shape: { type: 'boolean' },
+  };
+  const plugin = { identity: 'publisher', version: '1', digest: 'a'.repeat(64) };
+  const target = { ...plugin, identity: 'target' };
+  const receipt = {
+    reference: { ...plugin, identity: 'receipt' },
+    shape: { type: 'object' as const, fields: {} },
+  };
+  const outcome = { key: 'published', kind: 'success' as const, schema: receipt.reference };
+  const services = {
+    projectId: 'project',
+    api: {
+      ...factoryApi,
+      getAuthoringCapabilities: vi.fn<FactoryApi['getAuthoringCapabilities']>(async () => ({
+        build_resource_modes: [],
+        commands: [],
+        human_gates: [],
+        source_free_incompatibility: null,
+        deterministic_gate: {
+          policy: plugin,
+          parameter_contract: 'declarative_gate_v1',
+          max_parameter_bytes: 64,
+          resource_modes: [],
+        },
+        candidate_publications: [
+          {
+            plugin,
+            target,
+            outcome,
+            receipt_schema: receipt,
+            review_url: true,
+            permissions: emptyFactoryPermissions(),
+          },
+        ],
+      })),
+    },
+  };
+  const onDraftChange = vi.fn();
+  const props = { schemas: [receipt], draft, services, onDraftChange, onChange: vi.fn() };
+  const publisher = {
+    ...sample,
+    kind: 'trusted_action' as const,
+    outcomes: [outcome],
+    action: {
+      plugin,
+      action: 'publish_candidate',
+      parameters: { target, require_review_url: true },
+    },
+  };
+  const client = createConsoleQueryClient();
+  const wrap = (element: React.ReactNode) => (
+    <QueryClientProvider client={client}>{element}</QueryClientProvider>
+  );
+  const view = render(wrap(<StepResults {...props} node={publisher} />));
+  const menu = () => screen.getByRole('combobox', { name: 'Show on Issue' });
+  await userEvent.click(menu());
+  expect(screen.queryByRole('option', { name: 'Pull request' })).toBeNull();
+  await userEvent.keyboard('{Escape}');
+  view.rerender(
+    wrap(<StepResults {...props} node={publisher} draft={{ ...draft, shape: receipt.shape }} />),
+  );
+  await userEvent.click(menu());
+  await userEvent.click(await screen.findByRole('option', { name: 'Pull request' }));
+  expect(onDraftChange).toHaveBeenCalledWith({
+    ...draft,
+    shape: receipt.shape,
+    issuePresentation: { kind: 'publication_v1' },
+  });
+  for (const action of [
+    { ...publisher.action, action: 'send_report' },
+    { ...publisher.action, parameters: { target, require_review_url: false } },
+  ]) {
+    view.rerender(
+      wrap(
+        <StepResults
+          {...props}
+          node={{ ...publisher, action }}
+          draft={{ ...draft, shape: receipt.shape }}
+        />,
+      ),
+    );
+    await userEvent.click(menu());
+    expect(screen.queryByRole('option', { name: 'Pull request' })).toBeNull();
+    await userEvent.keyboard('{Escape}');
+  }
+  view.rerender(wrap(<StepResults {...props} node={{ ...sample, kind: 'reasoning' }} />));
+  await userEvent.click(menu());
+  expect(screen.queryByRole('option', { name: 'Pull request' })).toBeNull();
+  await userEvent.keyboard('{Escape}');
+  view.rerender(
+    wrap(
+      <StepResults
+        {...props}
+        draft={{ ...draft, kind: 'failure' }}
+        node={{ ...sample, kind: 'trusted_action' }}
+      />,
+    ),
+  );
+  await userEvent.click(menu());
+  expect(screen.queryByRole('option', { name: 'Pull request' })).toBeNull();
+});
+
 it('names reusable formats after their producing steps and keeps exact references in optional details', async () => {
   const sample = configurationFixture().configuration.flow.closure.definitions[0]!.nodes[0]!;
   const schemas = ['a', 'b'].map((digest) => ({
@@ -197,7 +308,7 @@ it('cancels a pending result check and ignores its late response', async () => {
   expect(normalizeSchema.mock.calls[0]?.[1]?.aborted).toBe(true);
 });
 
-it('adds a standard Issue card in one choice and lets a custom card name its conclusion', async () => {
+it('adds a standard Issue card and lets a custom card link an exact artifact', async () => {
   const flow = configurationFixture().configuration.flow;
   const schema: (typeof flow.data_schemas)[number] = {
     reference: { identity: 'assessment', version: '1', digest: 'a'.repeat(64) },
@@ -208,6 +319,26 @@ it('adds a standard Issue card in one choice and lets a custom card name its con
         decision: { required: true, value: { type: 'enum', values: ['eligible'] } },
         summary: { required: true, value: { type: 'string', min_bytes: 1, max_bytes: 200 } },
         private_notes: { required: false, value: { type: 'string', min_bytes: 1, max_bytes: 200 } },
+        report: {
+          required: true,
+          value: {
+            type: 'object',
+            fields: {
+              artifact_id: {
+                required: true,
+                value: { type: 'string', min_bytes: 36, max_bytes: 36 },
+              },
+              content_digest: {
+                required: true,
+                value: { type: 'string', min_bytes: 64, max_bytes: 64 },
+              },
+              encoded_size: {
+                required: true,
+                value: { type: 'integer', minimum: 1, maximum: 4096 },
+              },
+            },
+          },
+        },
       },
     },
   };
@@ -262,6 +393,9 @@ it('adds a standard Issue card in one choice and lets a custom card name its con
   await user.click(screen.getByRole('combobox', { name: 'Conclusion field' }));
   expect(screen.queryByRole('option', { name: 'private_notes' })).toBeNull();
   await user.click(screen.getByRole('option', { name: 'summary' }));
+  const links = screen.getByRole('group', { name: 'Artifact links' });
+  expect(within(links).queryByRole('checkbox', { name: 'private_notes' })).toBeNull();
+  await user.click(within(links).getByRole('checkbox', { name: 'report' }));
   await save();
   expect(onChange).toHaveBeenLastCalledWith({
     outcomes: [
@@ -271,6 +405,7 @@ it('adds a standard Issue card in one choice and lets a custom card name its con
           kind: 'custom_v1',
           title: 'Project assessment',
           conclusion_field: 'summary',
+          references: [{ field: 'report', kind: 'artifact' }],
         },
       },
     ],

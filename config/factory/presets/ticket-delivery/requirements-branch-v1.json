@@ -1,5 +1,30 @@
 {
   "schemas": {
+    "delivery_issue_artifact": {
+      "identity": "factory.ticket-delivery.issue-artifact",
+      "version": "v1",
+      "shape": {
+        "type": "object",
+        "fields": {
+          "artifact_id": {"required": true, "value": {"type": "string", "min_bytes": 36, "max_bytes": 36}},
+          "content_digest": {"required": true, "value": {"type": "string", "min_bytes": 64, "max_bytes": 64}},
+          "encoded_size": {"required": true, "value": {"type": "integer", "minimum": 1, "maximum": 16777216}}
+        }
+      }
+    },
+    "delivery_specification_result": {
+      "identity": "factory.ticket-delivery.specification-result",
+      "version": "v1",
+      "shape": {
+        "type": "object",
+        "fields": {
+          "summary": {"required": true, "value": {"type": "reference", "schema": "summary"}},
+          "conclusion": {"required": true, "value": {"type": "string", "min_bytes": 1, "max_bytes": 256}},
+          "manifest": {"required": true, "value": {"type": "reference", "schema": "delivery_issue_artifact"}},
+          "bundle": {"required": true, "value": {"type": "reference", "schema": "delivery_issue_artifact"}}
+        }
+      }
+    },
     "delivery_requirements_input": {
       "identity": "factory.ticket-delivery.requirements-input",
       "version": "v1",
@@ -56,7 +81,10 @@
       "key": "specification_accepted",
       "kind": "deterministic_gate",
       "input_schema": "delivery_spec_acceptance",
-      "outcomes": [{"key": "accepted", "kind": "success", "schema": "summary"}],
+      "outcomes": [{"key": "accepted", "kind": "success", "schema": "delivery_specification_result", "issue_presentation": {
+          "kind": "custom_v1", "title": "Specifications", "conclusion_field": "conclusion",
+          "references": [{"field": "manifest", "kind": "artifact"}, {"field": "bundle", "kind": "artifact"}]
+        }}],
       "budget": {"max_attempts": 1, "max_elapsed_millis": 1000, "max_tokens": 0, "max_cost_micro_units": 0, "max_output_bytes": 1048576},
       "required": true,
       "input_binding": {
@@ -74,17 +102,22 @@
         "rules": [],
         "fallback": "accepted",
         "default_output": {"value": {"mapping": "object", "fields": {
-          "work_kind": {"mapping": "pointer", "path": "/decision/work_kind"},
-          "size": {"mapping": "pointer", "path": "/decision/size"},
-          "risk": {"mapping": "pointer", "path": "/decision/risk"},
-          "admission_risk": {"mapping": "pointer", "path": "/decision/admission_risk"},
-          "recommended_route": {"mapping": "pointer", "path": "/decision/recommended_route"},
-          "research_required": {"mapping": "pointer", "path": "/decision/research_required"},
-          "research_accepted": {"mapping": "pointer", "path": "/decision/research_accepted"},
-          "component": {"mapping": "pointer", "path": "/decision/component"},
-          "severity": {"mapping": "pointer", "path": "/decision/severity"},
-          "dependencies": {"mapping": "pointer", "path": "/decision/dependencies"},
-          "specification": {"mapping": "pointer", "path": "/specification"}
+          "conclusion": {"mapping": "constant", "value": "Specification changes are ready for requirements review."},
+          "manifest": {"mapping": "pointer", "path": "/specification/artifacts/manifest"},
+          "bundle": {"mapping": "pointer", "path": "/specification/artifacts/bundle"},
+          "summary": {"mapping": "object", "fields": {
+            "work_kind": {"mapping": "pointer", "path": "/decision/work_kind"},
+            "size": {"mapping": "pointer", "path": "/decision/size"},
+            "risk": {"mapping": "pointer", "path": "/decision/risk"},
+            "admission_risk": {"mapping": "pointer", "path": "/decision/admission_risk"},
+            "recommended_route": {"mapping": "pointer", "path": "/decision/recommended_route"},
+            "research_required": {"mapping": "pointer", "path": "/decision/research_required"},
+            "research_accepted": {"mapping": "pointer", "path": "/decision/research_accepted"},
+            "component": {"mapping": "pointer", "path": "/decision/component"},
+            "severity": {"mapping": "pointer", "path": "/decision/severity"},
+            "dependencies": {"mapping": "pointer", "path": "/decision/dependencies"},
+            "specification": {"mapping": "pointer", "path": "/specification"}
+          }}
         }}}
       }
     }

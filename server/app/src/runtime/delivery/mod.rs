@@ -125,6 +125,23 @@ impl FactoryDeliveryPolicy {
       review_links: None,
     })
   }
+  fn required_permissions(
+    &self,
+    action: Option<&ImmutableReference>,
+  ) -> Result<FactoryPermissionSet, ApplicationError> {
+    let draft = &self.draft;
+    FactoryPermissionSet::try_new(FactoryPermissionDraft {
+      plugins: std::iter::once(&draft.plugin)
+        .chain(action.filter(|action| *action != &draft.plugin))
+        .cloned()
+        .collect(),
+      secret_profiles: vec![draft.credential_profile.clone()],
+      network_hosts: draft.network_hosts.clone(),
+      ..Default::default()
+    })
+    .map_err(|_| ApplicationError::invalid())
+  }
+
   /// Exact content identity to publish in the action's configured target.
   pub fn reference(&self) -> &ImmutableReference {
     &self.reference
@@ -223,15 +240,9 @@ impl HostedFactoryCandidatePublisher {
     let draft = &policy.draft;
     if request.candidate.exact().project_id() != draft.project_id
       || request.candidate.exact().repository_id() != draft.repository_id
-      || !request.permissions.plugins().any(|plugin| plugin == &draft.plugin)
-      || !request
-        .permissions
-        .secret_profiles()
-        .any(|profile| profile == &draft.credential_profile)
-      || draft
-        .network_hosts
-        .iter()
-        .any(|host| !request.permissions.network_hosts().any(|allowed| allowed == host))
+      || !policy
+        .required_permissions(None)?
+        .is_no_broader_than(&request.permissions)
     {
       return Err(ApplicationError::invalid());
     }

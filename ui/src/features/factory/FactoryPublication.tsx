@@ -1,8 +1,10 @@
+import { useFactoryAuthoringCapabilities } from './useFactoryAuthoringCapabilities';
+import { publishCandidateAction } from './PublicationStep';
 import { validationFieldLabel, LimitFailure } from './ValidationIssue';
 import { ConstraintReview } from './ConstraintReview';
 import { focusFactoryField } from './fieldFocus';
 import { useRef, useState } from 'react';
-import { useQuery, useQueryClient } from '@tanstack/react-query';
+import { useQueryClient } from '@tanstack/react-query';
 import { Link } from 'react-router-dom';
 import type { components } from '../../../.generated/api/schema';
 import { ManagementApiError, type ManagementValidationIssue } from '../../api/client';
@@ -40,6 +42,7 @@ const ISSUE_LABELS = {
   missing_input: 'factory.missingInputHelp',
   profile_permissions: 'factory.profilePermissionsHelp',
   action_permissions: 'factory.classificationAccessHelp',
+  publication_permissions: 'factory.publicationAccessHelp',
   profile_budget: 'factory.profileBudgetHelp',
   profile_context: 'factory.profileContextHelp',
   missing_terminal: 'factory.missingTerminalHelp',
@@ -110,17 +113,21 @@ export function FactoryPublication({
       ),
     ) ?? [];
   const project = subject.request.project_id;
-  const classification = useQuery({
-    queryKey: queryKeys.factoryAuthoringCapabilities(project),
-    queryFn: ({ signal }) => api.getAuthoringCapabilities(project, signal),
-    enabled: localWrites.length > 0,
-    staleTime: 0,
-  });
-  const currentClassification = classification.data?.issue_classification;
+  const publicationRequested =
+    subject.kind === 'flow' &&
+    subject.request.definition.root.nodes.some(
+      (node) => node.action?.action === publishCandidateAction,
+    );
+  const capabilities = useFactoryAuthoringCapabilities(
+    { api, projectId: project },
+    localWrites.length > 0 || publicationRequested,
+    0,
+  );
+  const currentClassification = capabilities.data?.issue_classification;
   const classificationReviewed =
     !!currentClassification &&
-    !classification.isFetching &&
-    !classification.isError &&
+    !capabilities.isFetching &&
+    !capabilities.isError &&
     localWrites.every(({ action }) => matchesClassification(action, currentClassification));
   const latestSignatureRef = useRef('');
   const signature = JSON.stringify(subject);
@@ -131,7 +138,7 @@ export function FactoryPublication({
   latestSignatureRef.current = signature;
   const local =
     subject.kind === 'flow'
-      ? validateFlowDraft(subject.request.definition)
+      ? validateFlowDraft(subject.request.definition, capabilities.data?.candidate_publications)
       : validateConfigurationDraft(subject.request.definition);
   const server = error instanceof ManagementApiError ? error.validationIssues : [];
   const issues = [...local, ...server];
@@ -225,10 +232,12 @@ export function FactoryPublication({
               </button>{' '}
               ·{' '}
               {t(
-                issue.field.endsWith('/action/parameters/size_labels') &&
-                  issue.code === 'unavailable_reference'
-                  ? 'factory.classificationSetupNeeded'
-                  : ISSUE_LABELS[issue.code],
+                issue.field === '/data_schemas'
+                  ? 'factory.commandReportSchemaNeeded'
+                  : issue.field.endsWith('/action/parameters/size_labels') &&
+                      issue.code === 'unavailable_reference'
+                    ? 'factory.classificationSetupNeeded'
+                    : ISSUE_LABELS[issue.code],
                 {
                   name:
                     ('issue_slot' in issue ? issue.issue_slot : undefined) ??
@@ -303,13 +312,13 @@ export function FactoryPublication({
                   </ul>
                   {classificationReviewed && currentClassification ? (
                     <ClassificationEffects choices={currentClassification} />
-                  ) : classification.isFetching ? (
+                  ) : capabilities.isFetching ? (
                     <p role="status">{t('factory.loadingStepCapabilities')}</p>
-                  ) : classification.error ? (
+                  ) : capabilities.error ? (
                     <QueryFailureNotice
                       title={t('factory.localClassification')}
-                      error={classification.error}
-                      onRetry={() => void classification.refetch()}
+                      error={capabilities.error}
+                      onRetry={() => void capabilities.refetch()}
                     />
                   ) : (
                     <p role="alert">{t('factory.classificationMappingChanged')}</p>

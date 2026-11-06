@@ -131,18 +131,18 @@ impl FactoryFileDeliveryProfile {
       if let Some(ReviewLinkProvider::Github) = selected.review_links {
         install_github_review_links(&mut policy, adapter)?;
       }
-      if let Some(schema) = &self.receipt_schema {
-        choices.push((
-          selected.draft.project_id,
-          FactoryCandidatePublicationChoice {
-            plugin: self.identity.clone(),
-            target: selected.reference.clone(),
-            outcome: self.outcome.clone(),
-            receipt_schema: schema.clone(),
-            review_url: policy.review_links.is_some(),
-          },
-        ));
-      }
+      choices.push((
+        selected.draft.project_id,
+        FactoryCandidatePublicationChoice {
+          plugin: self.identity.clone(),
+          target: selected.reference.clone(),
+          repository_id: selected.draft.repository_id,
+          outcome: self.outcome.clone(),
+          receipt_schema: self.receipt_schema.clone(),
+          review_url: policy.review_links.is_some(),
+          permissions: policy.required_permissions(Some(&self.identity)).map_err(|_| Invalid)?,
+        },
+      ));
       policies.push(policy);
     }
     let publisher = HostedFactoryCandidatePublisher::new(
@@ -160,7 +160,8 @@ impl FactoryFileDeliveryProfile {
         FlowNodeKind::TrustedAction,
         NodeExecutionIdentity::External(self.identity.clone()),
         Arc::new(FactoryFlowActionAdapter::new(Arc::new(
-          FactoryCandidatePublicationAction::new(self.identity.clone(), Arc::new(publisher), self.outcome.clone()),
+          FactoryCandidatePublicationAction::new(self.identity.clone(), Arc::new(publisher), self.outcome.clone())
+            .with_run_store(resources.runs.clone()),
         ))),
       ),
       choices,
@@ -277,7 +278,24 @@ mod tests {
     assert_eq!(choice.plugin, identity);
     assert_eq!(&choice.target, target.reference());
     assert_eq!(choice.outcome, outcome);
-    assert_eq!(choice.receipt_schema, receipt);
+    assert_eq!(choice.receipt_schema.as_ref(), Some(&receipt));
+    let advertised = serde_json::to_value(choice).unwrap();
+    let permissions = &advertised["permissions"];
+    assert!(
+      permissions["plugins"]
+        .as_array()
+        .unwrap()
+        .contains(&serde_json::json!(draft.plugin))
+    );
+    assert!(
+      permissions["plugins"]
+        .as_array()
+        .unwrap()
+        .contains(&serde_json::json!(identity))
+    );
+    assert_eq!(permissions["secret_profiles"], serde_json::json!(["delivery-only"]));
+    assert_eq!(permissions["network_hosts"], serde_json::json!(["forge.example"]));
+    assert!(!advertised.to_string().contains(&draft.credential_handle));
     assert!(!choice.review_url);
     let other_project = serde_json::from_value(catalog["projects"][1]["project_id"].clone()).unwrap();
     let octacity_server_store::FactoryConfigurationAvailability::Available(other) =
@@ -297,6 +315,52 @@ mod tests {
     assert_eq!(installed.0, FlowNodeKind::TrustedAction);
     assert_eq!(installed.1, NodeExecutionIdentity::External(identity));
     assert!(!marker.exists(), "installing authority must not execute the adapter");
+    let mut legacy = document.clone();
+    legacy.as_object_mut().unwrap().remove("receipt_schema");
+    let legacy: FactoryFileDeliveryProfile = serde_json::from_value(legacy).unwrap();
+    let (_, installed_targets) = legacy
+      .install(&crate::runtime::factory::factory_tests::resources())
+      .unwrap();
+    assert_eq!(
+      installed_targets.len(),
+      1,
+      "publication-only installations still own an exact target"
+    );
+    assert_eq!(&installed_targets[0].1.target, target.reference());
+    assert_eq!(installed_targets[0].1.outcome, outcome);
+    assert!(installed_targets[0].1.receipt_schema.is_none());
+    let mut same_adapter_and_action = document.clone();
+    same_adapter_and_action["identity"] = serde_json::to_value(&draft.plugin).unwrap();
+    let profile: FactoryFileDeliveryProfile = serde_json::from_value(same_adapter_and_action).unwrap();
+    let (_, targets) = profile
+      .install(&crate::runtime::factory::factory_tests::resources())
+      .expect("one installed capability can serve as both action and adapter");
+    assert_eq!(
+      serde_json::to_value(&targets[0].1.permissions).unwrap()["plugins"],
+      serde_json::json!([draft.plugin])
+    );
+    let mut private_catalog = catalog.clone();
+    private_catalog["delivery"][0]
+      .as_object_mut()
+      .unwrap()
+      .remove("receipt_schema");
+    private_catalog["projects"][0]["references"] = serde_json::json!([]);
+    let installer = crate::runtime::factory::factory_profile_file::FileProfileInstaller::parse_json(
+      &serde_json::to_vec(&private_catalog).unwrap(),
+      &[],
+    )
+    .unwrap();
+    let installation =
+      crate::runtime::FactoryRuntimeInstaller::install(&installer, crate::runtime::factory::factory_tests::resources())
+        .await
+        .expect("publication-only profiles can install without a Console choice");
+    assert_eq!(installation.executors.len(), 1);
+    let octacity_server_store::FactoryConfigurationAvailability::Available(choices) =
+      installation.capabilities.availability(draft.project_id).await.unwrap()
+    else {
+      panic!("the Project must remain available")
+    };
+    assert!(choices.candidate_publications().is_empty());
     let mut substituted = document;
     substituted["policies"][0]["draft"]["configuration_digest"] = serde_json::json!("06".repeat(32));
     let profile: FactoryFileDeliveryProfile = serde_json::from_value(substituted).unwrap();

@@ -2,6 +2,9 @@ use serde::{Deserialize, Serialize};
 
 use crate::{FactoryError, FactoryKey, ImmutableReference};
 
+/// Trusted operation for publishing a verified candidate to an external repository.
+pub const PUBLISH_CANDIDATE_ACTION: &str = "publish_candidate";
+
 /// Maximum serialized parameter bytes in one operator-published action binding.
 pub const MAX_FLOW_ACTION_PARAMETER_BYTES: usize = 8 * 1024;
 
@@ -63,6 +66,17 @@ impl FlowActionBinding {
   pub const fn action(&self) -> &FactoryKey {
     &self.action
   }
+  /// Whether this binding asks the candidate publisher to confirm a PR URL.
+  #[must_use]
+  pub fn requires_confirmed_publication_url(&self) -> bool {
+    self.action.as_str() == PUBLISH_CANDIDATE_ACTION
+      && self
+        .parameters
+        .get("require_review_url")
+        .and_then(serde_json::Value::as_bool)
+        == Some(true)
+  }
+
   /// Returns the operator-published parameters; plugin validation precedes effects.
   #[must_use]
   pub const fn parameters(&self) -> &serde_json::Value {

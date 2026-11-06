@@ -109,6 +109,11 @@ impl FlowOutcomeDefinition {
   pub const fn schema(&self) -> &ImmutableReference {
     &self.schema
   }
+
+  /// Compares the executable result contract independently of display settings.
+  pub fn matches_contract(&self, other: &Self) -> bool {
+    self.key == other.key && self.kind == other.kind && self.schema == other.schema
+  }
 }
 
 /// One finite terminal outcome exported by a Flow Definition.

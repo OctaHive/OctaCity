@@ -49,6 +49,7 @@ const titles = {
   triage: 'factory.issueCardTriage',
   specifications: 'factory.issueCardSpecifications',
   review: 'factory.issueCardReview',
+  publication: 'issueOutcomes.pullRequest',
 } satisfies Record<Exclude<Card['presentation']['kind'], 'custom'>, MessageKey>;
 
 /** The server owns current slot selection. This view reads only accepted display fields. */
@@ -101,7 +102,11 @@ function OutcomeCard({
   return (
     <article aria-labelledby={headingId} className={styles.outcomeCard}>
       <h3 id={headingId}>{title}</h3>
-      <p className={styles.prose}>{card.conclusion}</p>
+      <p className={styles.prose}>
+        {presentation.kind === 'publication'
+          ? t('issueOutcomes.publicationForManualMerge')
+          : card.conclusion}
+      </p>
       {presentation.kind === 'triage' ? <TriageFacts value={presentation} /> : null}
       {presentation.kind === 'review' ? (
         <OutcomeFacts

@@ -117,6 +117,18 @@ impl FactoryCommandBuildProfile {
       model_or_tool: self.identity.clone(),
       pipeline_node: self.pipeline_node.clone(),
       compilation: None,
+      command: self
+        .observation_bindings()
+        .ok()
+        .map(|_| octacity_server_factory::FactoryBuildCommandContract {
+          task_digest: self.task_digest(),
+          outputs: self.outputs.clone(),
+          observation_schema: self
+            .observation_contract
+            .as_ref()
+            .and_then(|contract| contract.report_schema().ok()),
+          permissions: self.project_permissions.clone(),
+        }),
     }
   }
 
@@ -154,8 +166,11 @@ impl FactoryCommandBuildProfile {
       .outputs
       .iter()
       .filter(|output| {
-        output.output_kind() == octacity_server_factory::EvidenceOutputKind::Report
-          && output.schema() == schema.reference()
+        octacity_server_factory::FactoryBuildCommandContract::accepts_primary_output(
+          Some(schema.reference()),
+          output.output_kind(),
+          output.schema(),
+        )
       })
       .map(|output| crate::FactoryCommandObservationBinding {
         command: self.identity.clone(),
@@ -670,11 +685,6 @@ pub fn compile_factory_command_task(
     .and_then(|definition| definition.node(intent.input().node()))
     .and_then(|node| node.build())
     .ok_or_else(invalid)?;
-  let result = profile
-    .outputs
-    .iter()
-    .find(|output| output.kind() == &binding.result_output)
-    .ok_or_else(invalid)?;
   let node = admitted
     .closure()
     .definition(intent.input().definition())
@@ -685,16 +695,7 @@ pub fn compile_factory_command_task(
     .iter()
     .find(|outcome| outcome.key() == &binding.result_outcome)
     .ok_or_else(invalid)?;
-  if result.schema() != outcome.schema()
-    || result.output_kind() != binding.result_output_kind
-    || result.tool() != binding.result_tool.as_ref().unwrap_or(&binding.tool)
-    || result.plugin() != &binding.plugin
-    || profile.outputs.len() != binding.evidence.len() + 1
-    || binding
-      .evidence
-      .iter()
-      .any(|expected| !profile.outputs.contains(expected))
-  {
+  if !binding.matches_outputs(outcome.schema(), &profile.outputs) {
     return Err(invalid());
   }
   let bytes = serde_json::to_vec(intent).map_err(|_| invalid())?;

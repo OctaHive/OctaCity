@@ -288,35 +288,72 @@ export function FactoryRunDiagnostics({ api, run }: { api: FactoryApi; run: Fact
                   <tbody>
                     {items
                       .filter((item) => item.kind === 'node_attempt')
-                      .map((item) => (
-                        <tr key={item.id}>
-                          <th scope="row">
-                            <button type="button" onClick={() => inspect(item, item.id)}>
-                              {item.record.node_key} · {item.record.number}
-                            </button>
-                          </th>
-                          <td>
-                            {knownCompletions.some((row) => row.record.node_attempt_id === item.id)
-                              ? t('factory.recordCompleted')
-                              : (knownStops.find((row) => row.record.node_attempt_id === item.id)
-                                  ?.record.reason.kind ??
-                                (item.record.retryable
-                                  ? t('factory.retryEligible')
-                                  : item.record.active
-                                    ? t(
-                                        item.record.node_kind === 'join'
-                                          ? 'factory.pendingJoin'
-                                          : 'factory.activeAttempt',
-                                      )
-                                    : completions.error || stops.error
-                                      ? t('factory.executionDetailsUnavailable')
-                                      : completions.isPending || stops.isPending
-                                        ? t('factory.executionDetailsLoading')
-                                        : t('factory.recordedAttempt')))}
-                          </td>
-                          <td>{item.record.node_kind}</td>
-                        </tr>
-                      ))}
+                      .map((item) => {
+                        const stop = knownStops.find(
+                          (row) => row.record.node_attempt_id === item.id,
+                        );
+                        return (
+                          <tr key={item.id}>
+                            <th scope="row">
+                              <button type="button" onClick={() => inspect(item, item.id)}>
+                                {item.record.node_key} · {item.record.number}
+                              </button>
+                            </th>
+                            <td>
+                              {stop ? (
+                                <>
+                                  <div>
+                                    {t(
+                                      stop.record.reason.kind === 'cancelled'
+                                        ? 'factory.executionCancelled'
+                                        : 'factory.executionFailed',
+                                    )}
+                                  </div>
+                                  {stop.record.observed_at >= item.record.deadline ? (
+                                    <div>{t('factory.stopAfterDeadline')}</div>
+                                  ) : null}
+                                  {item.record.retryable ? (
+                                    <div>{t('factory.retryEligible')}</div>
+                                  ) : null}
+                                  <Link
+                                    to={{
+                                      search: diagnosticParams(
+                                        item,
+                                        stop.id,
+                                        stops,
+                                        'node-stops',
+                                      ).toString(),
+                                    }}
+                                  >
+                                    {t('factory.viewStopDetails')}
+                                  </Link>
+                                </>
+                              ) : knownCompletions.some(
+                                  (row) => row.record.node_attempt_id === item.id,
+                                ) ? (
+                                t('factory.recordCompleted')
+                              ) : item.record.retryable ? (
+                                t('factory.retryEligible')
+                              ) : item.record.active ? (
+                                t(
+                                  item.record.node_kind === 'join'
+                                    ? 'factory.pendingJoin'
+                                    : item.record.wait_reason === 'awaiting_terminal_usage'
+                                      ? 'factory.waitForTerminalUsage'
+                                      : 'factory.activeAttempt',
+                                )
+                              ) : completions.error || stops.error ? (
+                                t('factory.executionDetailsUnavailable')
+                              ) : completions.isPending || stops.isPending ? (
+                                t('factory.executionDetailsLoading')
+                              ) : (
+                                t('factory.recordedAttempt')
+                              )}
+                            </td>
+                            <td>{item.record.node_kind}</td>
+                          </tr>
+                        );
+                      })}
                   </tbody>
                 </table>
               ) : null}

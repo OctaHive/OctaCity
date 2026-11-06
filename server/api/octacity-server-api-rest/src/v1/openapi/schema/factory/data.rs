@@ -55,7 +55,7 @@ pub(super) fn insert(schemas: &mut Map<String, Value>) {
   ]}));
   schemas.insert(
     "FactoryFlowRecordView".to_owned(),
-    json!({"type":"string","enum":["input_payload","payload","metadata"]}),
+    json!({"type":"string","enum":["input_payload","payload","metadata","primary_artifact"]}),
   );
   schemas.insert(
     "FactoryFlowInputBinding".to_owned(),

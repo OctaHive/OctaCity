@@ -11,6 +11,7 @@ import { sourceBindingKey, sourceReferenceKey } from '../../shared/sourceReferen
 
 type Node = components['schemas']['FactoryFlowNodeDefinition'];
 type Parameters = components['schemas']['FactoryWorkStatusActionParameters'];
+const MIN_RETRY_DELAY_MILLIS = 1;
 export type FlowSourceServices = { api: FactorySourcesApi; projectId: string };
 export type SourceUpdateDraft = {
   attempts: number;
@@ -59,7 +60,7 @@ function SourceUpdateForm({
   const original = parameters?.source_update;
   const form: SourceUpdateDraft = editing ?? {
     attempts: parameters?.outbox?.max_attempts ?? 1,
-    delay: parameters?.outbox?.retry_delay_millis ?? 0,
+    delay: parameters?.outbox?.retry_delay_millis ?? MIN_RETRY_DELAY_MILLIS,
     connectionId: original?.connection?.id ?? '',
     connectionVersion: original?.connection?.version,
     sourceKey: original ? sourceBindingKey(original.source) : '',
@@ -151,7 +152,7 @@ function SourceUpdateForm({
     Number.isSafeInteger(attempts) &&
     attempts > 0 &&
     Number.isSafeInteger(delay) &&
-    delay >= 0 &&
+    delay >= MIN_RETRY_DELAY_MILLIS &&
     (!contract ||
       (attempts <= contract.parameters.max_attempts &&
         delay <= contract.parameters.max_retry_delay_millis)) &&
@@ -309,7 +310,7 @@ function SourceUpdateForm({
             {t('factory.reportRetryDelay')}
             <input
               type="number"
-              min={0}
+              min={MIN_RETRY_DELAY_MILLIS}
               max={contract.parameters.max_retry_delay_millis}
               value={delay}
               onChange={(event) => edit({ delay: Number(event.target.value) })}

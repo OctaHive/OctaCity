@@ -1653,3 +1653,4 @@ fn issue_status_publication_uses_visible_retained_workflows_and_rejects_model_se
 }
 
 mod profile_selection;
+pub(crate) use profile_selection::PublicationChoices;

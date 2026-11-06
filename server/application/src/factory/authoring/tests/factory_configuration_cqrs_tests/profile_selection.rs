@@ -1,5 +1,7 @@
 use super::*;
+pub(crate) use crate::factory_node_test_support::publication::PublicationChoices;
 use octacity_server_factory::*;
+use octacity_server_store::*;
 use std::collections::BTreeMap;
 
 mod ticket_delivery;
@@ -331,7 +333,7 @@ fn standalone_flow_publication_uses_the_same_profile_compatibility_validation() 
       handlers.handle_query(&context(), input.clone()).await.is_err(),
       "standalone Flow publication must reject an unavailable candidate too"
     );
-    *store.0.lock().unwrap() = fixture.choices;
+    store.replace_choices(fixture.choices);
     assert!(
       handlers
         .handle_query(
@@ -347,19 +349,6 @@ fn standalone_flow_publication_uses_the_same_profile_compatibility_validation() 
     );
     assert!(handlers.handle_query(&context(), input).await.is_ok());
   });
-}
-
-// Standalone roots may read installed choices but must never read a subflow.
-// Only command tests opt in to the publication boundary.
-pub(super) struct PublicationChoices(std::sync::Mutex<FactoryConfigurationChoices>, bool);
-impl PublicationChoices {
-  pub(super) fn for_validation(choices: FactoryConfigurationChoices) -> Self {
-    Self(std::sync::Mutex::new(choices), false)
-  }
-
-  fn for_publication(choices: FactoryConfigurationChoices) -> Self {
-    Self(std::sync::Mutex::new(choices), true)
-  }
 }
 
 #[test]
@@ -491,86 +480,6 @@ fn access_constraints_explain_profile_narrowing_and_defer_actual_agent_enforceme
     }
   });
 }
-use octacity_server_store::*;
-#[async_trait]
-impl FactoryConfigurationStore for PublicationChoices {
-  async fn factory_configuration_availability(
-    &self,
-    _: ProjectId,
-  ) -> Result<FactoryConfigurationAvailability, StoreError> {
-    Ok(FactoryConfigurationAvailability::Available(
-      self.0.lock().unwrap().clone(),
-    ))
-  }
-  async fn replay_factory_configuration_mutation(
-    &self,
-    _: ManagementMutation<ReplayFactoryConfigurationMutation>,
-  ) -> Result<Option<FactoryConfigurationMutationOutcome>, StoreError> {
-    unreachable!("validation cannot replay a mutation")
-  }
-  async fn create_factory_configuration(
-    &self,
-    _: ManagementMutation<CreateFactoryConfiguration>,
-  ) -> Result<FactoryConfigurationMutationOutcome, StoreError> {
-    unreachable!("validation cannot create a configuration")
-  }
-  async fn replace_factory_configuration(
-    &self,
-    _: ManagementMutation<ReplaceFactoryConfiguration>,
-  ) -> Result<FactoryConfigurationMutationOutcome, ReplaceFactoryConfigurationError> {
-    unreachable!("validation cannot replace a configuration")
-  }
-  async fn factory_configuration_version(
-    &self,
-    _: FactoryConfigurationId,
-    _: FactoryConfigurationVersion,
-  ) -> Result<PublishedFactoryConfiguration, StoreError> {
-    unreachable!("root validation needs no configuration read")
-  }
-  async fn current_factory_configuration(
-    &self,
-    _: FactoryConfigurationId,
-  ) -> Result<PublishedFactoryConfiguration, StoreError> {
-    unreachable!("root validation needs no configuration read")
-  }
-}
-#[async_trait]
-impl FactoryFlowDefinitionStore for PublicationChoices {
-  async fn replay_factory_flow_definition(
-    &self,
-    _: ManagementMutation<ReplayFactoryFlowDefinition>,
-  ) -> Result<Option<FactoryFlowDefinitionMutationOutcome>, StoreError> {
-    assert!(self.1, "validation cannot replay a mutation");
-    Ok(None)
-  }
-  async fn publish_factory_flow_definition(
-    &self,
-    request: ManagementMutation<PublishFactoryFlowDefinition>,
-  ) -> Result<FactoryFlowDefinitionMutationOutcome, ReplaceFactoryConfigurationError> {
-    assert!(self.1, "validation cannot publish");
-    Ok(FactoryFlowDefinitionMutationOutcome {
-      disposition: octacity_server_store::MutationDisposition::Applied,
-      publication: request.into_parts().0.publication,
-    })
-  }
-  async fn factory_flow_definition(
-    &self,
-    _: FlowDefinitionId,
-    _: Option<FlowDefinitionVersion>,
-  ) -> Result<PublishedFactoryFlowDefinition, StoreError> {
-    unreachable!("a standalone root has no subflow")
-  }
-  async fn list_factory_flow_definitions(
-    &self,
-    _: ProjectId,
-    _: Option<FlowDefinitionPagePosition>,
-    _: u16,
-    _: FlowDefinitionListVisibility,
-  ) -> Result<FactoryFlowDefinitionPage, StoreError> {
-    unreachable!("validation cannot list definitions")
-  }
-}
-
 #[test]
 fn decision_profile_answers_are_checked_before_flow_publication() {
   run_ready(async {
@@ -696,6 +605,7 @@ fn native_compiler_rejects_missing_task_context_before_publication_and_accepts_e
     for binding in node.build_bindings() {
       choices = choices
         .with_build_pipeline_contract(FactoryBuildPipelineContract {
+          command: None,
           build_configuration: binding.build_configuration.clone(),
           tool: binding.tool.clone(),
           plugin: binding.plugin.clone(),
@@ -850,8 +760,13 @@ fn flow_publication_preserves_the_declared_accepted_predecessor() {
       .unwrap();
     let predecessor = FlowAcceptedPredecessor {
       definition: root.reference(),
-      terminal: key("triaged"),
-      outcomes: [key("eligible")].into(),
+      terminal: key("succeeded"),
+      outcomes: [key("succeeded")].into(),
+    };
+    let producer = PublishedFactoryFlowDefinition {
+      project_id: project,
+      flow: flow.clone(),
+      published_at: time(0),
     };
     let draft = serde_json::from_value(serde_json::json!({
       "root": {
@@ -868,7 +783,7 @@ fn flow_publication_preserves_the_declared_accepted_predecessor() {
     let handlers = AuthorizedCommandHandler::new(
       policy.clone(),
       Arc::new(crate::FactoryFlowDefinitionHandlers::new(
-        Arc::new(PublicationChoices::for_publication(fixture.choices)),
+        Arc::new(PublicationChoices::for_publication(fixture.choices).with_predecessor(producer)),
         policy,
       )),
     );

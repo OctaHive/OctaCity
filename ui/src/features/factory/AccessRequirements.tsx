@@ -1,3 +1,5 @@
+import { useFactoryAuthoringCapabilities } from './useFactoryAuthoringCapabilities';
+import type { FlowAuthoringServices } from './FlowPrimitives';
 import { useId, useRef, useState } from 'react';
 import type { components } from '../../../.generated/api/schema';
 import { usePresentation } from '../../app/presentation/PresentationProvider';
@@ -8,12 +10,22 @@ import styles from '../../shared/ConfirmedCommand.module.css';
 import layout from './Factory.module.css';
 
 type Draft = components['schemas']['FactoryFlowDefinitionDraft'];
+export function PublicationAccessRequirements({
+  services,
+  ...props
+}: Parameters<typeof AccessRequirements>[0] & { services: FlowAuthoringServices }) {
+  const { data } = useFactoryAuthoringCapabilities(services);
+  return <AccessRequirements {...props} publications={data?.candidate_publications} />;
+}
+
 /** Explicitly reviews one exact draft change. Opening/cancelling never requests access. */
 export function AccessRequirements({
   value,
+  publications,
   onChange,
 }: {
   value: Draft;
+  publications?: readonly components['schemas']['FactoryCandidatePublicationChoice'][] | undefined;
   onChange: (value: Draft) => void;
 }) {
   const { t } = usePresentation();
@@ -36,7 +48,7 @@ export function AccessRequirements({
   });
   const nodes = value.root.nodes.map((node) => ({
     ...node,
-    permissions: requiredPermissions(node),
+    permissions: requiredPermissions(node, publications),
   }));
   const permissions = nodes.reduce(
     (permissions, node) => mergePermissions(permissions, node.permissions),

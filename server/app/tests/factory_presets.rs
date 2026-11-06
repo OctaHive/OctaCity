@@ -49,10 +49,15 @@ async fn released_management_exposes_presets_before_factory_execution_is_install
     response.text().await.unwrap()
   );
   let page = response.json::<serde_json::Value>().await.unwrap();
-  assert_eq!(page["items"][0]["reference"]["identity"], "triage");
+  let triage = page["items"]
+    .as_array()
+    .unwrap()
+    .iter()
+    .find(|item| item["reference"]["identity"] == "triage")
+    .unwrap();
   let response = client
     .post(format!("{path}/resolve"))
-    .json(&json!({"preset":page["items"][0]["reference"]}))
+    .json(&json!({"preset":triage["reference"]}))
     .send()
     .await
     .unwrap();

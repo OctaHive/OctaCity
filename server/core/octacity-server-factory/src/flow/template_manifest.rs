@@ -1,11 +1,12 @@
 //! Bounded composition of editable documents before immutable publication.
 use crate::{
-  FactoryError, FactoryKey, FactoryRepositoryPath, FlowContextProjection, FlowDataProjection, FlowDefinitionTemplate,
-  FlowExecutionPolicy, FlowGateProgram, FlowPredicate, FlowTemplateNode, FlowTemplateSchema, FlowTransition,
-  MAX_FLOW_DATA_BYTES, MAX_FLOW_DEFINITION_EDGES, MAX_FLOW_DEFINITION_NODES, MAX_FLOW_SCHEMA_ENTRIES,
+  FactoryError, FactoryInstructions, FactoryKey, FactoryRepositoryPath, FlowContextProjection, FlowDataProjection,
+  FlowDefinitionTemplate, FlowExecutionPolicy, FlowGateProgram, FlowPredicate, FlowTemplateNode, FlowTemplateSchema,
+  FlowTransition, FlowTransitionTarget, MAX_FLOW_DATA_BYTES, MAX_FLOW_DEFINITION_EDGES, MAX_FLOW_DEFINITION_NODES,
+  MAX_FLOW_SCHEMA_ENTRIES,
 };
 use serde::Deserialize;
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 
 #[derive(Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -14,6 +15,10 @@ struct Manifest {
   entry: FactoryKey,
   execution: FlowExecutionPolicy,
   parts: Vec<FactoryRepositoryPath>,
+  #[serde(default)]
+  terminal_routes: BTreeMap<FactoryKey, Option<FactoryKey>>,
+  #[serde(default)]
+  without_pools: BTreeSet<FactoryKey>,
 }
 #[derive(Default, Deserialize)]
 #[serde(default, deny_unknown_fields)]
@@ -23,6 +28,7 @@ struct Part {
   nodes: Vec<FlowTemplateNode>,
   gate_programs: BTreeMap<FactoryKey, FlowGateProgram>,
   gate_bindings: BTreeMap<FactoryKey, GateBinding>,
+  assignments: BTreeMap<FactoryKey, FactoryInstructions>,
   transitions: Vec<FlowTransition>,
   terminals: BTreeMap<FactoryKey, FactoryKey>,
   context_projections: Vec<FlowContextProjection>,
@@ -33,6 +39,8 @@ struct Part {
 struct GateBinding {
   program: FactoryKey,
   precondition: FlowPredicate,
+  #[serde(default)]
+  outputs: BTreeMap<FactoryKey, crate::FlowDataMapping>,
 }
 impl FlowDefinitionTemplate {
   /// Assembles explicitly listed, flat configuration parts into the same editable
@@ -42,6 +50,8 @@ impl FlowDefinitionTemplate {
   /// root; the domain performs no filesystem or network access. Resolve all parts
   /// before publication: admitted runs retain only the immutable compiled closure,
   /// never mutable file references. Nested imports and silent overrides are rejected.
+  /// A manifest may explicitly connect a part's terminal to a node (or remove it
+  /// with `null`) and remove a named node's queue. Parts may supply missing step assignments.
   pub fn from_manifest(
     bytes: &[u8],
     mut resolve: impl FnMut(&FactoryRepositoryPath) -> Result<Vec<u8>, FactoryError>,
@@ -68,7 +78,8 @@ impl FlowDefinitionTemplate {
     let mut total = bytes.len();
     let mut programs = BTreeMap::new();
     let mut gate_bindings = BTreeMap::new();
-    let mut paths = std::collections::BTreeSet::new();
+    let mut assignments = BTreeMap::new();
+    let mut paths = BTreeSet::new();
     for path in manifest.parts {
       if !paths.insert(path.clone()) {
         return Err(invalid());
@@ -99,6 +110,11 @@ impl FlowDefinitionTemplate {
           return Err(invalid());
         }
       }
+      for (node, task) in part.assignments {
+        if assignments.insert(node, task).is_some() {
+          return Err(invalid());
+        }
+      }
       for (key, schema) in part.terminals {
         if template.terminals.insert(key, schema).is_some() {
           return Err(invalid());
@@ -117,6 +133,7 @@ impl FlowDefinitionTemplate {
         || template.deliverable_policies.len() > MAX_FLOW_SCHEMA_ENTRIES
         || programs.len() > MAX_FLOW_DEFINITION_NODES
         || gate_bindings.len() > MAX_FLOW_DEFINITION_NODES
+        || assignments.len() > MAX_FLOW_DEFINITION_NODES
         || template.nodes.len() > MAX_FLOW_DEFINITION_NODES
         || template.transitions.len() > MAX_FLOW_DEFINITION_EDGES
       {
@@ -133,7 +150,56 @@ impl FlowDefinitionTemplate {
         return Err(invalid());
       }
       let program = programs.get(&binding.program).ok_or_else(invalid)?;
-      node.gate = Some(program.clone().with_precondition(binding.precondition)?);
+      let mut program = program.clone().with_precondition(binding.precondition)?;
+      for (outcome, mapping) in binding.outputs {
+        program = program.with_output_mapping(outcome, mapping)?;
+      }
+      node.gate = Some(program);
+    }
+    for node in &mut template.nodes {
+      if let Some(task) = assignments.remove(&node.key) {
+        if node.task.is_some() || node.kind != crate::FlowNodeKind::Reasoning {
+          return Err(invalid());
+        }
+        node.task = Some(task);
+      }
+    }
+    if !assignments.is_empty() {
+      return Err(invalid());
+    }
+    for key in manifest.without_pools {
+      template
+        .nodes
+        .iter_mut()
+        .find(|node| node.key == key)
+        .and_then(|node| node.pool.take())
+        .ok_or_else(invalid)?;
+    }
+    for (terminal, next) in manifest.terminal_routes {
+      if template.terminals.remove(&terminal).is_none()
+        || next
+          .as_ref()
+          .is_some_and(|next| !template.nodes.iter().any(|node| &node.key == next))
+        || template.transitions.iter().any(|edge| {
+          edge.exhausted_terminal() == Some(&terminal)
+            || (edge.target() == &FlowTransitionTarget::Terminal(terminal.clone())
+              && (edge.max_repeats() != 0 || edge.starts_cycle()))
+        })
+      {
+        return Err(invalid());
+      }
+      template.transitions.retain_mut(|edge| {
+        if !matches!(edge.target(), FlowTransitionTarget::Terminal(key) if key == &terminal) {
+          return true;
+        }
+        let Some(next) = &next else { return false };
+        *edge = FlowTransition::new(
+          edge.predecessor().clone(),
+          edge.outcome().clone(),
+          FlowTransitionTarget::Node(next.clone()),
+        );
+        true
+      });
     }
     Ok(template)
   }

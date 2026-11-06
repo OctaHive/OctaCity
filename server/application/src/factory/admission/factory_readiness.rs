@@ -296,6 +296,7 @@ impl<S: FactoryConfigurationStore + FactoryRuntimeSettingsStore> ManagementQuery
           target.flow(),
           choices,
           "/flow",
+          crate::factory::authoring::factory_configuration_choices::FlowChoiceValidation::Retained,
         )
         .is_ok()
     });
@@ -338,6 +339,19 @@ impl<S: FactoryConfigurationStore + FactoryRuntimeSettingsStore> ManagementQuery
       }
       for definition in target.flow().closure.definitions() {
         for node in definition.nodes().iter().filter(|n| n.is_required()) {
+          if let Some(action) = node
+            .action()
+            .filter(|action| action.action().as_str() == PUBLISH_CANDIDATE_ACTION)
+          {
+            let (state, reason) =
+              publication_repository(definition, node, action, installation.as_ref().ok(), repository.id);
+            checks.push(at_node(
+              check("publication_target", state, reason, true, now, end),
+              definition.reference(),
+              node.key(),
+              None,
+            ));
+          }
           if let Some(binding) = node.context_binding() {
             for (name, source) in binding.static_sources() {
               let Some(FactoryContextReference::Artifact(artifact)) = source.source else {
@@ -479,6 +493,41 @@ impl<S: FactoryConfigurationStore + FactoryRuntimeSettingsStore> ManagementQuery
     })
   }
 }
+fn publication_repository(
+  definition: &FlowDefinition,
+  node: &FlowNodeDefinition,
+  action: &FlowActionBinding,
+  choices: Option<&FactoryConfigurationChoices>,
+  admitted_repository: octacity_server_domain::RepositoryId,
+) -> (FactoryReadinessState, &'static str) {
+  use crate::factory::artifacts::factory_candidate_publication::publication_target;
+  use FactoryReadinessState::*;
+  let Some(choices) = choices else {
+    return (Unknown, "unavailable");
+  };
+  let Some(target) = publication_target(action).ok().and_then(|target| {
+    choices
+      .candidate_publications()
+      .iter()
+      .find(|choice| &choice.plugin == action.plugin() && choice.target == target)
+  }) else {
+    return (Blocked, "unavailable");
+  };
+  let selected = match node.code() {
+    None => Some(admitted_repository),
+    Some(FlowCodeBinding::None) => None,
+    Some(FlowCodeBinding::Source { source, .. }) => definition
+      .code_sources()
+      .and_then(|sources| sources.get(source))
+      .map(|source| source.repository.id),
+  };
+  match selected {
+    Some(id) if id == target.repository_id => (Ready, "configured"),
+    Some(_) => (Blocked, "repository_mismatch"),
+    None => (Blocked, "repository_unbound"),
+  }
+}
+
 fn check(
   aspect: &str,
   state: FactoryReadinessState,
@@ -540,7 +589,7 @@ fn observation_count(target: &FactoryConfiguration) -> usize {
 fn remediation(aspect: &str) -> &'static str {
   match aspect {
     "configuration" => "review_configuration",
-    "repository" => "review_repository",
+    "repository" | "publication_target" => "review_repository",
     "installation" => "restore_runtime",
     "project_policies" => "review_project_policies",
     "agent" => "enroll_compatible_agent",

@@ -205,6 +205,20 @@ qualification blocks selected-source execution. Whole-repository access also
 requires its declared policy; broadening a scope is not a runtime repair.
 Backend/Build/Profile compatibility remains mandatory in every mode.
 
+For a Build that captures a ChangeSet, open **Candidate capture** on the step
+and list the writable directories. The same capture settings apply to every
+candidate executor of that step. If the installed compiler uses a public
+deliverable policy, enable **Require deliverables**, map the accepted Work
+contract from the step input, and specify permitted paths, exclusions and the
+minimum files per required category. These settings narrow the installed
+capability and do not grant repository access.
+
+Under **Advanced input and Context mappings**, select the exact candidate
+revision and add named **Artifact collections** from typed retained inputs.
+For optional branches, set **Only when input is present** to the pointer of the
+required input. Connect protected evidence only to the trusted step that needs
+it. Implementation can receive a separate public summary.
+
 ## Review purpose, limits and publication
 
 In **Pipeline purpose**, edit optional **Pipeline goals** and **Completion
@@ -279,12 +293,59 @@ an earlier run**, select the earlier Run of this Issue, then review and confirm.
 Factory checks the selected Run against the published predecessor, terminal,
 outcome, repository and current Issue requirements.
 
+For an optional starting point, open **Add pipeline → Start from an example →
+Ticket delivery · v1**. Select the published triage completion, compatible
+executors and command reports, and an installed review target. The example opens
+an editable Flow draft. Connect code to the steps that need it and review each
+access request before publishing. Set up the launch Configuration separately.
+To use an older triage Flow, open **Earlier Flow version**, select the Flow
+and its version, then choose that version's completion in **Incoming pipeline
+completion**. Delivery pins the exact version and selected outcome.
+See the [example's prerequisite guide](../../config/factory/presets/ticket-delivery/README.md).
+
 For trusted Delivery, choose **Server action** and **Publish candidate**.
 Select the installed Project target and review its receipt result. Connect the
-candidate revision, bundle and manifest explicitly, along with any required
-validation expiry and review metadata. Review the step request against Project
-access policy before publishing. The Delivery credentials belong to the trusted
-action. Keep them out of the AI steps' requests.
+candidate revision, bundle and manifest explicitly. Under **Publication inputs**,
+select the expiry paths for the accepted validation and review and the path to
+the PR title and summary. The expiry paths must come from the accepted Build
+proofs for review and validation. Both proofs must belong to the candidate being
+published. A new PR write must happen before both expiries. The publisher can
+still look up an existing PR within the original attempt.
+If the Flow should branch on a publication conflict or rejection, add a failure
+result and select it for that event under **Publication inputs**. Add a graph
+route for each selected result. The example supplies both routes.
+
+Use **Review required access** to see the selected target's adapter, network
+hosts and logical credential profile before applying them to the draft. Review
+the step request against the Project access policy before publishing. Keep
+Delivery credentials scoped to the trusted action.
+
+To show accepted results on the Issue, edit the step's **Expected result**
+and use **Show on Issue**. The Ticket delivery example includes a card with the
+retained specification manifest and bundle, and a card with the accepted
+review's Build report. To edit either card, choose **Custom**, select the
+conclusion field and choose the exact result fields under **Artifact links**.
+Use **Specifications** for Project documents and **Code review** for an
+attached Issue review. Each link follows its resource's own access rules.
+For the successful **Publish candidate** outcome, choose
+**Pull request** and use a Delivery receipt that requires the review URL. The
+card links to the original Run and appears only after trusted Delivery has
+confirmed a PR and the viewer can read its repository.
+The link opens the PR for manual review and merge.
+
+In the Run, **Node attempts** shows which step stopped and whether it can be
+retried. Open an attempt to see which accepted step results, admitted Work
+inputs and kinds of Context it received. Before responding to a pending human
+decision, **Run commands** lists the accepted results that reached that request.
+The result digest distinguishes repeats of the same producing step. These views
+omit private bodies, attachment handles and credentials.
+**View stop details** opens the retained cause and usage for that
+attempt. When a stop was observed after the deadline, the Console shows that
+timing separately from the recorded cause. If a Build stops before its
+verified usage is available, the affected attempt shows that wait reason until
+the stop is settled. Pending approvals are available
+through the Run's operator actions; ordinary Builds and validation evidence
+remain under their own Run records.
 
 Open the returned Run and inspect admission, node input/result records, linked
 ordinary Builds and any separate delivery receipts. A blocked/unknown prerequisite

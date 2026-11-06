@@ -1,0 +1,19 @@
+{
+  "assignments": {
+    "specification_author": [
+      "Prepare an OpenSpec proposal, design, delta specifications and tasks for the accepted issue. Preserve the original implementation acceptance and add observable regression criteria for a defect."
+    ],
+    "protected_tests": [
+      "Write isolated acceptance tests for the approved requirements. Check the reported behavior, keep the test files private, and report the covered classes for the baseline runner."
+    ],
+    "implementation": [
+      "Implement the approved requirements within the selected writable scope. Use the public test coverage and any retained rework feedback; add and run visible regression tests. Report evidence or a requirements defect without inventing test results."
+    ],
+    "review": [
+      "Independently review the exact candidate against the approved requirements. Report concrete findings and a verdict with evidence. Keep the candidate unchanged."
+    ],
+    "validation_classification": [
+      "Classify the retained validation failure using the trusted report. Distinguish a candidate defect, an environment or harness problem, and missing evidence. Do not infer success when the checks did not complete."
+    ]
+  }
+}

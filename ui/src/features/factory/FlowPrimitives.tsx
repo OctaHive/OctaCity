@@ -1,7 +1,6 @@
+import { useFactoryAuthoringCapabilities } from './useFactoryAuthoringCapabilities';
 import { useEffect, useRef, useState } from 'react';
-import { useQuery } from '@tanstack/react-query';
 import type { components } from '../../../.generated/api/schema';
-import { queryKeys } from '../../app/query';
 import { usePresentation } from '../../app/presentation/PresentationProvider';
 import { QueryFailureNotice } from '../../shared/QueryStateNotice';
 import { SelectMenu } from '../../shared/SelectMenu';
@@ -47,12 +46,10 @@ export function FlowPrimitives({
   const [inspectPublication, setInspectPublication] = useState(false);
   const publicationSelected = node.action?.action === publishCandidateAction;
   const canConfigurePublication = publication && (!node.action || publicationSelected);
-  const capabilities = useQuery({
-    queryKey: queryKeys.factoryAuthoringCapabilities(services.projectId),
-    queryFn: ({ signal }) => services.api.getAuthoringCapabilities(services.projectId, signal),
-    enabled:
-      !publication || (canConfigurePublication && (inspectPublication || publicationSelected)),
-  });
+  const capabilities = useFactoryAuthoringCapabilities(
+    services,
+    !publication || (canConfigurePublication && (inspectPublication || publicationSelected)),
+  );
   if (publication && !canConfigurePublication) return null;
   if (publication && !inspectPublication && !publicationSelected)
     return (

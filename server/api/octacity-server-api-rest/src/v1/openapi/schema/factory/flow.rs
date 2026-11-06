@@ -127,11 +127,13 @@ pub(super) fn insert(schemas: &mut Map<String, Value>) {
     "FactoryFlowIssuePresentation".to_owned(),
     json!({
       "x-built-in-contracts": octacity_server_application::flow_issue_builtin_contracts(),
+      "x-artifact-reference-shape": octacity_server_application::FlowIssueReferenceKind::Artifact.reference_shape(),
       "description":"Optional Issue display binding for the accepted outcome. It grants no execution or mutation authority.",
       "oneOf":[
         tagged("kind", "triage_v1", [("slot", key())], &[]),
         tagged("kind", "specifications_v1", [("slot", key())], &[]),
         tagged("kind", "review_v1", [("slot", key())], &[]),
+        tagged("kind", "publication_v1", [("slot", key())], &[]),
         tagged("kind", "custom_v1", [
           ("slot", key()),
           ("title", json!({"type":"string","minLength":1,"maxLength":title_bytes,"x-max-utf8-bytes":title_bytes})),

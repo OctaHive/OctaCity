@@ -40,7 +40,8 @@ impl<A: ArtifactRecordStore, S: BuildQueryStore, B: ArtifactByteReader> IssueArt
       );
     }
     let record = self.artifacts.artifact(request.artifact.artifact_id()).await?;
-    self.verify_record_reference(&request, &record).await?;
+    let build = self.verify_record_reference(&request, &record).await?;
+    self.verify_disclosable_build_output(&record, &build).await?;
     let identity = record.identity();
     let expires_at = identity.retention.delete_after();
     let availability = if record.state() == octacity_server_store::ArtifactState::Expired
@@ -77,7 +78,12 @@ impl<A: ArtifactRecordStore, S: BuildQueryStore, B: ArtifactByteReader> IssueArt
     })
   }
   async fn content(&self, request: ReadFactoryArtifact) -> Result<Vec<u8>, ApplicationError> {
-    Ok(self.read_input(request).await?.bytes)
+    Ok(
+      self
+        .read_input_with_audience(request, ArtifactAudience::Model)
+        .await?
+        .bytes,
+    )
   }
 }
 fn private_metadata(

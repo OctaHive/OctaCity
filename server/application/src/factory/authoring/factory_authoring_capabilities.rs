@@ -107,6 +107,21 @@ pub struct FactoryCommandAuthoringContract {
   pub alias: FactoryKey,
   /// Exact compiler facts without an implied logical outcome.
   pub execution: FactoryCommandExecutionContract,
+  /// Exact installed primary output schema, when declared.
+  #[serde(skip_serializing_if = "Option::is_none")]
+  pub output_schema: Option<ImmutableReference>,
+  /// Canonical schema when owned by the installed command.
+  #[serde(skip_serializing_if = "Option::is_none")]
+  pub output_definition: Option<FlowDataSchema>,
+  /// Independent verifier selected by the installed primary output.
+  #[serde(skip_serializing_if = "Option::is_none")]
+  pub result_tool: Option<ImmutableReference>,
+  /// Other installed output contracts required when selecting this primary output.
+  #[serde(skip_serializing_if = "Vec::is_empty")]
+  pub evidence: Vec<EvidenceRequirement>,
+  /// Installed command request ceiling, for review under ordinary Flow policy.
+  #[serde(skip_serializing_if = "Option::is_none")]
+  pub permissions: Option<FactoryPermissionSet>,
 }
 /// Technical installation facts only; Source/Reporter choices retain action authority.
 #[derive(Clone, Debug, serde::Serialize)]
@@ -223,18 +238,34 @@ impl<S: FactoryConfigurationStore> ManagementQueryUseCase<GetFactoryAuthoringCap
       )
       .await
       {
-        Ok(choices) => (
-          command_contracts(&choices),
-          choices.candidate_publications().to_vec(),
-          crate::factory::reporting::factory_issue_classification_authoring::current_choices(
+        Ok(choices) => {
+          let entries = choices.entries();
+          let publications = choices
+            .candidate_publications()
+            .iter()
+            .filter(|choice| {
+              choice.receipt_schema.as_ref().is_some_and(|schema| {
+                crate::factory::artifacts::factory_candidate_publication::publication_receipt_is_compatible(
+                  schema,
+                  choice.review_url,
+                )
+              }) && super::factory_configuration_choices::permissions_selectable(
+                &choice.permissions,
+                &entries.references,
+              )
+            })
+            .cloned()
+            .collect();
+          let classification = crate::factory::reporting::factory_issue_classification_authoring::current_choices(
             &choices,
             self.issue_properties.as_deref(),
             self.policy.as_ref(),
             context,
             query.project_id,
           )
-          .await?,
-        ),
+          .await?;
+          (command_contracts(&choices), publications, classification)
+        }
         Err(ApplicationError::CapabilityUnavailable) => (vec![], vec![], None),
         Err(error) => return Err(error),
       };
@@ -258,13 +289,8 @@ impl<S: FactoryConfigurationStore> ManagementQueryUseCase<GetFactoryAuthoringCap
 fn command_contracts(choices: &FactoryConfigurationChoices) -> Vec<FactoryCommandAuthoringContract> {
   let entries = choices.entries();
   choices
-    .build_pipeline_contracts()
-    .iter()
+    .unambiguous_build_pipeline_contracts()
     .filter_map(|installed| {
-      let compiler = installed
-        .compilation
-        .as_ref()
-        .filter(|compiler| !compiler.role_profiles)?;
       let declared = entries.references.iter().any(|entry| {
         entry.kind == FactoryChoiceKind::NodeCapability
           && entry.reference == installed.tool
@@ -281,18 +307,74 @@ fn command_contracts(choices: &FactoryConfigurationChoices) -> Vec<FactoryComman
         .find(|(_, reference)| reference == &installed.build_configuration)?
         .0
         .clone();
-      Some(FactoryCommandAuthoringContract {
+      let execution = |task_digest, result_output, result_output_kind| FactoryCommandExecutionContract {
+        build_configuration: installed.build_configuration.clone(),
+        tool: installed.tool.clone(),
+        plugin: installed.plugin.clone(),
+        model_or_tool: installed.model_or_tool.clone(),
+        task_digest,
+        result_output,
+        result_output_kind,
+      };
+      if let Some(native) = &installed.command {
+        if !super::factory_configuration_choices::permissions_selectable(&native.permissions, &entries.references)
+          || native.outputs.iter().any(|output| {
+            [output.tool(), output.plugin()].iter().any(|reference| {
+              !entries
+                .references
+                .iter()
+                .any(|entry| entry.kind == FactoryChoiceKind::NodeCapability && &entry.reference == *reference)
+            })
+          })
+        {
+          return None;
+        }
+        return Some(
+          native
+            .outputs
+            .iter()
+            .filter_map(|output| {
+              if !octacity_server_factory::FactoryBuildCommandContract::accepts_primary_output(
+                native.observation_schema.as_ref().map(FlowDataSchema::reference),
+                output.output_kind(),
+                output.schema(),
+              ) {
+                return None;
+              }
+              Some(FactoryCommandAuthoringContract {
+                alias: alias.clone(),
+                execution: execution(native.task_digest, output.kind().clone(), output.output_kind()),
+                output_schema: Some(output.schema().clone()),
+                output_definition: native.observation_schema.clone(),
+                result_tool: (output.tool() != &installed.tool).then(|| output.tool().clone()),
+                evidence: native
+                  .outputs
+                  .iter()
+                  .filter(|other| other.kind() != output.kind())
+                  .cloned()
+                  .collect(),
+                permissions: Some(native.permissions.clone()),
+              })
+            })
+            .collect::<Vec<_>>(),
+        );
+      }
+      let compiler = installed.legacy_command()?;
+      Some(vec![FactoryCommandAuthoringContract {
         alias,
-        execution: FactoryCommandExecutionContract {
-          build_configuration: installed.build_configuration.clone(),
-          tool: installed.tool.clone(),
-          plugin: installed.plugin.clone(),
-          model_or_tool: installed.model_or_tool.clone(),
-          task_digest: compiler.task_digest,
-          result_output: compiler.result_output.clone(),
-          result_output_kind: compiler.result_output_kind,
-        },
-      })
+        execution: execution(
+          compiler.task_digest,
+          compiler.result_output.clone(),
+          compiler.result_output_kind,
+        ),
+        output_schema: None,
+        output_definition: None,
+        result_tool: None,
+        evidence: vec![],
+        permissions: None,
+      }])
     })
+    .flatten()
+    .take(MAX_CONFIGURATION_CHOICES_PER_KIND)
     .collect()
 }

@@ -1,0 +1,8 @@
+{
+  "preset": {
+    "identity": "ticket-delivery-completion",
+    "version": "v1",
+    "digest": "604cf477d19f2d7d52213a5b279b02baf0b13d6004e98452e5bd8efd349e3888"
+  },
+  "content": "# Ticket delivery completion\n\nRetain the reviewed and validated candidate and the trusted publication receipt, or retain the reason delivery stopped. The pull request remains subject to the repository review and merge policy. Use the Issue’s own implementation acceptance to establish requirements.\n"
+}

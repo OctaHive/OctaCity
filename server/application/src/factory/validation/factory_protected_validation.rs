@@ -8,7 +8,7 @@ use octacity_server_artifacts::ArtifactRecord;
 use octacity_server_domain::Timestamp;
 use octacity_server_factory::{
   CandidateSubject, ChangeSet, ChangeSetId, DeterministicGateOutcome, FactoryArtifactReference, FactoryDigest,
-  FactoryKey, FlowBuildIntent, FlowNodeInput, FlowNodeKind, MountMode, ProtectedTestBundle,
+  FactoryKey, FlowBuildIntent, FlowNodeInput, FlowNodeKind, FlowNodeRecord, MountMode, ProtectedTestBundle,
 };
 use serde::{Deserialize, Serialize};
 
@@ -80,6 +80,59 @@ struct ValidationFacts {
   covered_classes: Vec<FactoryKey>,
   fresh_until: Timestamp,
 }
+impl ValidationFacts {
+  fn matches_report(
+    &self,
+    report: &FactoryProtectedValidationReport,
+    report_digest: FactoryDigest,
+    input_digest: FactoryDigest,
+  ) -> bool {
+    self.accepted
+      && self.input_digest == input_digest
+      && self.report_digest == report_digest
+      && self.candidate_revision == *report.candidate.candidate_revision()
+      && self.candidate_digest == report.candidate.changeset_digest()
+      && self.protected_inventory == report.tests
+      && self
+        .covered_classes
+        .iter()
+        .eq(report.classes.iter().map(|item| &item.class))
+  }
+}
+
+/// Checks the retained deterministic verdict and the exact evidence it covers.
+pub(crate) fn protected_validation_passed(
+  record: &FlowNodeRecord,
+  facts_output: &str,
+  candidate: &CandidateSubject,
+) -> bool {
+  let Some(primary) = record.primary_build_output() else {
+    return false;
+  };
+  let Ok(report) = FactoryProtectedValidationReport::deserialize(record.payload().value()) else {
+    return false;
+  };
+  let Some(facts) = record.build_provenance().and_then(|build| {
+    let output = build
+      .outputs()
+      .iter()
+      .find(|output| output.name.as_str() == facts_output)?;
+    ValidationFacts::deserialize(output.data.as_ref()?.payload().value()).ok()
+  }) else {
+    return false;
+  };
+  report.candidate == *candidate
+    && !report.classes.is_empty()
+    && report
+      .classes
+      .iter()
+      .all(|item| item.outcome == DeterministicGateOutcome::Passed)
+    && record
+      .input()
+      .digest()
+      .is_ok_and(|digest| facts.matches_report(&report, primary.artifact.content_digest(), digest))
+}
+
 pub(super) fn readonly_test_mounts(intent: &FlowBuildIntent) -> bool {
   !intent.permissions().mounts().any(|mount| {
     mount.mode() != MountMode::ReadOnly
@@ -229,18 +282,12 @@ impl FactoryProtectedValidationMaterialization {
     fresh_until: Timestamp,
     at: Timestamp,
   ) -> Result<Timestamp, ApplicationError> {
-    let facts: ValidationFacts = serde_json::from_value(value.clone()).map_err(|_| ApplicationError::invalid())?;
-    if !facts.accepted
-      || facts.input_digest != self.input.digest().map_err(|_| ApplicationError::invalid())?
-      || facts.report_digest != report_digest
-      || facts.candidate_revision != *report.candidate.candidate_revision()
-      || facts.candidate_digest != report.candidate.changeset_digest()
-      || facts.protected_inventory != report.tests
-      || !facts
-        .covered_classes
-        .iter()
-        .eq(report.classes.iter().map(|item| &item.class))
-      || facts.fresh_until <= at
+    let facts = ValidationFacts::deserialize(value).map_err(|_| ApplicationError::invalid())?;
+    if !facts.matches_report(
+      report,
+      report_digest,
+      self.input.digest().map_err(|_| ApplicationError::invalid())?,
+    ) || facts.fresh_until <= at
       || facts.fresh_until > fresh_until
       || facts.fresh_until > self.retained_until()
     {

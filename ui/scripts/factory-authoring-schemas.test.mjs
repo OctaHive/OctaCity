@@ -1,6 +1,8 @@
 import { URL } from 'node:url';
 import assert from 'node:assert/strict';
 import test from 'node:test';
+import ts from 'typescript';
+import * as authoring from './factory-authoring-schemas.mjs';
 import { factoryAuthoringSchemas, factorySetupSchemas } from './factory-authoring-schemas.mjs';
 const commandSchemas = {
   ValidateFactoryGateProgramRequest: {},
@@ -13,6 +15,29 @@ const commandSchemas = {
     properties: { identity: { pattern: '^[a-z]+$', maxLength: 29 } },
   },
 };
+
+test('ships repeated schema constraints once while preserving the exported contract', async () => {
+  const field = { type: 'string', minLength: 1, maxLength: 128, pattern: '^[a-z0-9]+$' };
+  const schemas = {
+    FactoryFlowDefinitionDraft: {
+      type: 'object',
+      properties: Object.fromEntries(Array.from({ length: 12 }, (_, i) => [`field${i}`, field])),
+    },
+    SourceCompletionDocument: { const: { description: 'Literal documentation field' } },
+    References: {
+      document: { type: 'object', fields: { content_digest: { required: true, value: field } } },
+      artifact: { type: 'object', fields: { content_digest: { required: true, value: field } } },
+    },
+  };
+  const source = authoring.factorySchemaSource(schemas);
+  const code = ts.transpileModule(`${source.declarations}\nexport default ${source.expression};`, {
+    compilerOptions: { module: ts.ModuleKind.ESNext, target: ts.ScriptTarget.ES2022 },
+  }).outputText;
+  const module = await import(`data:text/javascript,${encodeURIComponent(code)}`);
+  assert.deepEqual(module.default, schemas);
+  assert.equal(code.split(field.pattern).length - 1, 1);
+  assert.equal(code.split('content_digest').length - 1, 1);
+});
 test('exports Runtime MCP authoring bounds from the REST contract', () => {
   const result = factoryAuthoringSchemas({
     components: {

@@ -2,9 +2,9 @@
 use crate::{FactoryRunListVisibility, FactoryRunPagePosition, IssueRevision, StoreError};
 use octacity_server_domain::Timestamp;
 use octacity_server_factory::{
-  FactoryArtifactReference, FactoryDigest, FactoryKey, FactoryRunId, FactoryText, FlowIssuePresentation,
-  FlowIssueReferenceKind, FlowIssueSlot, MAX_ISSUE_OUTCOME_CONCLUSION_BYTES, MAX_ISSUE_OUTCOME_REFERENCES,
-  NodeAttemptId, WorkArtifacts, WorkEnvelopeId,
+  FactoryArtifactReference, FactoryDigest, FactoryKey, FactoryRunId, FactoryText, FlowDiscoveryFacts,
+  FlowIssuePresentation, FlowIssueReferenceKind, FlowIssueSlot, MAX_ISSUE_OUTCOME_CONCLUSION_BYTES,
+  MAX_ISSUE_OUTCOME_REFERENCES, NodeAttemptId, WorkArtifacts, WorkEnvelopeId,
 };
 
 /// Maximum number of current slots returned for one Issue.
@@ -35,6 +35,8 @@ pub enum IssueOutcomeContent {
     /// Reviewed disposition.
     verdict: FactoryKey,
   },
+  /// Confirmed pull request awaiting manual merge.
+  Publication,
   /// A short result under an author-selected title.
   Custom {
     /// Frozen title from the Flow definition.
@@ -136,6 +138,8 @@ pub struct IssueOutcomeCandidate {
 pub struct IssueOutcomeRecord {
   /// Raw accepted value, restricted to the projection boundary.
   pub value: serde_json::Value,
+  /// Trusted evidence retained with the accepted publication.
+  pub publication: Option<FlowDiscoveryFacts>,
   /// Original input inventory used by the Issue artifact reader.
   pub inputs: WorkArtifacts,
   /// Safe local assignment facts for the accepted result.
@@ -174,7 +178,7 @@ impl IssueOutcomeReference {
           select(binding.kind, &value[binding.field.as_str()]);
         }
       }
-      FlowIssuePresentation::TriageV1 { .. } => {}
+      FlowIssuePresentation::TriageV1 { .. } | FlowIssuePresentation::PublicationV1 { .. } => {}
     }
     references
   }
@@ -206,6 +210,9 @@ impl IssueOutcomeContent {
     result: &serde_json::Value,
     classification: IssueOutcomeClassification,
   ) -> Result<(String, Self), StoreError> {
+    if matches!(presentation, FlowIssuePresentation::PublicationV1 { .. }) {
+      return Ok(("Published for manual merge.".into(), Self::Publication));
+    }
     let conclusion_field = match &presentation {
       FlowIssuePresentation::CustomV1 { conclusion_field, .. } => conclusion_field.as_str(),
       _ => "conclusion",
@@ -240,6 +247,7 @@ impl IssueOutcomeContent {
         verdict: field("verdict")?.ok_or(StoreError::Unavailable)?,
       },
       FlowIssuePresentation::CustomV1 { title, .. } => Self::Custom { title },
+      FlowIssuePresentation::PublicationV1 { .. } => unreachable!(),
     };
     Ok((conclusion.to_owned(), content))
   }

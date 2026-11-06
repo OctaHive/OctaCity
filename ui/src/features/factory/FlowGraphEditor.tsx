@@ -1,3 +1,4 @@
+import { publishCandidateAction } from './PublicationStep';
 import { StepResults, type ResultDraft } from './StepResults';
 import { FACTORY_AUTHORING_SCHEMAS } from '../../../.generated/api/factory-authoring';
 import { FlowCodeSources, type CodeResourceServices } from './FlowCodeSources';
@@ -16,6 +17,7 @@ import styles from './Factory.module.css';
 import type { RoleServices } from './StageProfiles';
 import { FlowPrimitives, type FlowAuthoringServices, type PrimitiveDraft } from './FlowPrimitives';
 import { StepExecutor } from './StepExecutor';
+import { StepCapture } from './StepCapture';
 import { ExecutionProfiles } from './ExecutionProfiles';
 import { FlowSettings } from './FlowSettings';
 import { FlowBindings } from './FlowBindings';
@@ -24,7 +26,7 @@ import type { FlowSourceServices } from './FlowSourceUpdate';
 import { FlowProjections } from './FlowProjections';
 import { FlowTransitions } from './FlowTransitions';
 import { PermissionEditor } from './ResourceEditors';
-import { AccessRequirements } from './AccessRequirements';
+import { AccessRequirements, PublicationAccessRequirements } from './AccessRequirements';
 import { BudgetSettings } from './BudgetSettings';
 import { profileBudget, flowBudget, flatGraphLimits } from './flowRequirements';
 import { FlowDocuments, type FlowDocumentServices } from './FlowDocuments';
@@ -221,7 +223,12 @@ export function FlowGraphEditor({
           }}
         />
       </label>
-      <AccessRequirements value={value} onChange={onChange} />
+      {authoring &&
+      value.root.nodes.some((node) => node.action?.action === publishCandidateAction) ? (
+        <PublicationAccessRequirements value={value} services={authoring} onChange={onChange} />
+      ) : (
+        <AccessRequirements value={value} onChange={onChange} />
+      )}
       {documents ? (
         <FlowProcess
           value={value}
@@ -271,6 +278,7 @@ export function FlowGraphEditor({
           ) : null}
           <FlowSettings
             flows={subflows}
+            flowApi={authoring?.api}
             budgetCalculation={budgetCalculation}
             onBudgetCalculationChange={(kind, automatic) =>
               setBudgetCalculation((current) => ({ ...current, [kind]: automatic }))
@@ -385,6 +393,7 @@ export function FlowGraphEditor({
             services={roles}
             onChange={updateNode}
           />
+          <StepCapture node={node} onChange={updateNode} />
           <FlowBindings
             onRemoveClassification={(root) => {
               onChange({

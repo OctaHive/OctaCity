@@ -119,8 +119,13 @@ impl ArtifactRecordStore for PostgresStore {
     upload_key_prefix: &str,
   ) -> Result<bool, StoreError> {
     crate::artifacts::artifact::has_published_from_producer(
-      &self.pool, job_id, producer_run_id, producer_task_id, upload_key_prefix,
-    ).await
+      &self.pool,
+      job_id,
+      producer_run_id,
+      producer_task_id,
+      upload_key_prefix,
+    )
+    .await
   }
 }
 

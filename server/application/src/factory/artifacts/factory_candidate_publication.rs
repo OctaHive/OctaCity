@@ -1,9 +1,11 @@
 //! Exact candidate publication as an installed trusted action, independent of Flow names.
 use crate::*;
-pub(crate) const PUBLISH_CANDIDATE_ACTION: &str = "publish_candidate";
 use async_trait::async_trait;
 use octacity_server_domain::Timestamp;
+pub(crate) use octacity_server_factory::PUBLISH_CANDIDATE_ACTION;
 use octacity_server_factory::*;
+use octacity_server_store::FactoryRunStore;
+use serde::Deserialize;
 use std::sync::Arc;
 
 /// Frozen publication intent; the connector receives no reasoning session.
@@ -135,18 +137,21 @@ impl FactoryPublicationFacts {
   }
   /// Adds a credential-free HTTPS URL resolved by the trusted publisher.
   pub fn with_review_url(mut self, url: url::Url) -> Result<Self, ApplicationError> {
-    if url.scheme() != "https"
-      || url.host_str().is_none()
-      || !url.username().is_empty()
-      || url.password().is_some()
-      || url.query().is_some()
-      || url.fragment().is_some()
-      || url.as_str().len() > 2048
-    {
+    if !Self::is_safe_review_url(&url) {
       return Err(ApplicationError::invalid());
     }
     self.review_url = Some(url.into());
     Ok(self)
+  }
+
+  pub(crate) fn is_safe_review_url(url: &url::Url) -> bool {
+    url.scheme() == "https"
+      && url.host_str().is_some()
+      && url.username().is_empty()
+      && url.password().is_none()
+      && url.query().is_none()
+      && url.fragment().is_none()
+      && url.as_str().len() <= 2048
   }
 }
 /// Safe reasons that prevent another publication under the same intent.
@@ -159,7 +164,15 @@ pub enum FactoryPublicationRejection {
   InvalidReviewMetadata,
   /// The validation window has closed and no successful publication was observed.
   ValidationExpired,
+  /// The retained checks do not authorize the selected candidate.
+  CandidateProofMismatch,
 }
+const PUBLICATION_CONFLICT: &str = "publication_conflict";
+const PUBLICATION_REJECTIONS: [FactoryPublicationRejection; 3] = [
+  FactoryPublicationRejection::ProviderRejected,
+  FactoryPublicationRejection::InvalidReviewMetadata,
+  FactoryPublicationRejection::ValidationExpired,
+];
 
 /// Protected write boundary separate from read-only VCS and repository Jobs.
 /// Implementations verify bundle/manifest bytes, candidate digest and original
@@ -191,6 +204,7 @@ pub struct FactoryCandidatePublicationAction<P> {
   identity: ImmutableReference,
   publisher: Arc<P>,
   outcome: FlowOutcomeDefinition,
+  runs: Option<Arc<dyn FactoryRunStore>>,
 }
 #[derive(serde::Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -200,6 +214,8 @@ struct Parameters {
   target: ImmutableReference,
   #[serde(default)]
   valid_until: Option<FlowDataMapping>,
+  #[serde(default)]
+  review_valid_until: Option<FlowDataMapping>,
   #[serde(default)]
   review_metadata: Option<FlowDataMapping>,
   #[serde(default)]
@@ -211,10 +227,391 @@ impl Parameters {
   fn parse(binding: &FlowActionBinding) -> Result<Self, ApplicationError> {
     serde_json::from_value(binding.parameters().clone()).map_err(|_| ApplicationError::invalid())
   }
+
+  fn rejection_reasons(&self) -> impl Iterator<Item = FactoryPublicationRejection> {
+    PUBLICATION_REJECTIONS.into_iter().chain(
+      self
+        .review_valid_until
+        .as_ref()
+        .map(|_| FactoryPublicationRejection::CandidateProofMismatch),
+    )
+  }
 }
 /// Resolves the same typed frozen policy used by publication, without dispatching the publisher.
 pub(crate) fn publication_target(binding: &FlowActionBinding) -> Result<ImmutableReference, ApplicationError> {
   Ok(Parameters::parse(binding)?.target)
+}
+
+fn parse_expiry(value: &serde_json::Value) -> Result<Timestamp, ApplicationError> {
+  value
+    .as_i64()
+    .filter(|value| *value >= 0)
+    .and_then(|value| Timestamp::from_unix_millis(value).ok())
+    .ok_or_else(ApplicationError::invalid)
+}
+
+fn valid_expiry_mapping(mapping: &FlowValueMapping) -> bool {
+  match mapping {
+    FlowValueMapping::Constant { value } => parse_expiry(value).is_ok(),
+    FlowValueMapping::IfPresent { then, otherwise, .. } => {
+      valid_expiry_mapping(then) && valid_expiry_mapping(otherwise)
+    }
+    FlowValueMapping::Pointer { .. } => true,
+    _ => false,
+  }
+}
+
+#[derive(Clone, Copy)]
+enum PublicationProof {
+  Validation,
+  Review,
+}
+
+#[derive(Deserialize)]
+struct CandidateReview {
+  candidate_revision: octacity_server_domain::ImmutableRevision,
+  candidate_digest: FactoryDigest,
+  input_digest: FactoryDigest,
+  quality: ReviewQuality,
+  findings: Vec<serde_json::Value>,
+}
+
+#[derive(Deserialize)]
+struct ReviewQuality {
+  correctness: AssessmentOutcome,
+  maintainability: AssessmentOutcome,
+  public_tests: AssessmentOutcome,
+  security: AssessmentOutcome,
+}
+
+fn code_review_passed(record: &FlowNodeRecord, candidate: &CandidateSubject) -> bool {
+  let Ok(report) = CandidateReview::deserialize(record.payload().value()) else {
+    return false;
+  };
+  record.primary_build_output().is_some()
+    && report.candidate_revision == *candidate.candidate_revision()
+    && report.candidate_digest == candidate.changeset_digest()
+    && record
+      .input()
+      .digest()
+      .is_ok_and(|digest| digest == report.input_digest)
+    && [
+      report.quality.correctness,
+      report.quality.maintainability,
+      report.quality.public_tests,
+      report.quality.security,
+    ]
+    .into_iter()
+    .all(|outcome| outcome == AssessmentOutcome::Satisfied)
+    && report.findings.is_empty()
+}
+
+/// Uses the same projection walk at authoring and publication. At publication,
+/// each hop resolves through the immutable source references of its own input.
+struct PublicationProofTrace<'a> {
+  definition: &'a FlowDefinition,
+  schemas: &'a [FlowDataSchema],
+  proof: PublicationProof,
+  records: &'a [FlowNodeRecord],
+  candidate: Option<&'a CandidateSubject>,
+  remaining: usize,
+}
+
+impl<'history> PublicationProofTrace<'history> {
+  fn selects(&mut self, node: &FlowNodeDefinition, input: Option<&FlowNodeInput>, mapping: &FlowDataMapping) -> bool {
+    mapping.selects_only("", &mut |path| self.input(node, input, path))
+  }
+
+  fn input(&mut self, node: &FlowNodeDefinition, frozen: Option<&FlowNodeInput>, path: &str) -> bool {
+    if self.remaining == 0 {
+      return false;
+    }
+    self.remaining -= 1;
+    node.input_binding().is_some_and(|binding| {
+      binding.selects_only(path, |source, tail| match source {
+        FlowInputSource::Record {
+          node,
+          outcome,
+          view,
+          path,
+        } => self.source(node, outcome, *view, &format!("{path}{tail}"), frozen),
+        FlowInputSource::Predecessor { view, path } => {
+          let records = self.records;
+          let mut incoming = self.definition.transitions().iter().filter(|edge| {
+            (matches!(edge.target(), FlowTransitionTarget::Node(key) if key == node.key())
+              || edge.exhausted_node() == Some(node.key()))
+              && frozen
+                .is_none_or(|input| Self::frozen_record(records, input, edge.predecessor(), edge.outcome()).is_some())
+          });
+          let path = format!("{path}{tail}");
+          let mut check = |edge: &FlowTransition| self.source(edge.predecessor(), edge.outcome(), *view, &path, frozen);
+          incoming.next().is_some_and(&mut check) && incoming.all(check)
+        }
+        _ => false,
+      })
+    })
+  }
+
+  fn frozen_record(
+    records: &'history [FlowNodeRecord],
+    input: &FlowNodeInput,
+    key: &FactoryKey,
+    outcome: &FactoryKey,
+  ) -> Option<&'history FlowNodeRecord> {
+    let mut records = records.iter().filter(|record| {
+      record.input().node() == key
+        && record.outcome() == outcome
+        && input.sources().iter().any(|source| {
+          source.node_attempt_id() == record.node_attempt_id()
+            && record.digest().is_ok_and(|digest| digest == source.digest())
+        })
+    });
+    let record = records.next()?;
+    records.next().is_none().then_some(record)
+  }
+
+  fn declares_fields(&self, schema: &ImmutableReference, required: &[&str]) -> bool {
+    self.schemas.iter().any(|entry| {
+      entry.reference() == schema
+        && matches!(entry.shape(), FlowValueSchema::Object { fields } if required.iter().all(|name| {
+          fields.iter().any(|(key, field)| key.as_str() == *name && field.is_required())
+        }))
+    })
+  }
+
+  fn source(
+    &mut self,
+    key: &FactoryKey,
+    outcome: &FactoryKey,
+    view: FlowRecordView,
+    path: &str,
+    input: Option<&FlowNodeInput>,
+  ) -> bool {
+    let Some(producer) = self.definition.node(key) else {
+      return false;
+    };
+    let record = match input {
+      Some(input) => match Self::frozen_record(self.records, input, key, outcome) {
+        Some(record) => Some(record),
+        None => return false,
+      },
+      None => None,
+    };
+    let Some(result) = producer
+      .outcome(outcome)
+      .filter(|outcome| outcome.kind() == FlowOutcomeKind::Success)
+    else {
+      return false;
+    };
+    let frozen = record.map(FlowNodeRecord::input);
+    match view {
+      FlowRecordView::InputPayload => self.input(producer, frozen, path),
+      FlowRecordView::Payload => FlowGateProgram::from_node(producer).is_ok_and(|program| {
+        program.outcome_selects_only(outcome, path, &mut |path| self.input(producer, frozen, path))
+      }),
+      FlowRecordView::Metadata => {
+        self.candidate.is_none_or(|candidate| {
+          record.is_some_and(|record| {
+            record
+              .input()
+              .context()
+              .and_then(|context| context.subject().candidate())
+              == Some(candidate)
+          })
+        }) && match self.proof {
+          PublicationProof::Review => {
+            path == "/build/primary_fresh_until"
+              && producer.kind() == FlowNodeKind::Reasoning
+              && self.declares_fields(
+                result.schema(),
+                &[
+                  "candidate_revision",
+                  "candidate_digest",
+                  "input_digest",
+                  "quality",
+                  "findings",
+                ],
+              )
+              && producer
+                .build_bindings()
+                .any(|build| &build.result_outcome == outcome && build.result_output_kind == EvidenceOutputKind::Report)
+              && self
+                .candidate
+                .is_none_or(|candidate| record.is_some_and(|record| code_review_passed(record, candidate)))
+          }
+          PublicationProof::Validation => path
+            .strip_prefix("/build/outputs/")
+            .and_then(|path| path.strip_suffix("/data/payload/value/fresh_until"))
+            .is_some_and(|output| {
+              if producer.kind() != FlowNodeKind::BuildCommand
+                || !self.declares_fields(result.schema(), &["candidate", "tests", "classes"])
+              {
+                return false;
+              }
+              let mut bindings = producer.build_bindings();
+              let verifies = |build: &FlowBuildBinding| {
+                &build.result_outcome == outcome
+                  && build.result_output_kind == EvidenceOutputKind::Report
+                  && build.evidence.iter().any(|evidence| {
+                    evidence.kind().as_str() == output
+                      && evidence.output_kind() == EvidenceOutputKind::Report
+                      && self.declares_fields(evidence.schema(), &["accepted", "report_digest", "fresh_until"])
+                  })
+              };
+              bindings.next().is_some_and(verifies)
+                && bindings.all(verifies)
+                && self.candidate.is_none_or(|candidate| {
+                  record.is_some_and(|record| {
+                    crate::factory::validation::factory_protected_validation::protected_validation_passed(
+                      record, output, candidate,
+                    )
+                  })
+                })
+            }),
+        }
+      }
+      FlowRecordView::PrimaryArtifact => false,
+    }
+  }
+}
+
+/// Validates the installed publication target, emitted receipt, and explicit inputs.
+pub(crate) fn validate_publication_selection(
+  definition: &FlowDefinition,
+  node: &octacity_server_factory::FlowNodeDefinition,
+  binding: &FlowActionBinding,
+  choices: &octacity_server_factory::FactoryConfigurationChoices,
+  schemas: &[FlowDataSchema],
+  authoring_flow: bool,
+) -> Result<(), &'static str> {
+  let parameters = Parameters::parse(binding).map_err(|_| "/action/parameters")?;
+  let choice = choices
+    .candidate_publications()
+    .iter()
+    .find(|choice| {
+      &choice.plugin == binding.plugin()
+        && choice.target == parameters.target
+        && (!parameters.require_review_url || choice.review_url)
+    })
+    .ok_or("/action/target")?;
+  if !choice.permissions.is_no_broader_than(node.permissions()) {
+    return Err("/permissions");
+  }
+  validate_publication_outcomes(&parameters, node.outcomes(), &choice.outcome).map_err(|_| "/action/parameters")?;
+  let receipt = schemas
+    .iter()
+    .find(|schema| schema.reference() == choice.outcome.schema())
+    .ok_or("/outcomes")?;
+  if !publication_receipt_is_compatible(receipt, parameters.require_review_url) {
+    return Err("/outcomes");
+  }
+  let text = FlowValueSchema::String {
+    min_bytes: 0,
+    max_bytes: MAX_FLOW_DATA_BYTES,
+  };
+  let metadata = object([("title", text.clone()), ("summary", text)]).map_err(|_| "/action/parameters")?;
+  let timestamp = FlowValueSchema::Integer {
+    minimum: i64::MIN,
+    maximum: i64::MAX,
+  };
+  let input = node
+    .input_schema()
+    .and_then(|reference| schemas.iter().find(|schema| schema.reference() == reference))
+    .map(FlowDataSchema::shape);
+  let requires_freshness = authoring_flow && choice.review_url && choice.receipt_schema.is_some();
+  for (mapping, path, proof) in [
+    (
+      &parameters.valid_until,
+      "/action/parameters/valid_until",
+      PublicationProof::Validation,
+    ),
+    (
+      &parameters.review_valid_until,
+      "/action/parameters/review_valid_until",
+      PublicationProof::Review,
+    ),
+  ] {
+    if !mapping.as_ref().map_or(!requires_freshness, |mapping| {
+      input.is_some_and(|shape| mapping.fits(shape, &timestamp))
+        && if requires_freshness {
+          (PublicationProofTrace {
+            definition,
+            schemas,
+            proof,
+            records: &[],
+            candidate: None,
+            remaining: MAX_FLOW_SCHEMA_ENTRIES,
+          })
+          .selects(node, None, mapping)
+        } else {
+          valid_expiry_mapping(mapping.value())
+        }
+    }) {
+      return Err(path);
+    }
+  }
+  if parameters
+    .review_metadata
+    .as_ref()
+    .is_some_and(|mapping| !input.is_some_and(|shape| mapping.fits(shape, &metadata)))
+  {
+    return Err("/action/parameters/review_metadata");
+  }
+  if let Some(key) = &parameters.conflict_outcome {
+    publication_failure_payload(node.outcomes(), schemas, key, PUBLICATION_CONFLICT).map_err(|_| "/outcomes")?;
+  }
+  if let Some(key) = &parameters.rejected_outcome {
+    for reason in parameters.rejection_reasons() {
+      publication_failure_payload(node.outcomes(), schemas, key, reason).map_err(|_| "/outcomes")?;
+    }
+  }
+  if node.outcomes().iter().any(|outcome| {
+    matches!(
+      outcome.issue_presentation(),
+      Some(octacity_server_factory::FlowIssuePresentation::PublicationV1 { .. })
+    ) && !outcome.matches_contract(&choice.outcome)
+  }) {
+    return Err("/outcomes/issue_presentation");
+  }
+  let candidate_source = matches!(
+    node.code(),
+    Some(octacity_server_factory::FlowCodeBinding::Source {
+      revision: octacity_server_factory::FlowCodeRevision::AcceptedCandidate { .. },
+      ..
+    })
+  );
+  if !node.context_binding().is_some_and(|context| {
+    (context.selects_candidate() || candidate_source)
+      && context.guarantees_artifact(&parameters.bundle)
+      && context.guarantees_artifact(&parameters.manifest)
+  }) {
+    return Err("/context_binding");
+  }
+  Ok(())
+}
+
+fn validate_publication_outcomes(
+  parameters: &Parameters,
+  outcomes: &[FlowOutcomeDefinition],
+  receipt: &FlowOutcomeDefinition,
+) -> Result<(), ApplicationError> {
+  if !outcomes.iter().any(|outcome| outcome.matches_contract(receipt))
+    || parameters.bundle == parameters.manifest
+    || [
+      parameters.conflict_outcome.as_ref(),
+      parameters.rejected_outcome.as_ref(),
+    ]
+    .into_iter()
+    .flatten()
+    .any(|key| {
+      !outcomes
+        .iter()
+        .any(|outcome| outcome.key() == key && outcome.kind() == FlowOutcomeKind::Failure)
+    })
+  {
+    return Err(ApplicationError::invalid());
+  }
+  Ok(())
 }
 impl<P> FactoryCandidatePublicationAction<P> {
   /// Selects the trusted publisher and the configured successful receipt outcome.
@@ -224,34 +621,75 @@ impl<P> FactoryCandidatePublicationAction<P> {
       identity,
       publisher,
       outcome,
+      runs: None,
     }
   }
+
+  /// Reads exact, frozen source records for publication that requires independent review.
+  #[must_use]
+  pub fn with_run_store(mut self, runs: Arc<dyn FactoryRunStore>) -> Self {
+    self.runs = Some(runs);
+    self
+  }
+
+  async fn check_candidate_proofs(
+    &self,
+    input: &FlowNodeInput,
+    candidate: &CandidateSubject,
+    validation: Option<&FlowDataMapping>,
+    review: &FlowDataMapping,
+  ) -> Result<(), ApplicationError> {
+    let mismatch = || ApplicationError::PublicationRejected(FactoryPublicationRejection::CandidateProofMismatch);
+    let snapshot = self
+      .runs
+      .as_ref()
+      .ok_or_else(mismatch)?
+      .factory_run_snapshot(input.factory_run_id())
+      .await?;
+    let definition = snapshot
+      .admitted_flow
+      .closure()
+      .definition(input.definition())
+      .ok_or_else(mismatch)?;
+    let node = definition.node(input.node()).ok_or_else(mismatch)?;
+    for (proof, mapping) in [
+      (PublicationProof::Validation, validation.ok_or_else(mismatch)?),
+      (PublicationProof::Review, review),
+    ] {
+      let mut trace = PublicationProofTrace {
+        definition,
+        schemas: snapshot.admitted_flow.data_schemas(),
+        proof,
+        records: &snapshot.flow.data.records,
+        candidate: Some(candidate),
+        remaining: MAX_FLOW_SCHEMA_ENTRIES,
+      };
+      if !trace.selects(node, Some(input), mapping) {
+        return Err(mismatch());
+      }
+    }
+    Ok(())
+  }
+
   fn request(
     &self,
-    request: FactoryFlowActionRequest<'_>,
-    parameters: Parameters,
+    request: &FactoryFlowActionRequest<'_>,
+    parameters: &Parameters,
   ) -> Result<FactoryCandidatePublicationRequest, ApplicationError> {
     let context = request.input.context().ok_or_else(ApplicationError::invalid)?;
-    let publish_until = if let Some(validity) = parameters.valid_until {
-      let schema = FlowDataSchema::new(
-        FactoryKey::new("publication.validity").map_err(|_| ApplicationError::invalid())?,
-        FactoryKey::new("v1").map_err(|_| ApplicationError::invalid())?,
-        FlowValueSchema::Integer {
-          minimum: 0,
-          maximum: octacity_server_domain::MAX_TIMESTAMP_MILLIS,
-        },
-      )
-      .map_err(|_| ApplicationError::invalid())?;
-      let value = validity
-        .project(request.input.payload(), &schema)
-        .map_err(|_| ApplicationError::invalid())?;
-      Some(
-        Timestamp::from_unix_millis(value.value().as_i64().ok_or_else(ApplicationError::invalid)?)
-          .map_err(|_| ApplicationError::invalid())?,
-      )
-    } else {
-      None
-    };
+    let publish_until = [parameters.valid_until.as_ref(), parameters.review_valid_until.as_ref()]
+      .into_iter()
+      .flatten()
+      .map(|validity| {
+        let value = validity
+          .project_raw(request.input.payload().value())
+          .map_err(|_| ApplicationError::invalid())?;
+        parse_expiry(&value)
+      })
+      .try_fold(None, |earliest: Option<Timestamp>, cutoff| {
+        let cutoff = cutoff?;
+        Ok::<_, ApplicationError>(Some(earliest.map_or(cutoff, |current| current.min(cutoff))))
+      })?;
     let candidate = context.subject().candidate().ok_or_else(ApplicationError::invalid)?;
     if candidate.exact()
       != request
@@ -288,7 +726,7 @@ impl<P> FactoryCandidatePublicationAction<P> {
       candidate: candidate.clone(),
       bundle,
       manifest,
-      target: parameters.target,
+      target: parameters.target.clone(),
       review_metadata: parameters
         .review_metadata
         .as_ref()
@@ -311,24 +749,10 @@ impl<P: FactoryCandidatePublisher> FactoryFlowActionPlugin for FactoryCandidateP
   }
   fn validate(&self, binding: &FlowActionBinding, outcomes: &[FlowOutcomeDefinition]) -> Result<(), ApplicationError> {
     let parameters = Parameters::parse(binding)?;
-    if binding.action().as_str() != PUBLISH_CANDIDATE_ACTION
-      || !outcomes.contains(&self.outcome)
-      || parameters.bundle == parameters.manifest
-      || [
-        parameters.conflict_outcome.as_ref(),
-        parameters.rejected_outcome.as_ref(),
-      ]
-      .into_iter()
-      .flatten()
-      .any(|key| {
-        !outcomes
-          .iter()
-          .any(|outcome| outcome.key() == key && outcome.kind() == FlowOutcomeKind::Failure)
-      })
-    {
+    if binding.action().as_str() != PUBLISH_CANDIDATE_ACTION {
       return Err(ApplicationError::invalid());
     }
-    Ok(())
+    validate_publication_outcomes(&parameters, outcomes, &self.outcome)
   }
   async fn cancel(
     &self,
@@ -338,7 +762,7 @@ impl<P: FactoryCandidatePublisher> FactoryFlowActionPlugin for FactoryCandidateP
     let parameters = Parameters::parse(request.binding)?;
     self
       .publisher
-      .cancel(&self.request(request, parameters)?, requested_at)
+      .cancel(&self.request(&request, &parameters)?, requested_at)
       .await
   }
   async fn execute(
@@ -354,29 +778,33 @@ impl<P: FactoryCandidatePublisher> FactoryFlowActionPlugin for FactoryCandidateP
     let conflict = parameters
       .conflict_outcome
       .as_ref()
-      .map(|key| publication_failure(&request, key, "publication_conflict"))
+      .map(|key| publication_failure(&request, key, PUBLICATION_CONFLICT))
       .transpose()?;
     let rejected = parameters
       .rejected_outcome
       .as_ref()
       .map(|key| {
-        [
-          FactoryPublicationRejection::ProviderRejected,
-          FactoryPublicationRejection::InvalidReviewMetadata,
-          FactoryPublicationRejection::ValidationExpired,
-        ]
-        .map(|reason| publication_failure(&request, key, reason).map(|result| (reason, result)))
-        .into_iter()
-        .collect::<Result<Vec<_>, _>>()
+        parameters
+          .rejection_reasons()
+          .map(|reason| publication_failure(&request, key, reason).map(|result| (reason, result)))
+          .collect::<Result<Vec<_>, _>>()
       })
       .transpose()?;
     let observed_at = request.observed_at;
-    let intent = self.request(request, parameters)?;
+    let intent = self.request(&request, &parameters)?;
     if observed_at >= intent.deadline {
       return Err(ApplicationError::invalid());
     }
     // Establish compatibility with the entire producer contract before effects.
-    if !schema.accepts_all(&publication_shape(&intent.candidate, intent.require_review_url)?) {
+    if !schema.accepts_all(&publication_shape(
+      FlowValueSchema::Enum {
+        values: vec![serde_json::json!(intent.candidate.candidate_revision())],
+      },
+      FlowValueSchema::Enum {
+        values: vec![serde_json::json!(intent.candidate.changeset_digest())],
+      },
+      intent.require_review_url,
+    )?) {
       return Err(ApplicationError::invalid());
     }
     let published = match self.publisher.observe(&intent).await {
@@ -384,7 +812,21 @@ impl<P: FactoryCandidatePublisher> FactoryFlowActionPlugin for FactoryCandidateP
       Ok(None) if intent.publish_until.is_some_and(|cutoff| observed_at >= cutoff) => Err(
         ApplicationError::PublicationRejected(FactoryPublicationRejection::ValidationExpired),
       ),
-      Ok(None) => match self.publisher.publish(&intent).await {
+      Ok(None) => match async {
+        if let Some(review) = &parameters.review_valid_until {
+          self
+            .check_candidate_proofs(
+              request.input,
+              &intent.candidate,
+              parameters.valid_until.as_ref(),
+              review,
+            )
+            .await?;
+        }
+        self.publisher.publish(&intent).await
+      }
+      .await
+      {
         Err(error @ ApplicationError::Store(StoreError::Unavailable)) => {
           // A committed write can lose its reply. Only observe under the original intent.
           match self.publisher.observe(&intent).await {
@@ -423,8 +865,12 @@ impl<P: FactoryCandidatePublisher> FactoryFlowActionPlugin for FactoryCandidateP
     {
       return Err(ApplicationError::invalid());
     }
+    let discovery = match &publication.facts.review_url {
+      Some(url) => FlowDiscoveryFacts::candidate_with_review(publication.candidate.clone(), url.clone()),
+      None => FlowDiscoveryFacts::candidate(publication.candidate.clone()),
+    };
     Ok(FactoryFlowActionObservation {
-      discovery: Some(FlowDiscoveryFacts::candidate(publication.candidate.clone())),
+      discovery: Some(discovery),
       outcome: self.outcome.key().clone(),
       payload: FlowPayload::new(
         schema,
@@ -441,23 +887,30 @@ fn publication_failure(
   key: &FactoryKey,
   reason: impl serde::Serialize,
 ) -> Result<FactoryFlowActionObservation, ApplicationError> {
-  let outcome = request
-    .outcomes
-    .iter()
-    .find(|outcome| outcome.key() == key)
-    .ok_or_else(ApplicationError::invalid)?;
-  let schema = request
-    .schemas
-    .iter()
-    .find(|schema| schema.reference() == outcome.schema())
-    .ok_or_else(ApplicationError::invalid)?;
   Ok(FactoryFlowActionObservation {
     discovery: None,
     outcome: key.clone(),
-    payload: FlowPayload::new(schema, serde_json::json!({"reason":reason})).map_err(|_| ApplicationError::invalid())?,
+    payload: publication_failure_payload(request.outcomes, request.schemas, key, reason)?,
     usage: BudgetUsage::default(),
     outbox: vec![],
   })
+}
+
+fn publication_failure_payload(
+  outcomes: &[FlowOutcomeDefinition],
+  schemas: &[FlowDataSchema],
+  key: &FactoryKey,
+  reason: impl serde::Serialize,
+) -> Result<FlowPayload, ApplicationError> {
+  let outcome = outcomes
+    .iter()
+    .find(|outcome| outcome.key() == key)
+    .ok_or_else(ApplicationError::invalid)?;
+  let schema = schemas
+    .iter()
+    .find(|schema| schema.reference() == outcome.schema())
+    .ok_or_else(ApplicationError::invalid)?;
+  FlowPayload::new(schema, serde_json::json!({"reason":reason})).map_err(|_| ApplicationError::invalid())
 }
 
 fn publication_payload(
@@ -468,30 +921,73 @@ fn publication_payload(
   serde_json::json!({"receipt":receipt,"candidate_revision":candidate.candidate_revision(),"changeset_digest":candidate.changeset_digest(),"external":facts})
 }
 
+/// Checks the invariant receipt shape before offering or saving a publisher.
+pub(crate) fn publication_receipt_is_compatible(schema: &FlowDataSchema, require_review_url: bool) -> bool {
+  let FlowValueSchema::Object { fields } = schema.shape() else {
+    return false;
+  };
+  let Some(revision) = fields
+    .get(&FactoryKey::new("candidate_revision").expect("static key"))
+    .map(FlowFieldSchema::value)
+  else {
+    return false;
+  };
+  let digest_shape = FlowValueSchema::String {
+    min_bytes: 64,
+    max_bytes: 64,
+  };
+  let changeset = fields
+    .get(&FactoryKey::new("changeset_digest").expect("static key"))
+    .map(FlowFieldSchema::value);
+  let changeset = match changeset {
+    Some(shape @ FlowValueSchema::Enum { values })
+      if values.iter().all(|value| {
+        value
+          .as_str()
+          .is_some_and(|value| value.parse::<FactoryDigest>().is_ok())
+      }) =>
+    {
+      shape.clone()
+    }
+    _ => digest_shape,
+  };
+  let valid = match revision {
+    FlowValueSchema::String { max_bytes, .. } => *max_bytes > 0,
+    FlowValueSchema::Enum { values } => values.iter().all(|value| value.as_str().is_some_and(|s| !s.is_empty())),
+    _ => false,
+  };
+  // Context supplies the revision and changeset. Legacy receipts may pin an
+  // exact digest; the executor still validates the actual candidate value.
+  valid
+    && publication_shape(revision.clone(), changeset, require_review_url)
+      .is_ok_and(|producer| schema.accepts_all(&producer))
+}
+
+fn object<'a>(
+  fields: impl IntoIterator<Item = (&'a str, FlowValueSchema)>,
+) -> Result<FlowValueSchema, ApplicationError> {
+  Ok(FlowValueSchema::Object {
+    fields: fields
+      .into_iter()
+      .map(|(name, shape)| {
+        Ok((
+          FactoryKey::new(name).map_err(|_| ApplicationError::invalid())?,
+          FlowFieldSchema::required(shape),
+        ))
+      })
+      .collect::<Result<_, ApplicationError>>()?,
+  })
+}
+
 fn publication_shape(
-  candidate: &CandidateSubject,
+  revision: FlowValueSchema,
+  changeset_digest: FlowValueSchema,
   require_review_url: bool,
 ) -> Result<FlowValueSchema, ApplicationError> {
-  fn object<'a>(
-    fields: impl IntoIterator<Item = (&'a str, FlowValueSchema)>,
-  ) -> Result<FlowValueSchema, ApplicationError> {
-    Ok(FlowValueSchema::Object {
-      fields: fields
-        .into_iter()
-        .map(|(name, shape)| {
-          Ok((
-            FactoryKey::new(name).map_err(|_| ApplicationError::invalid())?,
-            FlowFieldSchema::required(shape),
-          ))
-        })
-        .collect::<Result<_, ApplicationError>>()?,
-    })
-  }
   let text = |min_bytes, max_bytes| FlowValueSchema::String { min_bytes, max_bytes };
-  let exact = |value| FlowValueSchema::Enum { values: vec![value] };
   let mut external = vec![
     ("branch_reference", text(1, 1024)),
-    ("remote_head", exact(serde_json::json!(candidate.candidate_revision()))),
+    ("remote_head", revision.clone()),
     ("review_identity", text(1, 256)),
     (
       "review_state",
@@ -505,14 +1001,8 @@ fn publication_shape(
   }
   object([
     ("receipt", text(64, 64)),
-    (
-      "candidate_revision",
-      exact(serde_json::json!(candidate.candidate_revision())),
-    ),
-    (
-      "changeset_digest",
-      exact(serde_json::json!(candidate.changeset_digest())),
-    ),
+    ("candidate_revision", revision),
+    ("changeset_digest", changeset_digest),
     ("external", object(external)?),
   ])
 }

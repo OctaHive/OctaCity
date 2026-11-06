@@ -52,6 +52,7 @@ pub fn installed_role_execution_choices(
   let (choices, definition) = installed_role_choices(project);
   let choices = choices
     .with_build_pipeline_contract(FactoryBuildPipelineContract {
+      command: None,
       build_configuration: definition.build_configuration.clone(),
       tool: definition.toolchain.executable.clone(),
       plugin: definition.toolchain.plugin.clone(),
@@ -628,6 +629,7 @@ async fn qualify_pipeline_fixture(
       project,
       choices
         .with_build_pipeline_contract(FactoryBuildPipelineContract {
+          command: None,
           build_configuration: binding.build_configuration,
           tool: binding.tool,
           plugin: binding.plugin,

@@ -2,7 +2,8 @@
 use crate::{PostgresStore, database::unavailable};
 use octacity_server_domain::Timestamp;
 use octacity_server_factory::{
-  FactoryDigest, FactoryRunId, FlowDefinitionId, FlowIssuePresentation, NodeAttemptId, WorkArtifacts, WorkEnvelopeId,
+  FactoryDigest, FactoryRunId, FlowDefinitionId, FlowDiscoveryFacts, FlowIssuePresentation, NodeAttemptId,
+  WorkArtifacts, WorkEnvelopeId,
 };
 use octacity_server_store::{
   FactoryRunListVisibility, FactoryRunPagePosition, IssueOutcomeAssignedLabel, IssueOutcomeAssignedPriority,
@@ -29,6 +30,7 @@ struct OutcomeRow {
 struct RecordRow {
   value: Json<serde_json::Value>,
   artifacts: Json<WorkArtifacts>,
+  publication: Option<Json<FlowDiscoveryFacts>>,
   classification: Option<Json<crate::issues::issue_classification::ClassificationReceipt>>,
   rejected: Option<bool>,
 }
@@ -84,6 +86,10 @@ impl IssueOutcomeStore for PostgresStore {
       .bind(candidate.work_id.as_uuid())
       .bind(candidate.position.attempt.as_uuid())
       .bind(matches!(candidate.presentation, FlowIssuePresentation::TriageV1 { .. }))
+      .bind(matches!(
+        candidate.presentation,
+        FlowIssuePresentation::PublicationV1 { .. }
+      ))
       .fetch_optional(self.pool())
       .await
       .map_err(unavailable)?;
@@ -116,6 +122,7 @@ impl IssueOutcomeStore for PostgresStore {
     };
     Ok(Some(IssueOutcomeRecord {
       value: row.value.0,
+      publication: row.publication.map(|facts| facts.0),
       inputs: row.artifacts.0,
       classification,
     }))

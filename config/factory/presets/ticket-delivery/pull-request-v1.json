@@ -54,7 +54,7 @@
       "shape": {
         "type": "object",
         "fields": {
-          "reason": {"required": true, "value": {"type": "enum", "values": ["publication_conflict", "provider_rejected", "invalid_review_metadata", "validation_expired"]}}
+          "reason": {"required": true, "value": {"type": "enum", "values": ["publication_conflict", "provider_rejected", "invalid_review_metadata", "validation_expired", "candidate_proof_mismatch"]}}
         }
       }
     },
@@ -68,6 +68,7 @@
           "candidate_revision": {"required": true, "value": {"type": "string", "min_bytes": 1, "max_bytes": 256}},
           "candidate_digest": {"required": true, "value": {"type": "string", "min_bytes": 64, "max_bytes": 64}},
           "valid_until": {"required": true, "value": {"type": "integer", "minimum": 0, "maximum": 9007199254740991}},
+          "review_valid_until": {"required": true, "value": {"type": "integer", "minimum": 0, "maximum": 9007199254740991}},
           "bundle": {"required": true, "value": {"type": "reference", "schema": "artifact_reference"}},
           "manifest": {"required": true, "value": {"type": "reference", "schema": "artifact_reference"}}
         }
@@ -144,6 +145,13 @@
             "view": "input_payload",
             "path": ""
           },
+          "review_valid_until": {
+            "source": "record",
+            "node": "code_review_gate",
+            "outcome": "accepted",
+            "view": "input_payload",
+            "path": "/fresh_until"
+          },
           "bundle": {
             "source": "record",
             "node": "implementation",
@@ -167,6 +175,7 @@
               "candidate_revision": {"mapping": "pointer", "path": "/validation/candidate_revision"},
               "candidate_digest": {"mapping": "pointer", "path": "/validation/candidate_digest"},
               "valid_until": {"mapping": "pointer", "path": "/validation/facts/fresh_until"},
+              "review_valid_until": {"mapping": "pointer", "path": "/review_valid_until"},
               "bundle": {"mapping": "pointer", "path": "/bundle"},
               "manifest": {"mapping": "pointer", "path": "/manifest"}
             }
@@ -189,6 +198,7 @@
             "digest": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
           },
           "valid_until": {"value": {"mapping": "pointer", "path": "/valid_until"}},
+          "review_valid_until": {"value": {"mapping": "pointer", "path": "/review_valid_until"}},
           "review_metadata": {"value": {"mapping": "pointer", "path": "/metadata"}},
           "require_review_url": true,
           "conflict_outcome": "conflict",

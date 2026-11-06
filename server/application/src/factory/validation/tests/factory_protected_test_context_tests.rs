@@ -122,17 +122,21 @@ fn model_context_reads_public_artifact_even_when_the_attempt_fills_an_artifact_p
       ContextManifestId::generate(),
       prior.subject().clone(),
       prior.construction_policy_digest(),
-      vec![ContextManifestEntry::new(
-        ContextSourceKind::Evidence,
-        key("public-result"),
-        prior.subject().clone(),
-        FactoryContextReference::Artifact(reference.clone()),
-        reference.content_digest(),
-        reference.encoded_size(),
-        FactorySafeText::new("Explicitly selected ordinary output").unwrap(),
-        FactoryDigest::from_bytes([3; 32]),
-      ).unwrap()],
-    ).unwrap();
+      vec![
+        ContextManifestEntry::new(
+          ContextSourceKind::Evidence,
+          key("public-result"),
+          prior.subject().clone(),
+          FactoryContextReference::Artifact(reference.clone()),
+          reference.content_digest(),
+          reference.encoded_size(),
+          FactorySafeText::new("Explicitly selected ordinary output").unwrap(),
+          FactoryDigest::from_bytes([3; 32]),
+        )
+        .unwrap(),
+      ],
+    )
+    .unwrap();
     let input = fixture.intent.input().clone().with_context(context, vec![]).unwrap();
     let bytes = Arc::new(InventoryBytes {
       id: identity.artifact_id,
@@ -282,6 +286,17 @@ fn retained_protected_tests_restore_exact_selected_inventory_and_file_identities
       )
       .unwrap();
       let model = fixture.intent.input().clone().with_context(context, vec![]).unwrap();
+      let request = ReadFactoryArtifact {
+        project_id: prior.subject().project_id(),
+        artifact: reference.clone(),
+        maximum_bytes: octacity_artifact_store::MAX_ARTIFACT_READ_BYTES,
+        observed_at: at(32),
+        required_until: at(899),
+      };
+      assert!(
+        IssueArtifactReader::metadata(reader.as_ref(), request).await.is_err(),
+        "Issue cards must not expose even the name of a protected test artifact: {alias}"
+      );
       assert!(
         reader.read_context(&model, at(32), at(899)).await.is_err(),
         "an exact protected test reference must not confer model context access"

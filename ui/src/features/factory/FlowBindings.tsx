@@ -2,6 +2,7 @@ import type { FlowAuthoringServices } from './FlowPrimitives';
 import { FlowWorkTask } from './FlowWorkTask';
 import { useDraftRowKeys } from '../../shared/useDraftRowKeys';
 import type { components } from '../../../.generated/api/schema';
+import { FACTORY_AUTHORING_SCHEMAS } from '../../../.generated/api/factory-authoring';
 import type { MessageKey } from '../../app/presentation/messages';
 import { usePresentation } from '../../app/presentation/PresentationProvider';
 import { AcceptedResultFields } from './AcceptedResultFields';
@@ -22,6 +23,7 @@ type Node = components['schemas']['FactoryFlowNodeDefinition'];
 type Root = components['schemas']['FactoryFlowRootDraft'];
 type Schema = components['schemas']['FactoryFlowDataSchema'];
 type Source = components['schemas']['FactoryFlowInputSource'];
+type Context = components['schemas']['FactoryFlowContextBinding'];
 const SOURCES = {
   node_configuration: 'factory.source.node_configuration',
   caller_input: 'factory.source.caller_input',
@@ -76,7 +78,11 @@ export function FlowBindings({
     documentsManaged ? documentSelections(node).map((entry) => entry.key) : [],
   );
   const editableEntries = Object.entries(entries).filter(([key]) => !documentKeys.has(key));
-  const entryKeys = useDraftRowKeys(editableEntries.map(([, entry]) => entry));
+  const collections = node.context_binding?.artifact_collections ?? {};
+  const contextCount =
+    Object.keys(entries).length +
+    Object.keys(collections).length +
+    Number(!!node.context_binding?.work_task);
   const candidate = node.context_binding?.candidate_revision;
   const updateSources = (sources: Record<string, Source>) =>
     onChange({
@@ -86,9 +92,15 @@ export function FlowBindings({
         sources,
       },
     });
-  const updateEntries = (
-    entries: Record<string, components['schemas']['FactoryFlowContextSelection']>,
-  ) => onChange({ ...node, context_binding: { ...node.context_binding, entries } });
+  const updateContext = (patch: Partial<Context>) => {
+    const next = { ...node.context_binding, entries, ...patch };
+    const hasBinding =
+      Object.keys(next.entries).length ||
+      Object.keys(next.artifact_collections ?? {}).length ||
+      next.work_task ||
+      next.candidate_revision;
+    onChange({ ...node, context_binding: hasBinding ? next : null });
+  };
   return (
     <section>
       <FlowWorkTask key={node.key} node={node} onChange={onChange} />
@@ -97,7 +109,7 @@ export function FlowBindings({
       (!node.action || node.action.action === classificationAction) ? (
         <FlowIssueClassification
           onRemove={onRemoveClassification}
-          key={node.key}
+          key={`classification:${node.key}`}
           node={node}
           root={root}
           schemas={schemas}
@@ -273,9 +285,15 @@ export function FlowBindings({
                   { value: 'payload', label: t('factory.payload') },
                   { value: 'metadata', label: t('factory.metadata') },
                   { value: 'input_payload', label: t('factory.retainedStepInput') },
+                  { value: 'primary_artifact', label: t('factory.primaryStepArtifact') },
                 ]}
                 onValueChange={(view) => {
-                  if (view === 'payload' || view === 'metadata' || view === 'input_payload')
+                  if (
+                    view === 'payload' ||
+                    view === 'metadata' ||
+                    view === 'input_payload' ||
+                    view === 'primary_artifact'
+                  )
                     updateSources({ ...sources, [name]: { ...source, view } });
                 }}
               />
@@ -298,16 +316,11 @@ export function FlowBindings({
             type="checkbox"
             checked={!!candidate}
             onChange={(event) =>
-              onChange({
-                ...node,
-                context_binding: {
-                  ...node.context_binding,
-                  entries,
-                  candidate_revision: event.target.checked
-                    ? { value: { mapping: 'pointer', path: '' } }
-                    : null,
-                  ...(!event.target.checked ? { candidate_when_present: null } : {}),
-                },
+              updateContext({
+                candidate_revision: event.target.checked
+                  ? { value: { mapping: 'pointer', path: '' } }
+                  : null,
+                ...(!event.target.checked ? { candidate_when_present: null } : {}),
               })
             }
           />
@@ -318,79 +331,131 @@ export function FlowBindings({
             <legend>{t('factory.candidateRevisionMapping')}</legend>
             <ValueMappingEditor
               value={candidate.value}
-              onChange={(value) =>
-                onChange({
-                  ...node,
-                  context_binding: {
-                    ...node.context_binding,
-                    entries,
-                    candidate_revision: { value },
-                  },
-                })
-              }
+              onChange={(value) => updateContext({ candidate_revision: { value } })}
+            />
+            <ContextGuard
+              value={node.context_binding?.candidate_when_present}
+              onChange={(candidate_when_present) => updateContext({ candidate_when_present })}
             />
           </fieldset>
         ) : null}
-        <button
-          type="button"
-          disabled={Object.keys(entries).length >= 64 || Object.hasOwn(entries, '')}
-          onClick={() =>
-            updateEntries({
-              ...entries,
-              '': {
-                source_kind: 'bounded_summary',
-                source: { value: { mapping: 'pointer', path: '' } },
-              },
-            })
-          }
-        >
-          {t('factory.addContextEntry')}
-        </button>
-        {editableEntries.map(([name, entry], index) => (
-          <fieldset key={entryKeys[index]}>
-            <label>
-              {t('factory.contextEntryName')}
-              <input
-                maxLength={128}
-                value={name}
-                onChange={(event) => updateEntries(rename(entries, name, event.target.value))}
-              />
-            </label>
-            <SelectMenu
-              ariaLabel={t('factory.contextKind')}
-              value={entry.source_kind}
-              options={Object.entries(CONTEXT).map(([kind, label]) => ({
-                value: kind,
-                label: t(label),
-              }))}
-              onValueChange={(kind) => {
-                if (Object.hasOwn(CONTEXT, kind))
-                  updateEntries({
-                    ...entries,
-                    [name]: { ...entry, source_kind: kind as keyof typeof CONTEXT },
-                  });
-              }}
-            />
-            <ValueMappingEditor
-              value={entry.source.value}
-              onChange={(value) =>
-                updateEntries({ ...entries, [name]: { ...entry, source: { value } } })
-              }
-            />
-            <button
-              type="button"
-              onClick={() =>
-                updateEntries(
-                  Object.fromEntries(Object.entries(entries).filter(([key]) => key !== name)),
-                )
-              }
-            >
-              {t('factory.removeContextEntry')}
-            </button>
-          </fieldset>
-        ))}
+        <ContextEntries
+          values={entries}
+          visible={editableEntries}
+          contextCount={contextCount}
+          onChange={(entries) => updateContext({ entries })}
+        />
+        <fieldset>
+          <legend>{t('factory.artifactCollections')}</legend>
+          <ContextEntries
+            collection
+            values={collections}
+            visible={Object.entries(collections)}
+            contextCount={contextCount}
+            onChange={(artifact_collections) => updateContext({ artifact_collections })}
+          />
+        </fieldset>
       </details>
     </section>
+  );
+}
+
+function ContextGuard({
+  value,
+  onChange,
+}: {
+  value: string | null | undefined;
+  onChange: (value: string | null) => void;
+}) {
+  const { t } = usePresentation();
+  return (
+    <label>
+      {t('factory.contextWhenPresent')}
+      <input value={value ?? ''} onChange={(event) => onChange(event.target.value || null)} />
+    </label>
+  );
+}
+
+function ContextEntries({
+  values,
+  visible,
+  contextCount,
+  collection = false,
+  onChange,
+}: {
+  values: Context['entries'];
+  visible: [string, Context['entries'][string]][];
+  contextCount: number;
+  collection?: boolean;
+  onChange: (values: Context['entries']) => void;
+}) {
+  const { t } = usePresentation();
+  const rowKeys = useDraftRowKeys(visible.map(([, entry]) => entry));
+  return (
+    <>
+      <button
+        type="button"
+        disabled={
+          contextCount >=
+            FACTORY_AUTHORING_SCHEMAS.FactoryFlowContextBinding.properties.entries.maxProperties ||
+          Object.hasOwn(values, '')
+        }
+        onClick={() =>
+          onChange({
+            ...values,
+            '': {
+              source_kind: collection ? 'evidence' : 'bounded_summary',
+              source: { value: { mapping: 'pointer', path: '' } },
+            },
+          })
+        }
+      >
+        {t(collection ? 'factory.addArtifactCollection' : 'factory.addContextEntry')}
+      </button>
+      {visible.map(([name, entry], index) => (
+        <fieldset key={rowKeys[index]}>
+          <label>
+            {t('factory.contextEntryName')}
+            <input
+              maxLength={128}
+              value={name}
+              onChange={(event) => onChange(rename(values, name, event.target.value))}
+            />
+          </label>
+          <SelectMenu
+            ariaLabel={t('factory.contextKind')}
+            value={entry.source_kind}
+            options={Object.entries(CONTEXT).map(([kind, label]) => ({
+              value: kind,
+              label: t(label),
+            }))}
+            onValueChange={(kind) => {
+              if (Object.hasOwn(CONTEXT, kind))
+                onChange({
+                  ...values,
+                  [name]: { ...entry, source_kind: kind as keyof typeof CONTEXT },
+                });
+            }}
+          />
+          <ValueMappingEditor
+            value={entry.source.value}
+            onChange={(value) => onChange({ ...values, [name]: { ...entry, source: { value } } })}
+          />
+          <ContextGuard
+            value={entry.when_present}
+            onChange={(when_present) => onChange({ ...values, [name]: { ...entry, when_present } })}
+          />
+          <button
+            type="button"
+            onClick={() =>
+              onChange(Object.fromEntries(Object.entries(values).filter(([key]) => key !== name)))
+            }
+          >
+            {t('factory.removeContextEntry')}
+          </button>
+        </fieldset>
+      ))}
+    </>
   );
 }
 function rename<T>(values: Record<string, T>, old: string, name: string): Record<string, T> {

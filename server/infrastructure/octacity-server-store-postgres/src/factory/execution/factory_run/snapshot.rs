@@ -67,6 +67,7 @@ pub(crate) async fn read_snapshot_in_transaction(
       run_id,
       run_version: FactoryRunVersion::new(positive(version)?).map_err(|_| StoreError::Unavailable)?,
       progress: document.progress,
+      awaiting_terminal_usage: document.awaiting_terminal_usage,
       cancellation_requested,
       recorded_at: timestamp(recorded_at)?,
     })

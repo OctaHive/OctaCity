@@ -1,5 +1,6 @@
+import { useFactoryAuthoringCapabilities } from './useFactoryAuthoringCapabilities';
 import type { FlowAuthoringServices } from './FlowPrimitives';
-import { useQuery, useQueries } from '@tanstack/react-query';
+import { useQueries } from '@tanstack/react-query';
 import { queryKeys } from '../../app/query';
 import type { components } from '../../../.generated/api/schema';
 import { usePresentation } from '../../app/presentation/PresentationProvider';
@@ -22,11 +23,7 @@ export function StepCode({
   onChange: (patch: Partial<S['FactoryFlowNodeDefinition']>) => void;
 }) {
   const { t } = usePresentation();
-  const capability = useQuery({
-    queryKey: queryKeys.factoryAuthoringCapabilities(authoring?.projectId ?? ''),
-    enabled: !!authoring,
-    queryFn: ({ signal }) => authoring!.api.getAuthoringCapabilities(authoring!.projectId, signal),
-  });
+  const capability = useFactoryAuthoringCapabilities(authoring);
   const external = ['reasoning', 'build_command', 'decision_signal'].includes(node.kind);
   const sourceFreeUnsupported =
     external &&

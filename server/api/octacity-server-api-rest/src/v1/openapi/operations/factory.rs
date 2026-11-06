@@ -10,8 +10,6 @@ use octacity_server_application::{
 
 use super::{ManagementOperation, ParameterProfile};
 
-const LEGACY_PRESET_MIGRATION: &str = "Legacy preset queries retain their original request/response semantics for existing clients. New authoring uses installed factory-authoring-capabilities and factory-configuration-choices, then /api/v1/flow-definitions/validate and ordinary immutable Flow/Configuration publication. See docs/reference/factory-pipeline-authoring-migration.md.";
-
 pub(super) const OPERATIONS: &[ManagementOperation] = &[
   operation!(
     octacity_server_application::ProvisionFactoryProjectPoliciesCommand,
@@ -150,14 +148,13 @@ pub(super) const OPERATIONS: &[ManagementOperation] = &[
     "/api/v1/projects/{project_id}/factory-presets/resolve",
     "resolveFactoryPreset",
     "Factory",
-    "Resolve reviewed ordinary drafts without publication or remote I/O",
+    "Resolve an optional Factory example into an editable draft without publication or remote I/O",
     Some("FactoryPresetResolutionRequest"),
     "FactoryPresetResolution",
     "200",
     false,
     false
   )
-  .with_deprecation(LEGACY_PRESET_MIGRATION)
   .with_no_store_response(),
   operation!(
     octacity_server_application::ListFactoryPresetsQuery,
@@ -165,7 +162,7 @@ pub(super) const OPERATIONS: &[ManagementOperation] = &[
     "/api/v1/projects/{project_id}/factory-presets",
     "listFactoryPresets",
     "Factory",
-    "Discover bounded release presets without execution or publication",
+    "Discover optional Factory examples without execution or publication",
     None,
     "FactoryPresetPage",
     "200",
@@ -174,7 +171,6 @@ pub(super) const OPERATIONS: &[ManagementOperation] = &[
   )
   .with_visibility::<octacity_server_application::ListFactoryPresetsQuery>()
   .with_parameters(ParameterProfile::CurrentDefinitionList)
-  .with_deprecation(LEGACY_PRESET_MIGRATION)
   .with_no_store_response(),
   operation!(
     octacity_server_application::GetFactoryRuntimeSettingsQuery,

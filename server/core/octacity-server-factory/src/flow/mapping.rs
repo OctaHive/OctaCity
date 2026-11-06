@@ -1,6 +1,6 @@
 use super::predicate::validate_pointer;
 use crate::{
-  FactoryError, FactoryKey, FlowDataSchema, FlowPayload, MAX_FLOW_DATA_BYTES, MAX_FLOW_SCHEMA_DEPTH,
+  FactoryError, FactoryKey, FlowDataSchema, FlowPayload, FlowValueSchema, MAX_FLOW_DATA_BYTES, MAX_FLOW_SCHEMA_DEPTH,
   MAX_FLOW_SCHEMA_ENTRIES,
 };
 use serde::{Deserialize, Serialize};
@@ -75,8 +75,15 @@ impl FlowDataMapping {
     }
     Ok(mapping)
   }
-  pub(super) const fn value(&self) -> &FlowValueMapping {
+  /// Returns the validated expression for callers checking a narrower runtime contract.
+  pub const fn value(&self) -> &FlowValueMapping {
     &self.value
+  }
+
+  /// Checks every source pointer that can populate one projected field.
+  /// Literals and paths without an explicit source fail closed.
+  pub fn selects_only(&self, path: &str, check: &mut impl FnMut(&str) -> bool) -> bool {
+    self.value.selects_only(path, check)
   }
 
   /// Projects only configured fields and validates the complete target contract.
@@ -90,6 +97,12 @@ impl FlowDataMapping {
   pub fn project_value(&self, input: &Value, schema: &FlowDataSchema) -> Result<FlowPayload, FactoryError> {
     FlowPayload::new(schema, self.project_raw(input)?)
   }
+  /// Checks that declared input paths and projected value types fit a consumer.
+  /// Optional source values still have to be present when their projection runs.
+  pub fn fits(&self, input: &FlowValueSchema, target: &FlowValueSchema) -> bool {
+    self.value.fits(input, target)
+  }
+
   /// Whether this mapping can be checked without observing an admitted input.
   pub(crate) fn is_input_independent(&self) -> bool {
     self.value.is_input_independent()
@@ -101,6 +114,91 @@ impl FlowDataMapping {
   }
 }
 impl FlowValueMapping {
+  fn selects_only(&self, path: &str, check: &mut impl FnMut(&str) -> bool) -> bool {
+    match self {
+      Self::Pointer { path: source } => check(&format!("{source}{path}")),
+      Self::IfPresent { then, otherwise, .. } => then.selects_only(path, check) && otherwise.selects_only(path, check),
+      Self::Object { fields } => projection_segment(path).is_some_and(|(key, tail)| {
+        fields
+          .iter()
+          .find(|(name, _)| name.as_str() == key)
+          .is_some_and(|(_, value)| value.selects_only(tail, check))
+      }),
+      Self::Array { items } => projection_segment(path).is_some_and(|(index, tail)| {
+        index
+          .parse::<usize>()
+          .ok()
+          .and_then(|index| items.get(index))
+          .is_some_and(|value| value.selects_only(tail, check))
+      }),
+      Self::Constant { .. } => false,
+    }
+  }
+
+  fn fits(&self, input: &FlowValueSchema, target: &FlowValueSchema) -> bool {
+    match self {
+      Self::Pointer { path } => {
+        let mut shape = input;
+        for segment in path.split('/').skip(1) {
+          let key = segment.replace("~1", "/").replace("~0", "~");
+          match shape {
+            FlowValueSchema::Object { fields } => {
+              let Some(field) = fields
+                .iter()
+                .find(|(name, _)| name.as_str() == key)
+                .map(|(_, field)| field)
+              else {
+                return false;
+              };
+              shape = field.value();
+            }
+            FlowValueSchema::Array { item, max_items, .. }
+              if key
+                .parse::<u16>()
+                .is_ok_and(|index| index < *max_items && index.to_string() == key) =>
+            {
+              shape = item;
+            }
+            FlowValueSchema::ExternallyTagged { variants } => {
+              let Some(value) = variants.get(&key).and_then(Option::as_deref) else {
+                return false;
+              };
+              shape = value;
+            }
+            _ => return false,
+          }
+        }
+        target.covers(shape)
+      }
+      Self::Constant { value } => target.accepts(value),
+      Self::Object { fields } => {
+        let FlowValueSchema::Object { fields: expected } = target else {
+          return false;
+        };
+        fields.iter().all(|(name, mapping)| {
+          expected
+            .get(name)
+            .is_some_and(|field| mapping.fits(input, field.value()))
+        }) && expected
+          .iter()
+          .all(|(name, field)| !field.is_required() || fields.contains_key(name))
+      }
+      Self::Array { items } => {
+        let FlowValueSchema::Array {
+          item,
+          min_items,
+          max_items,
+        } = target
+        else {
+          return false;
+        };
+        (usize::from(*min_items)..=usize::from(*max_items)).contains(&items.len())
+          && items.iter().all(|mapping| mapping.fits(input, item))
+      }
+      Self::IfPresent { then, otherwise, .. } => then.fits(input, target) && otherwise.fits(input, target),
+    }
+  }
+
   fn is_input_independent(&self) -> bool {
     match self {
       Self::Constant { .. } => true,
@@ -172,6 +270,12 @@ impl FlowValueMapping {
       }
     }
   }
+}
+
+pub(super) fn projection_segment(path: &str) -> Option<(String, &str)> {
+  let path = path.strip_prefix('/')?;
+  let (head, tail) = path.find('/').map_or((path, ""), |index| path.split_at(index));
+  Some((head.replace("~1", "/").replace("~0", "~"), tail))
 }
 pub(super) fn copy_bounded(value: &Value, remaining: &mut usize) -> Result<Value, FactoryError> {
   // Charge selected bytes before cloning: repeated selections cannot amplify allocation.

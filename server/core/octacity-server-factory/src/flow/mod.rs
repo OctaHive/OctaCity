@@ -57,7 +57,7 @@ pub use input_binding::{FlowInputBinding, FlowInputSource, FlowRecordView, MAX_F
 mod mapping;
 pub use mapping::{FlowDataMapping, FlowValueMapping, MAX_FLOW_MAPPING_BYTES};
 mod record;
-pub use action::{FlowActionBinding, MAX_FLOW_ACTION_PARAMETER_BYTES};
+pub use action::{FlowActionBinding, MAX_FLOW_ACTION_PARAMETER_BYTES, PUBLISH_CANDIDATE_ACTION};
 pub use build::{FlowBuildBinding, FlowBuildProfile};
 pub use data::{
   FlowDataSchema, FlowFieldSchema, FlowPayload, FlowValueSchema, MAX_FLOW_DATA_BYTES, MAX_FLOW_SCHEMA_BYTES,

@@ -1,7 +1,9 @@
 use std::{collections::BTreeMap, sync::Mutex};
 
 use async_trait::async_trait;
-use octacity_server_artifacts::{ArtifactEvent, ArtifactIdentity, ArtifactRetentionPolicy, ArtifactState, ArtifactType};
+use octacity_server_artifacts::{
+  ArtifactEvent, ArtifactIdentity, ArtifactRetentionPolicy, ArtifactState, ArtifactType,
+};
 use octacity_server_domain::{ArtifactId, ArtifactUploadId, EntityKind, Timestamp};
 
 use crate::{
@@ -305,15 +307,23 @@ impl ArtifactRecordStore for InMemoryArtifactRecordStore {
     producer_task_id: u64,
     upload_key_prefix: &str,
   ) -> Result<bool, StoreError> {
-    Ok(self.state.lock().map_err(|_| StoreError::Unavailable)?.uploads.values().any(|upload| {
-      let identity = upload.artifact.identity();
-      identity.job_id == job_id
-        && identity.artifact_type == ArtifactType::Artifact
-        && upload.artifact.state().is_visible()
-        && upload.producer_run_id == producer_run_id
-        && upload.producer_task_id == producer_task_id
-        && upload.idempotency_key.as_str().starts_with(upload_key_prefix)
-    }))
+    Ok(
+      self
+        .state
+        .lock()
+        .map_err(|_| StoreError::Unavailable)?
+        .uploads
+        .values()
+        .any(|upload| {
+          let identity = upload.artifact.identity();
+          identity.job_id == job_id
+            && identity.artifact_type == ArtifactType::Artifact
+            && upload.artifact.state().is_visible()
+            && upload.producer_run_id == producer_run_id
+            && upload.producer_task_id == producer_task_id
+            && upload.idempotency_key.as_str().starts_with(upload_key_prefix)
+        }),
+    )
   }
 }
 

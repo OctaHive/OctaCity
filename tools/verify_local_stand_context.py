@@ -27,6 +27,8 @@ MANDATORY_FINAL_DENIES = frozenset(
     }
 )
 
+FACTORY_RELEASE_MANIFEST = "config/factory/presets/ticket-delivery/v1.json"
+
 REQUIRED_CONTEXT_PATHS = (
     "Cargo.lock",
     "Cargo.toml",
@@ -46,6 +48,7 @@ REQUIRED_CONTEXT_PATHS = (
     "shared/protocol-fixtures/coordinator/register-request-v1.json",
     "shared/protocol-fixtures/job-spec/job-spec-v3.json",
     "config/runtime/microsandbox-agentd-v1/SHA256SUMS",
+    "config/factory/presets/ticket-delivery/completion-v1.json",
     "config/factory/presets/triage/completion-v1.json",
     "config/factory/presets/triage/completion-v2.json",
     "config/factory/presets/triage/ticket-input-v1.json",
@@ -66,7 +69,6 @@ REQUIRED_CONTEXT_PATHS = (
     "config/factory/presets/triage/classification-gate-v2.json",
     "config/factory/presets/triage/routing-v1.json",
     "config/factory/presets/triage/direct-classification-v1.json",
-    "config/factory/flows/base-flow/schemas/artifact_reference.json",
     "config/factory/flows/base-flow/schemas/work.json",
     "ui/package.json",
     "ui/pnpm-lock.yaml",
@@ -455,12 +457,30 @@ def validate_staging_directory(
             _validate_octa_identity(archive, entry, native)
 
 
-def validate_materialized_context(directory: Path, rules: tuple[str, ...]) -> None:
+def required_context_paths(repository: Path) -> tuple[str, ...]:
+    """Read release parts from the same manifest used to load the preset."""
+    manifest = _load_json(repository / FACTORY_RELEASE_MANIFEST, "Factory release manifest")
+    parts = manifest.get("parts")
+    if not isinstance(parts, list) or not parts:
+        raise ContextError(f"invalid release parts in {FACTORY_RELEASE_MANIFEST}")
+    paths = []
+    for part in parts:
+        if not isinstance(part, str) or not re.fullmatch(
+            r"(?:[a-zA-Z0-9_-]+/)+[a-zA-Z0-9_-]+\.json", part
+        ):
+            raise ContextError(f"invalid release part path in {FACTORY_RELEASE_MANIFEST}")
+        paths.append(f"config/factory/{part}")
+    return (*REQUIRED_CONTEXT_PATHS, FACTORY_RELEASE_MANIFEST, *paths)
+
+
+def validate_materialized_context(
+    directory: Path, rules: tuple[str, ...], required_paths: tuple[str, ...]
+) -> None:
     """Verify a context exported by Docker against the repository policy."""
 
     if directory.is_symlink() or not directory.is_dir():
         raise ContextError("materialized Docker context must be a real directory")
-    for required in REQUIRED_CONTEXT_PATHS:
+    for required in required_paths:
         if not (directory / required).is_file():
             raise ContextError(f"materialized Docker context omitted required input: {required}")
     for forbidden in FORBIDDEN_CONTEXT_PATHS:
@@ -484,7 +504,8 @@ def validate_repository(
     """Validate every local-stand context boundary owned by the repository."""
 
     rules = validate_dockerignore(repository / ".dockerignore")
-    for required in REQUIRED_CONTEXT_PATHS:
+    required_paths = required_context_paths(repository)
+    for required in required_paths:
         if not (repository / required).is_file() or not docker_path_included(required, rules):
             raise ContextError(f"required build input is absent or excluded: {required}")
     for forbidden in FORBIDDEN_CONTEXT_PATHS:
@@ -505,7 +526,7 @@ def validate_repository(
             staging_directory, entries, immutable, agent_revision
         )
     if materialized_context is not None:
-        validate_materialized_context(materialized_context, rules)
+        validate_materialized_context(materialized_context, rules, required_paths)
 
 
 def parse_args() -> argparse.Namespace:

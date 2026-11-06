@@ -3,6 +3,263 @@ use super::*;
 use octacity_server_store::testing::management_mutation;
 use serde_json::json;
 
+fn publication_flow(action: &str, require_review_url: bool) -> FlowDefinitionTemplate {
+  let mut template = summary_flow(None);
+  template.nodes.truncate(1);
+  let step = &mut template.nodes[0];
+  step.kind = FlowNodeKind::TrustedAction;
+  step.gate = None;
+  step.action = Some(
+    FlowActionBinding::new(
+      ImmutableReference::new(key("test-delivery"), key("v1"), FactoryDigest::from_bytes([2; 32])),
+      key(action),
+      json!({"require_review_url":require_review_url}),
+    )
+    .unwrap(),
+  );
+  step.outcomes[0].schema = key("custom");
+  step.outcomes[0].public_result = true;
+  step.outcomes[0].issue_presentation = Some(
+    serde_json::from_value(json!({"kind":"publication_v1"}))
+      .expect("the common outcome contract supports confirmed publication"),
+  );
+  let success = step.outcomes[0].key.clone();
+  let publication_schema: FlowValueSchema = serde_json::from_value(json!({
+    "type":"object","fields":{"external":{"required":true,"value":{
+      "type":"object","fields":{"review_url":{"required":true,"value":{"type":"string","min_bytes":1,"max_bytes":2048}}}
+    }}}
+  }))
+  .unwrap();
+  template.schemas.get_mut(&key("custom")).unwrap().shape = publication_schema;
+  template.transitions = vec![FlowTransition::new(
+    step.key.clone(),
+    success,
+    FlowTransitionTarget::Terminal(key("published")),
+  )];
+  template.terminals = [(key("published"), key("custom"))].into();
+  template
+}
+
+#[test]
+fn only_publication_requiring_a_verified_url_accepts_the_pr_card() {
+  for (action, requires_url) in [("send_report", true), ("publish_candidate", false)] {
+    let template = publication_flow(action, requires_url);
+    let published = template
+      .instantiate(
+        FlowDefinitionId::generate(),
+        FlowDefinitionVersion::INITIAL,
+        &Default::default(),
+      )
+      .unwrap();
+    let work = factory_node_test_support::fixtures::work();
+    let run = FactoryRun::admitted(FactoryRunId::generate(), &work);
+    let root = FlowRun::root(&run, published.definition.reference()).unwrap();
+    let cycle = WorkflowCycle::initial(&root).unwrap();
+    let flow = AdmittedFlow::new(
+      PinnedFlowDefinitionClosure::new(published.definition.reference(), vec![published.definition]).unwrap(),
+      FlowAdmissionLimits::product_defaults(4, template.execution.budget(), template.execution.permissions().clone())
+        .unwrap(),
+      root,
+      cycle,
+      FactoryWipLimits::new(8, 16).unwrap(),
+    )
+    .unwrap();
+    assert!(
+      matches!(
+        flow.with_data_schemas(published.schemas),
+        Err(FactoryError::InvalidIssuePresentation { .. })
+      ),
+      "{action} (requires_url={requires_url}) must reject the PR card"
+    );
+  }
+}
+
+#[tokio::test]
+#[ignore = "requires an explicitly configured disposable PostgreSQL service"]
+async fn issue_outcomes_show_only_a_confirmed_publication_from_the_visible_repository() {
+  let template = publication_flow("publish_candidate", true);
+  let database = postgres_support::TestDatabase::migrated().await;
+  let fixture = factory_node_test_support::fixtures::work();
+  let project = fixture.subject().project_id();
+  let content = requirements();
+  let original = IssueExecutionRequestId::generate();
+  let (admission, _) = flow_contract::configured_fixture_with_work(template, work_for(&fixture, original, &content));
+  let store = admit(&database.pool, &admission).await;
+  let issue = create_issue(&store, project, IssueId::generate(), content).await;
+  associate(&store, &issue, Some(original), &admission).await;
+  let read = || read_outcomes(&store, Arc::new(TrustedNetworkManagementPolicy), project, issue.id);
+  assert!(read().await.is_empty(), "pending publication cannot supply a card");
+  finish_with(
+    &store,
+    Arc::new(PublicationObservation(false)),
+    &admission,
+    30,
+    "published",
+  )
+  .await;
+  assert!(read().await.is_empty(), "result prose cannot prove a publication");
+
+  let confirmed = admit_next(&store, &admission, &issue, 2, true).await;
+  finish_with(
+    &store,
+    Arc::new(PublicationObservation(true)),
+    &confirmed,
+    80,
+    "published",
+  )
+  .await;
+  let cards = read().await;
+  let [card] = cards.as_slice() else {
+    panic!("one confirmed publication: {cards:?}")
+  };
+  assert_eq!(card.summary.run_id, confirmed.run.id());
+  let [link] = card.links.as_slice() else {
+    panic!("one verified review link: {cards:?}")
+  };
+  assert_eq!(
+    link.target,
+    IssueOutcomeLinkTarget::PullRequest("https://forge.example/team/repository/pull/23".into())
+  );
+  assert!(!format!("{cards:?}").contains("untrusted.example"));
+  let request = ManagementRequestContext::trusted_network(ManagementRequestId::new(uuid::Uuid::new_v4()).unwrap());
+  let policy = Arc::new(TrustedNetworkManagementPolicy);
+  let visible = AuthorizedQueryHandler::new(
+    policy.clone(),
+    Arc::new(FactoryDiscoveryHandlers::with_policy(store.clone(), policy)),
+  );
+  let page = visible
+    .handle_query(
+      &request,
+      ListFactoryDiagnosticsQuery::try_new(
+        confirmed.run.id(),
+        FactoryDiagnosticCollection::NodeCompletions,
+        None,
+        10,
+      )
+      .unwrap(),
+    )
+    .await
+    .unwrap();
+  assert_eq!(
+    serde_json::to_value(&page.items[0]).unwrap()["record"]["public_result"]["external"]["review_url"],
+    "https://forge.example/team/repository/pull/23"
+  );
+  let policy = Arc::new(DenyOutcomeRepository);
+  let diagnostics = AuthorizedQueryHandler::new(
+    policy.clone(),
+    Arc::new(FactoryDiscoveryHandlers::with_policy(store.clone(), policy)),
+  );
+  for collection in [
+    FactoryDiagnosticCollection::Candidates,
+    FactoryDiagnosticCollection::NodeCompletions,
+  ] {
+    let page = diagnostics
+      .handle_query(
+        &request,
+        ListFactoryDiagnosticsQuery::try_new(confirmed.run.id(), collection, None, 10).unwrap(),
+      )
+      .await
+      .unwrap();
+    let [record] = page.items.as_slice() else {
+      panic!("one retained record in {collection:?}")
+    };
+    let record = serde_json::to_value(record).unwrap();
+    assert_eq!(record["record"]["node_attempt_id"], json!(card.summary.node_attempt_id));
+    assert!(
+      !record
+        .to_string()
+        .contains("https://forge.example/team/repository/pull/23"),
+      "{collection:?} diagnostics must not bypass repository link visibility"
+    );
+  }
+
+  assert!(
+    read_outcomes(&store, Arc::new(DenyOutcomeRepository), project, issue.id)
+      .await
+      .is_empty()
+  );
+  database.cleanup().await;
+}
+
+struct PublicationObservation(bool);
+#[async_trait]
+impl FactoryNodeExecutor for PublicationObservation {
+  async fn observe(
+    &self,
+    request: FactoryNodeExecutionRequest<'_>,
+  ) -> Result<FactoryNodeExecutionStep, ApplicationError> {
+    let definition = request
+      .admitted
+      .closure()
+      .definition(request.input.definition())
+      .unwrap();
+    let node = definition.node(request.attempt.node_key()).unwrap();
+    let outcome = &node.outcomes()[0];
+    let schema = request.admitted.data_schema(outcome.schema()).unwrap();
+    let conclusion = if self.0 {
+      "https://forge.example/team/repository/pull/23"
+    } else {
+      "https://untrusted.example/fake/pull/7"
+    };
+    let payload = FlowPayload::new(schema, json!({"external":{"review_url":conclusion}})).unwrap();
+    let mut record = FlowNodeRecord::new(
+      request.input,
+      request.attempt,
+      definition,
+      FlowRecordObservation {
+        outcome: outcome.key().clone(),
+        payload,
+        producer: request.attempt.execution().clone(),
+        observed_at: request.observed_at,
+      },
+    )
+    .unwrap();
+    if self.0 {
+      let candidate = CandidateSubject::new(
+        request.input.exact_resource().unwrap().clone(),
+        "exact-candidate".parse().unwrap(),
+        FactoryDigest::from_bytes([3; 32]),
+      );
+      record = record
+        .with_discovery(FlowDiscoveryFacts::candidate_with_review(
+          candidate,
+          "https://forge.example/team/repository/pull/23".into(),
+        ))
+        .unwrap();
+    }
+    Ok(FactoryNodeExecutionStep::Completed {
+      execution: None,
+      record: Box::new(record),
+      usage: BudgetUsage::default(),
+      outbox: vec![],
+    })
+  }
+
+  async fn cancel(
+    &self,
+    _: FactoryNodeExecutionRequest<'_>,
+    _: Timestamp,
+  ) -> Result<FactoryNodeCancellationStep, ApplicationError> {
+    panic!("test runs finish without cancellation");
+  }
+}
+
+struct DenyOutcomeRepository;
+#[async_trait]
+impl ManagementAuthorizationPolicy for DenyOutcomeRepository {
+  async fn authorize(
+    &self,
+    _: &ManagementRequestContext,
+    _: ManagementAction,
+    resource: &ManagementResource,
+  ) -> Result<ManagementAuthorizationGrant, ManagementAuthorizationDenial> {
+    if resource.kind() == ManagementResourceKind::Repository {
+      return Err(ManagementAuthorizationDenial::forbidden());
+    }
+    Ok(ManagementAuthorizationGrant::new(ManagementVisibility::all()))
+  }
+}
+
 #[tokio::test]
 #[ignore = "requires an explicitly configured disposable PostgreSQL service"]
 async fn issue_outcomes_read_exact_current_accepted_records() {
@@ -497,6 +754,23 @@ async fn finish(
   admission: &PublishedFactoryAdmission,
   start: i64,
 ) {
+  finish_with(
+    store,
+    Arc::new(FactoryNodeBuildAdapter::new(execution.clone(), execution.clone())),
+    admission,
+    start,
+    "custom",
+  )
+  .await;
+}
+
+async fn finish_with(
+  store: &Arc<PostgresStore>,
+  executor: Arc<impl FactoryNodeExecutor + 'static>,
+  admission: &PublishedFactoryAdmission,
+  start: i64,
+  terminal: &str,
+) {
   let run = admission.run.id();
   let claim = FactoryRunClaimRecord::new(
     run,
@@ -527,7 +801,7 @@ async fn finish(
     .unwrap();
   let runner = FactoryFlowRunner::new(
     store.clone(),
-    Arc::new(FactoryNodeBuildAdapter::new(execution.clone(), execution.clone())),
+    executor,
     Arc::new(flow_contract::Inputs),
     factory_node_test_support::clock(),
   );
@@ -535,7 +809,7 @@ async fn finish(
     match runner.reconcile_flow(run, claim.id, at(time)).await.unwrap() {
       FactoryFlowStep::Advanced => {}
       FactoryFlowStep::Resolved(outcome) => {
-        assert_eq!(outcome, key("custom"));
+        assert_eq!(outcome, key(terminal));
         return;
       }
       other => panic!("unexpected result {other:?}"),

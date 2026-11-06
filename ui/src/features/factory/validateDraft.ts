@@ -1,3 +1,4 @@
+import { publishCandidateAction } from './PublicationStep';
 import type { components } from '../../../.generated/api/schema';
 import { FACTORY_AUTHORING_SCHEMAS } from '../../../.generated/api/factory-authoring';
 import { validFactoryValue } from '../../shared/FactoryValueInput';
@@ -19,6 +20,7 @@ export type DraftIssue = Partial<
     | 'missing_input'
     | 'profile_permissions'
     | 'action_permissions'
+    | 'publication_permissions'
     | 'profile_budget'
     | 'profile_context'
     | 'missing_terminal'
@@ -70,7 +72,10 @@ export function isFactoryGateProgram(
 }
 
 /** Early usability checks only. The authoritative server validates again before publication. */
-export function validateFlowDraft(value: Draft): DraftIssue[] {
+export function validateFlowDraft(
+  value: Draft,
+  publications?: readonly components['schemas']['FactoryCandidatePublicationChoice'][],
+): DraftIssue[] {
   const issues = validateContract(value, contracts.FactoryFlowDefinitionDraft!, '');
   const add = (field: string, code: DraftIssue['code']) => issues.push({ field, code });
   const nodes = new Map(value.root.nodes.map((node) => [node.key, node]));
@@ -105,10 +110,16 @@ export function validateFlowDraft(value: Draft): DraftIssue[] {
       add('/root/execution/permissions', 'enclosing_permissions');
     if ((node.build || node.profile_selection) && !node.input_schema)
       add(`${field}/input_schema`, 'missing_input');
-    if (JSON.stringify(requiredPermissions(node)) !== JSON.stringify(node.permissions))
+    if (
+      JSON.stringify(requiredPermissions(node, publications)) !== JSON.stringify(node.permissions)
+    )
       add(
         `${field}/permissions`,
-        node.profile_selection ? 'profile_permissions' : 'action_permissions',
+        node.profile_selection
+          ? 'profile_permissions'
+          : node.action?.action === publishCandidateAction
+            ? 'publication_permissions'
+            : 'action_permissions',
       );
     const requiredBudget = profileBudget(node);
     if (

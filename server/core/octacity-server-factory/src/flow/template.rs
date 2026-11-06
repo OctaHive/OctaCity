@@ -235,42 +235,18 @@ impl FlowDefinitionTemplate {
         }
         if let Some(profile) = &choice.build_profile {
           let mut binding = profiles.get(profile).ok_or_else(invalid)?.clone();
-          if let Some(contract) = &choice.capture_deliverables {
-            let policy = match &contract.policy {
-              FlowTemplateDeliverablePolicy::Inline(policy) => policy,
-              FlowTemplateDeliverablePolicy::Reference { reference } => {
-                self.deliverable_policies.get(reference).ok_or_else(invalid)?
-              }
-            };
-            if binding
-              .capture_deliverables
-              .as_ref()
-              .is_some_and(|ceiling| !policy.is_no_broader_than(&ceiling.policy))
-            {
-              return Err(invalid());
-            }
-            binding.capture_deliverables = Some(CandidateDeliverableBinding {
-              accepted_contract: contract.accepted_contract.clone(),
-              policy: policy.clone(),
-            });
-          }
-          if let Some(paths) = &choice.capture_write_paths {
-            if binding.capture_write_paths.as_ref().is_some_and(|ceiling| {
-              paths
-                .iter()
-                .any(|path| !ceiling.iter().any(|parent| path.is_within(parent)))
-            }) {
-              return Err(invalid());
-            }
-            binding.capture_write_paths = Some(paths.clone());
-          }
+          choice.bind_capture(&mut binding, &self.deliverable_policies)?;
           node = node.with_build(binding)?;
         }
         if let Some(task) = &choice.task {
           node = node.with_task(task.clone())?;
         }
         if let Some(selection) = &choice.profile_selection {
-          node = node.with_profile_selection(selection.clone())?;
+          let mut selection = selection.clone();
+          for candidate in selection.candidates.values_mut() {
+            choice.bind_capture(&mut candidate.build, &self.deliverable_policies)?;
+          }
+          node = node.with_profile_selection(selection)?;
         }
         if let Some(program) = &choice.gate {
           node = node.with_gate(program.binding()?)?;
@@ -283,6 +259,7 @@ impl FlowDefinitionTemplate {
         }
         if (choice.capture_write_paths.is_some() || choice.capture_deliverables.is_some())
           && choice.build_profile.is_none()
+          && choice.profile_selection.is_none()
         {
           return Err(invalid());
         }
@@ -316,9 +293,48 @@ impl FlowDefinitionTemplate {
     })?;
     let mut schemas = schemas.into_values().collect::<Vec<_>>();
     schemas.sort_by_key(|schema| schema.reference().clone());
+    // Multiple local aliases may select the same immutable contract.
+    schemas.dedup();
     Ok(PublishedFlowTemplate { definition, schemas })
   }
 }
+impl FlowTemplateNode {
+  fn bind_capture(
+    &self,
+    binding: &mut FlowBuildBinding,
+    policies: &BTreeMap<FactoryKey, CandidateDeliverablePolicy>,
+  ) -> Result<(), FactoryError> {
+    if let Some(contract) = &self.capture_deliverables {
+      let policy = match &contract.policy {
+        FlowTemplateDeliverablePolicy::Inline(policy) => policy,
+        FlowTemplateDeliverablePolicy::Reference { reference } => policies.get(reference).ok_or_else(invalid)?,
+      };
+      if binding
+        .capture_deliverables
+        .as_ref()
+        .is_some_and(|ceiling| !policy.is_no_broader_than(&ceiling.policy))
+      {
+        return Err(invalid());
+      }
+      binding.capture_deliverables = Some(CandidateDeliverableBinding {
+        accepted_contract: contract.accepted_contract.clone(),
+        policy: policy.clone(),
+      });
+    }
+    if let Some(paths) = &self.capture_write_paths {
+      if binding.capture_write_paths.as_ref().is_some_and(|ceiling| {
+        paths
+          .iter()
+          .any(|path| !ceiling.iter().any(|parent| path.is_within(parent)))
+      }) {
+        return Err(invalid());
+      }
+      binding.capture_write_paths = Some(paths.clone());
+    }
+    Ok(())
+  }
+}
+
 fn invalid() -> FactoryError {
   FactoryError::InvalidConfiguration {
     field: "Flow configuration template",

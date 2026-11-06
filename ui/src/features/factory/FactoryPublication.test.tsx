@@ -247,6 +247,7 @@ it.each([
   ['/root/input_schema', 'Input schema'],
   ['/context_binding/work_task', 'Task from admitted Work'],
   ['/gate/parameters', 'Condition check'],
+  ['/data_schemas', 'Advanced data contracts'],
 ])(
   'associates authoritative field %s with the draft and retains unrelated edits without allowing publication',
   async (field, label) => {
@@ -261,7 +262,12 @@ it.each([
           requestId: null,
           retryAfterMilliseconds: null,
           status: 400,
-          validationIssues: [{ field, code: 'unavailable_reference' }],
+          validationIssues: [
+            {
+              field,
+              code: field === '/data_schemas' ? 'invalid_contract' : 'unavailable_reference',
+            },
+          ],
         });
       }),
     };
@@ -279,6 +285,9 @@ it.each([
     await userEvent.click(screen.getByRole('button', { name: 'Validate draft' }));
     expect(await screen.findByText(field)).toBeTruthy();
     expect(screen.getByRole('button', { name: label })).toBeTruthy();
+    if (field === '/data_schemas') {
+      expect(screen.getByText(/Add the exact report schemas\./)).toBeTruthy();
+    }
     expect(screen.getByRole('button', { name: 'Review publication' })).toHaveProperty(
       'disabled',
       true,

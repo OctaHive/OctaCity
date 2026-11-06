@@ -16,7 +16,7 @@ import { IssueCodeReviewHistory } from './IssueCodeReviewHistory';
 import styles from './Issues.module.css';
 
 type Card = components['schemas']['IssueOutcomeCard'];
-type Resource = Exclude<Card['links'][number], { kind: 'unavailable' }>;
+type Resource = Exclude<Card['links'][number], { kind: 'unavailable' | 'pull_request' }>;
 
 const resourceLabels = {
   document: 'issueOutcomes.document',
@@ -62,6 +62,17 @@ export function IssueOutcomeLinks({
   return (
     <ul className={styles.outcomeLinks}>
       {card.links.map((link, index) => {
+        if (link.kind === 'pull_request') {
+          const url =
+            card.presentation.kind === 'publication' ? safePullRequestUrl(link.url) : null;
+          return url ? (
+            <li key={rowKeys[index]}>
+              <a href={url.href} rel="noreferrer">
+                {t('issueOutcomes.openPullRequest')}
+              </a>
+            </li>
+          ) : null;
+        }
         if (link.kind === 'unavailable')
           return (
             <li key={rowKeys[index]}>
@@ -94,6 +105,17 @@ export function IssueOutcomeLinks({
       })}
     </ul>
   );
+}
+
+function safePullRequestUrl(value: string) {
+  try {
+    const url = new URL(value);
+    return url.protocol === 'https:' && !url.username && !url.password && !url.search && !url.hash
+      ? url
+      : null;
+  } catch {
+    return null;
+  }
 }
 
 function ResourceLink({

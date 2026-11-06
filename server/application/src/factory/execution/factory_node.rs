@@ -484,10 +484,16 @@ impl<S: FactoryRunStore, E: FactoryNodeExecutor> FactoryNodeRunner<S, E> {
             let build = execution.build_id();
             let ordinary_attempt = execution.attempt_id();
             retain_execution(&snapshot, &mut append, Some(execution));
-            if snapshot.run.state() != FactoryRunState::Waiting || append.record_count() != 0 {
-              self
-                .commit_progress(&snapshot, append, at, GraphDisposition::Waiting, vec![])
-                .await?;
+            let first_observation = !snapshot.observed_waiting_for_terminal_usage(attempt.id());
+            if first_observation || snapshot.run.state() != FactoryRunState::Waiting || append.record_count() != 0 {
+              let disposition = if first_observation {
+                GraphDisposition::AwaitingTerminalUsage(attempt.id())
+              } else {
+                GraphDisposition::Waiting
+              };
+              self.commit_progress(&snapshot, append, at, disposition, vec![]).await?;
+            }
+            if first_observation {
               tracing::warn!(
                 run_id = %run,
                 node = %attempt.node_key(),
@@ -880,13 +886,15 @@ impl<S: FactoryRunStore, E: FactoryNodeExecutor> FactoryNodeRunner<S, E> {
       .iter()
       .find(|row| row.id == snapshot.current.lifecycle_checkpoint_id)
       .ok_or_else(ApplicationError::invalid)?;
-    let checkpoint = FactoryLifecycleCheckpoint::new(
+    let mut checkpoint = FactoryLifecycleCheckpoint::new(
       snapshot.run.id(),
       version,
       match &disposition {
-        GraphDisposition::Running | GraphDisposition::Waiting => FactoryLifecycleProgress::FlowRunning {
-          root: snapshot.admitted_flow.root_run().id(),
-        },
+        GraphDisposition::Running | GraphDisposition::Waiting | GraphDisposition::AwaitingTerminalUsage(_) => {
+          FactoryLifecycleProgress::FlowRunning {
+            root: snapshot.admitted_flow.root_run().id(),
+          }
+        }
         GraphDisposition::Resolved(terminal) => FactoryLifecycleProgress::FlowResolved {
           root: snapshot.admitted_flow.root_run().id(),
           terminal: terminal.clone(),
@@ -898,6 +906,9 @@ impl<S: FactoryRunStore, E: FactoryNodeExecutor> FactoryNodeRunner<S, E> {
       previous.cancellation_requested,
       at,
     );
+    if let GraphDisposition::AwaitingTerminalUsage(attempt) = &disposition {
+      checkpoint.awaiting_terminal_usage = Some(*attempt);
+    }
     let mut current = snapshot.current.clone();
     current.budget_id = budget.id;
     current.lifecycle_checkpoint_id = checkpoint.id;
@@ -946,7 +957,7 @@ impl<S: FactoryRunStore, E: FactoryNodeExecutor> FactoryNodeRunner<S, E> {
         match disposition {
           GraphDisposition::Resolved(_) => FactoryRunState::Completed,
           GraphDisposition::Running => FactoryRunState::Running,
-          GraphDisposition::Waiting => FactoryRunState::Waiting,
+          GraphDisposition::Waiting | GraphDisposition::AwaitingTerminalUsage(_) => FactoryRunState::Waiting,
           GraphDisposition::Cancelled => FactoryRunState::Cancelled,
         },
         version,
@@ -990,6 +1001,7 @@ fn invalid(_: FactoryError) -> ApplicationError {
 enum GraphDisposition {
   Running,
   Waiting,
+  AwaitingTerminalUsage(octacity_server_factory::NodeAttemptId),
   Resolved(FactoryKey),
   Cancelled,
 }

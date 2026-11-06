@@ -1338,6 +1338,46 @@ fn attach_candidate(h: &mut Harness) -> CandidateSubject {
   candidate
 }
 #[test]
+fn installed_candidate_publisher_accepts_issue_display_on_its_exact_receipt() {
+  let binding = binding(
+    "publisher",
+    "publish_candidate",
+    serde_json::json!({
+      "bundle":"candidate_bytes", "manifest":"candidate_manifest", "target":reference("production"),
+      "require_review_url": true
+    }),
+  );
+  let installed = FlowOutcomeDefinition::new(
+    key("published"),
+    FlowOutcomeKind::Success,
+    publication_schema().reference().clone(),
+  );
+  let publisher = Arc::new(Publisher {
+    requests: Mutex::new(vec![]),
+    published: Mutex::new(None),
+    lose_response: std::sync::atomic::AtomicBool::new(false),
+    first_recovery_error: Mutex::new(None),
+  });
+  let action = FactoryCandidatePublicationAction::new(reference("publisher"), publisher, installed.clone());
+  let displayed = installed
+    .with_public_result(true)
+    .with_issue_presentation(Some(FlowIssuePresentation::PublicationV1 { slot: None }));
+  assert!(action.validate(&binding, &[displayed]).is_ok());
+  assert!(
+    action
+      .validate(
+        &binding,
+        &[FlowOutcomeDefinition::new(
+          key("published"),
+          FlowOutcomeKind::Success,
+          reference("other.receipt"),
+        )]
+      )
+      .is_err()
+  );
+}
+
+#[test]
 fn prepared_review_metadata_flows_through_the_trusted_publication_action() {
   crate::factory::admission::tests::factory_admission_tests::run_ready(async {
     let mut h = harness_with_result(

@@ -21,6 +21,50 @@ export function factorySetupSchemas(document) {
   ]);
 }
 
+/** Shares repeated, immutable constraints in generated TypeScript without widening their types. */
+export function factorySchemaSource(schemas) {
+  const occurrences = new Map();
+  const shareable = (value) => !Array.isArray(value) && !Object.hasOwn(value, '__proto__');
+  function count(value) {
+    if (value === null || typeof value !== 'object') return;
+    if (shareable(value)) {
+      const literal = JSON.stringify(value);
+      if (literal.length >= 24) occurrences.set(literal, (occurrences.get(literal) ?? 0) + 1);
+    }
+    Object.values(value).forEach(count);
+  }
+  count(schemas);
+  const shared = new Map();
+  const declarations = [];
+  function emit(value) {
+    if (value === null || typeof value !== 'object') return JSON.stringify(value);
+    if (shareable(value)) {
+      const literal = JSON.stringify(value);
+      if ((occurrences.get(literal) ?? 0) > 1) {
+        let name = shared.get(literal);
+        if (!name) {
+          name = `schema${shared.size}`;
+          shared.set(literal, name);
+          declarations.push(`const ${name} = ${emitEntries(value)} as const;`);
+        }
+        return name;
+      }
+    }
+    if (Array.isArray(value)) return `[${value.map(emit).join(',')}]`;
+    return emitEntries(value);
+  }
+  function emitEntries(value) {
+    return `{${Object.entries(value)
+      .map(([key, item]) => {
+        const quoted = JSON.stringify(key);
+        return `${key === '__proto__' ? `[${quoted}]` : quoted}:${emit(item)}`;
+      })
+      .join(',')}}`;
+  }
+  const expression = emit(schemas);
+  return { declarations: declarations.join('\n'), expression };
+}
+
 function reachableSchemas(document, pending) {
   const source = document.components?.schemas ?? {};
   const result = {};

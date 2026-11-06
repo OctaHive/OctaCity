@@ -1,4 +1,5 @@
 import { FactoryPublication } from './FactoryPublication';
+import { FactoryExample } from './FactoryExample';
 import { emptyFlowDraft } from './emptyFlowDraft';
 import { useState } from 'react';
 import type { components } from '../../../.generated/api/schema';
@@ -8,6 +9,7 @@ import { PagedExplorerBranch, useCursorPage } from '../../shared/PagedExplorerBr
 import type { FactoryApi, FactoryConfigurationDetails, FactoryFlowDetails } from './api';
 import { NewConfigurationDraft, ExistingConfigurationDraft } from './ConfigurationDraft';
 import { SchemaEditor } from './SchemaEditor';
+import { factoryFieldId } from './fieldFocus';
 import { FlowGraphEditor } from './FlowGraphEditor';
 import { useFactoryChoices } from './useFactoryChoices';
 import type { IssueWorkflowsApi } from '../../api/issueWorkflows';
@@ -44,13 +46,15 @@ export function FactoryAuthoring({
   const [advancedContracts, setAdvancedContracts] = useState(false);
   const [processEditing, setProcessEditing] = useState(false);
   const [stepEditing, setStepEditing] = useState(false);
+  const [examplesOpen, setExamplesOpen] = useState(false);
+  const [blank] = useState(() => (kind === 'flow' ? emptyFlowDraft() : null));
   const projectId =
     configuration?.reference.project_id ??
     (baseline && 'project_id' in baseline ? baseline.project_id : (newProjectId ?? ''));
   const flow = configuration?.flow ?? (baseline && 'flow' in baseline ? baseline.flow : null);
   const [draft, setDraft] = useState<components['schemas']['FactoryFlowDefinitionDraft'] | null>(
     () => {
-      if (kind === 'flow') return emptyFlowDraft();
+      if (blank) return blank;
       if (configuration || !flow) return null;
       const root = flow.closure.definitions.find(
         (definition) =>
@@ -87,6 +91,20 @@ export function FactoryAuthoring({
           {t('factory.discardDraft')}
         </button>
       </div>
+      {blank && draft === blank ? (
+        <details onToggle={(event) => setExamplesOpen(event.currentTarget.open)}>
+          <summary>{t('factory.examples')}</summary>
+          {examplesOpen ? (
+            <FactoryExample
+              api={api}
+              projectId={projectId}
+              flowId={newId}
+              flows={visibleFlows}
+              onOpen={setDraft}
+            />
+          ) : null}
+        </details>
+      ) : null}
       <PagedExplorerBranch
         query={choices}
         empty={t('factory.noChoices')}
@@ -160,7 +178,7 @@ export function FactoryAuthoring({
       </PagedExplorerBranch>
       {draft ? (
         <details onToggle={(event) => setAdvancedContracts(event.currentTarget.open)}>
-          <summary>{t('factory.advancedContracts')}</summary>
+          <summary id={factoryFieldId('/data_schemas')}>{t('factory.advancedContracts')}</summary>
           {advancedContracts ? (
             <SchemaEditor
               api={api}

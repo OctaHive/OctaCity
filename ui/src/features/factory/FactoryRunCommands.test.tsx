@@ -217,6 +217,14 @@ it('responds to an arbitrary pinned HumanGate using its declared typed outcome w
     retry_of: null,
     retryable: false,
     active: true,
+    input_summary: {
+      accepted_results: [
+        { node: 'requirements_policy', outcome: 'review_required', digest: 'b'.repeat(64) },
+      ],
+      context_sources: [],
+      work_task: false,
+      work_acceptance: false,
+    },
   };
   run.diagnostics.current_nodes = [];
   run.diagnostics.active_node_count = 33;
@@ -252,6 +260,7 @@ it('responds to an arbitrary pinned HumanGate using its declared typed outcome w
       <RouterProvider router={router} />
     </QueryClientProvider>,
   );
+  expect(screen.getByText('requirements_policy · review_required')).toBeTruthy();
   await userEvent.click(screen.getByRole('checkbox', { name: 'Human response' }));
   await userEvent.click(screen.getByRole('button', { name: 'Review HumanGate response' }));
   const dialog = await screen.findByRole('dialog');

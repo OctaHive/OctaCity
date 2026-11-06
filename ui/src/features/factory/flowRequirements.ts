@@ -1,7 +1,7 @@
 import type { components } from '../../../.generated/api/schema';
 import { FACTORY_AUTHORING_SCHEMAS } from '../../../.generated/api/factory-authoring';
 import { classificationAction } from './issueClassification';
-import { publishCandidateAction } from './PublicationStep';
+import { publicationChoice, publishCandidateAction } from './PublicationStep';
 type S = components['schemas'];
 type Node = S['FactoryFlowNodeDefinition'];
 type Budget = S['FactoryBudget'];
@@ -171,11 +171,18 @@ export function mergePermissions(left: Permissions, right: Permissions): Permiss
     },
   };
 }
-export function requiredPermissions(node: Node): Permissions {
+export function requiredPermissions(
+  node: Node,
+  publications: readonly S['FactoryCandidatePublicationChoice'][] = [],
+): Permissions {
   const action = node.action;
+  const target = publicationChoice(action, publications);
   const base =
     action?.action === classificationAction || action?.action === publishCandidateAction
-      ? mergePermissions(node.permissions, { ...node.permissions, plugins: [action.plugin] })
+      ? mergePermissions(
+          node.permissions,
+          target?.permissions ?? { ...node.permissions, plugins: [action.plugin] },
+        )
       : node.permissions;
   return Object.values(node.profile_selection?.candidates ?? {}).reduce(
     (permissions, { profile }) => mergePermissions(permissions, profile.definition.permissions),

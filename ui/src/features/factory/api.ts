@@ -19,6 +19,16 @@ export type FactoryFilters = Omit<
   'after' | 'limit'
 >;
 export interface FactoryApi extends FactoryNodeControlApi {
+  listPresets(
+    projectId: string,
+    cursor: string | null,
+    signal?: AbortSignal,
+  ): Promise<components['schemas']['FactoryPresetPage']>;
+  resolvePreset(
+    projectId: string,
+    body: components['schemas']['FactoryPresetResolutionRequest'],
+    signal?: AbortSignal,
+  ): Promise<components['schemas']['FactoryPresetResolution']>;
   getAuthoringCapabilities(
     projectId: string,
     signal?: AbortSignal,
@@ -119,6 +129,24 @@ export interface FactoryApi extends FactoryNodeControlApi {
 
 /** Authorization-filtered, bounded same-origin Factory reads. */
 export const factoryApi: FactoryApi = {
+  async listPresets(projectId, cursor, signal) {
+    const { data } = await managementApi.GET('/api/v1/projects/{project_id}/factory-presets', {
+      params: { path: { project_id: projectId }, ...(cursor ? { query: { after: cursor } } : {}) },
+      signal: signal ?? null,
+    });
+    return requireManagementResponse(data);
+  },
+  async resolvePreset(projectId, body, signal) {
+    const { data } = await managementApi.POST(
+      '/api/v1/projects/{project_id}/factory-presets/resolve',
+      {
+        params: { path: { project_id: projectId } },
+        body,
+        signal: signal ?? null,
+      },
+    );
+    return requireManagementResponse(data);
+  },
   async getAuthoringCapabilities(projectId, signal) {
     const { data } = await managementApi.GET(
       '/api/v1/projects/{project_id}/factory-authoring-capabilities',

@@ -1,3 +1,4 @@
+import { useFactoryAuthoringCapabilities } from './useFactoryAuthoringCapabilities';
 import { FACTORY_AUTHORING_SCHEMAS } from '../../../.generated/api/factory-authoring';
 import { useEffect, useRef, useState } from 'react';
 import type { components } from '../../../.generated/api/schema';
@@ -6,6 +7,8 @@ import { QueryFailureNotice } from '../../shared/QueryStateNotice';
 import { useDraftRowKeys } from '../../shared/useDraftRowKeys';
 import { SelectMenu } from '../../shared/SelectMenu';
 import { ShapeEditor } from './SchemaEditor';
+import { publicationChoice, publishCandidateAction } from './PublicationStep';
+import { sourceReferenceKey } from '../../shared/sourceReferences';
 import type { FlowAuthoringServices } from './FlowPrimitives';
 import { FlowSchemaSelect } from './FlowSchemaSelect';
 import {
@@ -25,16 +28,7 @@ export type ResultDraft = {
   issuePresentation?: IssuePresentation | undefined;
 };
 
-/** Step-local result editing compiles to the existing server-normalized immutable schema. */
-export function StepResults({
-  node,
-  nodes = [node],
-  schemas,
-  services,
-  draft,
-  onDraftChange,
-  onChange,
-}: {
+type Props = {
   node: Node;
   nodes?: readonly Node[];
   schemas: readonly Schema['FactoryFlowDataSchema'][];
@@ -42,7 +36,48 @@ export function StepResults({
   draft?: ResultDraft | undefined;
   onDraftChange: (draft: ResultDraft | undefined) => void;
   onChange: (patch: Partial<Node>, schemas?: Schema['FactoryFlowDataSchema'][]) => void;
-}) {
+};
+
+/** Step-local result editing compiles to the existing server-normalized immutable schema. */
+export function StepResults(props: Props) {
+  const { node, services } = props;
+  if (services && node.kind === 'trusted_action' && node.action?.action === publishCandidateAction)
+    return <PublicationResults {...props} services={services} />;
+  return <ResultEditor {...props} />;
+}
+
+function PublicationResults(props: Props & { services: FlowAuthoringServices }) {
+  const { node, services, draft, schemas } = props;
+  const { data } = useFactoryAuthoringCapabilities(services);
+  const choice = publicationChoice(node.action, data?.candidate_publications ?? []);
+  const outcome = draft?.index == null ? undefined : node.outcomes[draft.index];
+  const canShowPublication = !!(
+    choice?.review_url &&
+    outcome &&
+    (node.action?.parameters as { require_review_url?: unknown })?.require_review_url === true &&
+    draft?.name === choice.outcome.key &&
+    draft.kind === choice.outcome.kind &&
+    sourceReferenceKey(outcome.schema) === sourceReferenceKey(choice.receipt_schema.reference) &&
+    JSON.stringify(draft.shape) ===
+      JSON.stringify(
+        schemas.find(
+          (schema) => sourceReferenceKey(schema.reference) === sourceReferenceKey(outcome.schema),
+        )?.shape,
+      )
+  );
+  return <ResultEditor {...props} canShowPublication={canShowPublication} />;
+}
+
+function ResultEditor({
+  node,
+  nodes = [node],
+  schemas,
+  services,
+  draft,
+  onDraftChange,
+  onChange,
+  canShowPublication = false,
+}: Props & { canShowPublication?: boolean }) {
   const { t } = usePresentation();
   const outcomeKeys = useDraftRowKeys(node.outcomes);
   const [pending, setPending] = useState(false);
@@ -75,7 +110,7 @@ export function StepResults({
       draft.name,
     ) &&
     !node.outcomes.some((item, index) => index !== draft.index && item.key === draft.name) &&
-    canSaveIssuePresentation(draft.shape, draft.issuePresentation);
+    canSaveIssuePresentation(draft.shape, draft.issuePresentation, canShowPublication);
   const save = async () => {
     if (!services || !draft || !valid || pending) return;
     const controller = new AbortController();
@@ -129,14 +164,22 @@ export function StepResults({
       if (!controller.signal.aborted) setPending(false);
     }
   };
+  const failureNotice = error ? (
+    <QueryFailureNotice
+      title={t('factory.expectedResult')}
+      error={error}
+      onRetry={draft ? () => void save() : () => setError(null)}
+    />
+  ) : null;
   return (
     <fieldset>
       <legend>{t('factory.expectedResult')}</legend>
       <p>{t('factory.stepResultHelp')}</p>
       {node.outcomes.map((outcome, index) => {
-        const shape = schemas.find(
+        const schemaIndex = schemas.findIndex(
           (item) => item.reference.digest === outcome.schema.digest,
-        )?.shape;
+        );
+        const shape = schemas[schemaIndex]?.shape;
         return (
           <fieldset key={outcomeKeys[index]}>
             <legend>{outcome.key || t('factory.resultName')}</legend>
@@ -164,9 +207,7 @@ export function StepResults({
                 schemas={schemas}
                 nodes={nodes}
                 ariaLabel={t('factory.outcomeSchema')}
-                value={String(
-                  schemas.findIndex((item) => item.reference.digest === outcome.schema.digest),
-                )}
+                value={String(schemaIndex)}
                 onValueChange={(selected) => {
                   const schema = schemas[Number(selected)];
                   if (schema)
@@ -181,13 +222,7 @@ export function StepResults({
           </fieldset>
         );
       })}
-      {error && !draft ? (
-        <QueryFailureNotice
-          title={t('factory.expectedResult')}
-          error={error}
-          onRetry={() => setError(null)}
-        />
-      ) : null}
+      {!draft && failureNotice}
       {!draft ? (
         <button type="button" disabled={!services} onClick={() => edit(null)}>
           {t('factory.addResult')}
@@ -227,16 +262,11 @@ export function StepResults({
             </details>
             <OutcomeIssuePresentationEditor
               shape={draft.shape}
+              canShowPublication={canShowPublication}
               value={draft.issuePresentation}
               onChange={(issuePresentation) => onDraftChange({ ...draft, issuePresentation })}
             />
-            {error ? (
-              <QueryFailureNotice
-                title={t('factory.expectedResult')}
-                error={error}
-                onRetry={() => void save()}
-              />
-            ) : null}
+            {failureNotice}
             <button type="button" disabled={!valid} onClick={() => void save()}>
               {t('factory.saveResult')}
             </button>

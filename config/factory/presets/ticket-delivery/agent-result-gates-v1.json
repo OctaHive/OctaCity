@@ -1,5 +1,17 @@
 {
   "schemas": {
+    "delivery_accepted_review": {
+      "identity": "factory.ticket-delivery.accepted-review",
+      "version": "v1",
+      "shape": {
+        "type": "object",
+        "fields": {
+          "summary": {"required": true, "value": {"type": "reference", "schema": "summary"}},
+          "conclusion": {"required": true, "value": {"type": "string", "min_bytes": 1, "max_bytes": 256}},
+          "report": {"required": true, "value": {"type": "reference", "schema": "delivery_issue_artifact"}}
+        }
+      }
+    },
     "delivery_code_review_gate_input": {
       "identity": "factory.delivery.code_review_gate_input",
       "version": "v1",
@@ -8,6 +20,7 @@
         "fields": {
           "request": {"required": true,"value": {"type": "reference","schema": "code_review_input"}},
           "review": {"required": true,"value": {"type": "reference","schema": "code_review"}},
+          "report": {"required": true, "value": {"type": "reference", "schema": "delivery_issue_artifact"}},
           "expected_input": {"required": true,"value": {"type": "string","min_bytes": 64,"max_bytes": 64}},
           "fresh_until": {"required": true,"value": {"type": "integer","minimum": 0,"maximum": 9007199254740991}}
         }
@@ -33,7 +46,10 @@
       "kind": "deterministic_gate",
       "input_schema": "delivery_code_review_gate_input",
       "outcomes": [
-        {"key": "accepted","kind": "success","schema": "summary"},
+        {"key": "accepted", "kind": "success", "schema": "delivery_accepted_review", "issue_presentation": {
+          "kind": "custom_v1", "title": "Code review", "conclusion_field": "conclusion",
+          "references": [{"field": "report", "kind": "artifact"}]
+        }},
         {"key": "changes_required","kind": "failure","schema": "summary"},
         {"key": "needs_human_input","kind": "failure","schema": "summary"},
         {"key": "invalid","kind": "failure","schema": "summary"}
@@ -50,6 +66,7 @@
         "sources": {
           "request": {"source": "predecessor","view": "input_payload","path": ""},
           "review": {"source": "predecessor","view": "payload","path": ""},
+          "report": {"source": "predecessor","view": "primary_artifact","path": ""},
           "metadata": {"source": "predecessor","view": "metadata","path": ""}
         },
         "mapping": {
@@ -58,6 +75,7 @@
             "fields": {
               "request": {"mapping": "pointer","path": "/request"},
               "review": {"mapping": "pointer","path": "/review"},
+              "report": {"mapping": "pointer","path": "/report"},
               "expected_input": {"mapping": "pointer","path": "/metadata/input_digest"},
               "fresh_until": {"mapping": "pointer","path": "/metadata/build/primary_fresh_until"}
             }
@@ -108,6 +126,13 @@
   "gate_bindings": {
     "code_review_gate": {
       "program": "code_review_gate",
+      "outputs": {
+        "accepted": {"value": {"mapping": "object", "fields": {
+          "summary": {"mapping": "pointer", "path": "/request/summary"},
+          "conclusion": {"mapping": "constant", "value": "Code review accepted the candidate for protected validation."},
+          "report": {"mapping": "pointer", "path": "/report"}
+        }}}
+      },
       "precondition": {
         "operation": "all",
         "predicates": [

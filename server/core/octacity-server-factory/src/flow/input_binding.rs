@@ -4,6 +4,7 @@ use crate::{
   FlowRecordReference, MAX_FLOW_DATA_BYTES, MAX_FLOW_SCHEMA_ENTRIES,
 };
 use serde::{Deserialize, Serialize};
+use serde_json::Value;
 use std::collections::BTreeMap;
 
 /// Hard encoded ceiling for one node's configured input selection.
@@ -21,6 +22,8 @@ pub enum FlowRecordView {
   Payload,
   /// Only owner metadata and independently verified output facts.
   Metadata,
+  /// Only the independently verified primary Build output's retained artifact reference.
+  PrimaryArtifact,
 }
 
 /// Explicit trusted source of projected input data.
@@ -30,7 +33,8 @@ pub enum FlowInputSource {
   /// Explicit field of this node's immutable admitted definition.
   /// Operator-owned settings are selected without copying other node data.
   NodeConfiguration {
-    /// RFC 6901 selection in this exact published node, including its Build binding.
+    /// RFC 6901 selection in this exact published node. Fields under `/build/`
+    /// can select a value shared by all declared profile candidates before one is chosen.
     path: String,
   },
   /// Explicit projection of the exact frozen input of this Flow's parent call.
@@ -100,6 +104,19 @@ pub(super) struct ProjectedInput {
   pub caller_input_digest: Option<crate::FactoryDigest>,
 }
 impl FlowInputBinding {
+  /// Checks the configured sources of one projected input field without evaluating data.
+  pub fn selects_only(&self, path: &str, mut check: impl FnMut(&FlowInputSource, &str) -> bool) -> bool {
+    self.mapping.selects_only(path, &mut |pointer| {
+      super::mapping::projection_segment(pointer).is_some_and(|(alias, tail)| {
+        self
+          .sources
+          .iter()
+          .find(|(name, _)| name.as_str() == alias)
+          .is_some_and(|(_, source)| check(source, tail))
+      })
+    })
+  }
+
   /// The exact external schemas required to prepare this node's input.
   pub fn incoming_schemas(&self) -> impl Iterator<Item = &crate::ImmutableReference> {
     self.sources.values().filter_map(|source| match source {
@@ -188,10 +205,9 @@ impl FlowInputBinding {
               .definition(context.flow.definition())
               .and_then(|definition| definition.node(&context.node))
               .ok_or_else(invalid)?;
-            let configuration = serde_json::to_value(node).map_err(|_| invalid())?;
             return Ok((
               alias.as_str().to_owned(),
-              copy_bounded(configuration.pointer(path).ok_or_else(invalid)?, &mut remaining)?,
+              node_configuration(node, path, &mut remaining)?,
             ));
           }
           FlowInputSource::CallerInput { path } => {
@@ -255,6 +271,34 @@ impl FlowInputBinding {
     })
   }
 }
+
+fn node_configuration(
+  node: &crate::FlowNodeDefinition,
+  path: &str,
+  remaining: &mut usize,
+) -> Result<Value, FactoryError> {
+  if node.build().is_none()
+    && let Some(build_path) = path.strip_prefix("/build")
+    && build_path.starts_with('/')
+  {
+    // Input preparation precedes profile selection. Read only the field common to
+    // every immutable candidate, never an arbitrary candidate or live profile.
+    let mut common = None;
+    for build in node.build_bindings() {
+      let value = serde_json::to_value(build).map_err(|_| invalid())?;
+      let field = value.pointer(build_path).ok_or_else(invalid)?;
+      match &common {
+        None => common = Some(copy_bounded(field, remaining)?),
+        Some(previous) if previous == field => (),
+        Some(_) => return Err(invalid()),
+      }
+    }
+    return common.ok_or_else(invalid);
+  }
+  let configuration = serde_json::to_value(node).map_err(|_| invalid())?;
+  copy_bounded(configuration.pointer(path).ok_or_else(invalid)?, remaining)
+}
+
 fn predecessor<'a>(context: &'a FlowInputPreparation<'_>) -> Result<&'a crate::NodeAttempt, FactoryError> {
   let definition = context
     .admitted
@@ -411,6 +455,11 @@ fn project_record(
     ),
     FlowRecordView::Payload => copy_bounded(record.payload().value().pointer(path).ok_or_else(invalid)?, remaining),
     FlowRecordView::Metadata => copy_bounded(record.metadata()?.pointer(path).ok_or_else(invalid)?, remaining),
+    FlowRecordView::PrimaryArtifact => {
+      let output = record.primary_build_output().ok_or_else(invalid)?;
+      let reference = serde_json::to_value(&output.artifact).map_err(|_| invalid())?;
+      copy_bounded(reference.pointer(path).ok_or_else(invalid)?, remaining)
+    }
   }
 }
 fn invalid() -> FactoryError {

@@ -87,6 +87,15 @@ async fn json(response: axum::response::Response) -> serde_json::Value {
   serde_json::from_slice(&to_bytes(response.into_body(), usize::MAX).await.unwrap()).unwrap()
 }
 
+fn triage_preset(page: &serde_json::Value) -> &serde_json::Value {
+  page["items"]
+    .as_array()
+    .unwrap()
+    .iter()
+    .find(|item| item["reference"]["identity"] == "triage")
+    .expect("retained triage example")
+}
+
 #[tokio::test]
 async fn schema_integer_bounds_round_trip_exactly_without_rehashing_retained_definitions() {
   let application = Arc::new(RecordingApplication::successful_workflow());
@@ -170,6 +179,137 @@ async fn schema_decimal_bounds_reject_overflow_and_noncanonical_text() {
 }
 
 #[tokio::test]
+async fn ticket_delivery_example_is_discoverable_and_reports_missing_bindings_before_publication() {
+  use testing::MutationEvidenceProbe;
+  let (router, project, store) = preset_router();
+  let before = store.mutation_evidence_counts().await;
+  let path = format!("/api/v1/projects/{project}/factory-presets");
+  let page = json(router.clone().oneshot(empty_request("GET", &path, None)).await.unwrap()).await;
+  let preset = page["items"]
+    .as_array()
+    .unwrap()
+    .iter()
+    .find(|item| item["reference"]["identity"] == "ticket-delivery")
+    .expect("optional ticket delivery example");
+  assert_eq!(preset["reference"]["version"], "v1");
+  assert_eq!(preset["editor"]["name"], "Ticket delivery");
+  let response = router
+    .oneshot(json_request(
+      "POST",
+      &format!("{path}/resolve"),
+      "read",
+      None,
+      &serde_json::json!({"preset":preset["reference"], "flow_only":true}).to_string(),
+    ))
+    .await
+    .unwrap();
+  assert_eq!(response.status(), StatusCode::OK);
+  let result = json(response).await;
+  assert!(result["flow"].is_null());
+  assert!(result["configuration"].is_null());
+  assert!(result["input"].is_null());
+  let diagnostics = result["diagnostics"].as_array().unwrap();
+  assert!(diagnostics.iter().all(|item| !matches!(
+    item["path"].as_str(),
+    Some("/repository" | "/configuration_id" | "/configuration")
+  )));
+  for path in [
+    "/profiles/implementation",
+    "/commands/reproduction",
+    "/commands/tests_on_base",
+    "/commands/protected.validation",
+    "/publication",
+    "/accepted_predecessor",
+  ] {
+    assert!(
+      diagnostics
+        .iter()
+        .any(|item| item["path"] == path && item["reason"] == "required"),
+      "{path}"
+    );
+  }
+  assert_eq!(store.mutation_evidence_counts().await, before);
+}
+
+#[tokio::test]
+async fn ticket_delivery_example_rejects_an_uninstalled_publication_target() {
+  use testing::MutationEvidenceProbe;
+  let (router, project, store) = preset_router();
+  let mut parameters = selected_parameters(&router, project, &store).await;
+  let path = format!("/api/v1/projects/{project}/factory-presets");
+  let page = json(router.clone().oneshot(empty_request("GET", &path, None)).await.unwrap()).await;
+  let example = &page["items"][0];
+  parameters["preset"] = example["reference"].clone();
+  parameters["context"] = serde_json::json!({});
+  let profile = parameters["profiles"]["eligibility"].clone();
+  parameters["profiles"] = example["profile_aliases"]
+    .as_array()
+    .unwrap()
+    .iter()
+    .map(|alias| (alias.as_str().unwrap().to_owned(), profile.clone()))
+    .collect::<serde_json::Map<_, _>>()
+    .into();
+  let result = AuthorizedQueryHandler::new(
+    Arc::new(TrustedNetworkManagementPolicy),
+    Arc::new(FactoryFlowDefinitionHandlers::new(
+      store.clone(),
+      Arc::new(TrustedNetworkManagementPolicy),
+    )),
+  )
+  .handle_query(
+    &ManagementRequestContext::trusted_network(ManagementRequestId::new(uuid::Uuid::new_v4()).unwrap()),
+    ValidateFactoryFlowDataSchemaQuery {
+      project_id: project,
+      identity: "uninstalled-command-result".parse().unwrap(),
+      version: "v1".parse().unwrap(),
+      shape: serde_json::from_value(serde_json::json!({"type":"boolean"})).unwrap(),
+    },
+  )
+  .await
+  .unwrap();
+  parameters["commands"] = serde_json::json!({});
+  for parameter in example["parameters"].as_array().unwrap() {
+    if let Some(alias) = parameter["path"].as_str().unwrap().strip_prefix("/commands/") {
+      parameters["commands"][alias] = serde_json::json!({
+        "build": profile["build"], "result":result,"permissions":parameters["execution"]["permissions"]
+      });
+    }
+  }
+  parameters["publication"] = serde_json::json!({
+    "plugin": profile["build"]["plugin"],
+    "target": {"identity":"unknown-target","version":"v1","digest":"d".repeat(64)},
+    "permissions":parameters["execution"]["permissions"]
+  });
+  parameters["accepted_predecessor"] = serde_json::json!({
+    "definition":{"id":uuid::Uuid::new_v4().to_string(),"version":1,"digest":"e".repeat(64)},
+    "terminal":"eligible","outcomes":["requirements"]
+  });
+  let before = store.mutation_evidence_counts().await;
+  let response = router
+    .oneshot(json_request(
+      "POST",
+      &format!("{path}/resolve"),
+      "read",
+      None,
+      &parameters.to_string(),
+    ))
+    .await
+    .unwrap();
+  assert_eq!(response.status(), StatusCode::OK);
+  let result = json(response).await;
+  assert!(
+    result["diagnostics"]
+      .as_array()
+      .unwrap()
+      .contains(&serde_json::json!({"path":"/publication/target","reason":"unavailable"})),
+    "{result}"
+  );
+  assert!(result["flow"].is_null());
+  assert!(result["configuration"].is_null());
+  assert_eq!(store.mutation_evidence_counts().await, before);
+}
+
+#[tokio::test]
 async fn presets_discovery_exposes_bounded_release_identity_without_factory_execution() {
   let (router, project, _) = preset_router();
   let response = router
@@ -183,10 +323,22 @@ async fn presets_discovery_exposes_bounded_release_identity_without_factory_exec
   assert_eq!(response.status(), StatusCode::OK);
   assert_eq!(response.headers()["cache-control"], "no-store");
   let page = json(response).await;
-  assert_eq!(page["total"], 1);
+  assert_eq!(page["total"], 2);
   assert_eq!(page["items"].as_array().unwrap().len(), 1);
-  let preset = &page["items"][0];
-  assert_eq!(preset["reference"]["identity"], "triage");
+  assert_eq!(page["items"][0]["reference"]["identity"], "ticket-delivery");
+  assert_eq!(page["next_cursor"], "ticket-delivery");
+  assert_json_matches_component(&openapi_document(), "FactoryPresetPage", &page);
+  let (router, project, _) = preset_router();
+  let response = router
+    .oneshot(empty_request(
+      "GET",
+      &format!("/api/v1/projects/{project}/factory-presets?after=ticket-delivery&limit=1"),
+      None,
+    ))
+    .await
+    .unwrap();
+  let page = json(response).await;
+  let preset = triage_preset(&page);
   assert_eq!(preset["reference"]["version"], "v3");
   assert_eq!(preset["reference"]["digest"].as_str().unwrap().len(), 64);
   let aliases = preset["profile_aliases"].as_array().unwrap();
@@ -203,7 +355,7 @@ async fn preset_resolution_returns_reviewable_process_criteria_and_missing_depen
   let before = store.mutation_evidence_counts().await;
   let path = format!("/api/v1/projects/{project}/factory-presets");
   let page = json(router.clone().oneshot(empty_request("GET", &path, None)).await.unwrap()).await;
-  let body = serde_json::json!({"preset":page["items"][0]["reference"]});
+  let body = serde_json::json!({"preset":triage_preset(&page)["reference"]});
   let response = router
     .oneshot(json_request(
       "POST",
@@ -314,7 +466,7 @@ async fn selected_parameters_with_runtime(
   let artifact = |byte: char| serde_json::json!({"artifact_id":uuid::Uuid::new_v4().to_string(),"content_digest":byte.to_string().repeat(64),"encoded_size":64});
   let context = serde_json::json!({"project_id":project,"goals":artifact('b'),"rules":artifact('c'),"documents":{}});
   let budget = serde_json::json!({"max_attempts":10,"max_elapsed_millis":300000,"max_tokens":40000,"max_cost_micro_units":4000000,"max_output_bytes":8388608});
-  serde_json::json!({"preset":page["items"][0]["reference"],"flow_id":uuid::Uuid::new_v4().to_string(),"configuration_id":uuid::Uuid::new_v4().to_string(),
+  serde_json::json!({"preset":triage_preset(&page)["reference"],"flow_id":uuid::Uuid::new_v4().to_string(),"configuration_id":uuid::Uuid::new_v4().to_string(),
     "profiles":profiles,"repository":{"project_id":project,"id":repository(project).id,"version":1,"definition_digest":repository(project).definition_digest().unwrap()},
     "context":{"eligibility":context,"classification":context},
     "execution":{"budget":budget,"permissions":definition.permissions,"max_active_nodes":1},
@@ -816,7 +968,7 @@ async fn preset_discovery_advertises_typed_parameters_and_required_technical_nod
     .unwrap();
   assert_eq!(response.status(), StatusCode::OK);
   let page = json(response).await;
-  let summary = &page["items"][0];
+  let summary = triage_preset(&page);
   assert_eq!(
     summary["required_node_kinds"],
     serde_json::json!(["reasoning", "deterministic_gate"])
@@ -908,7 +1060,7 @@ async fn preset_http_contract_bounds_discovery_and_rejects_authority_or_unsuppor
       .unwrap(),
   )
   .await;
-  assert_eq!(page["total"], 1);
+  assert_eq!(page["total"], 2);
   assert_eq!(page["items"], serde_json::json!([]));
   let response = router
     .oneshot(empty_request(

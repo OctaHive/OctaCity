@@ -634,6 +634,15 @@ impl FlowDefinition {
     self.name.as_ref()
   }
 
+  /// Starts authoring with no repository attachment, including on legacy-shaped template nodes.
+  /// Operators can then connect a reviewed source to each step that needs it.
+  pub fn without_code(mut self) -> Result<Self, FactoryError> {
+    for node in &mut self.nodes {
+      node.code = Some(super::FlowCodeBinding::None);
+    }
+    self.with_code_sources(Default::default())
+  }
+
   /// Freezes explicit available sources; an empty inventory requires reviewed no-code steps.
   pub fn with_code_sources(mut self, sources: super::FlowCodeSources) -> Result<Self, FactoryError> {
     super::code::validate(Some(&sources), &self.nodes)?;

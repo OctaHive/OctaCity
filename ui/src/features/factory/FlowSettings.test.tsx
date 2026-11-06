@@ -2,8 +2,10 @@
 import { cleanup, render, screen } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { useState } from 'react';
-import { afterEach, expect, it } from 'vitest';
+import { QueryClientProvider } from '@tanstack/react-query';
+import { afterEach, expect, it, vi } from 'vitest';
 import { configurationFixture } from '../../../tests/fixtures/factory';
+import { createConsoleQueryClient } from '../../app/query';
 import { FlowSettings } from './FlowSettings';
 import { emptyFlowDraft } from './emptyFlowDraft';
 
@@ -62,52 +64,89 @@ it('offers step results for completion while retaining every custom format under
   expect(observed.root.terminals[0]?.schema).toEqual(input.reference);
 });
 
-it('pins a selected published completion as incoming data for a new Flow', async () => {
-  const configuration = configurationFixture().configuration;
-  const flow = structuredClone(configuration.flow);
-  const root = flow.closure.definitions[0]!;
-  const schema = flow.data_schemas[0]!;
-  root.name = 'Triage';
-  root.nodes[0]!.outcomes = [
-    { key: 'classified', kind: 'success', schema: schema.reference },
-    { key: 'failed', kind: 'failure', schema: schema.reference },
-  ];
-  root.terminals = [{ key: 'reviewed', schema: schema.reference }];
-  root.transitions = root.nodes[0]!.outcomes.map(({ key }) => ({
-    predecessor: root.nodes[0]!.key,
-    outcome: key,
-    target: { kind: 'terminal', key: 'reviewed' },
-    max_repeats: 0,
-    exhausted_terminal: null,
-  }));
-  let observed = emptyFlowDraft();
-  function Harness() {
-    const [value, setValue] = useState(observed);
-    return (
-      <FlowSettings
-        value={value}
-        choices={[]}
-        flows={[{ flow, project_id: configuration.reference.project_id, published_at_unix_ms: 1 }]}
-        permissionDeclarations={value.limits.permissions}
-        budgetCalculation={{ run: true, admission: true }}
-        onBudgetCalculationChange={() => {}}
-        onChange={(next) => {
-          observed = next;
-          setValue(next);
-        }}
-      />
+it.each([false, true])(
+  'pins an exact incoming completion (historical version: %s)',
+  async (older) => {
+    const configuration = configurationFixture().configuration;
+    const flow = structuredClone(configuration.flow);
+    const root = flow.closure.definitions[0]!;
+    const schema = flow.data_schemas[0]!;
+    root.name = 'Triage';
+    root.nodes[0]!.outcomes = [
+      { key: 'classified', kind: 'success', schema: schema.reference },
+      { key: 'failed', kind: 'failure', schema: schema.reference },
+    ];
+    root.terminals = [{ key: 'reviewed', schema: schema.reference }];
+    root.transitions = root.nodes[0]!.outcomes.map(({ key }) => ({
+      predecessor: root.nodes[0]!.key,
+      outcome: key,
+      target: { kind: 'terminal', key: 'reviewed' },
+      max_repeats: 0,
+      exhausted_terminal: null,
+    }));
+    flow.closure.root = { ...flow.closure.root, version: 1 };
+    root.reference = flow.closure.root;
+    const previous = {
+      flow,
+      project_id: configuration.reference.project_id,
+      published_at_unix_ms: 1,
+    };
+    const latestReference = { ...flow.closure.root, version: 2, digest: 'f'.repeat(64) };
+    const latest = {
+      ...previous,
+      flow: {
+        ...flow,
+        closure: { root: latestReference, definitions: [{ ...root, reference: latestReference }] },
+      },
+    };
+    const getFlow = vi.fn(async () => previous);
+    let observed = emptyFlowDraft();
+    function Harness() {
+      const [value, setValue] = useState(observed);
+      return (
+        <FlowSettings
+          value={value}
+          choices={[]}
+          flows={[older ? latest : previous]}
+          flowApi={{ getFlow }}
+          permissionDeclarations={value.limits.permissions}
+          budgetCalculation={{ run: true, admission: true }}
+          onBudgetCalculationChange={() => {}}
+          onChange={(next) => {
+            observed = next;
+            setValue(next);
+          }}
+        />
+      );
+    }
+    render(
+      <QueryClientProvider client={createConsoleQueryClient()}>
+        <Harness />
+      </QueryClientProvider>,
     );
-  }
-  render(<Harness />);
-  await userEvent.click(screen.getByRole('combobox', { name: 'Incoming pipeline completion' }));
-  await userEvent.click(screen.getByRole('option', { name: /Triage.*reviewed/u }));
-  expect(screen.queryByRole('checkbox', { name: 'failed' })).toBeNull();
-  await userEvent.click(screen.getByRole('checkbox', { name: 'classified' }));
-  expect(observed.accepted_predecessor).toEqual({
-    definition: flow.closure.root,
-    terminal: 'reviewed',
-    outcomes: ['classified'],
-  });
-  expect(observed.data_schemas).toEqual([schema]);
-  expect(observed.root.nodes).toEqual([]);
-});
+    if (older) {
+      await userEvent.click(screen.getByText('Earlier Flow version'));
+      await userEvent.click(screen.getByRole('combobox', { name: 'Flow Definitions' }));
+      await userEvent.click(screen.getByRole('option', { name: /Triage/u }));
+      await userEvent.click(screen.getByRole('combobox', { name: 'Version' }));
+      await userEvent.click(screen.getByRole('option', { name: 'Version 1' }));
+      expect(
+        await screen.findByRole('combobox', { name: 'Incoming pipeline completion' }),
+      ).toBeTruthy();
+    }
+    await userEvent.click(screen.getByRole('combobox', { name: 'Incoming pipeline completion' }));
+    await userEvent.click(await screen.findByRole('option', { name: /Triage.*v1.*reviewed/u }));
+    expect(screen.queryByRole('checkbox', { name: 'failed' })).toBeNull();
+    await userEvent.click(screen.getByRole('checkbox', { name: 'classified' }));
+    expect(observed.accepted_predecessor).toEqual({
+      definition: flow.closure.root,
+      terminal: 'reviewed',
+      outcomes: ['classified'],
+    });
+    expect(observed.data_schemas).toEqual([schema]);
+    expect(observed.root.nodes).toEqual([]);
+    if (older)
+      expect(getFlow).toHaveBeenCalledWith(flow.closure.root.id, 1, expect.any(AbortSignal));
+    else expect(getFlow).not.toHaveBeenCalled();
+  },
+);

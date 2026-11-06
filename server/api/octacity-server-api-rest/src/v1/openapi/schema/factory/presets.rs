@@ -6,8 +6,9 @@ pub(super) fn insert(schemas: &mut Map<String, Value>) {
     object(
       [
         ("reference", schema_ref("FactoryImmutableReferenceResource")),
-        ("parameters", bounded_array(object([("path", non_empty_string()), ("kind", json!({"type":"string","enum":["identity","role_profile","repository","project_context","execution_policy","configuration_policy","source_input","reporting_effects"]})), ("required", boolean())], &["path","kind","required"]), octacity_server_application::factory_configuration_document_bounds().choice_entries)),
+        ("parameters", bounded_array(object([("path", non_empty_string()), ("kind", json!({"type":"string","enum":["identity","role_profile","repository","project_context","execution_policy","configuration_policy","source_input","reporting_effects","command","publication","accepted_predecessor"]})), ("required", boolean())], &["path","kind","required"]), octacity_server_application::factory_configuration_document_bounds().choice_entries)),
         ("required_node_kinds", bounded_array(schema_ref("FactoryFlowNodeKind"), octacity_server_application::factory_configuration_document_bounds().nodes)),
+        ("editor", schema_ref("FactoryPresetEditor")),
         (
           "profile_aliases",
           bounded_array(
@@ -20,6 +21,32 @@ pub(super) fn insert(schemas: &mut Map<String, Value>) {
     ),
   );
   let b = octacity_server_application::factory_configuration_document_bounds();
+  schemas.insert(
+    "FactoryPresetEditor".into(),
+    object(
+      [
+        ("name", non_empty_string()),
+        ("budget", schema_ref("FactoryBudget")),
+        ("max_active_nodes", bounded_integer(1, b.active_nodes.into())),
+        (
+          "steps",
+          bounded_array(
+            object(
+              [
+                ("alias", key()),
+                ("kind", json!({"enum":["reasoning","build_command"]})),
+                ("outcome", key()),
+                ("result", nullable(schema_ref("FactoryFlowDataSchema"))),
+              ],
+              &["alias", "kind", "outcome", "result"],
+            ),
+            b.nodes,
+          ),
+        ),
+      ],
+      &["name", "budget", "max_active_nodes", "steps"],
+    ),
+  );
   let uuid = || json!({"type":"string","format":"uuid"});
   let text = || json!({"type":"string","maxLength":b.text_bytes});
   let reference = || schema_ref("FactoryImmutableReferenceResource");
@@ -77,11 +104,43 @@ pub(super) fn insert(schemas: &mut Map<String, Value>) {
     ),
   );
   schemas.insert(
+    "FactoryPresetCommandSelection".into(),
+    object(
+      [
+        ("build", schema_ref("FactoryFlowBuildBinding")),
+        ("result", schema_ref("FactoryFlowDataSchema")),
+        ("permissions", schema_ref("FactoryPermissions")),
+      ],
+      &["build", "result", "permissions"],
+    ),
+  );
+  schemas.insert(
+    "FactoryPresetPublicationSelection".into(),
+    object(
+      [
+        ("plugin", reference()),
+        ("target", reference()),
+        ("permissions", schema_ref("FactoryPermissions")),
+      ],
+      &["plugin", "target", "permissions"],
+    ),
+  );
+  schemas.insert(
     "FactoryPresetResolutionRequest".into(),
     object(
       [
         ("preset", reference()),
         ("flow_id", nullable(uuid())),
+        ("flow_only", boolean()),
+        (
+          "commands",
+          bounded_map(schema_ref("FactoryPresetCommandSelection"), b.nodes),
+        ),
+        ("publication", nullable(schema_ref("FactoryPresetPublicationSelection"))),
+        (
+          "accepted_predecessor",
+          nullable(schema_ref("FactoryFlowAcceptedPredecessor")),
+        ),
         ("configuration_id", nullable(uuid())),
         ("input", nullable(schema_ref("FactoryPresetInputSelection"))),
         (

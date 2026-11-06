@@ -30,6 +30,33 @@ pub struct FactoryPresetSummary {
   pub parameters: Vec<FactoryPresetParameter>,
   /// Technical executor categories required by this release, not execution readiness.
   pub required_node_kinds: Vec<FlowNodeKind>,
+  /// Optional setup using the ordinary Flow editor without preparing a Configuration.
+  #[serde(skip_serializing_if = "Option::is_none")]
+  pub editor: Option<FactoryPresetEditor>,
+}
+/// Credential-free defaults and typed selection slots for an ordinary Flow draft.
+#[derive(Clone, Debug, Serialize)]
+pub struct FactoryPresetEditor {
+  /// Initial display name, editable after opening the example.
+  pub name: &'static str,
+  /// Released Flow budget before explicitly selected profile constraints.
+  pub budget: BudgetLimit,
+  /// Released concurrency, editable with the other Flow limits.
+  pub max_active_nodes: u16,
+  /// Exact logical result slots that require installed executors.
+  pub steps: Vec<FactoryPresetEditorStep>,
+}
+/// One independently reviewed executor selection.
+#[derive(Clone, Debug, Serialize)]
+pub struct FactoryPresetEditorStep {
+  /// Release-local alias used in the resolver request.
+  pub alias: FactoryKey,
+  /// Reasoning or Build command.
+  pub kind: FlowNodeKind,
+  /// Logical outcome consumed by the published graph.
+  pub outcome: FactoryKey,
+  /// Exact release schema where fixed; otherwise select the installed command report schema.
+  pub result: Option<FlowDataSchema>,
 }
 /// One ordinary authoring selection advertised by the bundled release.
 #[derive(Clone, Debug, Serialize)]
@@ -61,6 +88,12 @@ pub enum FactoryPresetParameterKind {
   SourceInput,
   /// Finite accepted-gate effects compiled by the ordinary reporting composer.
   ReportingEffects,
+  /// Exact installed command and typed result.
+  Command,
+  /// Exact trusted action and its installed publication target.
+  Publication,
+  /// Exact successful upstream Flow result.
+  AcceptedPredecessor,
 }
 /// Ordinary bounded discovery envelope, without private profile content or installation paths.
 #[derive(Clone, Debug, Serialize)]
@@ -80,6 +113,9 @@ pub struct FactoryPresetResolutionRequest {
   pub preset: ImmutableReference,
   /// Caller-owned prospective root identity; no version or identity is reserved by resolution.
   pub flow_id: Option<FlowDefinitionId>,
+  /// Review a Flow only; admission policy, repository and Source can be selected separately.
+  #[serde(default)]
+  pub flow_only: bool,
   /// Caller-owned prospective Configuration identity for ordinary publication.
   pub configuration_id: Option<FactoryConfigurationId>,
   /// Independently reviewed exact stage profiles and ordinary Build result bindings.
@@ -99,6 +135,37 @@ pub struct FactoryPresetResolutionRequest {
   /// Optional accepted-gate effects with caller-owned prospective child Flow identities.
   #[serde(default)]
   pub effects: std::collections::BTreeMap<FactoryKey, FactoryPresetEffectSelection>,
+  /// Independently selected command bindings with their installed result schemas.
+  #[serde(default)]
+  pub commands: std::collections::BTreeMap<FactoryKey, FactoryPresetCommandSelection>,
+  /// Explicit trusted publication target and its ordinary permission request.
+  pub publication: Option<FactoryPresetPublicationSelection>,
+  /// Exact already published source of the accepted incoming payload.
+  pub accepted_predecessor: Option<FlowAcceptedPredecessor>,
+}
+
+/// Ordinary command definition, independent of a particular stage alias.
+#[derive(Clone, Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct FactoryPresetCommandSelection {
+  /// Exact reviewed Build compiler and output binding.
+  pub build: FlowBuildBinding,
+  /// Selected canonical primary result shape.
+  pub result: FlowDataSchema,
+  /// Explicit ordinary step access request.
+  pub permissions: FactoryPermissionSet,
+}
+
+/// Ordinary trusted action choice; authorization remains installation-owned.
+#[derive(Clone, Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct FactoryPresetPublicationSelection {
+  /// Exact installed action plugin.
+  pub plugin: ImmutableReference,
+  /// Exact installed target.
+  pub target: ImmutableReference,
+  /// Explicit ordinary step access request.
+  pub permissions: FactoryPermissionSet,
 }
 /// A reviewed finite reporting composition, published through ordinary Flow authoring.
 #[derive(Clone, Debug, Deserialize)]

@@ -1004,7 +1004,7 @@ fn agent_route_qualification_flags_are_documented_as_optional_booleans() {
 }
 
 #[test]
-fn legacy_preset_queries_are_deprecated_without_reinterpreting_their_contracts() {
+fn optional_factory_example_queries_are_supported_without_reinterpreting_their_contracts() {
   let document = openapi_document();
   for (method, path, id) in [
     (
@@ -1019,13 +1019,7 @@ fn legacy_preset_queries_are_deprecated_without_reinterpreting_their_contracts()
     ),
   ] {
     let operation = &document["paths"][path][method];
-    assert_eq!(operation["deprecated"], true, "{id}");
-    assert!(
-      operation["description"]
-        .as_str()
-        .unwrap()
-        .contains("/api/v1/flow-definitions/validate")
-    );
+    assert_ne!(operation["deprecated"], true, "{id}");
     assert_eq!(
       operation["responses"]["200"]["headers"]["Cache-Control"]["schema"]["const"],
       "no-store"

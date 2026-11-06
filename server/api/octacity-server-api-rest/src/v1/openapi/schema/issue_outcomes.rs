@@ -37,6 +37,7 @@ pub(super) fn insert(schemas: &mut Map<String, Value>) {
         ("classification", schema_ref("IssueOutcomeClassification")),
       ], &["kind","decision","classification"]),
       object([("kind", kind("specifications"))], &["kind"]),
+      object([("kind", kind("publication"))], &["kind"]),
       object([("kind", kind("review")), ("verdict", string_enum(ISSUE_OUTCOME_REVIEW_VERDICTS))], &["kind","verdict"]),
       object([("kind", kind("custom")), ("title", bounded_text(MAX_ISSUE_OUTCOME_TITLE_BYTES))], &["kind","title"]),
     ]}),
@@ -56,6 +57,7 @@ pub(super) fn insert(schemas: &mut Map<String, Value>) {
     artifact("artifact"),
     object([("kind", kind("work_artifact")), ("work_id", id()), ("artifact_id", id()), ("title", non_empty_string())], &["kind","work_id","artifact_id"]),
     object([("kind", kind("review")), ("review_id", schema_ref("FactoryDigest")), ("title", non_empty_string())], &["kind","review_id"]),
+    object([("kind", kind("pull_request")), ("url", json!({"type":"string","format":"uri","maxLength":2048}))], &["kind","url"]),
     object([("kind", kind("unavailable")), ("title", non_empty_string())], &["kind"]),
   ]}));
   schemas.insert(

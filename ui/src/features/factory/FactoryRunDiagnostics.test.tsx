@@ -12,6 +12,112 @@ import { ManagementApiError } from '../../api/client';
 import { FactoryRunDiagnostics } from './FactoryRunDiagnostics';
 
 afterEach(cleanup);
+
+it('shows a stop and a pending usage observation only on their exact attempts', async () => {
+  const run = { ...runFixture(), updated_at_unix_ms: 110 };
+  const stopped = 'attempt-timeout';
+  const id = 'b'.repeat(64);
+  const active = {
+    factory_run_id: run.id,
+    flow_run_id: 'flow',
+    cycle_id: 'cycle',
+    node_kind: 'build_command' as const,
+    execution: { kind: 'built_in' as const },
+    input_digest: 'c'.repeat(64),
+    number: 1,
+    retry_of: null,
+    active: true,
+    retryable: false,
+    started_at: 1,
+    deadline: 100,
+  };
+  const api = {
+    ...factoryApi,
+    getConfiguration: vi.fn(async () => configurationFixture()),
+    listDiagnostics: vi.fn<FactoryApi['listDiagnostics']>(async (_run, collection) => ({
+      next_cursor: null,
+      items:
+        collection === 'node-attempts'
+          ? [
+              {
+                kind: 'node_attempt',
+                record: {
+                  id: stopped,
+                  factory_run_id: run.id,
+                  flow_run_id: 'flow',
+                  cycle_id: 'cycle',
+                  node_key: 'verify_candidate',
+                  node_kind: 'build_command',
+                  execution: { kind: 'built_in' },
+                  input_digest: 'a'.repeat(64),
+                  number: 1,
+                  retry_of: null,
+                  active: false,
+                  retryable: true,
+                  started_at: 1,
+                  deadline: 100,
+                },
+              },
+              {
+                kind: 'node_attempt',
+                record: {
+                  ...active,
+                  id: 'await-usage',
+                  node_key: 'await_usage',
+                  wait_reason: 'awaiting_terminal_usage',
+                },
+              },
+              {
+                kind: 'node_attempt',
+                record: { ...active, id: 'independent', node_key: 'independent' },
+              },
+            ]
+          : collection === 'node-stops'
+            ? [
+                {
+                  kind: 'node_stop',
+                  record: {
+                    id,
+                    node_attempt_id: stopped,
+                    reason: { kind: 'execution_failed' },
+                    observed_at: 110,
+                    execution: null,
+                    usage: {
+                      attempts: 0,
+                      elapsed_millis: 109,
+                      tokens: 0,
+                      cost_micro_units: 0,
+                      output_bytes: 0,
+                    },
+                  },
+                },
+              ]
+            : [],
+    })),
+  };
+  const router = createMemoryRouter([
+    { path: '*', element: <FactoryRunDiagnostics api={api} run={run} /> },
+  ]);
+  render(
+    <QueryClientProvider client={createConsoleQueryClient()}>
+      <RouterProvider router={router} />
+    </QueryClientProvider>,
+  );
+  const row = within(await screen.findByRole('row', { name: /verify_candidate/ }));
+  expect(await row.findByText('Stop observed after the deadline')).toBeTruthy();
+  expect(row.getByText('Retry eligible')).toBeTruthy();
+  expect(row.queryByText('Completed record')).toBeNull();
+  const awaiting = within(await screen.findByRole('row', { name: /await_usage/ }));
+  expect(awaiting.getByText('Execution stopped. Waiting for verified usage.')).toBeTruthy();
+  expect(awaiting.queryByText('Completed record')).toBeNull();
+  const independent = within(await screen.findByRole('row', { name: /independent/ }));
+  expect(independent.getByText('Active attempt')).toBeTruthy();
+  await userEvent.click(row.getByRole('link', { name: 'View stop details' }));
+  const params = new URLSearchParams(router.state.location.search);
+  expect(params.get('diagnostic_id')).toBe(id);
+  expect(params.get('node_attempt_id')).toBe(stopped);
+});
+
 it('reads pinned arbitrary nodes and distinguishes a typed advisory signal from an authoritative Decision', async () => {
   const run = runFixture();
   const configuration = configurationFixture();

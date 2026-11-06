@@ -99,6 +99,71 @@ it('declares a bounded summary and Work input source through typed controls with
   expect(screen.queryByRole('textbox', { name: 'Transcript' })).toBeNull();
 });
 
+it('selects a conditional candidate and a collection of retained Artifacts without adding other Context', async () => {
+  const flow = configurationFixture().configuration.flow;
+  const root = flow.closure.definitions[0]!;
+  const original = { ...root.nodes[0]!, context_binding: { entries: {}, work_task: 'task' } };
+  let observed: (typeof root.nodes)[number] = original;
+  function Harness() {
+    const [node, setNode] = useState(observed);
+    return (
+      <FlowBindings
+        root={root}
+        schemas={flow.data_schemas}
+        node={node}
+        onChange={(next) => {
+          observed = next;
+          setNode(next);
+        }}
+      />
+    );
+  }
+  render(<Harness />);
+  await userEvent.click(screen.getByText('Advanced input and Context mappings'));
+  await userEvent.click(screen.getByRole('checkbox', { name: 'Select a candidate revision' }));
+  const candidate = within(screen.getByRole('group', { name: 'Candidate revision' }));
+  await userEvent.type(
+    candidate.getByRole('textbox', { name: 'Selection path' }),
+    '/review/revision',
+  );
+  await userEvent.type(
+    candidate.getByRole('textbox', { name: 'Only when input is present' }),
+    '/review',
+  );
+  await userEvent.click(screen.getByRole('button', { name: 'Add Artifact collection' }));
+  const collection = within(screen.getByRole('group', { name: 'Artifact collections' }));
+  await userEvent.type(
+    collection.getByRole('textbox', { name: 'Context entry name' }),
+    'specifications',
+  );
+  await userEvent.type(
+    collection.getByRole('textbox', { name: 'Selection path' }),
+    '/review/artifacts',
+  );
+  await userEvent.type(
+    collection.getByRole('textbox', { name: 'Only when input is present' }),
+    '/review',
+  );
+  expect(observed.context_binding).toEqual({
+    entries: {},
+    work_task: 'task',
+    candidate_revision: { value: { mapping: 'pointer', path: '/review/revision' } },
+    candidate_when_present: '/review',
+    artifact_collections: {
+      specifications: {
+        source_kind: 'evidence',
+        source: { value: { mapping: 'pointer', path: '/review/artifacts' } },
+        when_present: '/review',
+      },
+    },
+  });
+  await userEvent.click(screen.getByRole('checkbox', { name: 'Select a candidate revision' }));
+  expect(observed.context_binding?.candidate_when_present).toBeNull();
+  expect(observed.context_binding?.artifact_collections?.specifications?.when_present).toBe(
+    '/review',
+  );
+});
+
 it('connects the admitted Work task explicitly without changing payload mappings or other Context entries', async () => {
   const flow = configurationFixture().configuration.flow;
   const root = flow.closure.definitions[0]!;

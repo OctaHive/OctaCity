@@ -239,8 +239,20 @@ impl<A: ArtifactRecordStore, S: BuildQueryStore, B: ArtifactByteReader> FactoryA
       return Err(ApplicationError::invalid());
     }
     let build = self.verify_record_reference(request, record).await?;
-    if audience == ArtifactAudience::Model
-      && identity.artifact_type == octacity_server_artifacts::ArtifactType::Artifact
+    if audience == ArtifactAudience::Model {
+      self.verify_disclosable_build_output(record, &build).await?;
+    }
+    Ok(upload)
+  }
+
+  // The same restriction applies to model Context and user-facing Issue resources.
+  async fn verify_disclosable_build_output(
+    &self,
+    record: &ArtifactRecord,
+    build: &octacity_server_store::BuildRecord,
+  ) -> Result<(), ApplicationError> {
+    let identity = record.identity();
+    if identity.artifact_type == octacity_server_artifacts::ArtifactType::Artifact
       && matches!(build.origin, BuildOrigin::Factory(_))
     {
       // A successful author Job publishes its inventory before terminal success.
@@ -259,7 +271,7 @@ impl<A: ArtifactRecordStore, S: BuildQueryStore, B: ArtifactByteReader> FactoryA
         return Err(ApplicationError::invalid());
       }
     }
-    Ok(upload)
+    Ok(())
   }
 }
 

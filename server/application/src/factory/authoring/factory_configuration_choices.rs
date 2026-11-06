@@ -487,10 +487,19 @@ pub(crate) fn permissions_selectable(
 }
 
 /// Checks installed identities throughout a caller-owned graph without interpreting logical stages.
+#[derive(Clone, Copy, Eq, PartialEq)]
+pub(crate) enum FlowChoiceValidation {
+  /// New Flow definitions must meet the current authoring contract.
+  Authoring,
+  /// Readiness of an already published configuration uses its original publication contract.
+  Retained,
+}
+
 pub(crate) fn validate_flow_choices(
   flow: &octacity_server_factory::FactoryFlowConfiguration,
   choices: &octacity_server_factory::FactoryConfigurationChoices,
   prefix: &str,
+  validation: FlowChoiceValidation,
 ) -> Result<(), ApplicationError> {
   use octacity_server_factory::{FactoryChoiceKind, FlowGateProgram};
   let entries = choices.entries();
@@ -542,6 +551,25 @@ pub(crate) fn validate_flow_choices(
           "/action/plugin",
         ));
       }
+      if let Some(action) = node.action()
+        && action.action().as_str() == octacity_server_factory::PUBLISH_CANDIDATE_ACTION
+      {
+        crate::factory::artifacts::factory_candidate_publication::validate_publication_selection(
+          definition,
+          node,
+          action,
+          choices,
+          &flow.data_schemas,
+          validation == FlowChoiceValidation::Authoring,
+        )
+        .map_err(|field| {
+          if field == "/action/target" {
+            crate::FactoryValidationDiagnostics::unavailable_binding(definition.reference(), Some(node.key()), field)
+          } else {
+            crate::FactoryValidationDiagnostics::invalid_binding(definition.reference(), node.key(), field)
+          }
+        })?;
+      }
       if node.gate().is_some_and(|gate| {
         FlowGateProgram::from_node(node).is_err() && !selectable(FactoryChoiceKind::ExecutionPolicy, gate.policy())
       }) {
@@ -590,6 +618,37 @@ pub(crate) fn validate_flow_choices(
         return Err(crate::FactoryValidationDiagnostics::unavailable_binding(
           definition.reference(),
           Some(node.key()),
+          "/build",
+        ));
+      }
+      if validation == FlowChoiceValidation::Authoring
+        && node.build_bindings().flat_map(|build| &build.evidence).any(|output| {
+          output.output_kind() == octacity_server_factory::EvidenceOutputKind::Report
+            && !flow
+              .data_schemas
+              .iter()
+              .any(|schema| schema.reference() == output.schema())
+        })
+      {
+        return Err(crate::FactoryValidationDiagnostics::invalid_binding(
+          definition.reference(),
+          node.key(),
+          "/data_schemas",
+        ));
+      }
+      if node.kind() == octacity_server_factory::FlowNodeKind::BuildCommand
+        && node.build_bindings().any(|build| {
+          choices.has_build_pipeline_contract(build)
+            && !choices.build_pipeline_contract(build).is_some_and(|installed| {
+              node
+                .outcome(&build.result_outcome)
+                .is_some_and(|outcome| installed.matches_command(build, outcome.schema()))
+            })
+        })
+      {
+        return Err(crate::FactoryValidationDiagnostics::invalid_binding(
+          definition.reference(),
+          node.key(),
           "/build",
         ));
       }

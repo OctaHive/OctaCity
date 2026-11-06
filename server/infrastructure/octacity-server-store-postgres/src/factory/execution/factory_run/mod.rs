@@ -16,7 +16,7 @@ use std::str::FromStr;
 use octacity_server_domain::{ArtifactId, EntityKind, Timestamp};
 use octacity_server_factory::{
   BudgetUsage, FactoryClaim, FactoryClaimFence, FactoryDigest, FactoryKey, FactoryLifecycleProgress, FactoryRun,
-  FactoryRunId, FactoryRunState, FactoryRunVersion, WorkEnvelope,
+  FactoryRunId, FactoryRunState, FactoryRunVersion, NodeAttemptId, WorkEnvelope,
 };
 use octacity_server_store::{
   AuditActorKind, FactoryArtifactRole, FactoryAuditFact, FactoryBudgetRecord, FactoryLifecycleCheckpoint,
@@ -128,6 +128,8 @@ pub(crate) async fn verify_node_dispatch(
 #[serde(deny_unknown_fields)]
 struct LifecycleDocument {
   progress: FactoryLifecycleProgress,
+  #[serde(default, skip_serializing_if = "Option::is_none")]
+  awaiting_terminal_usage: Option<NodeAttemptId>,
 }
 
 #[derive(FromRow)]
@@ -245,7 +247,10 @@ fn decode_locked_run(run_id: FactoryRunId, row: LockedRunRow) -> Result<LockedRu
     budget_id,
     lifecycle_checkpoint_id,
   };
-  let LifecycleDocument { progress } = row.lifecycle.0;
+  let LifecycleDocument {
+    progress,
+    awaiting_terminal_usage,
+  } = row.lifecycle.0;
   Ok(LockedRun {
     work,
     run,
@@ -263,6 +268,7 @@ fn decode_locked_run(run_id: FactoryRunId, row: LockedRunRow) -> Result<LockedRu
       run_id,
       run_version: version,
       progress,
+      awaiting_terminal_usage,
       cancellation_requested: row.cancellation_requested,
       recorded_at: timestamp(row.lifecycle_recorded_at_millis)?,
     },

@@ -127,10 +127,6 @@ pub(crate) enum ParameterProfile {
 }
 
 impl ManagementOperation {
-  const fn with_deprecation(mut self, migration: &'static str) -> Self {
-    self.deprecation = Some(migration);
-    self
-  }
   const fn with_pending_response(mut self) -> Self {
     self.pending_response = true;
     self

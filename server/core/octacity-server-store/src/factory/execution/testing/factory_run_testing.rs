@@ -321,14 +321,15 @@ impl StoredFactoryRun {
       || self.lifecycle_checkpoints.values().any(|checkpoint| {
         checkpoint.run_id != run_id
           || checkpoint.run_version > self.run.version()
-          || checkpoint
-            != &FactoryLifecycleCheckpoint::new(
+          || checkpoint.id
+            != FactoryLifecycleCheckpoint::new(
               checkpoint.run_id,
               checkpoint.run_version,
               checkpoint.progress.clone(),
               checkpoint.cancellation_requested,
               checkpoint.recorded_at,
             )
+            .id
           || (checkpoint.run_version == self.run.version()
             && octacity_server_factory::validate_lifecycle_progress(self.run.state(), &checkpoint.progress).is_err())
       })

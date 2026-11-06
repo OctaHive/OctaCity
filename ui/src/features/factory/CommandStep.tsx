@@ -2,9 +2,41 @@ import { useState } from 'react';
 import type { components } from '../../../.generated/api/schema';
 import { usePresentation } from '../../app/presentation/PresentationProvider';
 import { SelectMenu } from '../../shared/SelectMenu';
+import { sourceReferenceKey } from '../../shared/sourceReferences';
 
 type Schema = components['schemas'];
 type Node = Schema['FactoryFlowNodeDefinition'];
+type Command = Schema['FactoryAuthoringCapabilities']['commands'][number];
+
+function commandChoiceLabel({ alias, execution }: Command) {
+  const { build_configuration, result_output, tool } = execution;
+  return `${alias} · v${build_configuration.version} · ${result_output} · ${tool.identity}`;
+}
+
+/** Keep commands with identical display names individually selectable. */
+export function commandOptions(commands: readonly Command[]) {
+  const labels = commands.map(commandChoiceLabel);
+  return commands.map((command, index) => {
+    const label = labels[index]!;
+    return {
+      value: JSON.stringify(command),
+      label:
+        labels.indexOf(label) === labels.lastIndexOf(label)
+          ? label
+          : `${index + 1}. ${command.execution.task_digest.slice(0, 8)} · ${label}`,
+    };
+  });
+}
+
+/** Retains the installed result and evidence contract when binding a logical outcome. */
+export function commandBuild(command: Command, outcome: string): Schema['FactoryFlowBuildBinding'] {
+  return {
+    ...command.execution,
+    result_outcome: outcome,
+    ...(command.result_tool ? { result_tool: command.result_tool } : {}),
+    ...(command.evidence?.length ? { evidence: command.evidence } : {}),
+  };
+}
 
 /** Chooses a declared ordinary compiler; command arguments and task identity remain installation-owned. */
 export function CommandStep({
@@ -14,17 +46,20 @@ export function CommandStep({
 }: {
   node: Node;
   commands: Schema['FactoryAuthoringCapabilities']['commands'];
-  onChange: (patch: Partial<Node>) => void;
+  onChange: (patch: Partial<Node>, schemas?: Schema['FactoryFlowDataSchema'][]) => void;
 }) {
   const { t } = usePresentation();
-  const [selected, setSelected] =
-    useState<Schema['FactoryAuthoringCapabilities']['commands'][number]>();
+  const [selected, setSelected] = useState('');
   const [outcomeKey, setOutcomeKey] = useState('');
-  const commandIndex = selected
-    ? commands.findIndex((item) => JSON.stringify(item) === JSON.stringify(selected))
-    : -1;
-  const command = commandIndex < 0 ? undefined : selected;
-  const outcomes = node.outcomes.filter((item) => item.kind === 'success');
+  const command = commands.find((item) => JSON.stringify(item) === selected);
+  const definition = command?.output_definition;
+  const outcomes = node.outcomes.filter(
+    (item) =>
+      item.kind === 'success' &&
+      (definition ||
+        !command?.output_schema ||
+        sourceReferenceKey(command.output_schema) === sourceReferenceKey(item.schema)),
+  );
   const outcome =
     outcomes.find((item) => item.key === outcomeKey) ??
     (outcomes.length === 1 ? outcomes[0] : undefined);
@@ -35,17 +70,9 @@ export function CommandStep({
       {!commands.length ? <p role="alert">{t('factory.noInstalledCommand')}</p> : null}
       <SelectMenu
         ariaLabel={t('factory.installedCommand')}
-        value={commandIndex < 0 ? '' : String(commandIndex)}
-        options={[
-          { value: '', label: t('factory.chooseInput') },
-          ...commands.map((item, index) => ({
-            value: String(index),
-            label: `${item.alias} · v${item.execution.build_configuration.version}`,
-          })),
-        ]}
-        onValueChange={(index) =>
-          setSelected(index === '' ? undefined : structuredClone(commands[Number(index)]))
-        }
+        value={command ? selected : ''}
+        options={[{ value: '', label: t('factory.chooseInput') }, ...commandOptions(commands)]}
+        onValueChange={setSelected}
       />
       {outcomes.length > 1 ? (
         <SelectMenu
@@ -70,11 +97,22 @@ export function CommandStep({
         type="button"
         disabled={!command || !outcome}
         onClick={() => {
-          if (command && outcome)
-            onChange({
-              build: { ...command.execution, result_outcome: outcome.key },
-              profile_selection: null,
-            });
+          if (command && outcome) {
+            onChange(
+              {
+                build: commandBuild(command, outcome.key),
+                profile_selection: null,
+                outcomes: node.outcomes.map((item) =>
+                  item === outcome &&
+                  definition &&
+                  item.schema.digest !== definition.reference.digest
+                    ? { ...item, schema: definition.reference }
+                    : item,
+                ),
+              },
+              definition ? [definition] : undefined,
+            );
+          }
         }}
       >
         {t('factory.useCommand')}

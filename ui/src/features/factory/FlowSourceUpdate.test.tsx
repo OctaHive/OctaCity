@@ -241,13 +241,21 @@ it('creates the first authorized Reporter action from installed choices without 
     screen.getByRole('option', { name: writer.binding.configuration.identity }),
   );
   expect(observed.root.nodes[0]!.action).toBeUndefined();
-  await userEvent.click(screen.getByRole('button', { name: 'Use reviewed source effects' }));
+  const delay = screen.getByRole('spinbutton', { name: 'Retry delay (milliseconds)' });
+  expect(delay).toHaveProperty('value', '1');
+  const apply = screen.getByRole('button', { name: 'Use reviewed source effects' });
+  await userEvent.clear(delay);
+  await userEvent.type(delay, '0');
+  expect(apply).toHaveProperty('disabled', true);
+  await userEvent.clear(delay);
+  await userEvent.type(delay, '1');
+  await userEvent.click(apply);
   expect(observed.root.nodes[0]!.action).toEqual({
     plugin: contract.plugin,
     action: 'set_status',
     parameters: {
       status: writer.reporting!.mapping.statuses[0]!.status,
-      outbox: { max_attempts: 1, retry_delay_millis: 0 },
+      outbox: { max_attempts: 1, retry_delay_millis: 1 },
       source_update: {
         source: read.binding,
         reporter: writer.binding,

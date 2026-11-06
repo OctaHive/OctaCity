@@ -1,5 +1,36 @@
 # Ticket delivery Flow branches
 
+## Versioned example
+
+`v1.json` composes the branches below, declares which standalone terminals
+continue to another step, and disables the optional test-authoring queue for
+this example. The assignment part supplies the step instructions. In Factory, open **Add pipeline →
+Start from an example → Ticket delivery · v1**. Choose the exact successful
+triage completion, stage Profiles, installed command reports and review target.
+**Open example draft** opens the same editor used for a blank graph. Review the
+initial assignments, step data, code selections, access requests and limits
+there. Configure and publish the Flow and the launch Configuration separately.
+The example never selects a credential, activates intake or grants access.
+
+API clients discover the immutable release in
+`GET /api/v1/projects/{project_id}/factory-presets` and review it via the
+catalog's `/resolve` operation. Set `flow_only: true` to get only the editable
+Flow, or supply ordinary Configuration parameters to also review a disabled
+Configuration. The resolver identifies missing and incompatible dependencies
+by path; publication always uses the ordinary management commands. Source
+intake and Reporter effects are explicit. A confirmed pull request is ready
+for review and manual merge.
+
+The installed publisher supplies the exact target and successful receipt
+contract. Select the bundle and manifest independently in the publication
+step's Context. A publication target appears in the editor when the
+installation supplies a compatible receipt schema and its plugin and logical
+credential profile are selectable in the Project. The draft requests the
+target's configured adapter, hosts and credential profile. Review these
+requests against the Project access policy before publishing. The example
+binds both review and validation expiry. The earlier expiry closes new forge
+writes while the original attempt can still observe an existing PR.
+
 ## Reproduction
 
 `reproduction-v1.json` is an editable Flow manifest for the reproduction branch.
@@ -59,7 +90,16 @@ design and tasks, and for a defect to record regression criteria. Qualify the in
 their coherence before it attests to the captured requirements. The shared
 `specification_gate` checks the immutable capture and verifier evidence.
 `specification_accepted` prepares the summary with the exact manifest and
-bundle. Invalid evidence has a separate terminal.
+bundle. Its Issue card links to those two artifacts while requirements are
+still eligible for human review. The accepted code-review card links to the
+exact Build report selected by the review profile. Both cards can be turned
+off or edited through **Show on Issue** on the corresponding result. Link
+visibility follows the ordinary Artifact and Build access checks. Invalid
+evidence has a separate terminal.
+
+The Run's step completions show the verified report digest, verification time
+and freshness limit for the review and protected validation steps. Use the
+digest to correlate each report with its exact execution.
 
 The example policy requests human review for component `api`, sizes
 `medium` and `large`, and triage priority at least 70. Edit the ordinary gate
@@ -213,8 +253,10 @@ requests. The same reference suffices if both identities match. Allow
 the policy's credential profile and network hosts in the enclosing
 ceilings and request them on the trusted action, with no grant on the
 DevOps step. The action gets the accepted revision, its original bundle
-and manifest, the validation deadline and the prepared metadata. The
-installed target policy controls the repository, target branch and draft mode.
+and manifest, the review and validation deadlines and the prepared metadata.
+Before a new forge write, it verifies that the retained review passed and
+every class in the protected validation report passed for the same candidate.
+The installed target policy controls the repository, target branch and draft mode.
 
 Install the Delivery action with the `published` outcome from this
 branch and its exact `pull_request_receipt` schema. Set `review_links`

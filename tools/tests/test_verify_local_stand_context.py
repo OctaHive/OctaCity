@@ -92,7 +92,7 @@ class LocalStandContextTests(unittest.TestCase):
 
     def test_required_sources_and_lockfiles_are_included(self):
         rules = VERIFY.validate_dockerignore(REPOSITORY / ".dockerignore")
-        for path in VERIFY.REQUIRED_CONTEXT_PATHS:
+        for path in VERIFY.required_context_paths(REPOSITORY):
             with self.subTest(path=path):
                 self.assertTrue(VERIFY.docker_path_included(path, rules))
 
@@ -109,7 +109,7 @@ class LocalStandContextTests(unittest.TestCase):
             with self.subTest(missing=missing), tempfile.TemporaryDirectory() as temporary:
                 root = Path(temporary)
                 shutil.copyfile(REPOSITORY / ".dockerignore", root / ".dockerignore")
-                for relative in VERIFY.REQUIRED_CONTEXT_PATHS:
+                for relative in VERIFY.required_context_paths(REPOSITORY):
                     if relative == f"config/factory/presets/triage/{missing}":
                         continue
                     destination = root / relative
@@ -133,6 +133,22 @@ class LocalStandContextTests(unittest.TestCase):
             with self.subTest(path=path):
                 self.assertFalse(VERIFY.docker_path_included(path, rules))
 
+    def test_released_ticket_delivery_assets_are_included_without_private_configuration(self):
+        rules = VERIFY.validate_dockerignore(REPOSITORY / ".dockerignore")
+        manifest = "config/factory/presets/ticket-delivery/v1.json"
+        document = json.loads((REPOSITORY / manifest).read_text(encoding="utf-8"))
+        assets = (
+            manifest,
+            "config/factory/presets/ticket-delivery/completion-v1.json",
+            "config/factory/presets/ticket-delivery/assignments-v1.json",
+            *(f"config/factory/{part}" for part in document["parts"]),
+        )
+        for asset in assets:
+            with self.subTest(asset=asset):
+                self.assertTrue(VERIFY.docker_path_included(asset, rules))
+                self.assertIn(asset, VERIFY.required_context_paths(REPOSITORY))
+        self.assertFalse(VERIFY.docker_path_included("config/factory/presets/ticket-delivery/private.json", rules))
+
     def test_context_preflight_rejects_each_missing_released_triage_part(self):
         manifest = "config/factory/presets/triage/v1.json"
         document = json.loads((REPOSITORY / manifest).read_text(encoding="utf-8"))
@@ -140,7 +156,7 @@ class LocalStandContextTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as temporary:
             root = Path(temporary)
             shutil.copyfile(REPOSITORY / ".dockerignore", root / ".dockerignore")
-            for relative in (*VERIFY.REQUIRED_CONTEXT_PATHS, *assets):
+            for relative in (*VERIFY.required_context_paths(REPOSITORY), *assets):
                 destination = root / relative
                 destination.parent.mkdir(parents=True, exist_ok=True)
                 shutil.copyfile(REPOSITORY / relative, destination)
@@ -153,6 +169,21 @@ class LocalStandContextTests(unittest.TestCase):
                             VERIFY.validate_repository(root)
                     finally:
                         shutil.copyfile(REPOSITORY / relative, root / relative)
+
+    def test_context_preflight_checks_parts_declared_by_ticket_delivery_manifest(self):
+        manifest = "config/factory/presets/ticket-delivery/v1.json"
+        part = "config/factory/presets/ticket-delivery/new-release-part.json"
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            for relative in (".dockerignore", *VERIFY.required_context_paths(REPOSITORY)):
+                destination = root / relative
+                destination.parent.mkdir(parents=True, exist_ok=True)
+                shutil.copyfile(REPOSITORY / relative, destination)
+            document = json.loads((root / manifest).read_text(encoding="utf-8"))
+            document["parts"].append(part.removeprefix("config/factory/"))
+            (root / manifest).write_text(json.dumps(document), encoding="utf-8")
+            with self.assertRaisesRegex(VERIFY.ContextError, part):
+                VERIFY.validate_repository(root)
 
     def test_openapi_wire_examples_are_available_in_the_filtered_build_context(self):
         rules = VERIFY.validate_dockerignore(REPOSITORY / ".dockerignore")
@@ -168,7 +199,7 @@ class LocalStandContextTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as temporary:
             root = Path(temporary)
             shutil.copyfile(REPOSITORY / ".dockerignore", root / ".dockerignore")
-            for relative in VERIFY.REQUIRED_CONTEXT_PATHS:
+            for relative in VERIFY.required_context_paths(REPOSITORY):
                 if relative == fixture:
                     continue
                 destination = root / relative
@@ -193,7 +224,7 @@ class LocalStandContextTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as temporary:
             root = Path(temporary)
             shutil.copyfile(REPOSITORY / ".dockerignore", root / ".dockerignore")
-            for relative in VERIFY.REQUIRED_CONTEXT_PATHS:
+            for relative in VERIFY.required_context_paths(REPOSITORY):
                 if relative == fixture:
                     continue
                 destination = root / relative
@@ -220,7 +251,7 @@ class LocalStandContextTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as temporary:
             root = Path(temporary)
             shutil.copyfile(REPOSITORY / ".dockerignore", root / ".dockerignore")
-            for relative in VERIFY.REQUIRED_CONTEXT_PATHS:
+            for relative in VERIFY.required_context_paths(REPOSITORY):
                 if relative == fixture:
                     continue
                 destination = root / relative
@@ -237,7 +268,7 @@ class LocalStandContextTests(unittest.TestCase):
             with self.subTest(dependency=dependency), tempfile.TemporaryDirectory() as temporary:
                 root = Path(temporary)
                 shutil.copyfile(REPOSITORY / ".dockerignore", root / ".dockerignore")
-                for relative in VERIFY.REQUIRED_CONTEXT_PATHS:
+                for relative in VERIFY.required_context_paths(REPOSITORY):
                     if relative == f"ui/scripts/{dependency}":
                         continue
                     destination = root / relative
@@ -407,7 +438,7 @@ console.log(JSON.stringify(factoryAuthoringSchemas({components: {schemas: {
         with tempfile.TemporaryDirectory() as temporary:
             root = Path(temporary)
             shutil.copyfile(REPOSITORY / ".dockerignore", root / ".dockerignore")
-            for relative in VERIFY.REQUIRED_CONTEXT_PATHS:
+            for relative in VERIFY.required_context_paths(REPOSITORY):
                 if relative == "deployment/local-stand/management-upstream.conf":
                     continue
                 destination = root / relative
@@ -534,13 +565,13 @@ console.log(JSON.stringify(factoryAuthoringSchemas({components: {schemas: {
         rules = VERIFY.validate_dockerignore(REPOSITORY / ".dockerignore")
         with tempfile.TemporaryDirectory() as temporary:
             root = Path(temporary)
-            for relative in VERIFY.REQUIRED_CONTEXT_PATHS:
+            for relative in VERIFY.required_context_paths(REPOSITORY):
                 path = root / relative
                 path.parent.mkdir(parents=True, exist_ok=True)
                 path.write_text("fixture", encoding="utf-8")
             (root / "developer-notes.txt").write_text("private", encoding="utf-8")
             with self.assertRaisesRegex(VERIFY.ContextError, "forbidden input"):
-                VERIFY.validate_materialized_context(root, rules)
+                VERIFY.validate_materialized_context(root, rules, VERIFY.required_context_paths(REPOSITORY))
 
 
 if __name__ == "__main__":
