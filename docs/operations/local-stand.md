@@ -511,6 +511,58 @@ untouched. Unchanged subsequent startup does not replenish attempts again.
 Missing VCS resolution support is a configuration failure, rather than a
 transient provider error retried eight times.
 
+#### Add Delivery capabilities to an existing stand
+
+Use the same stand root to add the **Coder**, **Tester**, **Reviewer**, and
+**DevOps** profiles. The launcher uses the existing installation updater and
+retains published pipelines, tickets, Runs, integrations, and storage volumes.
+Build and publish the Delivery Flow in Console after installing its capabilities.
+
+Create the test Issue in OctaCity with a title, description, and acceptance
+criteria. In a private directory outside the repository, save a reviewed
+`checks.sh` and a `pack.json` that identifies that Issue by UUID.
+
+```json
+{"name":"issue-23","issue_id":"00000000-0000-0000-0000-000000000023","script":"checks.sh"}
+```
+
+```shell
+chmod 0600 /absolute/private/issue-23/{pack.json,checks.sh}
+tools/factory-stand --root /absolute/private/triage-stand \
+  --delivery-test-pack /absolute/private/issue-23/pack.json \
+  --delivery-write-directory tools
+```
+
+The launcher pins the exact title, description, acceptance criteria, and script.
+Repeat `--delivery-test-pack` for additional Issues. If the Issue or script
+changes, rerun the command and select the newly installed versions in the Flow.
+Reuse the same Coder directory list on later invocations. The Coder source
+selection in the Flow must match those directories and grant scoped write access.
+
+Use **AI-агент → Команда** (English **AI agent → Command**) for the protected
+test author and select `delivery-author-issue-23-…`. Attach the Work task and
+its original acceptance artifact as explicit task Context. In advanced bindings,
+the acceptance artifact comes from the admitted Work at `/artifacts/acceptance`.
+Keep that step source-free. For the baseline and
+candidate steps select `delivery-baseline-issue-23-…` and
+`delivery-candidate-issue-23-…` under **Build command**. Select commands from the
+same pack revision and connect the accepted protected inventory explicitly.
+The baseline uses the selected base revision and the candidate check uses the
+selected retained candidate. The optional reproduction command checks the base
+against the original Issue. The Tester profile is for a separate AI diagnosis
+step when the Flow needs one.
+
+The reviewed script runs under `/bin/sh` with the source directory as `$1`,
+read-only source, and no credentials or network. Return `0` when the checks pass,
+`1` for a confirmed test failure, and `2` for missing dependencies or other
+setup errors. Keep prerequisites within the guest and verify them explicitly.
+The candidate cannot replace the protected script. Both checks run the same bytes.
+
+To also install the trusted draft-PR action, add `--delivery-target-branch`
+with an explicit base branch and `--delivery-token-file` with a separate
+owner-only GitHub credential. Select that action separately in the Flow when
+publication is desired.
+
 Subscription mode records tokens/time and reports monetary cost as unknown
 unless the native client provides it. API mode requires reported cost or
 explicit operator pricing. Finite technical budgets remain in force in both

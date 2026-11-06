@@ -374,6 +374,7 @@ export function FlowGraphEditor({
           (node.kind === 'deterministic_gate' ||
             node.kind === 'human_gate' ||
             node.kind === 'build_command' ||
+            node.kind === 'reasoning' ||
             node.kind === 'trusted_action') ? (
             <FlowPrimitives
               key={`${selected}:${node.kind}:${bindingRevision}`}

@@ -75,6 +75,7 @@ pub(super) fn insert(schemas: &mut Map<String, Value>) {
       [
         ("alias", key()),
         ("execution", schema_ref("FactoryCommandExecutionContract")),
+        ("node_kind", json!({"enum":["reasoning"]})),
         ("output_schema", reference()),
         ("output_definition", schema_ref("FactoryFlowDataSchema")),
         ("result_tool", reference()),

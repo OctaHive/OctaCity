@@ -282,6 +282,24 @@ it('selects bounded result data for a condition explicitly without changing its 
   expect(draft().root.nodes[0]!.outcomes).toEqual(before);
 });
 
+it('binds an installed reasoning command directly to a step without an AI profile', async () => {
+  const choice = {
+    alias: 'Reviewed test pack',
+    node_kind: 'reasoning' as const,
+    output_definition: {
+      reference: { identity: 'handoff', version: 'v1', digest: 'a'.repeat(64) },
+      shape: { type: 'boolean' as const },
+    },
+  };
+  const { draft } = setup(undefined, 'reasoning', choice);
+  const editor = within(await screen.findByRole('group', { name: 'Command' }));
+  await userEvent.click(editor.getByRole('combobox', { name: 'Installed command' }));
+  await userEvent.click(screen.getByRole('option', { name: /Reviewed test pack/ }));
+  await userEvent.click(editor.getByRole('button', { name: 'Use command' }));
+  expect(draft().root.nodes[0]?.build?.model_or_tool.identity).toBe('format-check');
+  expect(draft().root.nodes[0]?.profile_selection).toBeNull();
+});
+
 it('authors a command from exact installed compiler facts with explicit result routing and no copied Flow', async () => {
   const { api, draft } = setup(undefined, 'build_command');
   const editor = within(await screen.findByRole('group', { name: 'Command' }));
@@ -289,7 +307,7 @@ it('authors a command from exact installed compiler facts with explicit result r
   await userEvent.click(editor.getByRole('combobox', { name: 'Installed command' }));
   await userEvent.click(
     screen.getByRole('option', {
-      name: 'Check formatting · v3 · observation.json · factory.declarative-gate',
+      name: 'Check formatting · v3 · observation.json · factory.declarative-gate v1',
     }),
   );
   expect(draft().root.nodes[0]!.build).toBeUndefined();
@@ -341,7 +359,7 @@ it('sets and removes a bounded candidate capture policy on an installed Build wi
   await userEvent.click(editor.getByRole('combobox', { name: 'Installed command' }));
   await userEvent.click(
     screen.getByRole('option', {
-      name: 'Check formatting · v3 · observation.json · factory.declarative-gate',
+      name: 'Check formatting · v3 · observation.json · factory.declarative-gate v1',
     }),
   );
   await userEvent.click(editor.getByRole('button', { name: 'Use command' }));
@@ -403,7 +421,7 @@ it('keeps installed evidence when replacing a command through the ordinary edito
   await userEvent.click(editor.getByRole('combobox', { name: 'Installed command' }));
   await userEvent.click(
     screen.getByRole('option', {
-      name: 'Check formatting · v3 · observation.json · factory.declarative-gate',
+      name: 'Check formatting · v3 · observation.json · factory.declarative-gate v1',
     }),
   );
   await userEvent.click(editor.getByRole('button', { name: 'Use command' }));
@@ -507,7 +525,7 @@ it('requires re-selection when a command contract changes in the installed catal
   await userEvent.click(editor.getByRole('combobox', { name: 'Installed command' }));
   await userEvent.click(
     screen.getByRole('option', {
-      name: 'Check formatting · v3 · observation.json · factory.declarative-gate',
+      name: 'Check formatting · v3 · observation.json · factory.declarative-gate v1',
     }),
   );
   const refreshed = await api.getAuthoringCapabilities();

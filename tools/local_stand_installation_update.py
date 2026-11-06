@@ -27,6 +27,8 @@ import init_local_stand as initializer
 import local_stand_lifecycle as lifecycle
 import local_stand_state as state
 
+ConfigurationIdentity = dict[str, tuple[int, str] | None]
+
 
 def validate_factory_installation(staging: Path, image: str) -> None:
     """Run the packaged server's full file validator without network or volumes.
@@ -80,7 +82,7 @@ def _exchange(left: Path, right: Path) -> None:
         raise OSError(ctypes.get_errno(), "cannot atomically exchange the Factory installation")
 
 
-def _snapshot(directory: Path, *, copy_to: Path | None = None) -> dict[str, tuple[int, str] | None]:
+def _snapshot(directory: Path, *, copy_to: Path | None = None) -> ConfigurationIdentity:
     """Fingerprint configuration and optionally stream-copy it to private staging."""
     def fingerprint(relative: Path, source: BinaryIO, size: int) -> str:
         target = copy_to / relative if copy_to is not None else None
@@ -112,6 +114,11 @@ def _snapshot(directory: Path, *, copy_to: Path | None = None) -> dict[str, tupl
             else:
                 target.chmod(record[0])
     return files
+
+
+def installed_configuration_identity(root: Path) -> ConfigurationIdentity:
+    """Fingerprint the configuration from which an additive update is prepared."""
+    return _snapshot(root / "config")
 
 
 def installed_factory_inputs(root: Path, exports: Path) -> dict[str, Path | None]:
@@ -180,6 +187,7 @@ def factory_installation_update(
     factory_signal_connectors: Path | None = None,
     factory_issue_mcp_readers: Path | None = None,
     vcs_integrations: Path | None = None,
+    expected_configuration: ConfigurationIdentity | None = None,
     openssl: str = "openssl",
 ) -> Iterator[None]:
     """Preflight before stopping; restore the old configuration on startup failure.
@@ -191,7 +199,9 @@ def factory_installation_update(
     owner.require_exclusive_lock()
     root = root.resolve()
     initialized = initializer.validate_initialized_state(root, openssl=openssl)
-    original = _snapshot(root / "config")
+    original = installed_configuration_identity(root)
+    if expected_configuration is not None and original != expected_configuration:
+        raise state.StateError("Factory installation changed before update; retry with current inputs")
     old_installation = installed_native_installation(root)
     if old_installation is None:
         raise state.StateError("installed Agent configuration is absent")

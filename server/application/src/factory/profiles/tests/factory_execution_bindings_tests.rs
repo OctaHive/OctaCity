@@ -200,6 +200,34 @@ fn installed_command_authoring_exposes_exact_compiler_facts_without_a_saved_flow
   });
 }
 
+#[test]
+fn installed_reasoning_command_is_discoverable_for_manual_authoring() {
+  crate::factory::admission::tests::factory_admission_tests::run_ready(async {
+    let project = ProjectId::generate();
+    let store = Arc::new(InMemoryFactoryConfigurationStore::new());
+    store.seed_project(project).unwrap();
+    let choices = crate::factory::execution::factory_test_support::installed_command_execution_choices(project)
+      .with_choice_metadata(
+        FactoryChoiceKind::NodeCapability,
+        "dependency-1".parse().unwrap(),
+        FactoryChoiceMetadata {
+          node_kinds: vec![FlowNodeKind::Reasoning],
+          ..Default::default()
+        },
+      )
+      .unwrap();
+    store.enable_project(project, choices).unwrap();
+    let handlers = Arc::new(FactoryRoleProfileHandlers::new(store));
+    let queries = AuthorizedQueryHandler::new(Arc::new(TrustedNetworkManagementPolicy), handlers);
+    let result = queries
+      .handle_query(&context(), GetFactoryAuthoringCapabilitiesQuery { project_id: project })
+      .await
+      .unwrap();
+    let body = serde_json::to_value(result).unwrap();
+    assert_eq!(body["commands"][0]["node_kind"], "reasoning");
+  });
+}
+
 struct HiddenCommandChoices;
 #[async_trait::async_trait]
 impl ManagementAuthorizationPolicy for HiddenCommandChoices {

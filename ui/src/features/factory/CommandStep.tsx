@@ -10,7 +10,7 @@ type Command = Schema['FactoryAuthoringCapabilities']['commands'][number];
 
 function commandChoiceLabel({ alias, execution }: Command) {
   const { build_configuration, result_output, tool } = execution;
-  return `${alias} · v${build_configuration.version} · ${result_output} · ${tool.identity}`;
+  return `${alias} · v${build_configuration.version} · ${result_output} · ${tool.identity} ${tool.version}`;
 }
 
 /** Keep commands with identical display names individually selectable. */
@@ -41,16 +41,17 @@ export function commandBuild(command: Command, outcome: string): Schema['Factory
 /** Chooses a declared ordinary compiler; command arguments and task identity remain installation-owned. */
 export function CommandStep({
   node,
-  commands,
+  commands = [],
   onChange,
 }: {
   node: Node;
-  commands: Schema['FactoryAuthoringCapabilities']['commands'];
+  commands?: Schema['FactoryAuthoringCapabilities']['commands'];
   onChange: (patch: Partial<Node>, schemas?: Schema['FactoryFlowDataSchema'][]) => void;
 }) {
   const { t } = usePresentation();
   const [selected, setSelected] = useState('');
   const [outcomeKey, setOutcomeKey] = useState('');
+  if (node.kind === 'reasoning' && !commands.length) return null;
   const command = commands.find((item) => JSON.stringify(item) === selected);
   const definition = command?.output_definition;
   const outcomes = node.outcomes.filter(
@@ -87,11 +88,6 @@ export function CommandStep({
       ) : null}
       {selected && !command ? <p role="alert">{t('factory.staleExecutorChoice')}</p> : null}
       {!outcomes.length ? <p role="alert">{t('factory.executorNeedsOutcome')}</p> : null}
-      {command ? (
-        <p>
-          {command.execution.model_or_tool.identity} · {command.execution.model_or_tool.version}
-        </p>
-      ) : null}
       {node.build ? <p>{t('factory.commandConfigured')}</p> : null}
       <button
         type="button"
@@ -103,11 +99,7 @@ export function CommandStep({
                 build: commandBuild(command, outcome.key),
                 profile_selection: null,
                 outcomes: node.outcomes.map((item) =>
-                  item === outcome &&
-                  definition &&
-                  item.schema.digest !== definition.reference.digest
-                    ? { ...item, schema: definition.reference }
-                    : item,
+                  item === outcome && definition ? { ...item, schema: definition.reference } : item,
                 ),
               },
               definition ? [definition] : undefined,

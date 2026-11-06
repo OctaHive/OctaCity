@@ -13,6 +13,7 @@ from pathlib import Path
 import secrets
 import re
 import subprocess
+import tempfile
 import time
 import uuid
 from urllib.parse import urlencode
@@ -29,7 +30,7 @@ _INSTALLED_ADMISSION = "triage-admission"
 _INSTALLED_ACCESS_DEFAULT = "triage-ceiling"
 
 
-def prepare_guest_image(root: Path, native: Path, *, execute=subprocess.run) -> str:
+def prepare_guest_image(root: Path, native: Path, *, delivery: bool = False, execute=subprocess.run) -> str:
     """Qualify an immutable guest with the public stand CA in its normal trust store.
 
     Only a public certificate enters the build context. Model credentials,
@@ -41,9 +42,19 @@ def prepare_guest_image(root: Path, native: Path, *, execute=subprocess.run) -> 
         max_bytes=65536, modes=frozenset({0o644}))
     recipe = (f"FROM {base}\nCOPY local-ca.pem /etc/pki/ca-trust/source/anchors/octacity-local-ca.pem\n"
               "RUN update-ca-trust\n")
+    name = "triage"
+    if delivery:
+        name = "delivery"
+        node = inputs["images"]["node"]["reference"]
+        recipe = (f"FROM {node} AS node\n" + recipe
+            + "COPY --from=node /usr/local/bin/node /usr/local/bin/node\n"
+            + "COPY --from=node /usr/lib/aarch64-linux-gnu/libstdc++.so.6 /usr/local/lib/libstdc++.so.6\n"
+            + "COPY --from=node /lib/aarch64-linux-gnu/libgcc_s.so.1 /usr/local/lib/libgcc_s.so.1\n"
+            + "RUN /usr/local/bin/node --version\n")
+    repository = f"local.octacity/factory-{name}"
     identity = {"base": base, "ca_sha256": hashlib.sha256(certificate).hexdigest(),
                 "recipe_sha256": hashlib.sha256(recipe.encode()).hexdigest()}
-    work = root / "triage-guest"
+    work = root / f"{name}-guest"
     _publish(work / "inputs.json", identity)
     home = agent.microsandbox_state_root(root) / "microsandbox"
     state.ensure_private_directory(home.parent)
@@ -68,7 +79,7 @@ def prepare_guest_image(root: Path, native: Path, *, execute=subprocess.run) -> 
         retained = state.load_json_object(state.read_regular_file(receipt, "triage guest image",
             max_bytes=4096, modes=frozenset({0o600})), "triage guest image")
         try:
-            if retained["reference"] == "local.octacity/factory-triage@" + inspect(retained["reference"]):
+            if retained["reference"] == repository + "@" + inspect(retained["reference"]):
                 return retained["reference"]
         except subprocess.CalledProcessError:
             # A rebuild can produce another image digest. Recovery must keep the
@@ -77,23 +88,23 @@ def prepare_guest_image(root: Path, native: Path, *, execute=subprocess.run) -> 
                 modes=frozenset({0o600, 0o644}))
             os.close(descriptor)
             run([msb, "image", "load", "--input", str(archive), "--tag", retained["reference"]])
-            if retained["reference"] != "local.octacity/factory-triage@" + inspect(retained["reference"]):
+            if retained["reference"] != repository + "@" + inspect(retained["reference"]):
                 raise ValueError("restored triage guest differs from its retained identity")
             return retained["reference"]
     context = work / "context"
     state.ensure_private_directory(context)
     (context / "Dockerfile").write_text(recipe)
     (context / "local-ca.pem").write_bytes(certificate)
-    tag = "local.octacity/factory-triage:" + hashlib.sha256(json.dumps(identity, sort_keys=True).encode()).hexdigest()
-    run(["docker", "build", "--network", "none", "--platform=linux/arm64", "--tag", tag, str(context)])
+    tag = repository + ":" + hashlib.sha256(json.dumps(identity, sort_keys=True).encode()).hexdigest()
     if archive.is_symlink() or archive.exists() and not archive.is_file():
         raise ValueError("triage guest archive path is invalid")
+    run(["docker", "build", "--network", "none", "--platform=linux/arm64", "--tag", tag, str(context)])
     run(["docker", "image", "save", "--output", str(archive), tag])
     run([msb, "image", "load", "--input", str(archive), "--tag", tag])
-    reference = "local.octacity/factory-triage@" + inspect(tag)
+    reference = repository + "@" + inspect(tag)
     run([msb, "image", "load", "--input", str(archive), "--tag", reference])
-    if reference != "local.octacity/factory-triage@" + inspect(reference):
-        raise ValueError("triage guest import changed image identity")
+    if reference != repository + "@" + inspect(reference):
+        raise ValueError(f"{name} guest import changed image identity")
     _publish(receipt, {"reference": reference})
     return reference
 

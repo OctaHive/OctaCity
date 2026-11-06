@@ -84,15 +84,21 @@ export function FlowPrimitives({
       contracts={capabilities.data.human_gates}
       onChange={onChange}
     />
-  ) : node.kind === 'build_command' ? (
-    <CommandStep node={node} commands={capabilities.data.commands ?? []} onChange={onChange} />
-  ) : node.kind === 'trusted_action' ? (
+  ) : publication ? (
     <PublicationStep
       node={node}
       choices={capabilities.data.candidate_publications ?? []}
       onChange={onChange}
     />
-  ) : null;
+  ) : (
+    <CommandStep
+      node={node}
+      commands={capabilities.data.commands?.filter((command) =>
+        node.kind === 'reasoning' ? command.node_kind : !command.node_kind,
+      )}
+      onChange={onChange}
+    />
+  );
 }
 
 function ConditionEditor({

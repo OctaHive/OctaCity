@@ -105,6 +105,9 @@ pub struct FactoryCommandExecutionContract {
 pub struct FactoryCommandAuthoringContract {
   /// Existing authorized Build configuration alias.
   pub alias: FactoryKey,
+  /// Static command's eligible step kind. An omitted kind denotes an ordinary command.
+  #[serde(skip_serializing_if = "Option::is_none")]
+  pub node_kind: Option<FlowNodeKind>,
   /// Exact compiler facts without an implied logical outcome.
   pub execution: FactoryCommandExecutionContract,
   /// Exact installed primary output schema, when declared.
@@ -291,16 +294,16 @@ fn command_contracts(choices: &FactoryConfigurationChoices) -> Vec<FactoryComman
   choices
     .unambiguous_build_pipeline_contracts()
     .filter_map(|installed| {
-      let declared = entries.references.iter().any(|entry| {
-        entry.kind == FactoryChoiceKind::NodeCapability
-          && entry.reference == installed.tool
-          && choices
-            .choice_metadata(entry.kind, &entry.alias)
-            .is_some_and(|metadata| metadata.node_kinds.contains(&FlowNodeKind::BuildCommand))
-      });
-      if !declared {
-        return None;
-      }
+      let metadata = entries
+        .references
+        .iter()
+        .filter(|entry| entry.kind == FactoryChoiceKind::NodeCapability && entry.reference == installed.tool)
+        .filter_map(|entry| choices.choice_metadata(entry.kind, &entry.alias))
+        .find(|metadata| {
+          metadata.node_kinds.contains(&FlowNodeKind::BuildCommand)
+            || metadata.node_kinds.contains(&FlowNodeKind::Reasoning)
+        })?;
+      let node_kind = (!metadata.node_kinds.contains(&FlowNodeKind::BuildCommand)).then_some(FlowNodeKind::Reasoning);
       let alias = entries
         .build_configurations
         .iter()
@@ -334,6 +337,16 @@ fn command_contracts(choices: &FactoryConfigurationChoices) -> Vec<FactoryComman
             .outputs
             .iter()
             .filter_map(|output| {
+              if node_kind.is_some() && output.output_kind() != EvidenceOutputKind::Report {
+                return None;
+              }
+              if metadata
+                .command_output
+                .as_ref()
+                .is_some_and(|shape| shape.reference() != output.schema())
+              {
+                return None;
+              }
               if !octacity_server_factory::FactoryBuildCommandContract::accepts_primary_output(
                 native.observation_schema.as_ref().map(FlowDataSchema::reference),
                 output.output_kind(),
@@ -343,9 +356,16 @@ fn command_contracts(choices: &FactoryConfigurationChoices) -> Vec<FactoryComman
               }
               Some(FactoryCommandAuthoringContract {
                 alias: alias.clone(),
+                node_kind,
                 execution: execution(native.task_digest, output.kind().clone(), output.output_kind()),
                 output_schema: Some(output.schema().clone()),
-                output_definition: native.observation_schema.clone(),
+                output_definition: native.observation_schema.clone().or_else(|| {
+                  metadata
+                    .command_output
+                    .as_ref()
+                    .filter(|schema| schema.reference() == output.schema())
+                    .cloned()
+                }),
                 result_tool: (output.tool() != &installed.tool).then(|| output.tool().clone()),
                 evidence: native
                   .outputs
@@ -362,6 +382,7 @@ fn command_contracts(choices: &FactoryConfigurationChoices) -> Vec<FactoryComman
       let compiler = installed.legacy_command()?;
       Some(vec![FactoryCommandAuthoringContract {
         alias,
+        node_kind,
         execution: execution(
           compiler.task_digest,
           compiler.result_output.clone(),

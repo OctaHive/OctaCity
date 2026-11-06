@@ -339,7 +339,8 @@ def _stop_halves(
     return disposition
 
 
-def up(arguments: argparse.Namespace, *, before_agent: Callable[[], None] | None = None) -> dict[str, object]:
+def up(arguments: argparse.Namespace, *, before_agent: Callable[[], None] | None = None,
+       expected_configuration: installation_update.ConfigurationIdentity | None = None) -> dict[str, object]:
     """Start the stack and finish optional Project preparation inside startup recovery."""
     if arguments.update_factory_installation and (arguments.factory_profiles is None or arguments.factory_agent_profile is None):
         raise LocalStandError("--update-factory-installation requires --factory-profiles and --factory-agent-profile")
@@ -390,7 +391,7 @@ def up(arguments: argparse.Namespace, *, before_agent: Callable[[], None] | None
                 root, native.path, owner=owner,
                 factory_agent_profile=arguments.factory_agent_profile,
                 **factory_inputs,
-                openssl=arguments.openssl, preflight=preflight,
+                openssl=arguments.openssl, preflight=preflight, expected_configuration=expected_configuration,
                 stop=lambda: _stop_halves(owner, root, arguments.https_port, remove_volumes=False),
             )
         with update:

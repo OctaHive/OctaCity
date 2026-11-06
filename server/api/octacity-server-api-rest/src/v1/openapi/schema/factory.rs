@@ -720,6 +720,7 @@ pub(super) fn insert_factory_schemas(schemas: &mut Map<String, Value>) {
   schemas.insert("FactoryChoiceMetadata".to_owned(), object([
     ("permission_declarations", schema_ref("FactoryPermissions")),
     ("profile_selection", schema_ref("FactoryProfileSelectorMetadata")),
+    ("command_output", schema_ref("FactoryFlowDataSchema")),
     ("node_kinds", bounded_array(schema_ref("FactoryFlowNodeKind"),octacity_server_application::factory_flow_node_kinds().count())),
     ("signal_purposes", bounded_array(json!({"type":"string","enum":octacity_server_application::factory_signal_purposes().collect::<Vec<_>>()}),octacity_server_application::factory_signal_purposes().count())),
     ("enforcement", bounded_array(json!({"type":"string","enum":octacity_server_application::factory_permission_categories().collect::<Vec<_>>()}),octacity_server_application::factory_permission_categories().count())),

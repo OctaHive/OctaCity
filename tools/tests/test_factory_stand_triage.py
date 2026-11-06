@@ -69,6 +69,11 @@ class FactoryStandTriageTests(unittest.TestCase):
             self.assertEqual(setup.prepare_guest_image(root, root / "native", execute=execute), image)
             self.assertFalse(any("build" in command for command in calls),
                 "cache recovery must reimport the retained immutable archive without rebuilding its identity")
+            calls.clear()
+            delivery_image = setup.prepare_guest_image(root, root / "native", delivery=True, execute=execute)
+            self.assertEqual(delivery_image, "local.octacity/factory-delivery@" + digest)
+            self.assertIn("/usr/local/bin/node --version", (root / "delivery-guest/context/Dockerfile").read_text())
+            self.assertEqual(setup.prepare_guest_image(root, root / "native", execute=execute), image)
 
     def test_plain_cli_selects_the_triage_installer_instead_of_automatic_demonstration_runs(self):
         expected = {"project": "selected-project", "configuration": {"id": "triage", "version": 1}, "input": {"enabled": False}}
@@ -78,6 +83,16 @@ class FactoryStandTriageTests(unittest.TestCase):
                 mock.patch.object(stand, "run_triage_stand", return_value=expected, create=True):
             self.assertEqual(stand.main(["--root", temporary]), 0)
         self.assertEqual(json.loads(output.getvalue()), expected)
+
+    def test_delivery_cli_extends_the_retained_project_without_selecting_a_new_stand(self):
+        with tempfile.TemporaryDirectory() as temporary, redirect_stdout(io.StringIO()), \
+                mock.patch.object(stand, "run_triage_stand", return_value={"project": "retained"}) as install:
+            root = Path(temporary)
+            self.assertEqual(stand.main(["--root", str(root), "--delivery-test-pack", str(root / "ticket.json"),
+                "--delivery-write-directory", "tools"]), 0)
+            self.assertEqual(install.call_args.args[0], root)
+            self.assertEqual(install.call_args.kwargs["delivery_test_packs"], [root / "ticket.json"])
+            self.assertEqual(install.call_args.kwargs["delivery_write_directories"], ["tools"])
 
     def test_triage_selection_pins_current_source_access_and_unlabeled_scope_without_reporter_writes(self):
         import factory_triage_setup as setup

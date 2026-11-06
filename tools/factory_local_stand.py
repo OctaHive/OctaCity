@@ -24,6 +24,7 @@ import verify_local_stand_integration as integration
 from factory_integrations import install_repository, read_github_token, ensure_github_connection, installed_github_resource
 from factory_local_runtime import install_runtime_executable
 import factory_triage_setup as triage
+import factory_delivery_setup as delivery
 import factory_stand_flow
 
 
@@ -106,7 +107,11 @@ def _read_seed_configuration(client, project: str, identity: str, version: int =
 
 
 def run_triage_stand(root: Path, source: str | None, revision: str | None, *,
-                     github_repository: str | None = None, github_token_file: Path | None = None) -> dict:
+                     github_repository: str | None = None, github_token_file: Path | None = None,
+                     delivery_test_packs: list[Path] | None = None,
+                     delivery_write_directories: list[str] | None = None,
+                     delivery_target_branch: str | None = None,
+                     delivery_token_file: Path | None = None) -> dict:
     """Install the actual two-stage pipeline, leaving activation to ordinary review.
 
     Local files retain only installation receipts. Server remains the owner of
@@ -116,6 +121,9 @@ def run_triage_stand(root: Path, source: str | None, revision: str | None, *,
     resources_file = root / "evidence/factory-triage-resources.json"
     assets_file = root / "evidence/factory-triage-assets.json"
     receipt_file = root / "evidence/factory-triage.json"
+    if delivery_test_packs and not receipt_file.exists():
+        raise ValueError("install Delivery on an initialized Factory stand using the same --root")
+    delivery_token = read_github_token(delivery_token_file) if delivery_token_file else None
     if (root / "config/server").exists() and not resources_file.exists():
         raise ValueError("this stand has another server installation; use a clean disposable stand root")
     if github_token_file is None and not (root / "evidence/factory-github-connection.json").exists():
@@ -183,6 +191,25 @@ def run_triage_stand(root: Path, source: str | None, revision: str | None, *,
             if upgraded_vcs:
                 arguments.append("--update-factory-installation")
             launcher.up(launcher.parse_arguments(arguments), before_agent=prepare_project)
+        if delivery_test_packs:
+            client = integration.LocalStandClient(root, bootstrap.DEFAULT_ORIGIN)
+            repository_id = _read_json(resources_file)["repository"]
+            packs = [delivery.read_test_pack(path, client=client, project=retained["project"])
+                     for path in delivery_test_packs]
+            publication = None
+            if delivery_token is not None:
+                publication = (repository_id, delivery_target_branch, delivery_token)
+            with tempfile.TemporaryDirectory(prefix=".factory-delivery-", dir=root) as temporary:
+                directory = Path(temporary)
+                expected = installation_update.installed_configuration_identity(root)
+                installed = installation_update.installed_factory_inputs(root, directory)
+                selected = delivery.stage(root, directory, installed, retained["project"], repository_id, namespace, native.path,
+                    client, packs, delivery_write_directories, publication=publication)
+                arguments = ["up", "--root", str(root), "--update-factory-installation"]
+                for name, path in selected.items():
+                    arguments.extend(("--" + name.replace("_", "-"), str(path)))
+                launcher.up(launcher.parse_arguments(arguments), expected_configuration=expected)
+            delivery.publish_roles(client, retained["project"], namespace)
         return retained
     executable = install_runtime_executable(root, native.path)
     if not resources_file.exists() or not assets_file.exists():
@@ -467,8 +494,19 @@ def main(arguments=None) -> int:
     parser.add_argument("--factory-runtime-bundle", type=Path, help="private installed AI Runtime directory")
     parser.add_argument("--factory-agent-profile", type=Path, help="independently approved private Agent policy")
     parser.add_argument("--factory-issue-mcp-readers", type=Path, help="explicit Project-scoped Issue MCP installation")
+    parser.add_argument("--delivery-test-pack", action="append", type=Path, help="private reviewed test pack for one ticket")
+    parser.add_argument("--delivery-write-directory", action="append", help="repository directory writable by Coder")
+    parser.add_argument("--delivery-target-branch", help="explicit base branch for draft pull requests")
+    parser.add_argument("--delivery-token-file", type=Path, help="separate private credential for candidate publication")
     parser.add_argument("--update-factory-installation", action="store_true", help="update an existing installation without resetting stand data")
     args = parser.parse_args(arguments)
+    if bool(args.delivery_target_branch) != bool(args.delivery_token_file):
+        parser.error("--delivery-target-branch and --delivery-token-file must be supplied together")
+    if args.delivery_test_pack:
+        if args.factory_profiles or not args.delivery_write_directory:
+            parser.error("Delivery packs require an existing default stand and --delivery-write-directory")
+    elif args.delivery_write_directory or args.delivery_target_branch:
+        parser.error("Delivery options require --delivery-test-pack")
     if args.github_token_file is not None:
         try:
             read_github_token(args.github_token_file)
@@ -518,6 +556,10 @@ def main(arguments=None) -> int:
             args.github_repository = policy["github_repository"]
         receipt = run_triage_stand(args.root, args.source_repository,
                             args.source_revision, github_repository=args.github_repository,
+                            **({"delivery_test_packs": args.delivery_test_pack,
+                                "delivery_write_directories": args.delivery_write_directory,
+                                "delivery_target_branch": args.delivery_target_branch,
+                                "delivery_token_file": args.delivery_token_file} if args.delivery_test_pack else {}),
                             **({"github_token_file": args.github_token_file} if args.github_token_file is not None else {}))
     except (ValueError, OSError, RuntimeError, subprocess.SubprocessError) as error:
         print(f"Factory stand failed: {error}", file=sys.stderr)

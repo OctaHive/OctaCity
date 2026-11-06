@@ -324,3 +324,18 @@ class FactoryStandRecoveryTests(unittest.TestCase):
         self.profiles.write_text(json.dumps(catalog))
         with self.assertRaisesRegex(stand.state.StateError, "access ceiling.*triage-ceiling"):
             self._update(self.readers)
+
+    def test_additive_update_rejects_an_installation_replaced_after_its_inputs_were_selected(self):
+        expected = updates._snapshot(self.root / "config")
+        self._update(self._readers("newer", "cd"))
+        before = updates._snapshot(self.root / "config")
+        preflight, stop = mock.Mock(), mock.Mock()
+        with lifecycle.LifecycleState(self.root) as owner:
+            with self.assertRaisesRegex(stand.state.StateError, "installation changed before update"):
+                with updates.factory_installation_update(self.root, self.fixture.installation, owner=owner,
+                        factory_profiles=self.profiles, factory_agent_profile=self.policy,
+                        preflight=preflight, stop=stop, expected_configuration=expected):
+                    self.fail("stale inputs must not replace a newer installation")
+        preflight.assert_not_called()
+        stop.assert_not_called()
+        self.assertEqual(updates._snapshot(self.root / "config"), before)

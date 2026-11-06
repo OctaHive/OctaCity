@@ -437,6 +437,7 @@ async fn visible_factory_choices_from<S: octacity_server_store::FactoryConfigura
           entry.alias,
           octacity_server_factory::FactoryChoiceMetadata {
             node_kinds: metadata.node_kinds.clone(),
+            command_output: metadata.command_output.clone(),
             profile_selection: metadata.profile_selection.clone(),
             issue_classification: metadata.issue_classification.clone(),
             // Internal qualification consumes the exact visible ceiling's declarations.

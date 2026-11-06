@@ -655,6 +655,7 @@ fn configuration_choices_apply_reference_visibility_before_filter_count_and_curs
         FactoryChoiceKind::CriterionPack,
         key("criteria"),
         octacity_server_factory::FactoryChoiceMetadata {
+          command_output: None,
           permission_declarations: None,
           issue_classification: None,
           profile_selection: Some(octacity_server_factory::FactoryProfileSelectorMetadata {
