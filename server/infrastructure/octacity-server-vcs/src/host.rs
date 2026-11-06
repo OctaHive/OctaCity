@@ -91,6 +91,7 @@ fn telemetry_operation(command: &VcsCommand) -> Operation {
     VcsCommand::ListReferences(_)
     | VcsCommand::ReadCommit(_)
     | VcsCommand::ListTree(_)
+    | VcsCommand::ReadFiles(_)
     | VcsCommand::ReadFile(_)
     | VcsCommand::ResolveRevision(_) => Operation::Resolve,
     VcsCommand::Cancel(_) => Operation::Cancel,
@@ -104,6 +105,7 @@ fn require_capability(adapter: &InstalledVcsAdapter, command: &VcsCommand) -> Re
     VcsCommand::ReadCommit(_) => capabilities.read_commit,
     VcsCommand::ListTree(_) => capabilities.list_tree,
     VcsCommand::ReadFile(_) => capabilities.read_file,
+    VcsCommand::ReadFiles(_) => capabilities.read_files,
     VcsCommand::ResolveRevision(_) => capabilities.resolve_revision,
     VcsCommand::Cancel(_) => true,
   };
@@ -140,6 +142,7 @@ fn operation_name(command: &VcsCommand) -> &'static str {
     VcsCommand::ReadCommit(_) => "read_commit",
     VcsCommand::ListTree(_) => "list_tree",
     VcsCommand::ReadFile(_) => "read_file",
+    VcsCommand::ReadFiles(_) => "read_files",
     VcsCommand::ResolveRevision(_) => "resolve_revision",
     VcsCommand::Cancel(_) => "cancel",
   }
@@ -151,6 +154,7 @@ fn operation_id(command: &VcsCommand) -> Option<&str> {
     VcsCommand::ReadCommit(value) => Some(&value.repository.operation_id),
     VcsCommand::ListTree(value) => Some(&value.repository.operation_id),
     VcsCommand::ReadFile(value) => Some(&value.repository.operation_id),
+    VcsCommand::ReadFiles(value) => Some(&value.repository.operation_id),
     VcsCommand::ResolveRevision(value) => Some(&value.repository.operation_id),
     VcsCommand::Cancel(_) => None,
   }

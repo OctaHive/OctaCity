@@ -113,23 +113,35 @@ impl crate::runtime::FactoryRuntimeInstaller for FileProfileInstaller {
       self.providers.clone(),
     ));
     let mut catalog = self.catalog.clone();
-    let commands = self
-      .bindings
-      .commands
-      .iter()
-      .chain(self.bindings.authors.iter().map(|profile| profile.command()))
-      .chain(
-        self
-          .bindings
-          .protected_validation
-          .iter()
-          .flat_map(|binding| &binding.profiles),
-      );
-    for profile in commands {
-      crate::runtime::factory::factory_profiles::install_pipeline_contract(
-        &mut catalog.projects,
-        profile.pipeline_contract(),
-      );
+    use octacity_server_factory::{EvidenceOutputKind, FactoryProtectedTestBuildContract};
+    let commands = self.bindings.commands.iter().map(|profile| profile.pipeline_contract());
+    let authors = self.bindings.authors.iter().map(|profile| {
+      let mut contract = profile.command().pipeline_contract();
+      let report = profile
+        .command()
+        .outputs
+        .iter()
+        .find(|output| output.output_kind() == EvidenceOutputKind::Report)
+        .expect("qualified protected test author has one public handoff");
+      contract.protected_tests = Some(FactoryProtectedTestBuildContract::Author {
+        result_output: report.kind().clone(),
+        inventory: profile.inventory().clone(),
+      });
+      contract
+    });
+    let verifiers = self.bindings.protected_validation.iter().flat_map(|binding| {
+      binding.profiles.iter().map(|profile| {
+        let mut contract = profile.pipeline_contract();
+        contract.protected_tests = Some(FactoryProtectedTestBuildContract::Verifier {
+          author_profile: binding.author_profile.clone(),
+          inventory: binding.inventory.clone(),
+          accepts_supplement: binding.accepts_supplement,
+        });
+        contract
+      })
+    });
+    for contract in commands.chain(authors).chain(verifiers) {
+      crate::runtime::factory::factory_profiles::install_pipeline_contract(&mut catalog.projects, contract);
     }
     for binding in &self.bindings.promotions {
       match binding {
@@ -221,10 +233,16 @@ impl crate::runtime::FactoryRuntimeInstaller for FileProfileInstaller {
         .executors
         .push(resources.protected_test_authoring_command_executor(profiles)?);
     }
-    let output_finalizer = if self.bindings.authors.is_empty() {
+    let codex_authors = catalog
+      .codex
+      .iter()
+      .filter(|profile| profile.protected_tests.is_some())
+      .cloned()
+      .collect::<Vec<_>>();
+    let output_finalizer = if self.bindings.authors.is_empty() && codex_authors.is_empty() {
       None
     } else {
-      Some(resources.protected_test_output_finalizer(self.bindings.authors.clone())?)
+      Some(resources.protected_test_output_finalizer(self.bindings.authors.clone(), codex_authors)?)
     };
     for binding in &self.bindings.protected_validation {
       let executor = match &binding.mode {
@@ -234,6 +252,7 @@ impl crate::runtime::FactoryRuntimeInstaller for FileProfileInstaller {
             author_profile: binding.author_profile.clone(),
             policy: binding.policy.clone(),
             inventory: binding.inventory.clone(),
+            accepts_supplement: binding.accepts_supplement,
             capture_tool: capture_tool.clone(),
           },
           binding.report.clone(),
@@ -244,6 +263,7 @@ impl crate::runtime::FactoryRuntimeInstaller for FileProfileInstaller {
           binding.author_profile.clone(),
           binding.policy.clone(),
           binding.inventory.clone(),
+          binding.accepts_supplement,
         )?,
       };
       command_executors.add(&binding.profiles, executor)?;
@@ -401,6 +421,8 @@ struct ValidationCommandInputs {
   author_profile: ImmutableReference,
   policy: FactoryProtectedTestPolicy,
   inventory: EvidenceRequirement,
+  #[serde(default)]
+  accepts_supplement: bool,
   capture_tool: Option<ImmutableReference>,
 }
 struct ValidationCommandBinding {
@@ -409,6 +431,7 @@ struct ValidationCommandBinding {
   policy: FactoryProtectedTestPolicy,
   inventory: EvidenceRequirement,
   report: EvidenceRequirement,
+  accepts_supplement: bool,
   mode: ProtectedValidationMode,
 }
 enum ProtectedValidationMode {
@@ -852,6 +875,8 @@ struct CodexProfile {
   reviewer: Option<octacity_server_application::FactoryCodexReviewerPolicy>,
   #[serde(default)]
   capture: Option<CaptureProfile>,
+  #[serde(default)]
+  protected_tests: Option<octacity_server_application::FactoryProtectedTestAuthoringPolicy>,
   pipeline_node: PipelineNodeId,
   parameters: BTreeMap<String, serde_json::Value>,
   project_permissions: FactoryPermissionSet,
@@ -1078,6 +1103,7 @@ impl FactoryRuntimeProfileCatalog {
           reviewer: profile.reviewer,
           candidate_capture_tool: profile.candidate_capture_tool,
           capture,
+          protected_tests: profile.protected_tests,
           pipeline_node: profile.pipeline_node,
           parameters: profile.parameters,
           project_permissions: profile.project_permissions,
@@ -1341,13 +1367,23 @@ impl FactoryRuntimeProfileCatalog {
         };
         if matches!(mode, ProtectedValidationMode::BaseObservation)
           && profiles.iter().any(|profile| {
-            !authors.iter().any(|author| {
+            let command = authors.iter().any(|author| {
               author.command().identity == entry.inputs.author_profile
                 && author.command().build_configuration.project_id() == profile.build_configuration.project_id()
                 && author.policy() == &entry.inputs.policy
                 && author.inventory() == &entry.inputs.inventory
                 && author.transcript().is_some()
-            })
+            });
+            let model = catalog.codex.iter().any(|author| {
+              author.toolchain.model == entry.inputs.author_profile
+                && author.build_configuration.project_id() == profile.build_configuration.project_id()
+                && author.protected_tests.as_ref().is_some_and(|policy| {
+                  policy.policy() == &entry.inputs.policy
+                    && policy.inventory() == &entry.inputs.inventory
+                    && policy.transcript().is_some()
+                })
+            });
+            !command && !model
           })
         {
           return Err(Invalid);
@@ -1357,6 +1393,7 @@ impl FactoryRuntimeProfileCatalog {
           author_profile: entry.inputs.author_profile,
           policy: entry.inputs.policy,
           inventory: entry.inputs.inventory,
+          accepts_supplement: entry.inputs.accepts_supplement,
           report: entry.report,
           mode,
         })

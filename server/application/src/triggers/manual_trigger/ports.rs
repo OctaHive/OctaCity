@@ -4,8 +4,8 @@ use async_trait::async_trait;
 use octacity_server_domain::{ImmutableRevision, ProjectId};
 use octacity_server_job::JobSpecToolchainPolicy;
 use octacity_server_store::{
-  ConfigurationStore, PipelineStore, ProjectPolicyStore, StoreError, TriggerDefinitionRef, TriggerDefinitionStore,
-  TriggerKind, TriggerTarget,
+  ConfigurationStore, PipelineStore, ProjectPolicyStore, PublishedRepository, StoreError, TriggerDefinitionRef,
+  TriggerDefinitionStore, TriggerKind, TriggerTarget,
 };
 
 use crate::{EffectiveProjectPolicy, ProjectPolicyLayer, resolve_project_policy};
@@ -150,6 +150,20 @@ where
 pub trait RevisionResolver: Send + Sync {
   /// Returns the exact immutable provider-native revision selected for the Build.
   async fn resolve(&self, request: RevisionResolutionRequest) -> Result<ImmutableRevision, RevisionResolutionError>;
+
+  /// Reads exactly the selected complete files under a shared byte limit.
+  async fn read_files(
+    &self,
+    _repository: &PublishedRepository,
+    _revision: &ImmutableRevision,
+    _paths: &[octacity_server_factory::FactoryRepositoryPath],
+    _max_bytes: u32,
+  ) -> Result<
+    std::collections::BTreeMap<octacity_server_factory::FactoryRepositoryPath, Vec<u8>>,
+    RevisionResolutionError,
+  > {
+    Err(RevisionResolutionError::Unavailable)
+  }
 }
 
 /// Resolver for the pre-VCS vertical slice that accepts only an exact immutable

@@ -79,6 +79,7 @@ fn published_issue_outcomes_use_accepted_producer_records_with_owner_references(
     .publish_document(
       &request,
       ProjectDocumentSubmission {
+        purpose: Default::default(),
         project_id,
         name: "Accepted design".parse().unwrap(),
         content: "Store one accepted review per release.".into(),

@@ -52,6 +52,7 @@ const ISSUE_LABELS = {
   invalid_contract: 'factory.invalidContract',
   ambiguous_issue_presentation_slot: 'factory.ambiguousIssueSlot',
   unavailable_reference: 'factory.unavailableReference',
+  verification_retention_unavailable: 'factory.verificationRetentionUnavailable',
   unmapped_legacy_policy: 'factory.unmappedLegacyPolicy',
   launch_policy_denied: 'factory.launchPolicyDenied',
   permission_exceeds_ceiling: 'factory.accessExceedsPolicyLimit',
@@ -94,6 +95,7 @@ export function FactoryPublication({
   const [failure, setFailure] = useState<{ signature: string; error: Error } | null>(null);
   const [proof, setProof] = useState<{ signature: string; preview: Preview } | null>(null);
   const [review, setReview] = useState<{
+    signature: string;
     subject: Subject;
     flow: components['schemas']['FactoryFlowConfiguration'];
     returnFocus: HTMLElement;
@@ -131,6 +133,7 @@ export function FactoryPublication({
     localWrites.every(({ action }) => matchesClassification(action, currentClassification));
   const latestSignatureRef = useRef('');
   const signature = JSON.stringify(subject);
+  const reviewCurrent = review?.signature === signature;
   const error = failure?.signature === signature ? failure.error : null;
   function setError(error: Error | null) {
     setFailure(error ? { signature, error } : null);
@@ -234,10 +237,13 @@ export function FactoryPublication({
               {t(
                 issue.field === '/data_schemas'
                   ? 'factory.commandReportSchemaNeeded'
-                  : issue.field.endsWith('/action/parameters/size_labels') &&
-                      issue.code === 'unavailable_reference'
-                    ? 'factory.classificationSetupNeeded'
-                    : ISSUE_LABELS[issue.code],
+                  : issue.field.endsWith('/protected_verification') &&
+                      issue.code === 'invalid_contract'
+                    ? 'factory.verificationIncompatible'
+                    : issue.field.endsWith('/action/parameters/size_labels') &&
+                        issue.code === 'unavailable_reference'
+                      ? 'factory.classificationSetupNeeded'
+                      : ISSUE_LABELS[issue.code],
                 {
                   name:
                     ('issue_slot' in issue ? issue.issue_slot : undefined) ??
@@ -274,6 +280,7 @@ export function FactoryPublication({
               ? proof.preview.value
               : proof.preview.value.configuration.flow;
           setReview({
+            signature,
             subject: structuredClone(subject),
             flow,
             returnFocus: event.currentTarget,
@@ -301,6 +308,7 @@ export function FactoryPublication({
           ].join('\n')}
           renderReview={
             <>
+              {!reviewCurrent ? <p role="alert">{t('factory.publicationReviewStale')}</p> : null}
               <OutcomeIssuePresentationReview flow={review.flow} />
               {localWrites.length ? (
                 <section aria-label={t('factory.localClassification')}>
@@ -329,7 +337,7 @@ export function FactoryPublication({
           }
           confirmLabel={t('factory.confirmPublish')}
           request={review.subject}
-          ready={ready && (!localWrites.length || classificationReviewed)}
+          ready={ready && reviewCurrent && (!localWrites.length || classificationReviewed)}
           execute={execute}
           queryClient={queryClient}
           invalidations={[

@@ -105,6 +105,7 @@ pub struct FactoryStoredProtectedTestContextSource<R, A, Q, B, P> {
   reader: Arc<FactoryArtifactReader<A, Q, B>>,
   plans: Arc<P>,
   inventory: EvidenceRequirement,
+  accepts_supplement: bool,
   clock: Arc<dyn FactoryExecutionClock>,
 }
 impl<
@@ -128,8 +129,15 @@ impl<
       reader,
       plans,
       inventory,
+      accepts_supplement: false,
       clock,
     }
+  }
+  /// Enables supplemental inputs only for verifier programs installed with that capability.
+  #[must_use]
+  pub fn with_verification_supplement(mut self, supported: bool) -> Self {
+    self.accepts_supplement = supported;
+    self
   }
   /// Recovers the exact selected inventory while its original retention still covers the window.
   /// This read grants no execution authority and never renews an expired authoring attempt.
@@ -201,6 +209,7 @@ impl<
     let plan = self.plans.frozen_plan(intent).await?;
     if plan.subject().exact().map_err(|_| invalid())? != input.exact_resource().map_err(|_| invalid())?
       || required_until > plan.retain_until()
+      || plan.supplement().is_some() && !self.accepts_supplement
     {
       return Err(invalid());
     }

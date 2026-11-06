@@ -6,6 +6,7 @@ import userEvent from '@testing-library/user-event';
 import { useState } from 'react';
 import { afterEach, expect, it, vi } from 'vitest';
 import type { components } from '../../../.generated/api/schema';
+import { factoryProfileConfigurationFixture } from '../../../tests/fixtures/factoryRoles';
 import { configurationFixture } from '../../../tests/fixtures/factory';
 import { ConfigurationEditor } from './ConfigurationEditor';
 import { FlowGraphEditor } from './FlowGraphEditor';
@@ -1273,3 +1274,233 @@ it('renames an explicit accepted code candidate reference together with its prod
     revision: { kind: 'accepted_candidate', node: 'producer', outcome: 'accepted' },
   });
 });
+
+it.each(['files', 'folder', 'repository'])(
+  'freezes selected verification entrypoints and fixtures from %s',
+  async (source) => {
+    const draft = emptyFlowDraft();
+    const sample =
+      factoryProfileConfigurationFixture().configuration.flow.closure.definitions[0]!.nodes[0]!;
+    const build = sample.profile_selection!.candidates.default!.build;
+    draft.root.nodes = [
+      {
+        ...sample,
+        key: 'prepare_checks',
+        profile_selection: null,
+        build: {
+          ...build,
+          result_output: 'reviewed_check_summary',
+          evidence: [
+            {
+              kind: 'frozen_check_files',
+              output_kind: 'artifact',
+              tool: build.tool,
+              plugin: build.plugin,
+              schema: sample.outcomes[0]!.schema,
+            },
+          ],
+        },
+      },
+      { ...sample, key: 'next_step' },
+    ];
+    draft.root.entry = 'prepare_checks';
+    const installed = draft.root.nodes[0]!.build!;
+    const authoring = {
+      projectId: 'project',
+      api: {
+        ...factoryApi,
+        getAuthoringCapabilities: vi.fn(async () => ({
+          commands: [],
+          human_gates: [],
+          build_resource_modes: ['none' as const],
+          source_free_incompatibility: null,
+          deterministic_gate: {
+            policy: build.plugin,
+            parameter_contract: 'declarative_gate_v1' as const,
+            max_parameter_bytes: 65536,
+            resource_modes: ['none' as const],
+          },
+          verification_authors: [
+            {
+              build_configuration: installed.build_configuration,
+              tool: installed.tool,
+              plugin: installed.plugin,
+              model_or_tool: installed.model_or_tool,
+              result_output: installed.result_output,
+              inventory: installed.evidence![0]!,
+            },
+          ],
+        })),
+      },
+    };
+    const artifact = {
+      artifact_id: crypto.randomUUID(),
+      content_digest: 'a'.repeat(64),
+      encoded_size: 128,
+    };
+    const receipt = { artifact, project_id: 'project' };
+    let finishFreeze!: (value: typeof receipt) => void;
+    const pending = new Promise<typeof receipt>((resolve) => {
+      finishFreeze = resolve;
+    });
+    const api = {
+      list: vi.fn().mockResolvedValue({ items: [] }),
+      read: vi.fn(),
+      publish: vi
+        .fn()
+        .mockRejectedValueOnce(new Error('response lost'))
+        .mockReturnValueOnce(pending)
+        .mockResolvedValue(receipt),
+    };
+    const onChange = vi.fn();
+    const onStepEditingChange = vi.fn();
+    const repository = {
+      id: 'checks',
+      version: 1,
+      name: 'Verification suite',
+      project_id: 'project',
+    };
+    const codeResources = {
+      projectId: 'project',
+      repositories: {
+        listRepositories: vi.fn().mockResolvedValue({ items: [repository] }),
+        getRepository: vi.fn(),
+      },
+    };
+    function Harness() {
+      const [value, setValue] = useState(draft);
+      return (
+        <FlowGraphEditor
+          choices={[]}
+          subflows={[]}
+          value={value}
+          onChange={(next) => {
+            onChange(next);
+            setValue(next);
+          }}
+          onStepEditingChange={onStepEditingChange}
+          documents={{ api, projectId: 'project' }}
+          codeResources={codeResources}
+          authoring={authoring}
+        />
+      );
+    }
+    render(
+      <QueryClientProvider client={createConsoleQueryClient()}>
+        <Harness />
+      </QueryClientProvider>,
+    );
+    await userEvent.click(screen.getByRole('button', { name: 'Edit step: prepare_checks' }));
+    const checks = await screen.findByRole('group', { name: 'Additional verification' });
+    const run = within(checks).getByRole('button', { name: 'Freeze verification inputs' });
+    expect((run as HTMLButtonElement).disabled).toBe(true);
+    const prefix = source === 'files' ? '' : 'suite/';
+    const entry = `${prefix}check.sh`;
+    const fixture = source === 'repository' ? `${prefix}Octafile.yml` : `${prefix}fixture.bin`;
+    const revision = '0123456789abcdef';
+    if (source === 'repository') {
+      await userEvent.click(within(checks).getByLabelText('Source of verification files'));
+      await userEvent.click(screen.getByText('Project repository', { exact: true }));
+      await userEvent.click(await within(checks).findByLabelText('Project repository'));
+      await userEvent.click(screen.getByText('Verification suite · v1', { exact: true }));
+      await userEvent.type(within(checks).getByLabelText('Exact revision'), revision);
+      await userEvent.type(
+        within(checks).getByLabelText('Repository paths (one file per line)'),
+        `${entry}\n${fixture}`,
+      );
+    } else {
+      const script = new File(['exit 0\n'], 'check.sh');
+      const data = new File([new Uint8Array([0, 255])], 'fixture.bin');
+      if (source === 'folder') {
+        Object.defineProperty(script, 'webkitRelativePath', { value: entry });
+        Object.defineProperty(data, 'webkitRelativePath', { value: fixture });
+      }
+      await userEvent.upload(
+        within(checks).getByLabelText(
+          source === 'files' ? 'Upload verification files' : 'Upload a verification folder',
+        ),
+        [script, data],
+      );
+    }
+    await userEvent.type(
+      within(checks).getByLabelText('Shell scripts to run (one path per line)'),
+      entry,
+    );
+    if (source === 'repository') {
+      await userEvent.click(within(checks).getByRole('button', { name: 'Add Octafile task' }));
+      await userEvent.click(within(checks).getByLabelText('Octafile path'));
+      await userEvent.click(screen.getByText(fixture, { exact: true }));
+      const task = within(checks).getByLabelText('Task name');
+      await userEvent.type(task, 'Checks:*');
+      expect((run as HTMLButtonElement).disabled).toBe(true);
+      expect(task.getAttribute('aria-invalid')).toBe('true');
+      await userEvent.clear(task);
+      await userEvent.type(task, 'Checks:_Verify');
+    }
+    expect(api.publish).not.toHaveBeenCalled();
+    await userEvent.click(run);
+    await waitFor(() => expect(api.publish).toHaveBeenCalledTimes(1));
+    await waitFor(() => expect((run as HTMLButtonElement).disabled).toBe(false));
+    if (source === 'repository') {
+      await userEvent.click(screen.getByRole('button', { name: 'Flow settings' }));
+      await userEvent.click(screen.getByRole('combobox', { name: 'Run budget · Calculation' }));
+      await userEvent.click(screen.getByRole('option', { name: 'Calculate automatically' }));
+    }
+    await userEvent.click(run);
+    expect(onStepEditingChange).toHaveBeenLastCalledWith(true);
+    const nextStep = screen.getByRole('button', { name: 'Edit step: next_step' });
+    expect(nextStep).toHaveProperty('disabled', true);
+    expect(screen.getByRole('button', { name: 'Add step' })).toHaveProperty('disabled', true);
+    await userEvent.click(nextStep);
+    expect(screen.getByRole('textbox', { name: 'Step name' })).toHaveProperty(
+      'value',
+      'prepare_checks',
+    );
+    if (source === 'repository') {
+      await userEvent.click(screen.getByRole('combobox', { name: 'Run budget · Calculation' }));
+      await userEvent.click(screen.getByRole('option', { name: 'Set manually' }));
+      const tokens = screen.getByRole('spinbutton', { name: 'Run budget · Maximum tokens' });
+      await userEvent.clear(tokens);
+      await userEvent.type(tokens, '123456');
+      expect(tokens).toHaveProperty('value', '123456');
+    }
+    finishFreeze(receipt);
+    await waitFor(() =>
+      expect(onChange.mock.calls.at(-1)?.[0].root.nodes[0].protected_verification).toEqual(
+        artifact,
+      ),
+    );
+    if (source === 'repository') {
+      expect(
+        screen.getByRole('spinbutton', { name: 'Run budget · Maximum tokens' }),
+      ).toHaveProperty('value', '123456');
+    }
+    await waitFor(() => expect(onStepEditingChange).toHaveBeenLastCalledWith(false));
+    expect(api.publish.mock.calls[1]?.[2]).toEqual(api.publish.mock.calls[0]?.[2]);
+    const [project, body] = api.publish.mock.calls[0]!;
+    expect(project).toBe('project');
+    expect(body.purpose).toBe('verification');
+    expect(JSON.parse(body.content)).toEqual({
+      ...(source === 'repository'
+        ? { repository: { id: repository.id, version: 1, revision, paths: [entry, fixture] } }
+        : {
+            files: [
+              { path: entry, content_base64: 'ZXhpdCAwCg==' },
+              { path: fixture, content_base64: 'AP8=' },
+            ],
+          }),
+      entries: [
+        { kind: 'shell', path: entry },
+        ...(source === 'repository'
+          ? [{ kind: 'octafile', path: fixture, task: 'Checks:_Verify' }]
+          : []),
+      ],
+    });
+    await userEvent.click(run);
+    await waitFor(() => expect(api.publish).toHaveBeenCalledTimes(3));
+    expect(api.publish.mock.calls[2]?.[2]).not.toEqual(api.publish.mock.calls[1]?.[2]);
+    await waitFor(() => expect(nextStep).toHaveProperty('disabled', false));
+    await userEvent.click(nextStep);
+    expect(screen.getByRole('textbox', { name: 'Step name' })).toHaveProperty('value', 'next_step');
+  },
+);

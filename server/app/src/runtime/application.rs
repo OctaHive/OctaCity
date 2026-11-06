@@ -187,6 +187,7 @@ pub(super) fn management_application(
     octacity_server_application::FactoryConfigurationHandlers::with_policy(store.clone(), management_policy.clone())
       .with_project_policies(store.clone())
       .with_repositories(store.clone())
+      .with_verification_inputs(store.clone())
       .with_published_flows(store.clone())
       .with_issue_status_actions(workflow_queries.clone())
       .with_issue_properties(store.clone());
@@ -197,13 +198,16 @@ pub(super) fn management_application(
   let log_search = Arc::new(BuildLogSearch::new(store.clone(), log_search_index));
   let operational_metadata = Arc::new(OperationalMetadataQueries::new(operational_metadata));
   let project_commands = authorized_commands(&management_policy, projects.clone());
-  let project_documents = Arc::new(octacity_server_application::ProjectTextIntake::new(
-    store.clone(),
-    object_storage.clone(),
-    revision_resolver.clone(),
-    management_policy.clone(),
-    Arc::new(octacity_server_application::SystemFactoryExecutionClock),
-  ));
+  let project_documents = Arc::new(
+    octacity_server_application::ProjectTextIntake::new(
+      store.clone(),
+      object_storage.clone(),
+      revision_resolver.clone(),
+      management_policy.clone(),
+      Arc::new(octacity_server_application::SystemFactoryExecutionClock),
+    )
+    .with_repositories(store.clone()),
+  );
   let pipeline_commands = authorized_commands(&management_policy, pipelines.clone());
   let configuration_commands = authorized_commands(&management_policy, configurations.clone());
   let pool_commands = authorized_commands(&management_policy, pools.clone());
@@ -237,6 +241,7 @@ pub(super) fn management_application(
   let flow_handlers =
     octacity_server_application::FactoryFlowDefinitionHandlers::new(store.clone(), management_policy.clone())
       .with_repositories(store.clone())
+      .with_verification_inputs(store.clone())
       .with_issue_status_actions(workflow_queries.clone())
       .with_issue_properties(store.clone());
   let flow_handlers = Arc::new(match &source_queries {
@@ -253,7 +258,8 @@ pub(super) fn management_application(
         revision_resolver.clone(),
         management_policy.clone(),
       )
-      .with_repositories(store.clone()),
+      .with_repositories(store.clone())
+      .with_verification_inputs(store.clone()),
     ),
   );
   let factory_discovery = authorized_queries(
@@ -342,6 +348,7 @@ pub(super) fn management_application(
   .with_project_policies(store.clone())
   .with_repositories(configuration_queries.clone())
   .with_artifacts(retained_artifacts.clone())
+  .with_verification_inputs(store.clone())
   .with_placement(octacity_server_application::FactoryReadinessPlacement::new(
     execution_context,
     agent_queries.clone(),

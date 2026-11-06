@@ -655,6 +655,7 @@ pub(crate) fn validate_flow_choices(
       }
     }
   }
+  crate::factory::validation::factory_verification_supplement::validate_verification_capabilities(flow, choices)?;
   // Extension parameters are bounded data owned by the exact plugin/policy contract.
   // They never acquire authority from their JSON field names. Typed Build bindings,
   // capabilities and permission ceilings above carry the graph's selectable authority.

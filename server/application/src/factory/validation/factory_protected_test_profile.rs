@@ -89,6 +89,10 @@ impl FactoryProtectedTestAuthoringPolicy {
   pub fn files(&self) -> &[FactoryProtectedTestFileOutput] {
     &self.files
   }
+  /// Exact optional raw transcript publication selected by this policy.
+  pub const fn transcript(&self) -> Option<&FactoryKey> {
+    self.transcript.as_ref()
+  }
 }
 
 /// Exact command and canonical author policy; installation qualification remains separate.

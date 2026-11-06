@@ -348,6 +348,7 @@ mod process {
       read_commit: true,
       list_tree: true,
       read_file: true,
+      read_files: true,
       resolve_revision: true,
     }
   }
@@ -367,13 +368,14 @@ mod process {
     fs::write(
       directory.join("adapter.toml"),
       format!(
-        "manifest_version = 1\nadapter_id = \"fixture\"\nexecutable = \"adapter\"\nexecutable_sha256 = \"{digest}\"\n\n[protocol]\nmin = {}\nmax = {}\n\n[capabilities]\nlist_references = {}\nread_commit = {}\nlist_tree = {}\nread_file = {}\nresolve_revision = {}\n",
+        "manifest_version = 1\nadapter_id = \"fixture\"\nexecutable = \"adapter\"\nexecutable_sha256 = \"{digest}\"\n\n[protocol]\nmin = {}\nmax = {}\n\n[capabilities]\nlist_references = {}\nread_commit = {}\nlist_tree = {}\nread_file = {}\nread_files = {}\nresolve_revision = {}\n",
         ProtocolRange { min: 1, max: 1 }.min,
         ProtocolRange { min: 1, max: 1 }.max,
         capabilities.list_references,
         capabilities.read_commit,
         capabilities.list_tree,
         capabilities.read_file,
+        capabilities.read_files,
         capabilities.resolve_revision,
       ),
     )

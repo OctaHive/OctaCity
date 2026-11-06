@@ -364,8 +364,31 @@ impl FactoryProjectInputReader {
       .ok_or_else(ApplicationError::capability_unavailable)?;
     read_project_input_object(self.bytes.as_ref(), &request, input).await
   }
+  pub(crate) async fn read_verification(
+    &self,
+    request: ReadFactoryArtifact,
+  ) -> Result<FactoryRetainedInput, ApplicationError> {
+    let input = self
+      .store
+      .project_input_artifact(request.project_id, request.artifact.artifact_id())
+      .await?
+      .filter(|input| input.mapping.as_str() == octacity_server_store::PROJECT_PROTECTED_VERIFICATION_MAPPING)
+      .ok_or_else(ApplicationError::capability_unavailable)?;
+    read_project_object(self.bytes.as_ref(), &request, input).await
+  }
 }
 pub(crate) async fn read_project_input_object(
+  bytes: &(impl ArtifactByteReader + ?Sized),
+  request: &ReadFactoryArtifact,
+  input: octacity_server_store::PublishedProjectInput,
+) -> Result<FactoryRetainedInput, ApplicationError> {
+  if input.mapping.as_str() == octacity_server_store::PROJECT_PROTECTED_VERIFICATION_MAPPING {
+    return Err(ApplicationError::invalid());
+  }
+  read_project_object(bytes, request, input).await
+}
+
+async fn read_project_object(
   bytes: &(impl ArtifactByteReader + ?Sized),
   request: &ReadFactoryArtifact,
   input: octacity_server_store::PublishedProjectInput,

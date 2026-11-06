@@ -162,6 +162,8 @@ pub struct FactoryCodexBuildProfile {
   pub reviewer: Option<FactoryCodexReviewerPolicy>,
   /// Independent trusted producer capture policy; absent on readonly profiles.
   pub capture: Option<FactoryCodexCapturePolicy>,
+  /// Private deliverables of a read-only protected-test author.
+  pub protected_tests: Option<crate::FactoryProtectedTestAuthoringPolicy>,
   /// Explicit qualified single-job Pipeline node; any valid identifier is accepted.
   pub pipeline_node: PipelineNodeId,
   /// Bounded ordinary Build parameters selected by the installation.
@@ -175,7 +177,20 @@ pub struct FactoryCodexBuildProfile {
 impl FactoryCodexBuildProfile {
   /// Installation metadata shared with readiness and the materializer's shape check.
   pub fn pipeline_contract(&self) -> octacity_server_factory::FactoryBuildPipelineContract {
+    let result_output: octacity_server_factory::FactoryKey = if self.protected_tests.is_some() {
+      super::factory_codex::PROTECTED_TEST_HANDOFF
+    } else {
+      crate::factory::codex::factory_codex_contract::CODEX_RUN_RESULT
+    }
+    .parse()
+    .expect("native output key");
     octacity_server_factory::FactoryBuildPipelineContract {
+      protected_tests: self.protected_tests.as_ref().map(|policy| {
+        octacity_server_factory::FactoryProtectedTestBuildContract::Author {
+          result_output: result_output.clone(),
+          inventory: policy.inventory().clone(),
+        }
+      }),
       command: None,
       build_configuration: self.build_configuration.clone(),
       tool: self.toolchain.executable.clone(),
@@ -186,11 +201,17 @@ impl FactoryCodexBuildProfile {
         task_digest: self.task_digest(),
         role_profiles: true,
         requires_task_context: true,
-        result_output: crate::factory::codex::factory_codex_contract::CODEX_RUN_RESULT
-          .parse()
-          .expect("native output key"),
+        result_output: result_output.clone(),
         result_output_kind: octacity_server_factory::EvidenceOutputKind::Report,
-        mcp_result_tool: Some(crate::factory_mcp_evidence_verifier()),
+        mcp_result_tool: self
+          .protected_tests
+          .is_none()
+          .then(crate::factory_mcp_evidence_verifier),
+        evidence: self
+          .protected_tests
+          .iter()
+          .map(|policy| policy.inventory().clone())
+          .collect(),
       }),
     }
   }
@@ -207,10 +228,13 @@ impl FactoryCodexBuildProfile {
       .capture
       .as_ref()
       .map_or(selected, |capture| capture.task_digest(selected));
-    self
+    let selected = self
       .reviewer
       .as_ref()
-      .map_or(selected, |reviewer| reviewer.task_digest(selected))
+      .map_or(selected, |reviewer| reviewer.task_digest(selected));
+    self.protected_tests.as_ref().map_or(selected, |policy| {
+      crate::codex_protected_test_task_digest(selected, policy)
+    })
   }
   /// Installed model task before the separately pinned provider allocation.
   pub fn base_task_digest(&self) -> octacity_server_factory::FactoryDigest {
@@ -370,6 +394,24 @@ impl FactoryCodexBuildProfile {
     }
     let mut expected_outputs =
       std::collections::BTreeSet::from([CODEX_RUN_TRACE, CODEX_RUN_PROVENANCE, CODEX_RUN_RESULT]);
+    if let Some(policy) = &self.protected_tests {
+      if self.consumer != FactoryCredentialConsumer::ReadOnlyReview
+        || self.reviewer.is_some()
+        || self.capture.is_some()
+        || self.tool_risk.is_some()
+        || self.tool_response_limits.is_some()
+        || !self.mcp_configurations.is_empty()
+        || !super::factory_codex::valid_protected_test_policy(policy)
+        || policy.inventory().tool() != &self.toolchain.executable
+        || policy.inventory().plugin() != &self.toolchain.plugin
+        || !permissions
+          .mounts()
+          .any(|mount| mount.root().as_str() == octacity_protocol::FACTORY_SOURCE_ROOT)
+      {
+        return Err(CodexCompilationError::MissingAuthority);
+      }
+      expected_outputs.extend(super::factory_codex::protected_test_outputs(policy));
+    }
     if let Some(capture) = &self.capture {
       expected_outputs.extend([
         octacity_protocol::CHANGE_SET_BUNDLE_OUTPUT,
@@ -708,6 +750,7 @@ impl<
         tool_response_limits: profile.tool_response_limits,
         capture: profile.capture.as_ref(),
         reviewer: review,
+        protected_tests: profile.protected_tests.as_ref(),
       },
     )
     .map_err(|_| Invalid)?;

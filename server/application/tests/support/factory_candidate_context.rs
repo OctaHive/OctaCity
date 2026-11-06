@@ -236,6 +236,18 @@ pub(crate) fn candidate_context_fixture_with_definition(
   candidate_context_fixture_with_preparation(profile, consumer, configure, vec![], None, async |_, _, _, _| time(32))
 }
 
+// Build the large runner future outside the fixture's polling frame.
+fn run_candidate_fixture_step<E: FactoryNodeExecutor>(
+  runner: &FactoryNodeRunner<octacity_server_store::testing::InMemoryFactoryConfigurationStore, E>,
+  run: FactoryRunId,
+  claim: FactoryDigest,
+  target: FactoryNodeTarget,
+  input: Option<FlowNodeInput>,
+  at: octacity_server_domain::Timestamp,
+) -> impl std::future::Future<Output = Result<FactoryNodeStep, ApplicationError>> + '_ {
+  Box::pin(runner.run_once(run, claim, target, input, at))
+}
+
 /// Runs explicit caller-owned metadata steps before preparing the retained consumer.
 /// The existing producer and Artifact lifecycle are shared with the unchanged wrapper.
 pub(crate) async fn candidate_context_fixture_with_preparation(
@@ -369,10 +381,16 @@ pub(crate) async fn candidate_context_fixture_with_preparation(
     Arc::new(PreparationOnly),
     crate::factory_node_test_support::clock(),
   );
-  owner
-    .run_once(run.id(), claim.id, producer_target.clone(), Some(input), time(10))
-    .await
-    .unwrap();
+  run_candidate_fixture_step(
+    &owner,
+    run.id(),
+    claim.id,
+    producer_target.clone(),
+    Some(input),
+    time(10),
+  )
+  .await
+  .unwrap();
   let snapshot = runs.factory_run_snapshot(run.id()).await.unwrap();
   let intent = snapshot.flow.data.build_intents[0].clone();
   let builds = Arc::new(Builds::new());
@@ -410,8 +428,7 @@ pub(crate) async fn candidate_context_fixture_with_preparation(
     crate::factory_node_test_support::clock(),
   );
   assert_eq!(
-    observer
-      .run_once(run.id(), claim.id, producer_target.clone(), None, time(31))
+    run_candidate_fixture_step(&observer, run.id(), claim.id, producer_target.clone(), None, time(31))
       .await
       .unwrap(),
     FactoryNodeStep::Waiting
@@ -426,8 +443,7 @@ pub(crate) async fn candidate_context_fixture_with_preparation(
     dispatched.flow.data.build_executions[0].attempt_id(),
     builds.acceptance.attempt_id
   );
-  let step = observer
-    .run_once(run.id(), claim.id, producer_target, None, time(31))
+  let step = run_candidate_fixture_step(&observer, run.id(), claim.id, producer_target, None, time(31))
     .await
     .unwrap();
   assert_eq!(builds.requests.lock().unwrap().len(), 1);
@@ -523,8 +539,7 @@ pub(crate) async fn candidate_context_fixture_with_preparation(
     vec![],
   )
   .unwrap();
-  owner
-    .run_once(run.id(), claim.id, consumer_target, Some(selected), consumer_at)
+  run_candidate_fixture_step(&owner, run.id(), claim.id, consumer_target, Some(selected), consumer_at)
     .await
     .unwrap();
   let snapshot = runs.factory_run_snapshot(run.id()).await.unwrap();

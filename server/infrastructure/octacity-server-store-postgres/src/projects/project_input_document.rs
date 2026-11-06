@@ -44,10 +44,12 @@ impl ProjectDocumentInputStore for PostgresStore {
       "SELECT p.document FROM project_text_preparations p \
        JOIN project_text_input_objects o ON o.preparation_id=p.id \
        WHERE p.project_id=$1 AND o.artifact_id=$2 AND o.role='document' \
+         AND p.document->'intent'->>'mapping' = $3 \
          AND p.document->>'published_at' IS NOT NULL",
     )
     .bind(project.as_uuid())
     .bind(artifact.as_uuid())
+    .bind(PROJECT_CONTEXT_DOCUMENT_MAPPING)
     .fetch_optional(self.pool())
     .await
     .map_err(unavailable)?;
@@ -62,8 +64,8 @@ impl ProjectDocumentInputStore for PostgresStore {
       ReadVisibilityView::None => (false, vec![]),
       ReadVisibilityView::Restricted(ids) => (false, ids.iter().map(|id| id.as_uuid()).collect()),
     };
-    let rows: Vec<Json<Value>> = sqlx::query_scalar("SELECT p.document FROM project_text_preparations p JOIN project_text_input_objects o ON o.preparation_id=p.id WHERE p.project_id=$1 AND o.role='document' AND p.document->>'published_at' IS NOT NULL AND (p.document->>'expires_at')::bigint>$2 AND o.deleted_at_millis IS NULL AND ($3::uuid IS NULL OR o.artifact_id>$3) AND ($4 OR o.artifact_id=ANY($5::uuid[])) ORDER BY o.artifact_id LIMIT $6")
-      .bind(request.project_id.as_uuid()).bind(request.observed_at.unix_millis()).bind(request.after.map(|id| id.as_uuid())).bind(all).bind(visible).bind(crate::discovery::requested_row_limit(request.limit)).fetch_all(self.pool()).await.map_err(unavailable)?;
+    let rows: Vec<Json<Value>> = sqlx::query_scalar("SELECT p.document FROM project_text_preparations p JOIN project_text_input_objects o ON o.preparation_id=p.id WHERE p.project_id=$1 AND o.role='document' AND p.document->'intent'->>'mapping'=$7 AND p.document->>'published_at' IS NOT NULL AND (p.document->>'expires_at')::bigint>$2 AND o.deleted_at_millis IS NULL AND ($3::uuid IS NULL OR o.artifact_id>$3) AND ($4 OR o.artifact_id=ANY($5::uuid[])) ORDER BY o.artifact_id LIMIT $6")
+      .bind(request.project_id.as_uuid()).bind(request.observed_at.unix_millis()).bind(request.after.map(|id| id.as_uuid())).bind(all).bind(visible).bind(crate::discovery::requested_row_limit(request.limit)).bind(PROJECT_CONTEXT_DOCUMENT_MAPPING).fetch_all(self.pool()).await.map_err(unavailable)?;
     let (items, next_cursor) = crate::discovery::decode_page(
       rows,
       request.limit,
@@ -111,8 +113,7 @@ impl ProjectDocumentInputStore for PostgresStore {
     request: ManagementMutation<ReserveProjectDocument>,
   ) -> Result<ProjectDocumentPreparation, StoreError> {
     let (request, audit) = request.into_parts();
-    let proposed =
-      ProjectDocumentPreparation::reserve(&request.submission, audit.security_scope().clone(), request.now)?;
+    let proposed = request.preparation(audit.security_scope().clone())?;
     let mut tx = self.pool().begin().await.map_err(unavailable)?;
     sqlx::query("SELECT pg_advisory_xact_lock($1)")
       .bind(i64::from_be_bytes(
@@ -129,7 +130,7 @@ impl ProjectDocumentInputStore for PostgresStore {
         .map_err(unavailable)?;
     if let Some(previous) = previous {
       let original = decode(previous)?;
-      if !original.matches_submission(&request.submission) {
+      if !request.matches(&original) {
         return Err(conflict());
       }
       if original.published_at.is_some() {

@@ -174,6 +174,10 @@ pub(super) fn insert(schemas: &mut Map<String, Value>) {
         ("key", key()),
         ("kind", schema_ref("FactoryFlowNodeKind")),
         ("task", nullable(schema_ref("FactoryInstructions"))),
+        (
+          "protected_verification",
+          nullable(schema_ref("FactoryArtifactReference")),
+        ),
         ("code", nullable(schema_ref("FactoryFlowCodeBinding"))),
         (
           "input_schema",

@@ -113,7 +113,11 @@ PACKAGE_ALLOWED_EXTERNAL_DEPENDENCIES = {
     # Raster previews use a bounded in-memory decoder to validate and normalize
     # PNG/JPEG/WebP; no image/library types cross application contracts and this
     # grants no filesystem, network, provider or execution authority.
-    "octacity-server-application": frozenset({"base64", "image", "serde_path_to_error", "url", "zeroize"}),
+    # The private verification publisher parses bounded Octafile bytes in memory
+    # to reject references outside the frozen file selection.
+    "octacity-server-application": frozenset({
+        "base64", "image", "serde_path_to_error", "serde_yaml_ng", "url", "zeroize",
+    }),
     # Cache namespace syntax follows Octa's public protocol while HMAC protects
     # the server-private credential derivation boundary.
     "octacity-server-cache": frozenset({"blake3", "hmac", "octa-cache-protocol", "zstd"}),

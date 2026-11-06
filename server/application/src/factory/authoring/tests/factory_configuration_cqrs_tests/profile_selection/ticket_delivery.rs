@@ -39,6 +39,7 @@ fn ticket_delivery_roles_run_separate_invocations_with_only_their_declared_input
         .publish_document(
           &context(),
           ProjectDocumentSubmission {
+            purpose: Default::default(),
             project_id: project,
             name: alias.parse().unwrap(),
             content: content.into(),

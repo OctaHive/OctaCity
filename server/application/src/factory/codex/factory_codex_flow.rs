@@ -8,6 +8,64 @@ use octacity_server_factory::{
   AdmittedFlow, EvidenceOutputKind, FactoryContextReference, FactoryText, FlowBuildIntent,
 };
 
+pub(crate) const PROTECTED_TEST_HANDOFF: &str = "protected_handoff";
+const PROTECTED_TEST_DIRECTORY: &str = "output/protected-tests";
+// The installed Codex plugin limits the number of declared files per task.
+const MAX_CODEX_DELIVERABLES: usize = 64;
+
+/// Pins the private file selection and retention policy into a Codex task.
+pub fn codex_protected_test_task_digest(
+  base: FactoryDigest,
+  policy: &crate::FactoryProtectedTestAuthoringPolicy,
+) -> FactoryDigest {
+  let digest = policy.digest().expect("typed protected-test policy serializes");
+  FactoryDigest::sha256(
+    "octacity.factory.codex.protected-test-task.v1",
+    &[&base.as_bytes(), &digest.as_bytes()],
+  )
+}
+
+pub(crate) fn protected_test_model_schema() -> octacity_server_factory::FlowDataSchema {
+  use octacity_server_factory::{FlowDataSchema, FlowFieldSchema, FlowValueSchema};
+  FlowDataSchema::new(
+    "factory.codex.protected-tests.prepared"
+      .parse()
+      .expect("constant schema identity"),
+    "v1".parse().expect("constant schema version"),
+    FlowValueSchema::Object {
+      fields: BTreeMap::from([(
+        "prepared".parse().expect("constant schema field"),
+        FlowFieldSchema::required(FlowValueSchema::Enum {
+          values: vec![json!(true)],
+        }),
+      )]),
+    },
+  )
+  .expect("constant schema")
+}
+
+pub(crate) fn protected_test_outputs(
+  policy: &crate::FactoryProtectedTestAuthoringPolicy,
+) -> impl Iterator<Item = &str> {
+  [PROTECTED_TEST_HANDOFF, policy.inventory().kind().as_str()]
+    .into_iter()
+    .chain(policy.files().iter().map(|file| file.output.as_str()))
+}
+
+pub(crate) fn valid_protected_test_policy(policy: &crate::FactoryProtectedTestAuthoringPolicy) -> bool {
+  let outputs = protected_test_outputs(policy).collect::<BTreeSet<_>>();
+  policy.files().len() <= MAX_CODEX_DELIVERABLES
+    && outputs.len() == policy.files().len() + 2
+    && [CODEX_RUN_PROVENANCE, CODEX_RUN_RESULT, CODEX_RUN_TRACE]
+      .iter()
+      .all(|name| !outputs.contains(name))
+    && policy
+      .files()
+      .iter()
+      .all(|file| portable_codex_path(file.path.as_str()))
+    && policy.transcript().is_none_or(|name| name.as_str() == CODEX_RUN_TRACE)
+}
+
 /// Freezes installed instructions, credential purpose and explicit cost basis.
 /// Model/tool/configuration identities are independently pinned by the common
 /// profile. Unused credential purposes do not couple unrelated installations.
@@ -126,6 +184,8 @@ pub struct FactoryCodexFlowCompilationOptions<'a> {
   pub capture: Option<&'a crate::FactoryCodexCapturePolicy>,
   /// Qualified independent review; absent for arbitrary readonly observations.
   pub reviewer: Option<FactoryCodexReviewCompilation<'a>>,
+  /// Installed, finite selection of protected test outputs from this invocation.
+  pub protected_tests: Option<&'a crate::FactoryProtectedTestAuthoringPolicy>,
 }
 
 /// Compiles an installed task with explicit context and tool-risk allocation.
@@ -179,6 +239,7 @@ pub fn compile_codex_flow_task_with_options(
       reviewer: options.reviewer,
       role: options.role,
       mcp_configurations: options.mcp_configurations,
+      protected_tests: options.protected_tests,
     },
   )
 }
@@ -265,6 +326,7 @@ struct RenderedCompilationOptions<'a> {
   capture: Option<&'a crate::FactoryCodexCapturePolicy>,
   candidate_capture_tool: Option<&'a octacity_server_factory::ImmutableReference>,
   reviewer: Option<FactoryCodexReviewCompilation<'a>>,
+  protected_tests: Option<&'a crate::FactoryProtectedTestAuthoringPolicy>,
 }
 
 fn compile_flow_task(
@@ -302,6 +364,9 @@ fn compile_flow_task(
   let selected_digest = options
     .reviewer
     .map_or(selected_digest, |review| review.policy.task_digest(selected_digest));
+  let selected_digest = options.protected_tests.map_or(selected_digest, |policy| {
+    codex_protected_test_task_digest(selected_digest, policy)
+  });
   if intent.selected_profile().is_some() && options.role.is_none() {
     return Err(CodexCompilationError::NodeBindings);
   }
@@ -442,6 +507,36 @@ fn compile_flow_task(
   let mut required = BTreeSet::from([CODEX_RUN_TRACE, CODEX_RUN_PROVENANCE, CODEX_RUN_RESULT]);
   let mut artifact_count = 2;
   let mut report_count = 1;
+  let mut private_paths = Vec::new();
+  if let Some(policy) = options.protected_tests {
+    let definition = admitted
+      .closure()
+      .definition(intent.input().definition())
+      .ok_or(CodexCompilationError::NodeBindings)?;
+    let binding = profile
+      .binding(definition)
+      .map_err(|_| CodexCompilationError::NodeBindings)?;
+    if consumer != FactoryCredentialConsumer::ReadOnlyReview
+      || options.reviewer.is_some()
+      || has_tools
+      || source_count != 1
+      || !valid_protected_test_policy(policy)
+      || policy.inventory().tool() != profile.result_tool()
+      || policy.inventory().plugin() != &profile.plugin
+      || binding.evidence.as_slice() != [policy.inventory().clone()]
+    {
+      return Err(CodexCompilationError::MissingAuthority);
+    }
+    required.extend(protected_test_outputs(policy));
+    artifact_count += 1 + u32::try_from(policy.files().len()).map_err(|_| CodexCompilationError::MissingAuthority)?;
+    report_count += 1;
+    private_paths.extend(
+      policy
+        .files()
+        .iter()
+        .map(|file| format!("{PROTECTED_TEST_DIRECTORY}/{}", file.path.as_str())),
+    );
+  }
   if writable {
     // These outputs are produced by trusted Agent capture. They never become
     // model-owned CodeX deliverables, even when permission to retain them exists.
@@ -459,7 +554,12 @@ fn compile_flow_task(
       report_count += 1;
     }
   }
-  if profile.result_output.as_str() != CODEX_RUN_RESULT
+  let expected_result = if options.protected_tests.is_some() {
+    PROTECTED_TEST_HANDOFF
+  } else {
+    CODEX_RUN_RESULT
+  };
+  if profile.result_output.as_str() != expected_result
     || profile.result_output_kind != EvidenceOutputKind::Report
     || allowed != required
     || outputs.max_artifact_count() < artifact_count
@@ -478,7 +578,9 @@ fn compile_flow_task(
     .outcome(intent.result_outcome())
     .and_then(|outcome| admitted.data_schema(outcome.schema()))
     .ok_or(CodexCompilationError::NodeBindings)?;
-  let result_schema = if intent.profile().result_tool() == &crate::factory_mcp_evidence_verifier() {
+  let result_schema = if options.protected_tests.is_some() {
+    crate::factory::codex::factory_codex_schema::flow_result_schema(protected_test_model_schema().shape())?
+  } else if intent.profile().result_tool() == &crate::factory_mcp_evidence_verifier() {
     if options.reviewer.is_some()
       || options.role.is_none_or(|role| {
         role
@@ -532,7 +634,7 @@ fn compile_flow_task(
     );
   }
   let task_envelope = serde_json::to_vec(&task_envelope).map_err(|_| CodexCompilationError::Serialization)?;
-  let prompt = render_role_prompt(
+  let mut prompt = render_role_prompt(
     intent,
     instructions,
     options.context,
@@ -545,6 +647,18 @@ fn compile_flow_task(
       }
     }),
   )?;
+  if !private_paths.is_empty() {
+    prompt.push_str(
+      "\n\nWrite the protected checks only to the following paths. Return only the prepared acknowledgement.\n",
+    );
+    for path in &private_paths {
+      prompt.push_str(path);
+      prompt.push('\n');
+    }
+    if prompt.len() > MAX_CODEX_PROMPT_BYTES {
+      return Err(CodexCompilationError::InvalidPrompt);
+    }
+  }
   let mut public_environment = public_environment();
   let protected_tools = consumer == FactoryCredentialConsumer::ToolReasoning;
   if options.role.is_some_and(|role| {
@@ -655,7 +769,21 @@ fn compile_flow_task(
               secret: &secret_environment,
             },
             source_revision: revision.map(|revision| revision.as_str()),
-            deliverables: vec![],
+            deliverables: options
+              .protected_tests
+              .into_iter()
+              .flat_map(|policy| {
+                policy
+                  .files()
+                  .iter()
+                  .zip(&private_paths)
+                  .map(|(file, path)| CodexDeliverable {
+                    kind: "artifact",
+                    name: file.output.as_str(),
+                    path,
+                  })
+              })
+              .collect(),
             tool_authorization: has_tools.then_some(ToolAuthorization::Required),
           },
         }],

@@ -155,6 +155,7 @@ pub(super) fn profile(
   })
   .unwrap();
   FactoryCodexBuildProfile {
+    protected_tests: None,
     authentication: Default::default(),
     mcp_configurations: vec![],
     toolchain: FactoryTaskToolchain {

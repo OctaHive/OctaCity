@@ -10,7 +10,8 @@ use octacity_server_store::{
   FactoryAdmissionMutationOutcome, FactoryInputRole, ProjectTextInputStore, ReserveProjectText,
 };
 pub use octacity_server_store::{
-  ProjectDocumentResource, ProjectDocumentSubmission, ProjectTextDocuments, ProjectTextIntent, ProjectTextSubmission,
+  ProjectDocumentPurpose, ProjectDocumentResource, ProjectDocumentSubmission, ProjectTextDocuments, ProjectTextIntent,
+  ProjectTextSubmission,
 };
 use std::sync::Arc;
 /// Shared recoverable publication; no Issue, installed Source or Build prerequisite.
@@ -119,15 +120,21 @@ impl<S: ProjectTextInputStore + 'static, B: ArtifactBytePublisher + ArtifactByte
       selected.repository.as_ref().ok_or_else(ApplicationError::invalid)?,
     )
     .map_err(|_| ApplicationError::InvalidInput)?;
+    let now = self.clock.now()?;
+    crate::factory::validation::factory_verification_supplement::validate_verification_selections(
+      selected.configuration.configuration.flow(),
+      submission.intent.target.project_id,
+      Some(self.store.as_ref()),
+      now,
+      None,
+    )
+    .await?;
     let documents = submission.documents.clone();
     let record = self
       .store
       .reserve_project_text(crate::management_security::audited_mutation(
         context,
-        ReserveProjectText {
-          submission,
-          now: self.clock.now()?,
-        },
+        ReserveProjectText { submission, now },
       )?)
       .await?;
     let guard = record.guard(self.clock.now()?);

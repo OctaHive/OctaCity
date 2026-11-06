@@ -3,6 +3,7 @@ import { StepResults, type ResultDraft } from './StepResults';
 import { FACTORY_AUTHORING_SCHEMAS } from '../../../.generated/api/factory-authoring';
 import { FlowCodeSources, type CodeResourceServices } from './FlowCodeSources';
 import { StepTask } from './StepTask';
+import { StepVerification } from './StepVerification';
 import { StepCode } from './StepCode';
 import { emptyFactoryPermissions } from './emptyFlowDraft';
 import { factoryFieldId } from './fieldFocus';
@@ -34,6 +35,7 @@ import { FlowProcess } from './FlowProcess';
 import { classificationAction } from './issueClassification';
 
 type Draft = components['schemas']['FactoryFlowDefinitionDraft'];
+type NodePatch = Partial<components['schemas']['FactoryFlowNodeDefinition']>;
 interface Props {
   onStepEditingChange?: ((editing: boolean) => void) | undefined;
   codeResources?: CodeResourceServices | undefined;
@@ -116,9 +118,12 @@ export function FlowGraphEditor({
   };
   const [stepDrafts, setStepDrafts] = useState<Record<string, PrimitiveDraft>>({});
   const [inputPending, setInputPending] = useState(false);
+  const [verificationPending, setVerificationPending] = useState(false);
   const [resultDrafts, setResultDrafts] = useState<Record<string, ResultDraft>>({});
   const isEditing =
-    inputPending || nodeKeys.some((key) => !!stepDrafts[key] || !!resultDrafts[key]);
+    inputPending ||
+    verificationPending ||
+    nodeKeys.some((key) => !!stepDrafts[key] || !!resultDrafts[key]);
   useEffect(() => {
     onStepEditingChange?.(isEditing);
   }, [isEditing, onStepEditingChange]);
@@ -146,28 +151,29 @@ export function FlowGraphEditor({
 
   const latestValueRef = useRef(value);
   latestValueRef.current = value;
-  const updateNode = (
-    patch: Partial<components['schemas']['FactoryFlowNodeDefinition']>,
-    schemas: components['schemas']['FactoryFlowDataSchema'][] = [],
-  ) =>
-    onChange({
-      ...latestValueRef.current,
+  const patchNode = (patch: NodePatch, schemas: Draft['data_schemas'] = []): Draft => {
+    const current = latestValueRef.current;
+    return {
+      ...current,
       data_schemas: [
-        ...latestValueRef.current.data_schemas,
+        ...current.data_schemas,
         ...schemas.filter(
           (schema) =>
-            !latestValueRef.current.data_schemas.some(
+            !current.data_schemas.some(
               (existing) => existing.reference.digest === schema.reference.digest,
             ),
         ),
       ],
       root: {
-        ...latestValueRef.current.root,
-        nodes: latestValueRef.current.root.nodes.map((item, index) =>
+        ...current.root,
+        nodes: current.root.nodes.map((item, index) =>
           index === selected ? { ...item, ...patch } : item,
         ),
       },
-    });
+    };
+  };
+  const updateNode = (patch: NodePatch, schemas?: Draft['data_schemas']) =>
+    onChange(patchNode(patch, schemas));
   const addStep = () => {
     setSelected(value.root.nodes.length);
     onChange({
@@ -248,6 +254,7 @@ export function FlowGraphEditor({
         onAddStep={addStep}
         value={value.root}
         selected={selected}
+        stepSelectionDisabled={verificationPending}
         onSelect={setSelected}
         repeatCeiling={value.limits.max_repeat_count}
         onChange={(root) => onChange({ ...value, root })}
@@ -296,7 +303,11 @@ export function FlowGraphEditor({
         </>
       ) : null}
       {node === undefined ? null : (
-        <fieldset data-factory-field={`/root/nodes/${selected}`} tabIndex={-1}>
+        <fieldset
+          data-factory-field={`/root/nodes/${selected}`}
+          tabIndex={-1}
+          disabled={verificationPending}
+        >
           <legend>{t('factory.node')}</legend>
           {stepDrafts[nodeKeys[selected] ?? ''] ? (
             <>
@@ -437,6 +448,18 @@ export function FlowGraphEditor({
               services={documents}
               onChange={updateNode}
               processManaged={value.root.process != null}
+            />
+          ) : null}
+          {documents && (node.kind === 'reasoning' || node.protected_verification) ? (
+            <StepVerification
+              key={nodeKeys[selected]}
+              node={node}
+              authoring={authoring}
+              documents={documents}
+              code={codeResources}
+              // A verification attachment cannot change the calculated Flow settings.
+              onChange={(patch) => commitDraft(patchNode(patch))}
+              onPendingChange={setVerificationPending}
             />
           ) : null}
           <BudgetSettings

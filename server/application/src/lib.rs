@@ -313,8 +313,9 @@ pub use factory::authoring::factory_configuration_cqrs::{
 pub use factory::codex::factory_codex::{
   CodexCompilationError, CompiledCodexTask, FactoryCodexAuthentication, FactoryCodexFlowCompilationOptions,
   FactoryCodexReviewCompilation, FactoryProtectedDocument, FactoryProtectedDocumentKind, codex_flow_task_digest,
-  codex_prompt_digest, codex_prompt_provenance_digest, compile_codex_flow_task, compile_codex_flow_task_with_context,
-  compile_codex_flow_task_with_options, compile_codex_node_task, compile_codex_reviewer, compile_codex_task,
+  codex_prompt_digest, codex_prompt_provenance_digest, codex_protected_test_task_digest, compile_codex_flow_task,
+  compile_codex_flow_task_with_context, compile_codex_flow_task_with_options, compile_codex_node_task,
+  compile_codex_reviewer, compile_codex_task,
 };
 pub use factory::codex::factory_codex_observation::{
   CodexHarnessOutcome, FactoryCodexEvaluationObservation, FactoryCodexImplementationObservation,

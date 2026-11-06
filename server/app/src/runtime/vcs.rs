@@ -1,12 +1,15 @@
 use std::{collections::BTreeMap, sync::Arc, time::Duration};
 
+use base64::{Engine as _, engine::general_purpose::STANDARD};
 use octacity_server_application::{
   ManualSourceSelection, RevisionResolutionError, RevisionResolutionRequest, RevisionResolver,
 };
 use octacity_server_domain::{ImmutableRevision, IntegrationId};
+use octacity_server_factory::FactoryRepositoryPath;
+use octacity_server_store::PublishedRepository;
 use octacity_server_vcs::{HostFailureClass, VcsAdapterRegistry};
 use octacity_vcs_protocol::{
-  Command, FailureClass, Outcome, RepositoryAccess, Request, ResolveRevision, VCS_PROTOCOL_VERSION,
+  Command, FailureClass, Outcome, ReadFiles, RepositoryAccess, Request, ResolveRevision, VCS_PROTOCOL_VERSION,
 };
 use tokio_util::sync::CancellationToken;
 
@@ -66,9 +69,68 @@ impl RevisionResolver for HostedRevisionResolver {
       ManualSourceSelection::Reference(reference) => reference,
       ManualSourceSelection::DefaultReference => return Err(RevisionResolutionError::Invalid),
     };
+    match self
+      .execute(&request.repository, |repository| {
+        Command::ResolveRevision(ResolveRevision {
+          repository,
+          reference: reference.as_str().to_owned(),
+        })
+      })
+      .await?
+    {
+      Outcome::Resolved(resolved) => {
+        ImmutableRevision::new(resolved.revision).map_err(|_| RevisionResolutionError::Invalid)
+      }
+      _ => Err(RevisionResolutionError::Invalid),
+    }
+  }
+
+  async fn read_files(
+    &self,
+    repository: &PublishedRepository,
+    revision: &ImmutableRevision,
+    paths: &[FactoryRepositoryPath],
+    max_bytes: u32,
+  ) -> Result<BTreeMap<FactoryRepositoryPath, Vec<u8>>, RevisionResolutionError> {
+    let Outcome::Files(files) = self
+      .execute(repository, |repository| {
+        Command::ReadFiles(ReadFiles {
+          repository,
+          revision: revision.as_str().to_owned(),
+          paths: paths.iter().map(|path| path.as_str().to_owned()).collect(),
+          max_bytes,
+        })
+      })
+      .await?
+    else {
+      return Err(RevisionResolutionError::Invalid);
+    };
+    paths
+      .iter()
+      .cloned()
+      .zip(files)
+      .map(|(path, file)| {
+        let bytes = STANDARD
+          .decode(&file.content_base64)
+          .map_err(|_| RevisionResolutionError::Invalid)?;
+        if STANDARD.encode(&bytes) != file.content_base64 {
+          return Err(RevisionResolutionError::Invalid);
+        }
+        Ok((path, bytes))
+      })
+      .collect()
+  }
+}
+
+impl HostedRevisionResolver {
+  async fn execute(
+    &self,
+    repository: &PublishedRepository,
+    command: impl FnOnce(RepositoryAccess) -> Command,
+  ) -> Result<Outcome, RevisionResolutionError> {
     let integration = self
       .integrations
-      .get(&request.repository.definition.vcs_integration_id)
+      .get(&repository.definition.vcs_integration_id)
       .ok_or(RevisionResolutionError::Unavailable)?;
     let adapter = self
       .registry
@@ -80,14 +142,11 @@ impl RevisionResolver for HostedRevisionResolver {
         Request {
           protocol_version: VCS_PROTOCOL_VERSION,
           request_id: uuid::Uuid::new_v4().to_string(),
-          command: Command::ResolveRevision(ResolveRevision {
-            repository: RepositoryAccess {
-              operation_id,
-              repository_id: request.repository.id.to_string(),
-              repository_locator: request.repository.definition.repository_locator.as_str().to_owned(),
-              credential_handle: integration.credential_handle.clone(),
-            },
-            reference: reference.as_str().to_owned(),
+          command: command(RepositoryAccess {
+            operation_id,
+            repository_id: repository.id.to_string(),
+            repository_locator: repository.definition.repository_locator.as_str().to_owned(),
+            credential_handle: integration.credential_handle.clone(),
           }),
         },
         self.operation_timeout,
@@ -104,9 +163,6 @@ impl RevisionResolver for HostedRevisionResolver {
         HostFailureClass::Cancelled => RevisionResolutionError::Cancelled,
       })?;
     match outcome {
-      Outcome::Resolved(resolved) => {
-        ImmutableRevision::new(resolved.revision).map_err(|_| RevisionResolutionError::Invalid)
-      }
       Outcome::Failure(failure) => Err(match failure.class {
         FailureClass::InvalidRequest | FailureClass::ProtocolFault => RevisionResolutionError::Invalid,
         FailureClass::Unsupported => RevisionResolutionError::Unavailable,
@@ -115,11 +171,7 @@ impl RevisionResolver for HostedRevisionResolver {
         FailureClass::Transient => RevisionResolutionError::Transient,
         FailureClass::Cancelled => RevisionResolutionError::Cancelled,
       }),
-      Outcome::References(_)
-      | Outcome::Commit(_)
-      | Outcome::Tree(_)
-      | Outcome::File(_)
-      | Outcome::Acknowledged { .. } => Err(RevisionResolutionError::Invalid),
+      outcome => Ok(outcome),
     }
   }
 }
@@ -146,7 +198,16 @@ case "$request" in
   *) exit 91 ;;
 esac
 request_id=$(printf '%s' "$request" | /usr/bin/sed -n 's/.*"request_id":"\([^"]*\)".*/\1/p')
-printf '{"protocol_version":1,"request_id":"%s","outcome":{"status":"resolved","payload":{"reference":"refs/heads/main","revision":"0123456789abcdef"}}}\n' "$request_id"
+case "$request" in
+  *'"operation":"read_files"'*'"revision":"0123456789abcdef"'*'"paths":["suite/fixture.bin"]'*'"max_bytes":2'*)
+    outcome='{"status":"files","payload":[{"path":"suite/fixture.bin","offset":0,"content_base64":"AP8=","truncated":false}]}' ;;
+  *'"operation":"read_files"'*'"paths":["suite/truncated.bin"]'*)
+    outcome='{"status":"files","payload":[{"path":"suite/truncated.bin","offset":0,"content_base64":"AP8=","truncated":true}]}' ;;
+  *'"operation":"resolve_revision"'*)
+    outcome='{"status":"resolved","payload":{"reference":"refs/heads/main","revision":"0123456789abcdef"}}' ;;
+  *) exit 92 ;;
+esac
+printf '{"protocol_version":1,"request_id":"%s","outcome":%s}\n' "$request_id" "$outcome"
 "#;
     let (root, digest) = install_adapter(script);
     let integration_id = IntegrationId::from_uuid(uuid::Uuid::from_u128(201)).unwrap();
@@ -165,12 +226,25 @@ printf '{"protocol_version":1,"request_id":"%s","outcome":{"status":"resolved","
 
     let revision = resolver
       .resolve(RevisionResolutionRequest {
-        repository,
+        repository: repository.clone(),
         selection: ManualSourceSelection::Reference(SourceReference::new("refs/heads/main").unwrap()),
       })
       .await
       .unwrap();
     assert_eq!(revision.as_str(), "0123456789abcdef");
+    let path = FactoryRepositoryPath::new("suite/fixture.bin").unwrap();
+    assert_eq!(
+      resolver
+        .read_files(&repository, &revision, std::slice::from_ref(&path), 2)
+        .await
+        .unwrap()[&path],
+      [0, 255]
+    );
+    let path = FactoryRepositoryPath::new("suite/truncated.bin").unwrap();
+    assert_eq!(
+      resolver.read_files(&repository, &revision, &[path], 2).await,
+      Err(RevisionResolutionError::Invalid)
+    );
   }
 
   #[tokio::test]
@@ -236,7 +310,7 @@ printf '{"protocol_version":1,"request_id":"%s","outcome":{"status":"resolved","
     fs::write(
       directory.join("adapter.toml"),
       format!(
-        "manifest_version = 1\nadapter_id = \"fixture\"\nexecutable = \"adapter\"\nexecutable_sha256 = \"{digest}\"\n\n[protocol]\nmin = 1\nmax = 1\n\n[capabilities]\nlist_references = false\nread_commit = false\nlist_tree = false\nread_file = false\nresolve_revision = true\n"
+        "manifest_version = 1\nadapter_id = \"fixture\"\nexecutable = \"adapter\"\nexecutable_sha256 = \"{digest}\"\n\n[protocol]\nmin = 1\nmax = 1\n\n[capabilities]\nlist_references = false\nread_commit = false\nlist_tree = false\nread_file = true\nread_files = true\nresolve_revision = true\n"
       ),
     )
     .unwrap();

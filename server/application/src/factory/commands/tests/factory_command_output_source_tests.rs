@@ -1479,8 +1479,7 @@ pub(crate) async fn retained_promotion_command_fixture() -> (
   retained_promotion_command_fixture_with_profile(|_, _| {}).await
 }
 
-// Construct and heap-pin the lifecycle before polling it so setup temporaries
-// and large future moves do not stack with nested journal/node validation.
+// Pin the lifecycle before it is moved into the fixture's polling frame.
 pub(crate) fn retained_promotion_command_fixture_with_profile(
   configure: impl FnOnce(&mut FactoryCommandBuildProfile, &mut FactoryPermissionSet),
 ) -> impl std::future::Future<
@@ -1563,6 +1562,7 @@ pub(crate) fn retained_promotion_command_fixture_with_profile(
       definition.nodes.push(criterion);
     },
   );
+  let candidate = Box::pin(candidate);
   Box::pin(async move { (profile, candidate.await) })
 }
 
@@ -1835,53 +1835,19 @@ fn installed_author_source_retains_exact_private_files_as_opaque_artifacts() {
 
 // The authoritative accepted contract is prepared through the same common owner
 // used in production; only ordinary Build records/object storage are port fakes.
-async fn prepared_accepted_author(
-  mut profile: FactoryCommandBuildProfile,
-) -> (Fixture, FactoryProtectedTestAuthoringProfile, LeaseAccess) {
-  let work = fixtures::work();
-  configure_profile(&mut profile, &work);
-  let public_schema = fixtures::supplied_base_flow_template()
-    .data_schemas()
-    .unwrap()
-    .remove(&fixtures::key("protected_test_handoff"))
-    .unwrap();
-  let author = install_author_profile(&mut profile);
-  let policy = FactoryProtectedTestAuthoringPolicy::new(
-    author.policy().clone(),
-    author.inventory().clone(),
-    author.files().to_vec(),
-  )
-  .unwrap();
-  profile.outputs[0] = EvidenceRequirement::new(
-    profile.outputs[0].kind().clone(),
-    EvidenceOutputKind::Report,
-    public_schema.reference().clone(),
-    profile.executor.clone(),
-    profile.plugin.clone(),
-  );
-  profile.program.octafile = FactoryCommandOctafile::new(
-    serde_json::json!({"version":1,"tasks":{"observe":{
-      "shell":"printf 'private contract' > /workspace/output/contract.rs",
-      "artifacts":[{"name":"hidden.contract","path":"/workspace/output/contract.rs"}]
-    }}})
-    .to_string(),
-  )
-  .unwrap();
-  let author = FactoryProtectedTestAuthoringProfile::new(profile.clone(), policy).unwrap();
-  let mut binding = fixtures::binding(work.subject().project_id());
-  binding.tool = profile.executor.clone();
-  binding.plugin = profile.plugin.clone();
-  binding.model_or_tool = profile.identity.clone();
-  binding.build_configuration = profile.build_configuration.clone();
-  binding.task_digest = profile.task_digest();
-  binding.result_output = profile.outputs[0].kind().clone();
-  binding.evidence = vec![profile.outputs[1].clone()];
+pub(crate) async fn prepared_accepted_author_run(
+  work: WorkEnvelope,
+  binding: FlowBuildBinding,
+  public_schema: FlowDataSchema,
+  permissions: FactoryPermissionSet,
+  supplement: Option<FactoryArtifactReference>,
+) -> (Arc<InMemoryFactoryConfigurationStore>, AdmittedFlow, FlowBuildIntent) {
   let (_, base, schema, _, _) = fixtures::execution_fixture_with_permissions(
     FlowNodeKind::Reasoning,
     work.clone(),
     binding,
     Some(public_schema.clone()),
-    profile.project_permissions.clone(),
+    permissions,
   );
   let original = base.closure().definition(base.closure().root()).unwrap();
   let input_schema = base.data_schema(original.input_schema().unwrap()).unwrap().clone();
@@ -1907,6 +1873,10 @@ async fn prepared_accepted_author(
       .unwrap(),
     )
     .unwrap();
+  let author_node = match supplement {
+    Some(reference) => author_node.with_protected_verification(reference).unwrap(),
+    None => author_node,
+  };
   let accepted = FlowNodeDefinition::new(FlowNodeDefinitionInput {
     key: acceptance.clone(),
     kind: FlowNodeKind::DeterministicGate,
@@ -2041,6 +2011,52 @@ async fn prepared_accepted_author(
     }
   }
   let intent = intent.expect("the configured accepted contract must reach the author");
+  (runs, admitted, intent)
+}
+
+async fn prepared_accepted_author(
+  mut profile: FactoryCommandBuildProfile,
+) -> (Fixture, FactoryProtectedTestAuthoringProfile, LeaseAccess) {
+  let work = fixtures::work();
+  configure_profile(&mut profile, &work);
+  let public_schema = fixtures::supplied_base_flow_template()
+    .data_schemas()
+    .unwrap()
+    .remove(&fixtures::key("protected_test_handoff"))
+    .unwrap();
+  let author = install_author_profile(&mut profile);
+  let policy = FactoryProtectedTestAuthoringPolicy::new(
+    author.policy().clone(),
+    author.inventory().clone(),
+    author.files().to_vec(),
+  )
+  .unwrap();
+  profile.outputs[0] = EvidenceRequirement::new(
+    profile.outputs[0].kind().clone(),
+    EvidenceOutputKind::Report,
+    public_schema.reference().clone(),
+    profile.executor.clone(),
+    profile.plugin.clone(),
+  );
+  profile.program.octafile = FactoryCommandOctafile::new(
+    serde_json::json!({"version":1,"tasks":{"observe":{
+      "shell":"printf 'private contract' > /workspace/output/contract.rs",
+      "artifacts":[{"name":"hidden.contract","path":"/workspace/output/contract.rs"}]
+    }}})
+    .to_string(),
+  )
+  .unwrap();
+  let author = FactoryProtectedTestAuthoringProfile::new(profile.clone(), policy).unwrap();
+  let mut binding = fixtures::binding(work.subject().project_id());
+  binding.tool = profile.executor.clone();
+  binding.plugin = profile.plugin.clone();
+  binding.model_or_tool = profile.identity.clone();
+  binding.build_configuration = profile.build_configuration.clone();
+  binding.task_digest = profile.task_digest();
+  binding.result_output = profile.outputs[0].kind().clone();
+  binding.evidence = vec![profile.outputs[1].clone()];
+  let (runs, admitted, intent) =
+    prepared_accepted_author_run(work, binding, public_schema, profile.project_permissions.clone(), None).await;
   let mut f =
     finish_prepared_with_primary(profile, runs, admitted, intent, None, "application/json", |_, _| None).await;
   f.query.build.state = BuildState::Running;

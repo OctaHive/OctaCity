@@ -4,6 +4,7 @@ use super::*;
 pub(super) struct SourceCandidateBridge<S, B> {
   pub(super) predecessors: Option<Arc<dyn FactorySourcePredecessors>>,
   pub(super) repositories: Option<Arc<dyn ConfigurationStore>>,
+  pub(super) verification_inputs: Option<Arc<dyn octacity_server_store::ProjectInputQueryStore>>,
   pub(super) managed_connections: Option<ManagedIntegrationConnections>,
   pub(super) store: Arc<S>,
   pub(super) bytes: Arc<B>,
@@ -129,6 +130,9 @@ impl<S: WorkSourceArtifactStore + 'static, B: ArtifactBytePublisher + 'static> S
     }
     if let Some(repositories) = &self.repositories {
       admission = admission.with_repositories(repositories.clone());
+    }
+    if let Some(inputs) = &self.verification_inputs {
+      admission = admission.with_verification_inputs(inputs.clone());
     }
     admission
   }

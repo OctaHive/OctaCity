@@ -11,8 +11,8 @@ use base64::{Engine as _, engine::general_purpose::STANDARD};
 use http::Uri;
 use octacity_vcs_protocol::{
   Command as VcsCommand, Commit, Failure, FailureClass, FileContent, ListReferences, ListTree, MAX_TEXT_BYTES, Outcome,
-  ReadCommit, ReadFile, Reference, ReferenceKind, ReferencePage, Request, ResolveRevision, ResolvedRevision, TreeEntry,
-  TreeEntryKind, TreePage,
+  ReadCommit, ReadFile, ReadFiles, Reference, ReferenceKind, ReferencePage, Request, ResolveRevision, ResolvedRevision,
+  TreeEntry, TreeEntryKind, TreePage,
 };
 use processkit::{Command, ErrorReason, OutputBufferPolicy, OverflowMode};
 use tempfile::TempDir;
@@ -60,6 +60,7 @@ impl GitVcsAdapter {
       VcsCommand::ReadCommit(value) => self.read_commit(value, &cancellation).await.map(Outcome::Commit),
       VcsCommand::ListTree(value) => self.list_tree(value, &cancellation).await.map(Outcome::Tree),
       VcsCommand::ReadFile(value) => self.read_file(value, &cancellation).await.map(Outcome::File),
+      VcsCommand::ReadFiles(value) => self.read_files(value, &cancellation).await.map(Outcome::Files),
       VcsCommand::ResolveRevision(value) => self.resolve_revision(value, &cancellation).await.map(Outcome::Resolved),
       VcsCommand::Cancel(value) => {
         return Outcome::Acknowledged {
@@ -210,47 +211,15 @@ impl GitVcsAdapter {
     require_object_id(&request.revision)?;
     let repository = self.clone_bare(&request.repository, cancellation).await?;
     self.verify_commit(&repository, &request.revision, cancellation).await?;
-    let object = format!("{}:{}", request.revision, request.path);
     let context = self.context(&request.repository, cancellation)?;
-    let directory = repository.path.parent().unwrap_or(Path::new("."));
-    let kind = context
-      .run(
-        directory,
-        "file type read",
-        git_dir_arguments(&repository.path, ["cat-file", "-t", object.as_str()]),
-        256,
-      )
-      .await?;
-    if trim_ascii(&kind) != b"blob" {
-      return Err(GitError::Permanent("not_a_file", "requested Git path is not a file"));
-    }
-    let size = context
-      .run(
-        directory,
-        "file size read",
-        git_dir_arguments(&repository.path, ["cat-file", "-s", object.as_str()]),
-        256,
-      )
-      .await?;
-    let size = std::str::from_utf8(trim_ascii(&size))
-      .ok()
-      .and_then(|value| value.parse::<usize>().ok())
-      .ok_or(GitError::Permanent(
-        "invalid_blob_size",
-        "Git returned an invalid file size",
-      ))?;
-    if size > self.config.max_blob_bytes {
-      return Err(GitError::Permanent(
-        "blob_too_large",
-        "Git file exceeds the configured browsing limit",
-      ));
-    }
-    let content = context
-      .run(
-        directory,
-        "file content read",
-        git_dir_arguments(&repository.path, ["cat-file", "blob", object.as_str()]),
+    let content = self
+      .read_blob(
+        &repository,
+        &context,
+        &request.revision,
+        &request.path,
         self.config.max_blob_bytes,
+        true,
       )
       .await?;
     let offset = usize::try_from(request.offset).unwrap_or(usize::MAX).min(content.len());
@@ -261,6 +230,92 @@ impl GitVcsAdapter {
       content_base64: STANDARD.encode(&content[offset..end]),
       truncated: end < content.len(),
     })
+  }
+
+  async fn read_files(
+    &self,
+    request: &ReadFiles,
+    cancellation: &CancellationToken,
+  ) -> Result<Vec<FileContent>, GitError> {
+    require_object_id(&request.revision)?;
+    let repository = self.clone_bare(&request.repository, cancellation).await?;
+    self.verify_commit(&repository, &request.revision, cancellation).await?;
+    let context = self.context(&request.repository, cancellation)?;
+    let mut remaining = request.max_bytes as usize;
+    let mut files = Vec::with_capacity(request.paths.len());
+    for path in &request.paths {
+      let content = self
+        .read_blob(
+          &repository,
+          &context,
+          &request.revision,
+          path,
+          remaining.min(self.config.max_blob_bytes),
+          false,
+        )
+        .await?;
+      remaining = remaining.checked_sub(content.len()).ok_or(GitError::Permanent(
+        "blob_too_large",
+        "selected Git files exceed the byte limit",
+      ))?;
+      files.push(FileContent {
+        path: path.clone(),
+        offset: 0,
+        content_base64: STANDARD.encode(content),
+        truncated: false,
+      });
+    }
+    Ok(files)
+  }
+
+  async fn read_blob(
+    &self,
+    repository: &BareRepository,
+    context: &GitContext<'_>,
+    revision: &str,
+    path: &str,
+    maximum: usize,
+    allow_symlink: bool,
+  ) -> Result<Vec<u8>, GitError> {
+    let directory = repository.path.parent().unwrap_or(Path::new("."));
+    let tree = context
+      .run(
+        directory,
+        "file metadata read",
+        git_dir_arguments(
+          &repository.path,
+          ["--literal-pathspecs", "ls-tree", "-zl", revision, "--", path],
+        ),
+        self.config.max_git_output_bytes,
+      )
+      .await?;
+    let entry = parse_tree(&tree, None)?
+      .into_iter()
+      .find(|entry| {
+        entry.path == path
+          && (entry.kind == TreeEntryKind::File || allow_symlink && entry.kind == TreeEntryKind::Symlink)
+      })
+      .ok_or(GitError::Permanent("not_a_file", "requested Git path is not a file"))?;
+    if entry.size_bytes.ok_or(GitError::Permanent(
+      "invalid_blob_size",
+      "Git returned an invalid file size",
+    ))?
+      > maximum as u64
+    {
+      return Err(GitError::Permanent(
+        "blob_too_large",
+        "Git file exceeds the configured browsing limit",
+      ));
+    }
+    let object = format!("{revision}:{path}");
+    context
+      .run(
+        directory,
+        "file content read",
+        git_dir_arguments(&repository.path, ["cat-file", "blob", object.as_str()]),
+        maximum.max(1),
+      )
+      .await
   }
 
   async fn verify_commit(

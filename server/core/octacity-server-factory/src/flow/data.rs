@@ -236,6 +236,30 @@ impl FlowPayload {
   }
 }
 impl FlowValueSchema {
+  /// Whether the pointer is present in every value allowed by this shape.
+  pub(super) fn guarantees_pointer(&self, path: &str) -> bool {
+    if path.is_empty() {
+      return true;
+    }
+    let Some((key, tail)) = super::mapping::projection_segment(path) else {
+      return false;
+    };
+    match self {
+      Self::Object { fields } => fields
+        .iter()
+        .find(|(name, _)| name.as_str() == key)
+        .is_some_and(|(_, field)| field.is_required() && field.value().guarantees_pointer(tail)),
+      Self::Array { item, min_items, .. } => key
+        .parse::<u16>()
+        .is_ok_and(|index| index < *min_items && index.to_string() == key && item.guarantees_pointer(tail)),
+      Self::ExternallyTagged { variants } if variants.len() == 1 => variants
+        .get(&key)
+        .and_then(Option::as_ref)
+        .is_some_and(|shape| shape.guarantees_pointer(tail)),
+      _ => false,
+    }
+  }
+
   pub(super) fn resolve(
     &self,
     schemas: &BTreeMap<FactoryKey, crate::FlowTemplateSchema>,

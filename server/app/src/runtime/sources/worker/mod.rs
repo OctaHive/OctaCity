@@ -108,6 +108,7 @@ struct SourceWorkerIntegrations {
   profile_provider: Option<Arc<dyn FactorySourceProfileProvider>>,
   predecessors: Option<Arc<dyn FactorySourcePredecessors>>,
   repositories: Option<Arc<dyn ConfigurationStore>>,
+  verification_inputs: Option<Arc<dyn octacity_server_store::ProjectInputQueryStore>>,
 }
 impl<S: WorkSourceArtifactStore + 'static, B: ArtifactBytePublisher + 'static> FactorySourceWorker<S, B> {
   /// Constructs explicit source support without fetching tokens or contacting a provider.
@@ -172,6 +173,13 @@ impl<S: WorkSourceArtifactStore + 'static, B: ArtifactBytePublisher + 'static> F
   }
   pub(in crate::runtime) fn with_repositories(mut self, repositories: Arc<dyn ConfigurationStore>) -> Self {
     self.integrations.repositories = Some(repositories);
+    self
+  }
+  pub(in crate::runtime) fn with_verification_inputs(
+    mut self,
+    inputs: Arc<dyn octacity_server_store::ProjectInputQueryStore>,
+  ) -> Self {
+    self.integrations.verification_inputs = Some(inputs);
     self
   }
   /// Runs one finite slice; absence or pre-cancellation performs no provider activity.
@@ -243,6 +251,7 @@ async fn poll_target<S: WorkSourceArtifactStore + 'static, B: ArtifactBytePublis
     profile_provider,
     predecessors,
     repositories,
+    verification_inputs,
   } = integrations;
   let mut outcome = FactorySourceWorkerOutcome::default();
   let settings = installation.settings;
@@ -290,6 +299,7 @@ async fn poll_target<S: WorkSourceArtifactStore + 'static, B: ArtifactBytePublis
     let processor = Arc::new(SourceCandidateBridge {
       predecessors,
       repositories,
+      verification_inputs,
       managed_connections: managed_connections.clone(),
       store: d.store.clone(),
       bytes: d.bytes.clone(),

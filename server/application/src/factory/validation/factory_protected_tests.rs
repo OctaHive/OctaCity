@@ -1,5 +1,6 @@
 //! Protected test capture over frozen inputs and actual ordinary Build outputs.
 //! This technical capability selects no logical node or Flow transition.
+use super::factory_verification_supplement::{VerificationSupplement, supplement_matches};
 use crate::factory::execution::factory_node_build::{
   ObservedBuild, artifact_reference, document_producer, selected_document, validate_execution_facts, validate_outputs,
 };
@@ -28,6 +29,9 @@ pub struct FactoryProtectedTestInventory {
   /// Private author transcript. It is never a test-class input.
   #[serde(default, skip_serializing_if = "Option::is_none")]
   pub transcript: Option<FactoryArtifactReference>,
+  /// Operator attachment retained privately in the signed inventory.
+  #[serde(default, skip_serializing_if = "Option::is_none")]
+  pub supplement: Option<VerificationSupplement>,
 }
 
 impl FactoryProtectedTestInventory {
@@ -41,6 +45,7 @@ impl FactoryProtectedTestInventory {
     if inventory.plan_digest != plan.digest().map_err(|_| invalid())?
       || inventory.input_digest != intent.input().digest().map_err(|_| invalid())?
       || inventory.node_attempt_id != intent.node().id()
+      || !supplement_matches(plan.supplement(), inventory.supplement.as_ref())
       || inventory.transcript.as_ref().is_some_and(|transcript| {
         transcript.artifact_id() == manifest.record.identity().artifact_id
           || inventory

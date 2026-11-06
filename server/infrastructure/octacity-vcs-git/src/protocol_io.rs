@@ -144,6 +144,7 @@ fn operation_id(request: &Request) -> &str {
     VcsCommand::ReadCommit(value) => &value.repository.operation_id,
     VcsCommand::ListTree(value) => &value.repository.operation_id,
     VcsCommand::ReadFile(value) => &value.repository.operation_id,
+    VcsCommand::ReadFiles(value) => &value.repository.operation_id,
     VcsCommand::ResolveRevision(value) => &value.repository.operation_id,
     VcsCommand::Cancel(value) => &value.target_operation_id,
   }

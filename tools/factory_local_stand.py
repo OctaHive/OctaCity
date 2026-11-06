@@ -155,6 +155,25 @@ def run_triage_stand(root: Path, source: str | None, revision: str | None, *,
     triage._publish(vcs, {"version": 1, "integrations": [{
         "integration_id": str(uuid.uuid5(namespace, "source")), "adapter_id": "git",
         "adapter_sha256": vcs_digest, "credential_handle": "anonymous"}]})
+
+    def install_delivery(project: str) -> None:
+        client = integration.LocalStandClient(root, bootstrap.DEFAULT_ORIGIN)
+        repository_id = _read_json(resources_file)["repository"]
+        packs = [delivery.read_test_pack(path, client=client, project=project) for path in delivery_test_packs or ()]
+        publication = (repository_id, delivery_target_branch, delivery_token) if delivery_token is not None else None
+        with tempfile.TemporaryDirectory(prefix=".factory-delivery-", dir=root) as temporary:
+            directory = Path(temporary)
+            expected = installation_update.installed_configuration_identity(root)
+            installed = installation_update.installed_factory_inputs(root, directory)
+            selected = delivery.stage(root, directory, installed, project, repository_id, namespace, native.path,
+                client, packs, delivery_write_directories or [], publication=publication)
+            if selected:
+                arguments = ["up", "--root", str(root), "--update-factory-installation"]
+                for name, path in selected.items():
+                    arguments.extend(("--" + name.replace("_", "-"), str(path)))
+                launcher.up(launcher.parse_arguments(arguments), expected_configuration=expected)
+            delivery.publish_roles(client, project, namespace, selected.get("factory_profiles", installed["factory_profiles"]))
+
     if receipt_file.exists():
         # Bootstrap receipts are immutable seeds, not the current installation.
         # Resume through the same owner used by explicit installation updates.
@@ -191,25 +210,7 @@ def run_triage_stand(root: Path, source: str | None, revision: str | None, *,
             if upgraded_vcs:
                 arguments.append("--update-factory-installation")
             launcher.up(launcher.parse_arguments(arguments), before_agent=prepare_project)
-        if delivery_test_packs:
-            client = integration.LocalStandClient(root, bootstrap.DEFAULT_ORIGIN)
-            repository_id = _read_json(resources_file)["repository"]
-            packs = [delivery.read_test_pack(path, client=client, project=retained["project"])
-                     for path in delivery_test_packs]
-            publication = None
-            if delivery_token is not None:
-                publication = (repository_id, delivery_target_branch, delivery_token)
-            with tempfile.TemporaryDirectory(prefix=".factory-delivery-", dir=root) as temporary:
-                directory = Path(temporary)
-                expected = installation_update.installed_configuration_identity(root)
-                installed = installation_update.installed_factory_inputs(root, directory)
-                selected = delivery.stage(root, directory, installed, retained["project"], repository_id, namespace, native.path,
-                    client, packs, delivery_write_directories, publication=publication)
-                arguments = ["up", "--root", str(root), "--update-factory-installation"]
-                for name, path in selected.items():
-                    arguments.extend(("--" + name.replace("_", "-"), str(path)))
-                launcher.up(launcher.parse_arguments(arguments), expected_configuration=expected)
-            delivery.publish_roles(client, retained["project"], namespace)
+        install_delivery(retained["project"])
         return retained
     executable = install_runtime_executable(root, native.path)
     if not resources_file.exists() or not assets_file.exists():
@@ -256,6 +257,7 @@ def run_triage_stand(root: Path, source: str | None, revision: str | None, *,
     receipt = {"schema_version": 1, "origin": bootstrap.DEFAULT_ORIGIN, "project": resources["project"],
         "profiles": profiles, "context": context, **published}
     _private_json(receipt_file, receipt)
+    install_delivery(resources["project"])
     return receipt
 
 
@@ -502,11 +504,9 @@ def main(arguments=None) -> int:
     args = parser.parse_args(arguments)
     if bool(args.delivery_target_branch) != bool(args.delivery_token_file):
         parser.error("--delivery-target-branch and --delivery-token-file must be supplied together")
-    if args.delivery_test_pack:
-        if args.factory_profiles or not args.delivery_write_directory:
-            parser.error("Delivery packs require an existing default stand and --delivery-write-directory")
-    elif args.delivery_write_directory or args.delivery_target_branch:
-        parser.error("Delivery options require --delivery-test-pack")
+    delivery_options = args.delivery_test_pack or args.delivery_write_directory or args.delivery_target_branch
+    if args.factory_profiles and delivery_options:
+        parser.error("Delivery options require the default Factory stand")
     if args.github_token_file is not None:
         try:
             read_github_token(args.github_token_file)
@@ -559,7 +559,7 @@ def main(arguments=None) -> int:
                             **({"delivery_test_packs": args.delivery_test_pack,
                                 "delivery_write_directories": args.delivery_write_directory,
                                 "delivery_target_branch": args.delivery_target_branch,
-                                "delivery_token_file": args.delivery_token_file} if args.delivery_test_pack else {}),
+                                "delivery_token_file": args.delivery_token_file} if delivery_options else {}),
                             **({"github_token_file": args.github_token_file} if args.github_token_file is not None else {}))
     except (ValueError, OSError, RuntimeError, subprocess.SubprocessError) as error:
         print(f"Factory stand failed: {error}", file=sys.stderr)

@@ -1003,6 +1003,7 @@ fn project_input_owner_publishes_a_named_context_document_without_build_or_admis
       Arc::new(Clock),
     );
     let submission = ProjectDocumentSubmission {
+      purpose: Default::default(),
       project_id: project,
       name: "Reviewed Project goals".parse().unwrap(),
       content: "Independent Project goals\r\nKeep this exact document.\n".into(),
@@ -1061,6 +1062,7 @@ fn project_goals_can_be_read_and_revised_without_changing_an_accepted_version() 
         &context(),
         PublishProjectDocumentCommand {
           submission: ProjectDocumentSubmission {
+            purpose: Default::default(),
             project_id: project,
             name: "Project goals".parse().unwrap(),
             content: "Original private goals\r\nIsolated agents.\n".into(),
@@ -1088,6 +1090,7 @@ fn project_goals_can_be_read_and_revised_without_changing_an_accepted_version() 
         &context(),
         PublishProjectDocumentCommand {
           submission: ProjectDocumentSubmission {
+            purpose: Default::default(),
             project_id: project,
             name: "Project goals".parse().unwrap(),
             content: "Revised goals\nBounded selected context.\n".into(),
@@ -1146,6 +1149,7 @@ fn absent_foreign_and_expired_project_documents_are_not_found_before_private_rea
       .publish_document(
         &context(),
         ProjectDocumentSubmission {
+          purpose: Default::default(),
           project_id: project,
           name: "Goals".parse().unwrap(),
           content: "Private goals".into(),
@@ -1220,6 +1224,7 @@ fn project_document_metadata_visibility_does_not_grant_private_content_download(
       .publish_document(
         &context(),
         ProjectDocumentSubmission {
+          purpose: Default::default(),
           project_id: project,
           name: "Goals".parse().unwrap(),
           content: "Private goals".into(),
@@ -1309,6 +1314,7 @@ fn named_project_document_recovers_an_unknown_write_and_replays_without_renewing
       )
     };
     let request = ProjectDocumentSubmission {
+      purpose: Default::default(),
       project_id: project,
       name: "Reviewed rules".parse().unwrap(),
       content: "Private Project rules\n".into(),
@@ -1337,6 +1343,123 @@ fn named_project_document_recovers_an_unknown_write_and_replays_without_renewing
 }
 
 #[test]
+fn verification_octafile_accepts_only_frozen_includes_for_each_selected_task() {
+  use base64::{Engine as _, engine::general_purpose::STANDARD};
+  run(async {
+    let project = ProjectId::generate();
+    let store = Arc::new(InMemoryFactoryConfigurationStore::new());
+    store.seed_project(project).unwrap();
+    let bytes = Arc::new(DocumentBytes::default());
+    let owner = ProjectTextIntake::new(
+      store,
+      bytes.clone(),
+      Arc::new(RecordingResolver::default()),
+      Arc::new(TrustedNetworkManagementPolicy),
+      Arc::new(Clock),
+    );
+    let submission = |key: &str, include: &str, task_count| ProjectDocumentSubmission {
+      project_id: project,
+      name: "Private Octa suite".parse().unwrap(),
+      purpose: ProjectDocumentPurpose::Verification,
+      content: serde_json::json!({
+        "files": [
+          {"path": "suite/Octafile.yml", "content_base64": STANDARD.encode(format!(
+            "version: 1\nincludes:\n  Checks: {include}\n"
+          ))},
+          {"path": "suite/checks.yml", "content_base64": STANDARD.encode(
+            std::iter::once("version: 1\ntasks:\n".to_owned()).chain((0..task_count).map(|index|
+              format!("  _Verify-{index}:\n    shell: echo checked\n")
+            )).collect::<String>()
+          )}
+        ],
+        "entries": (0..task_count).map(|index| serde_json::json!(
+          {"kind": "octafile", "path": "suite/Octafile.yml", "task": format!("Checks:_Verify-{index}")}
+        )).collect::<Vec<_>>()
+      })
+      .to_string(),
+      idempotency_key: key.parse().unwrap(),
+    };
+    for path in ["/workspace/source/Octafile.yml", "missing.yml", "Octafile.yml"] {
+      assert!(
+        matches!(
+          owner
+            .publish_document(&context(), submission("unselected", path, 1))
+            .await,
+          Err(ApplicationError::InvalidInput)
+        ),
+        "Octafile include {path} must be rejected before publication"
+      );
+    }
+    assert_eq!(bytes.writes.load(Ordering::SeqCst), 0);
+    owner
+      .publish_document(&context(), submission("selected", "checks.yml", 33))
+      .await
+      .unwrap();
+    let mut wildcard = submission("wildcard", "checks.yml", 1);
+    wildcard.content = wildcard.content.replace("Checks:_Verify-0", "Checks:*");
+    assert!(matches!(
+      owner.publish_document(&context(), wildcard).await,
+      Err(ApplicationError::InvalidInput)
+    ));
+  });
+}
+
+#[test]
+fn protected_verification_is_retained_separately_from_project_documents() {
+  run(async {
+    let project = ProjectId::generate();
+    let store = Arc::new(InMemoryFactoryConfigurationStore::new());
+    store.seed_project(project).unwrap();
+    let bytes = Arc::new(DocumentBytes::default());
+    let policy = Arc::new(TrustedNetworkManagementPolicy);
+    let owner = Arc::new(ProjectTextIntake::new(
+      store.clone(),
+      bytes,
+      Arc::new(RecordingResolver::default()),
+      policy.clone(),
+      Arc::new(Clock),
+    ));
+    let submission: ProjectDocumentSubmission = serde_json::from_value(serde_json::json!({
+      "project_id": project,
+      "name": "Private test suite",
+      "content": "{\"files\":[{\"path\":\"check.sh\",\"content_base64\":\"ZXhpdCAwCg==\"}],\"entries\":[{\"kind\":\"shell\",\"path\":\"check.sh\"}]}",
+      "idempotency_key": "protected-check",
+      "purpose": "verification"
+    })).unwrap();
+    let result = owner.publish_document(&context(), submission).await.unwrap();
+    let retained = store
+      .project_input_artifact(project, result.artifact.artifact_id())
+      .await
+      .unwrap()
+      .unwrap();
+    assert_eq!(retained.mapping.as_str(), "protected-verification.v1");
+    let ordinary = AuthorizedQueryHandler::new(policy, owner.clone())
+      .handle_query(
+        &context(),
+        ListProjectInputDocumentsQuery {
+          page: CurrentDefinitionPageInput::try_new(project, None, 25).unwrap(),
+        },
+      )
+      .await
+      .unwrap();
+    assert!(ordinary.items.is_empty());
+    assert!(
+      owner
+        .execute_management_query(
+          &context(),
+          &ManagementAuthorizationGrant::new(ManagementVisibility::all()),
+          ReadProjectInputDocumentQuery {
+            project_id: project,
+            artifact_id: result.artifact.artifact_id()
+          },
+        )
+        .await
+        .is_err()
+    );
+  });
+}
+
+#[test]
 fn project_document_management_lists_only_metadata_without_execution_or_private_byte_reads() {
   run(async {
     let project = ProjectId::generate();
@@ -1357,6 +1480,7 @@ fn project_document_management_lists_only_metadata_without_execution_or_private_
         &context(),
         PublishProjectDocumentCommand {
           submission: ProjectDocumentSubmission {
+            purpose: Default::default(),
             project_id: project,
             name: "First Project goals".parse().unwrap(),
             content: "Private goals not in discovery".into(),
@@ -1407,6 +1531,7 @@ fn named_project_document_rejects_an_absent_project_before_private_byte_effects(
       .publish_document(
         &context(),
         ProjectDocumentSubmission {
+          purpose: Default::default(),
           project_id: ProjectId::generate(),
           name: "Goals".parse().unwrap(),
           content: "Reviewed goals".into(),
@@ -1422,5 +1547,159 @@ fn named_project_document_rejects_an_absent_project_before_private_byte_effects(
     ));
     assert_eq!(bytes.writes.load(Ordering::SeqCst), 0);
     assert_eq!(bytes.reads.load(Ordering::SeqCst), 0);
+  });
+}
+
+#[test]
+fn verification_freezes_only_selected_repository_files_at_the_exact_revision() {
+  #[derive(Default)]
+  struct RepositoryVisibility(AtomicBool);
+  #[async_trait::async_trait]
+  impl ManagementAuthorizationPolicy for RepositoryVisibility {
+    async fn authorize(
+      &self,
+      _: &ManagementRequestContext,
+      action: ManagementAction,
+      resource: &ManagementResource,
+    ) -> Result<ManagementAuthorizationGrant, ManagementAuthorizationDenial> {
+      if action == ManagementAction::View
+        && resource.kind() == ManagementResourceKind::Repository
+        && self.0.load(Ordering::SeqCst)
+      {
+        return Err(ManagementAuthorizationDenial::forbidden());
+      }
+      Ok(ManagementAuthorizationGrant::new(ManagementVisibility::all()))
+    }
+  }
+  #[derive(Default)]
+  struct SelectedFiles(Mutex<Vec<Vec<String>>>);
+  #[async_trait::async_trait]
+  impl RevisionResolver for SelectedFiles {
+    async fn resolve(
+      &self,
+      _: RevisionResolutionRequest,
+    ) -> Result<octacity_server_domain::ImmutableRevision, RevisionResolutionError> {
+      panic!("the operator selected an immutable revision");
+    }
+
+    async fn read_files(
+      &self,
+      _: &PublishedRepository,
+      revision: &octacity_server_domain::ImmutableRevision,
+      paths: &[octacity_server_factory::FactoryRepositoryPath],
+      _: u32,
+    ) -> Result<
+      std::collections::BTreeMap<octacity_server_factory::FactoryRepositoryPath, Vec<u8>>,
+      RevisionResolutionError,
+    > {
+      assert_eq!(revision.as_str(), "0123456789abcdef");
+      self
+        .0
+        .lock()
+        .unwrap()
+        .push(paths.iter().map(|path| path.as_str().to_owned()).collect());
+      Ok(
+        paths
+          .iter()
+          .map(|path| {
+            let bytes = match path.as_str() {
+              "suite/check.sh" => b"exit 0\n".to_vec(),
+              "suite/fixture.bin" => vec![0, 255],
+              _ => panic!("unselected file was requested"),
+            };
+            (path.clone(), bytes)
+          })
+          .collect(),
+      )
+    }
+  }
+  run(async {
+    let project = ProjectId::generate();
+    let foreign = ProjectId::generate();
+    let store = Arc::new(InMemoryFactoryConfigurationStore::new());
+    let repositories = Arc::new(testing::InMemoryConfigurationStore::new());
+    let bytes = Arc::new(DocumentBytes::default());
+    let resolver = Arc::new(SelectedFiles::default());
+    let policy = Arc::new(RepositoryVisibility::default());
+    store.seed_project(project).unwrap();
+    store.seed_project(foreign).unwrap();
+    repositories.seed_project(project).unwrap();
+    let selected = repositories
+      .create_repository(testing::management_mutation_with_request(
+        CreateRepository {
+          id: RepositoryId::generate(),
+          project_id: project,
+          name: "checks".parse().unwrap(),
+          definition: repository(project, RepositoryId::generate(), None).definition,
+          idempotency_key: "verification-repo".parse().unwrap(),
+          published_at: time(1),
+        },
+        "verification-repository",
+      ))
+      .await
+      .unwrap()
+      .repository;
+    let owner = ProjectTextIntake::new(
+      store.clone(),
+      bytes.clone(),
+      resolver.clone(),
+      policy.clone(),
+      Arc::new(Clock),
+    )
+    .with_repositories(repositories);
+    let selection = |project_id, paths: Vec<&str>| ProjectDocumentSubmission {
+      project_id,
+      name: "Repository checks".parse().unwrap(),
+      purpose: ProjectDocumentPurpose::Verification,
+      content: serde_json::json!({
+        "repository": {
+          "id": selected.id, "version": selected.version, "revision": "0123456789abcdef", "paths": paths
+        },
+        "entries": [{"kind": "shell", "path": "suite/check.sh"}]
+      })
+      .to_string(),
+      idempotency_key: "repository-checks".parse().unwrap(),
+    };
+    assert!(
+      owner
+        .publish_document(&context(), selection(foreign, vec!["suite/check.sh"]))
+        .await
+        .is_err()
+    );
+    assert!(
+      owner
+        .publish_document(&context(), selection(project, vec!["suite/fixture.bin"]))
+        .await
+        .is_err()
+    );
+    assert!(resolver.0.lock().unwrap().is_empty());
+    let reviewed = || selection(project, vec!["suite/check.sh", "suite/fixture.bin"]);
+    bytes.lose_ack.store(true, Ordering::SeqCst);
+    assert!(owner.publish_document(&context(), reviewed()).await.is_err());
+    policy.0.store(true, Ordering::SeqCst);
+    assert!(
+      owner.publish_document(&context(), reviewed()).await.is_err(),
+      "a reserved selection cannot become published after Repository View is revoked"
+    );
+    policy.0.store(false, Ordering::SeqCst);
+    let frozen = owner.publish_document(&context(), reviewed()).await.unwrap();
+    policy.0.store(true, Ordering::SeqCst);
+    let replay = owner.publish_document(&context(), reviewed()).await.unwrap();
+    assert_eq!(replay, frozen);
+    assert!(matches!(
+      owner
+        .publish_document(&context(), selection(project, vec!["suite/check.sh"]))
+        .await,
+      Err(ApplicationError::Store(StoreError::Conflict { .. }))
+    ));
+    let objects = bytes.objects.lock().unwrap();
+    let (_, frozen_bytes) = &objects[&frozen.artifact.artifact_id()];
+    let content: serde_json::Value = serde_json::from_slice(frozen_bytes).unwrap();
+    assert_eq!(content["repository"]["revision"], "0123456789abcdef");
+    assert_eq!(content["files"][1]["content_base64"], "AP8=");
+    assert_eq!(
+      *resolver.0.lock().unwrap(),
+      [vec!["suite/check.sh", "suite/fixture.bin"]]
+    );
   });
 }

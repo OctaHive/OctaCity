@@ -592,6 +592,7 @@ pub struct FactoryConfigurationHandlers<S> {
   store: Arc<S>,
   project_policies: Option<Arc<dyn octacity_server_store::FactoryProjectPolicyStore>>,
   repositories: Option<Arc<dyn octacity_server_store::ConfigurationStore>>,
+  verification_inputs: Option<Arc<dyn octacity_server_store::ProjectInputQueryStore>>,
   published_flows: Option<Arc<dyn FactoryFlowDefinitionStore>>,
   policy: Arc<dyn crate::ManagementAuthorizationPolicy>,
   source_actions: Option<Arc<dyn crate::FactoryStageSourceAuthorizer>>,
@@ -607,6 +608,7 @@ impl<S> FactoryConfigurationHandlers<S> {
       store,
       project_policies: None,
       repositories: None,
+      verification_inputs: None,
       published_flows: None,
       policy,
       source_actions: None,
@@ -626,6 +628,13 @@ impl<S> FactoryConfigurationHandlers<S> {
   #[must_use]
   pub fn with_repositories(mut self, repositories: Arc<dyn octacity_server_store::ConfigurationStore>) -> Self {
     self.repositories = Some(repositories);
+    self
+  }
+
+  /// Resolves explicit protected verification selections through the private Project input owner.
+  #[must_use]
+  pub fn with_verification_inputs(mut self, inputs: Arc<dyn octacity_server_store::ProjectInputQueryStore>) -> Self {
+    self.verification_inputs = Some(inputs);
     self
   }
 
@@ -737,6 +746,14 @@ where
         self.published_flows.as_deref(),
         self.policy.as_ref(),
         context,
+      )
+      .await?;
+      crate::factory::validation::factory_verification_supplement::validate_verification_selections(
+        flow,
+        project_id,
+        self.verification_inputs.as_deref(),
+        crate::FactoryExecutionClock::now(&crate::SystemFactoryExecutionClock)?,
+        Some((self.policy.as_ref(), context)),
       )
       .await?;
       crate::factory::execution::factory_code_sources::validate_sources(

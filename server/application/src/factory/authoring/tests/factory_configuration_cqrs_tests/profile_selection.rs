@@ -347,7 +347,463 @@ fn standalone_flow_publication_uses_the_same_profile_compatibility_validation() 
         .is_err(),
       "installed capability choices do not make another Project's Role and Profiles selectable"
     );
-    assert!(handlers.handle_query(&context(), input).await.is_ok());
+    assert!(handlers.handle_query(&context(), input.clone()).await.is_ok());
+    let mut input = input;
+    let node = input
+      .draft
+      .root
+      .nodes
+      .iter_mut()
+      .find(|node| node.kind() == octacity_server_factory::FlowNodeKind::Reasoning)
+      .unwrap();
+    *node = node
+      .clone()
+      .with_protected_verification(
+        octacity_server_factory::FactoryArtifactReference::new(
+          octacity_server_domain::ArtifactId::generate(),
+          octacity_server_factory::FactoryDigest::content_sha256(b"unknown"),
+          7,
+        )
+        .unwrap(),
+      )
+      .unwrap();
+    assert!(
+      handlers.handle_query(&context(), input).await.is_err(),
+      "a caller cannot attach arbitrary bytes to the protected verifier"
+    );
+  });
+}
+
+#[test]
+fn standalone_flow_requires_compatible_verification_and_current_retention() {
+  #[derive(Clone)]
+  struct Input(PublishedProjectInput);
+  #[async_trait::async_trait]
+  impl ProjectInputQueryStore for Input {
+    async fn project_input_artifact(
+      &self,
+      project: ProjectId,
+      artifact: octacity_server_domain::ArtifactId,
+    ) -> Result<Option<PublishedProjectInput>, StoreError> {
+      Ok((self.0.project_id == project && self.0.object.artifact.artifact_id() == artifact).then(|| self.0.clone()))
+    }
+  }
+  run_ready(async {
+    let project = ProjectId::generate();
+    let fixture = selected_fixture(project);
+    let flow = fixture.draft.flow.unwrap();
+    let root = flow.closure.definition(flow.closure.root()).unwrap();
+    let reference =
+      FactoryArtifactReference::new(octacity_server_domain::ArtifactId::generate(), digest(27), 100).unwrap();
+    let mut wire = serde_json::to_value(root).unwrap();
+    wire.as_object_mut().unwrap().remove("reference");
+    let mut draft: crate::FactoryFlowRootDraft = serde_json::from_value(wire).unwrap();
+    let step = draft
+      .nodes
+      .iter_mut()
+      .find(|node| node.kind() == FlowNodeKind::Reasoning)
+      .unwrap();
+    let mut selection = step.profile_selection().unwrap().clone();
+    let schema = step.outcomes()[0].schema().clone();
+    for candidate in selection.candidates.values_mut() {
+      let build = &mut candidate.build;
+      build.result_output = key("reviewed_check_summary");
+      build.evidence = vec![EvidenceRequirement::new(
+        key("frozen_check_files"),
+        EvidenceOutputKind::Artifact,
+        schema.clone(),
+        build.tool.clone(),
+        build.plugin.clone(),
+      )];
+    }
+    let mut choices = fixture.choices;
+    for candidate in selection.candidates.values() {
+      let build = &candidate.build;
+      choices = choices
+        .with_build_pipeline_contract(FactoryBuildPipelineContract {
+          build_configuration: build.build_configuration.clone(),
+          tool: build.tool.clone(),
+          plugin: build.plugin.clone(),
+          model_or_tool: build.model_or_tool.clone(),
+          pipeline_node: "job".parse().unwrap(),
+          compilation: None,
+          command: None,
+          protected_tests: Some(FactoryProtectedTestBuildContract::Author {
+            result_output: build.result_output.clone(),
+            inventory: build.evidence[0].clone(),
+          }),
+        })
+        .unwrap();
+    }
+    let author = &selection.candidates[&key("default")].build;
+    let mut verifier = author.clone();
+    verifier.model_or_tool = verifier.tool.clone();
+    verifier.result_output = key("check-result");
+    verifier.evidence.clear();
+    verifier.result_tool = None;
+    let verifier_contract = FactoryBuildPipelineContract {
+      build_configuration: verifier.build_configuration.clone(),
+      tool: verifier.tool.clone(),
+      plugin: verifier.plugin.clone(),
+      model_or_tool: verifier.model_or_tool.clone(),
+      pipeline_node: "job".parse().unwrap(),
+      compilation: None,
+      protected_tests: None,
+      command: Some(FactoryBuildCommandContract {
+        task_digest: verifier.task_digest,
+        outputs: vec![EvidenceRequirement::new(
+          verifier.result_output.clone(),
+          EvidenceOutputKind::Report,
+          schema,
+          verifier.tool.clone(),
+          verifier.plugin.clone(),
+        )],
+        observation_schema: None,
+        permissions: FactoryPermissionSet::deny_all(),
+      }),
+    };
+    let author_profile = author.model_or_tool.clone();
+    let inventory = author.evidence[0].clone();
+    let author_key = step.key().clone();
+    let plain_author_key = key("plain-author");
+    let mut plain_author =
+      serde_json::to_value(step.clone().with_profile_selection(selection.clone()).unwrap()).unwrap();
+    plain_author["key"] = serde_json::json!(plain_author_key);
+    *step = step
+      .clone()
+      .with_profile_selection(selection)
+      .unwrap()
+      .with_protected_verification(reference.clone())
+      .unwrap();
+    draft.nodes.push(serde_json::from_value(plain_author).unwrap());
+    let edge = draft
+      .transitions
+      .iter_mut()
+      .find(|edge| edge.predecessor() == &author_key && edge.outcome() == &key("succeeded"))
+      .unwrap();
+    *edge = FlowTransition::new(
+      author_key.clone(),
+      key("succeeded"),
+      FlowTransitionTarget::Node(plain_author_key.clone()),
+    );
+    for outcome in ["succeeded", "retryable", "failed", "cancelled"] {
+      let target = if outcome == "succeeded" {
+        FlowTransitionTarget::Node(key("validate"))
+      } else {
+        FlowTransitionTarget::Terminal(key(if outcome == "cancelled" { "cancelled" } else { "failed" }))
+      };
+      draft
+        .transitions
+        .push(FlowTransition::new(plain_author_key.clone(), key(outcome), target));
+    }
+    let artifact_schema = FlowDataSchema::new(
+      key("test.artifact"),
+      key("v1"),
+      serde_json::from_value(serde_json::json!({
+        "type": "object", "fields": {
+          "artifact_id": {"required": true, "value": {"type": "string", "min_bytes": 1, "max_bytes": 256}},
+          "content_digest": {"required": true, "value": {"type": "string", "min_bytes": 64, "max_bytes": 64}},
+          "encoded_size": {"required": true, "value": {"type": "integer", "minimum": 1, "maximum": 16777216}}
+        }
+      }))
+      .unwrap(),
+    )
+    .unwrap();
+    let verifier_input = FlowDataSchema::new(
+      key("test.verifier-input"),
+      key("v1"),
+      FlowValueSchema::Object {
+        fields: BTreeMap::from([
+          (key("suite"), FlowFieldSchema::required(artifact_schema.shape().clone())),
+          (
+            key("alternate"),
+            FlowFieldSchema::required(artifact_schema.shape().clone()),
+          ),
+        ]),
+      },
+    )
+    .unwrap();
+    let verifier_step = draft
+      .nodes
+      .iter_mut()
+      .find(|node| node.key() == &key("validate"))
+      .unwrap();
+    let mut wire = serde_json::to_value(&*verifier_step).unwrap();
+    wire.as_object_mut().unwrap().remove("action");
+    wire["kind"] = serde_json::json!("build_command");
+    wire["input_schema"] = serde_json::json!(verifier_input.reference());
+    let artifact_selection = |path: &str| {
+      serde_json::json!({
+        "source_kind": "evidence", "source": {"value": {"mapping": "object", "fields": {
+          "kind": {"mapping": "constant", "value": "artifact"},
+          "value": {"mapping": "pointer", "path": path}
+        }}}
+      })
+    };
+    wire["context_binding"] = serde_json::json!({
+      "entries": {"selected-suite": artifact_selection("/suite")}
+    });
+    *verifier_step = serde_json::from_value::<FlowNodeDefinition>(wire)
+      .unwrap()
+      .with_build(verifier)
+      .unwrap();
+    let mut request = crate::ValidateFactoryFlowDefinitionQuery {
+      id: FlowDefinitionId::generate(),
+      project_id: project,
+      draft: crate::FactoryFlowDefinitionDraft {
+        accepted_predecessor: None,
+        root: draft,
+        limits: flow.limits.clone(),
+        data_schemas: flow.data_schemas,
+        pools: flow.pools,
+      },
+    };
+    request.draft.data_schemas.push(verifier_input);
+    let now = crate::FactoryExecutionClock::now(&crate::SystemFactoryExecutionClock).unwrap();
+    let expired = octacity_server_domain::Timestamp::from_unix_millis(1).unwrap();
+    let current = octacity_server_domain::Timestamp::from_unix_millis(now.unix_millis() + 60_000).unwrap();
+    for (expires_at, accepts_supplement, producer, alternate_guard, should_validate) in [
+      (current, true, &author_key, "/with_additional", true),
+      (current, false, &author_key, "/with_additional", false),
+      (current, false, &plain_author_key, "/with_additional", true),
+      (current, false, &plain_author_key, "/suite", false),
+      (current, false, &plain_author_key, "/suite/artifact_id", false),
+      (expired, true, &author_key, "/with_additional", false),
+    ] {
+      let installed = choices
+        .clone()
+        .with_build_pipeline_contract(FactoryBuildPipelineContract {
+          protected_tests: Some(FactoryProtectedTestBuildContract::Verifier {
+            author_profile: author_profile.clone(),
+            inventory: inventory.clone(),
+            accepts_supplement,
+          }),
+          ..verifier_contract.clone()
+        })
+        .unwrap();
+      let store = Arc::new(PublicationChoices::for_validation(installed));
+      let policy = Arc::new(TrustedNetworkManagementPolicy);
+      let metadata = Input(PublishedProjectInput {
+        project_id: project,
+        preparation_id: digest(27),
+        mapping: key(PROJECT_PROTECTED_VERIFICATION_MAPPING),
+        object: FactoryInputObject {
+          artifact: reference.clone(),
+          role: FactoryInputRole::Document,
+          upload_id: octacity_server_domain::ArtifactUploadId::generate(),
+          media_type: ArtifactMediaType::new("application/json").unwrap(),
+        },
+        published_at: expired,
+        expires_at,
+      });
+      let handlers = AuthorizedQueryHandler::new(
+        policy.clone(),
+        Arc::new(crate::FactoryFlowDefinitionHandlers::new(store, policy).with_verification_inputs(Arc::new(metadata))),
+      );
+      let verifier = request
+        .draft
+        .root
+        .nodes
+        .iter_mut()
+        .find(|node| node.key() == &key("validate"))
+        .unwrap();
+      let inventory_from = |node: &FactoryKey| FlowInputSource::Record {
+        node: node.clone(),
+        outcome: key("succeeded"),
+        view: FlowRecordView::Metadata,
+        path: "/build/outputs/frozen_check_files/artifact".into(),
+      };
+      let mut guarded = artifact_selection("/alternate");
+      guarded["when_present"] = serde_json::json!(alternate_guard);
+      let mut wire = serde_json::to_value(&*verifier).unwrap();
+      wire["context_binding"]["entries"]["alternate-suite"] = guarded;
+      *verifier = serde_json::from_value::<FlowNodeDefinition>(wire)
+        .unwrap()
+        .with_input_binding(
+          FlowInputBinding::new(
+            BTreeMap::from([
+              (key("inventory"), inventory_from(producer)),
+              (key("extra"), inventory_from(&author_key)),
+            ]),
+            FlowDataMapping::new(FlowValueMapping::Object {
+              fields: BTreeMap::from([
+                (
+                  key("suite"),
+                  FlowValueMapping::Pointer {
+                    path: "/inventory".into(),
+                  },
+                ),
+                (key("alternate"), FlowValueMapping::Pointer { path: "/extra".into() }),
+              ]),
+            })
+            .unwrap(),
+          )
+          .unwrap(),
+        )
+        .unwrap();
+      let result = handlers.handle_query(&context(), request.clone()).await;
+      assert_eq!(
+        result.is_ok(),
+        should_validate,
+        "producer {producer}, guard {alternate_guard}, supplement support {accepts_supplement}, retention {expires_at:?}, error {:?}",
+        result.err()
+      );
+    }
+  });
+}
+
+#[test]
+fn readiness_bounds_verification_reads_and_distinguishes_store_failure() {
+  use std::sync::atomic::{AtomicUsize, Ordering};
+  struct VerificationInputs {
+    reads: AtomicUsize,
+    fail: bool,
+    input: PublishedProjectInput,
+  }
+  #[async_trait::async_trait]
+  impl ProjectInputQueryStore for VerificationInputs {
+    async fn project_input_artifact(
+      &self,
+      project: ProjectId,
+      artifact: octacity_server_domain::ArtifactId,
+    ) -> Result<Option<PublishedProjectInput>, StoreError> {
+      self.reads.fetch_add(1, Ordering::SeqCst);
+      assert_eq!(project, self.input.project_id);
+      assert_eq!(artifact, self.input.object.artifact.artifact_id());
+      if self.fail {
+        return Err(StoreError::Unavailable);
+      }
+      Ok(Some(self.input.clone()))
+    }
+  }
+  run_ready(async {
+    use crate::{FactoryReadinessState::*, *};
+    let project = ProjectId::generate();
+    let reference =
+      FactoryArtifactReference::new(octacity_server_domain::ArtifactId::generate(), digest(27), 100).unwrap();
+    for (count, fail, expected, expected_reads) in
+      [(2, true, Unknown, 1), (2, false, Ready, 1), (64, false, Unknown, 0)]
+    {
+      let mut fixture = selected_fixture(project);
+      let flow = fixture.draft.flow.as_mut().unwrap();
+      let root = flow.closure.definition(flow.closure.root()).unwrap();
+      let template = serde_json::to_value(
+        root
+          .node(root.entry())
+          .unwrap()
+          .clone()
+          .with_protected_verification(reference.clone())
+          .unwrap(),
+      )
+      .unwrap();
+      let name = |index| key(&format!("author-{index}"));
+      let mut nodes = Vec::new();
+      let mut transitions = Vec::new();
+      for index in 0..count {
+        let mut wire = template.clone();
+        wire["key"] = serde_json::json!(name(index));
+        let node: FlowNodeDefinition = serde_json::from_value(wire).unwrap();
+        for outcome in node.outcomes() {
+          let target = if index + 1 < count && outcome.key() == &key("succeeded") {
+            FlowTransitionTarget::Node(name(index + 1))
+          } else {
+            FlowTransitionTarget::Terminal(key(match outcome.key().as_str() {
+              "succeeded" => "succeeded",
+              "cancelled" => "cancelled",
+              _ => "failed",
+            }))
+          };
+          transitions.push(FlowTransition::new(name(index), outcome.key().clone(), target));
+        }
+        nodes.push(node);
+      }
+      let definition = FlowDefinition::new(FlowDefinitionInput {
+        id: root.reference().id(),
+        version: root.reference().version(),
+        entry: name(0),
+        input_schema: root.input_schema().cloned(),
+        nodes,
+        transitions,
+        terminals: root.terminals().to_vec(),
+        context_projections: vec![],
+        data_projections: vec![],
+        execution: root.execution().clone(),
+      })
+      .unwrap();
+      flow.closure = PinnedFlowDefinitionClosure::new(definition.reference(), vec![definition]).unwrap();
+      let id = FactoryConfigurationId::generate();
+      let version = FactoryConfigurationVersion::INITIAL;
+      let configuration =
+        FactoryConfiguration::publish(id, version, project, digest(28), fixture.draft, &fixture.choices).unwrap();
+      let store = Arc::new(InMemoryFactoryConfigurationStore::new());
+      store.seed_project(project).unwrap();
+      store
+        .seed_factory_configuration_version(PublishedFactoryConfiguration {
+          configuration,
+          published_at: time(0),
+        })
+        .unwrap();
+      let inputs = Arc::new(VerificationInputs {
+        fail,
+        reads: AtomicUsize::new(0),
+        input: PublishedProjectInput {
+          project_id: project,
+          preparation_id: digest(27),
+          mapping: key(PROJECT_PROTECTED_VERIFICATION_MAPPING),
+          object: FactoryInputObject {
+            artifact: reference.clone(),
+            role: FactoryInputRole::Document,
+            upload_id: octacity_server_domain::ArtifactUploadId::generate(),
+            media_type: ArtifactMediaType::new("application/json").unwrap(),
+          },
+          published_at: time(0),
+          expires_at: time(60_000),
+        },
+      });
+      let policy = Arc::new(TrustedNetworkManagementPolicy);
+      let handler = AuthorizedQueryHandler::new(
+        policy.clone(),
+        Arc::new(
+          FactoryReadinessHandlers::new(
+            store,
+            policy,
+            crate::factory_node_test_support::clock(),
+            std::time::Duration::from_secs(30),
+          )
+          .unwrap()
+          .with_verification_inputs(inputs.clone()),
+        ),
+      );
+      let report = handler
+        .handle_query(
+          &context(),
+          GetFactoryReadinessQuery {
+            id,
+            version,
+            selection: FactoryReadinessSelection {
+              repository: WorkSourceRepositoryRef {
+                project_id: project,
+                id: octacity_server_domain::RepositoryId::generate(),
+                version: octacity_server_domain::RepositoryVersion::INITIAL,
+                definition_digest: digest(29),
+              },
+              input: None,
+            },
+          },
+        )
+        .await
+        .unwrap();
+      let aspect = if expected_reads == 0 {
+        "coverage"
+      } else {
+        "protected_verification"
+      };
+      assert_eq!(
+        report.checks.iter().find(|check| check.aspect == aspect).unwrap().state,
+        expected
+      );
+      assert_eq!(inputs.reads.load(Ordering::SeqCst), expected_reads);
+    }
   });
 }
 
@@ -605,6 +1061,7 @@ fn native_compiler_rejects_missing_task_context_before_publication_and_accepts_e
     for binding in node.build_bindings() {
       choices = choices
         .with_build_pipeline_contract(FactoryBuildPipelineContract {
+          protected_tests: None,
           command: None,
           build_configuration: binding.build_configuration.clone(),
           tool: binding.tool.clone(),
@@ -612,6 +1069,7 @@ fn native_compiler_rejects_missing_task_context_before_publication_and_accepts_e
           model_or_tool: binding.model_or_tool.clone(),
           pipeline_node: octacity_server_domain::PipelineNodeId::new("native").unwrap(),
           compilation: Some(FactoryBuildCompilationContract {
+            evidence: vec![],
             task_digest: binding.task_digest,
             role_profiles: true,
             requires_task_context: true,

@@ -14,6 +14,7 @@ pub(crate) mod factory_protected_validation_build;
 pub(crate) mod factory_protected_validation_evidence_action;
 pub(crate) mod factory_protected_validation_input_source;
 pub(crate) mod factory_verification;
+pub(crate) mod factory_verification_supplement;
 pub(crate) mod factory_verified_build_outputs;
 #[cfg(test)]
 pub(crate) mod tests;

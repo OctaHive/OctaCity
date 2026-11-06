@@ -126,11 +126,33 @@ pub struct FactoryCommandAuthoringContract {
   #[serde(skip_serializing_if = "Option::is_none")]
   pub permissions: Option<FactoryPermissionSet>,
 }
+/// Exact public selection of an installed protected-test author.
+#[derive(Clone, Debug, serde::Serialize)]
+pub struct FactoryVerificationAuthorChoice {
+  /// Ordinary Build configuration of the author.
+  pub build_configuration: BuildConfigurationRef,
+  /// Exact executable capability.
+  pub tool: ImmutableReference,
+  /// Exact plugin capability.
+  pub plugin: ImmutableReference,
+  /// Exact author model or command identity.
+  pub model_or_tool: ImmutableReference,
+  /// Required task digest for a static command. Role/Profile tasks bind separately.
+  #[serde(skip_serializing_if = "Option::is_none")]
+  pub task_digest: Option<FactoryDigest>,
+  /// Public handoff output.
+  pub result_output: FactoryKey,
+  /// Exact private inventory output.
+  pub inventory: EvidenceRequirement,
+}
 /// Technical installation facts only; Source/Reporter choices retain action authority.
 #[derive(Clone, Debug, serde::Serialize)]
 pub struct FactoryAuthoringCapabilities {
   /// Commands explicitly declared by visible installed compilers; an empty list grants nothing.
   pub commands: Vec<FactoryCommandAuthoringContract>,
+  /// Visible installed authors that can freeze supplemental verification inputs.
+  #[serde(skip_serializing_if = "Vec::is_empty")]
+  pub verification_authors: Vec<FactoryVerificationAuthorChoice>,
   /// Visible installed publication targets, independent of previously published Flows.
   #[serde(skip_serializing_if = "Vec::is_empty")]
   pub candidate_publications: Vec<FactoryCandidatePublicationChoice>,
@@ -232,7 +254,7 @@ impl<S: FactoryConfigurationStore> ManagementQueryUseCase<GetFactoryAuthoringCap
         resource_modes: vec!["none"],
       });
     }
-    let (commands, candidate_publications, issue_classification) =
+    let (commands, verification_authors, candidate_publications, issue_classification) =
       match crate::factory::authoring::factory_configuration_choices::visible_installed_factory_choices(
         self.store.as_ref(),
         self.policy.as_ref(),
@@ -267,13 +289,19 @@ impl<S: FactoryConfigurationStore> ManagementQueryUseCase<GetFactoryAuthoringCap
             query.project_id,
           )
           .await?;
-          (command_contracts(&choices), publications, classification)
+          (
+            command_contracts(&choices),
+            verification_authors(&choices),
+            publications,
+            classification,
+          )
         }
-        Err(ApplicationError::CapabilityUnavailable) => (vec![], vec![], None),
+        Err(ApplicationError::CapabilityUnavailable) => (vec![], vec![], vec![], None),
         Err(error) => return Err(error),
       };
     Ok(FactoryAuthoringCapabilities {
       commands,
+      verification_authors,
       candidate_publications,
       issue_classification,
       deterministic_gate: FactoryDeterministicGateContract {
@@ -287,6 +315,30 @@ impl<S: FactoryConfigurationStore> ManagementQueryUseCase<GetFactoryAuthoringCap
       source_free_incompatibility: None,
     })
   }
+}
+
+fn verification_authors(choices: &FactoryConfigurationChoices) -> Vec<FactoryVerificationAuthorChoice> {
+  choices
+    .unambiguous_build_pipeline_contracts()
+    .filter_map(|installed| {
+      let Some(FactoryProtectedTestBuildContract::Author {
+        result_output,
+        inventory,
+      }) = &installed.protected_tests
+      else {
+        return None;
+      };
+      Some(FactoryVerificationAuthorChoice {
+        build_configuration: installed.build_configuration.clone(),
+        tool: installed.tool.clone(),
+        plugin: installed.plugin.clone(),
+        model_or_tool: installed.model_or_tool.clone(),
+        task_digest: installed.command.as_ref().map(|command| command.task_digest),
+        result_output: result_output.clone(),
+        inventory: inventory.clone(),
+      })
+    })
+    .collect()
 }
 
 fn command_contracts(choices: &FactoryConfigurationChoices) -> Vec<FactoryCommandAuthoringContract> {

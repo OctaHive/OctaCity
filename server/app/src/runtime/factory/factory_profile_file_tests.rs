@@ -612,6 +612,47 @@ async fn file_installs_a_protected_observation_on_the_work_base() {
     .collect::<Vec<_>>();
   assert_eq!(commands.len(), 1, "one executor must serve both exact command profiles");
   assert_eq!(commands[0].1, NodeExecutionIdentity::External(profile.executor));
+  let mut tester = crate::runtime::factory::factory_tests::qualified_codex_profile();
+  tester.build_configuration = author_command.build_configuration.clone();
+  let mut grants = serde_json::to_value(&tester.project_permissions).unwrap();
+  grants["outputs"]["kinds"] = serde_json::json!([
+    "codex-run-result",
+    "codex-run-provenance",
+    "codex-run-trace",
+    "hidden.contract",
+    "private.inventory",
+    "protected_handoff"
+  ]);
+  grants["outputs"]["max_artifact_count"] = serde_json::json!(4);
+  grants["outputs"]["max_report_count"] = serde_json::json!(2);
+  tester.project_permissions = serde_json::from_value(grants).unwrap();
+  tester.local_permissions =
+    octacity_server_factory::LocalPermissionCeiling::fully_enforced(tester.project_permissions.clone());
+  let mut codex = crate::runtime::factory::factory_tests::codex_catalog_document(&tester)["codex"].clone();
+  author_policy["inventory"]["tool"] = serde_json::json!(tester.toolchain.executable);
+  author_policy["inventory"]["plugin"] = serde_json::json!(tester.toolchain.plugin);
+  author_policy["transcript"] = serde_json::json!("codex-run-trace");
+  codex[0]["protected_tests"] = author_policy.clone();
+  let mut generated = document.clone();
+  generated["protected_test_authors"] = serde_json::json!([]);
+  generated["codex"] = codex;
+  generated["protected_validation"][0]["inputs"]["author_profile"] = serde_json::json!(tester.toolchain.model);
+  generated["protected_validation"][0]["inputs"]["inventory"] = author_policy["inventory"].clone();
+  let installer = parse(&generated).expect("a native Tester can author the exact inputs of the baseline");
+  let mut resources = crate::runtime::factory::factory_tests::resources();
+  for pin in [&profile.plugin, &tester.toolchain.plugin] {
+    resources
+      .toolchain
+      .octa
+      .plugin_digests
+      .insert(pin.identity().to_string(), pin.digest().to_string());
+  }
+  assert!(installer.install(resources).await.unwrap().output_finalizer.is_some());
+  generated["codex"][0]["protected_tests"]["transcript"] = serde_json::Value::Null;
+  assert!(
+    parse(&generated).is_err(),
+    "the baseline cannot select a Tester without its private transcript"
+  );
   document["protected_validation"][0]["profiles"][0]
     .as_object_mut()
     .unwrap()

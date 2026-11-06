@@ -68,8 +68,18 @@ and [`resolve-revision-v1.json`](../../../server/protocols/octacity-vcs-protocol
 | `read_commit` | repository, immutable revision | normalized `commit` |
 | `list_tree` | repository, immutable revision, optional path/cursor, bounded page size | ordered `tree` page |
 | `read_file` | repository, immutable revision, path, offset, maximum bytes | base64 `file` fragment |
+| `read_files` | repository, immutable revision, selected paths, total maximum bytes | complete base64 `files` |
 | `resolve_revision` | repository, allowed mutable reference | exact `resolved` revision |
 | `cancel` | target operation identity | `acknowledged` or `cancelled` failure |
+
+An adapter may advertise the optional `read_files` capability. The request
+selects one immutable revision, up to 64 distinct repository-relative paths
+and one total `max_bytes` limit. The `files` outcome contains one complete
+`FileContent` per path in request order with offset zero and no truncation.
+A missing file or exceeded aggregate limit fails the whole operation. The Git
+adapter also fails the whole `read_files` request if any selected path is a
+symbolic link or another non-regular entry. A single `read_file` request can
+still return the stored link target for browsing.
 
 Reference and tree cursors are opaque. Clients must not parse them or construct
 new cursors from provider state. Pages contain at most 256 entries. One file
@@ -143,7 +153,7 @@ included in host errors; credential handles are redacted from debug output.
 
 ## Git adapter installation and safety boundary
 
-`octacity-vcs-git` implements all five v1 capabilities. Its installed
+`octacity-vcs-git` implements the five original v1 capabilities and the optional batch read. Its installed
 `adapter.toml` advertises protocol range `1..=1`, enables every VCS capability,
 and pins the SHA-256 of the adapter executable in the normal registry format.
 The executable expects a strict `git-adapter.toml` beside it:

@@ -315,6 +315,35 @@ export const ruMessages = {
   'factory.removeCodeSource': 'Удалить исходники {name}',
   'factory.codeMetadataUnavailable':
     'Данные репозитория недоступны. Выбор сохранён; повторите запрос или проверьте доступ в Project.',
+  'factory.verificationTitle': 'Дополнительные проверки',
+  'factory.verificationHelp':
+    'Подключите файлы к тестам, которые напишет Tester. Выполняются только выбранные скрипты и задачи Octafile. Остальные файлы доступны проверкам как данные.',
+  'factory.verificationFrozen': 'Файлы и команды проверок зафиксированы для этого шага.',
+  'factory.verificationRetentionUnavailable':
+    'Срок хранения файлов ограничен. Замените вложение, если его срока не хватает для запуска.',
+  'factory.verificationIncompatible':
+    'Выбранный профиль Tester и команды проверки должны поддерживать дополнительные проверки.',
+  'factory.verificationExpiresAt': 'Доступно до {date}.',
+  'factory.verificationDetach': 'Отключить дополнительные проверки',
+  'factory.verificationSource': 'Источник файлов проверок',
+  'factory.verificationUpload': 'Загрузить файлы или папку',
+  'factory.verificationFiles': 'Загрузить файлы проверок',
+  'factory.verificationFolder': 'Загрузить папку с проверками',
+  'factory.verificationPaths': 'Пути в репозитории (один файл на строку)',
+  'factory.verificationShell': 'Shell-скрипты для запуска (один путь на строку)',
+  'factory.verificationOctaTask': 'Задача Octafile',
+  'factory.verificationOctafile': 'Путь к Octafile',
+  'factory.verificationTaskName': 'Имя задачи',
+  'factory.verificationInvalidTaskName':
+    'Введите точное имя задачи Octa, например Checks:_Verify. До 128 байт, без шаблонов поиска.',
+  'factory.verificationRemoveTask': 'Убрать задачу',
+  'factory.verificationAddTask': 'Добавить задачу Octafile',
+  'factory.verificationLimit': 'Выберите до 64 файлов общим объёмом до 256 КиБ.',
+  'factory.verificationFailed':
+    'Не удалось зафиксировать проверки. Проверьте пути, размер файлов и доступ к репозиторию.',
+  'factory.verificationFreeze': 'Зафиксировать проверки',
+  'factory.verificationFreezing':
+    'Фиксируем файлы проверок. После этого можно будет переключить шаг.',
   'factory.stepCode': 'Исходники шага',
   'factory.stepCodeHelp': 'Этому шагу подключается только выбранный здесь источник.',
   'factory.stepCodeSelection': 'Код, доступный этому шагу',
@@ -2052,6 +2081,8 @@ export const ruMessages = {
   'factory.publishConsequence':
     'Опубликовать неизменяемую версию. Существующие Runs сохранят закреплённые определения.',
   'factory.confirmPublish': 'Подтвердить публикацию',
+  'factory.publicationReviewStale':
+    'Черновик изменился. Закройте окно и проверьте черновик заново.',
   'factory.published': 'Неизменяемая версия опубликована.',
   'factory.openPublished': 'Открыть опубликованную версию',
   'factory.normalized': 'Нормализованные значения',

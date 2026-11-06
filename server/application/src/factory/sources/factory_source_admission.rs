@@ -484,6 +484,12 @@ impl<S: FactoryAdmissionStore + 'static> FactorySourceAdmissionHandlers<S> {
     self
   }
 
+  /// Uses the same verification metadata owner as manual admission.
+  pub fn with_verification_inputs(mut self, inputs: Arc<dyn octacity_server_store::ProjectInputQueryStore>) -> Self {
+    self.admission = self.admission.with_verification_inputs(inputs);
+    self
+  }
+
   /// Installs trusted owner time; production defaults to the system execution clock.
   #[must_use]
   pub fn with_clock(mut self, clock: Arc<dyn crate::FactoryExecutionClock>) -> Self {

@@ -15,7 +15,9 @@ impl ProjectDocumentInputStore for crate::testing::InMemoryFactoryConfigurationS
         .records
         .values()
         .filter_map(|row| row.document().ok())
-        .filter(|row| row.intent.project_id == project)
+        .filter(|row| {
+          row.intent.project_id == project && row.intent.mapping.as_str() == PROJECT_CONTEXT_DOCUMENT_MAPPING
+        })
         .filter_map(|row| row.resource().ok())
         .find(|row| row.artifact.artifact_id() == artifact),
     )
@@ -34,7 +36,11 @@ impl ProjectDocumentInputStore for crate::testing::InMemoryFactoryConfigurationS
       .records
       .values()
       .filter_map(|row| row.document().ok())
-      .filter(|row| row.intent.project_id == request.project_id && row.expires_at > request.observed_at)
+      .filter(|row| {
+        row.intent.project_id == request.project_id
+          && row.expires_at > request.observed_at
+          && row.intent.mapping.as_str() == PROJECT_CONTEXT_DOCUMENT_MAPPING
+      })
       .filter_map(|row| row.resource().ok())
       .filter(|row| {
         request.visibility.allows(&row.artifact.artifact_id())
@@ -100,7 +106,7 @@ impl ProjectDocumentInputStore for crate::testing::InMemoryFactoryConfigurationS
     }
     if let Some(id) = state.project_text.keys.get(&key).copied() {
       let original = state.project_text.records[&id].document()?;
-      if !original.matches_submission(&request.submission) {
+      if !request.matches(original) {
         return Err(document_conflict());
       }
       if original.published_at.is_some() {
@@ -113,7 +119,7 @@ impl ProjectDocumentInputStore for crate::testing::InMemoryFactoryConfigurationS
         .insert(id, RetainedProjectInput::Document(Box::new(next.clone())));
       return Ok(next);
     }
-    let record = ProjectDocumentPreparation::reserve(&request.submission, audit.security_scope().clone(), request.now)?;
+    let record = request.preparation(audit.security_scope().clone())?;
     state.project_text.documents.insert(
       record.id,
       RetainedProjectInputBody::Document(request.submission.content),

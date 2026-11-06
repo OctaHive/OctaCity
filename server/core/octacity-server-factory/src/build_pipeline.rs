@@ -18,6 +18,28 @@ pub struct FactoryBuildPipelineContract {
   pub compilation: Option<FactoryBuildCompilationContract>,
   /// Exact static command outputs and request ceiling, without invocation arguments.
   pub command: Option<FactoryBuildCommandContract>,
+  /// Installation-owned qualification for protected test inputs and outputs.
+  pub protected_tests: Option<FactoryProtectedTestBuildContract>,
+}
+/// Exact protected-test role declared by a qualified native Build installation.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub enum FactoryProtectedTestBuildContract {
+  /// Freezes selected verification files alongside the generated inventory.
+  Author {
+    /// Public handoff output of this installed author.
+    result_output: crate::FactoryKey,
+    /// Exact private inventory output.
+    inventory: crate::EvidenceRequirement,
+  },
+  /// Verifies an inventory produced by the exact author configuration.
+  Verifier {
+    /// Installed author model or command identity.
+    author_profile: ImmutableReference,
+    /// Exact private inventory to consume.
+    inventory: crate::EvidenceRequirement,
+    /// Whether the installed command can run supplemental checks.
+    accepts_supplement: bool,
+  },
 }
 /// Safe native command compiler facts available for ordinary authoring.
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -134,4 +156,6 @@ pub struct FactoryBuildCompilationContract {
   pub result_output_kind: crate::EvidenceOutputKind,
   /// Existing verifier required for captured MCP observations selected by a Profile.
   pub mcp_result_tool: Option<ImmutableReference>,
+  /// Additional outputs required by this native compiler.
+  pub evidence: Vec<crate::EvidenceRequirement>,
 }

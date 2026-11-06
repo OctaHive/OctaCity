@@ -184,6 +184,7 @@ async fn native_validation_command_requires_original_capture_and_distinct_declar
       900,
     )
     .unwrap(),
+    accepts_supplement: false,
     inventory: EvidenceRequirement::new(
       FactoryKey::new("original-inventory").unwrap(),
       EvidenceOutputKind::Artifact,

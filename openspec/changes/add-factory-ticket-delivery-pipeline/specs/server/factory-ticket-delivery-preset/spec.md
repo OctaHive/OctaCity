@@ -80,6 +80,14 @@ The pipeline SHALL create acceptance or regression tests from the frozen require
 - **WHEN** the implementation invocation requests protected test content or author transcript
 - **THEN** its declared artifact and workspace access denies that read while requirements remain available
 
+### Requirement: Operators can attach additional protected verification through Console
+
+The test step SHALL accept additional verification inputs from uploaded files or a directory, or from selected paths in an additional Project repository. Console SHALL allow an operator to select Octafile tasks or shell entrypoints and set the Tester assignment separately. Preparation SHALL retain exact input bytes, repository revision when applicable, relative paths and executable selections together with the Tester-authored suite before the baseline run. Only explicitly selected entrypoints SHALL run, with fixtures available inside the isolated verification workspace.
+
+#### Scenario: A supplementary test repository changes during implementation
+- **WHEN** an operator has selected additional verification from a Project repository and that repository changes after test preparation
+- **THEN** post-review verification executes the original retained files and configured entrypoints along with the Tester-authored tests
+
 ### Requirement: Implementation review and validation use the same candidate
 
 The pipeline SHALL execute implementation or defect correction, capture its exact candidate, run one independent code-review invocation, and then validate that candidate with the previously retained protected bundle and required repository checks. The reviewer SHALL receive the candidate and requirements without the implementation transcript. A successful review SHALL NOT replace test execution. Required test failures or review findings SHALL prevent delivery and return bounded findings to implementation within a configured rework limit, defaulting to one rework cycle. A changed candidate SHALL receive a fresh review and validation; the original protected bundle SHALL remain fixed unless an explicit requirements or test correction starts a new preparation cycle. Exhaustion or indeterminate outcomes SHALL pause with findings. Protected assertions SHALL NOT leak through implementation remediation.
@@ -87,6 +95,10 @@ The pipeline SHALL execute implementation or defect correction, capture its exac
 #### Scenario: Candidate passes review and acceptance tests
 - **WHEN** the captured candidate receives a successful independent review and passes the prepared tests and required repository checks
 - **THEN** that exact candidate becomes eligible for PR delivery
+
+#### Scenario: The Flow selects how to launch the protected checks
+- **WHEN** the operator selects either a scoped Tester invocation or a direct CI/CD Build step to launch verification
+- **THEN** the same protected runner executes the frozen plan and supplies the verified verdict for the exact candidate
 
 #### Scenario: Review requests a fix or a prepared test fails
 - **WHEN** review or validation identifies a change within the remaining rework budget
@@ -148,7 +160,7 @@ An operator SHALL be able to enable concise cards on accepted specification, rev
 
 ### Requirement: Every AI stage has its declared role and isolated invocation
 
-The example graph SHALL assign the Tester responsibility to deeper defect reproduction, test authoring and test execution/validation, Coder to implementation and independent review, DevOps to Delivery and Analytic to requirements/specification authoring. Each stage SHALL pin a compatible Project Role/Profile and its own isolated invocation, even when stages share a role or profile. The assignment and expected result SHALL be set on the step independently of reusable Profile instructions and skills. Compatible existing roles SHALL be selectable regardless of their display names. Role names SHALL NOT dispatch runtime code or grant input access. The Coder review invocation SHALL remain independent of implementation and SHALL NOT inherit its private transcript. Tester test execution SHALL use scoped tools to execute/observe the prepared test plan through the trusted runner; actual deterministic execution reports SHALL determine pass/fail, not model prose.
+The example graph SHALL assign the Tester responsibility to deeper defect reproduction and test authoring, Coder to implementation and independent review, DevOps to Delivery and Analytic to requirements/specification authoring. Test execution SHALL allow either a Tester invocation with scoped execution and observation tools or a direct CI/CD Build step. Both modes SHALL rely on the trusted runner's deterministic reports for pass/fail. Each agent stage SHALL pin a compatible Project Role/Profile and its own isolated invocation, even when stages share a role or profile. The assignment and expected result SHALL be set on the step independently of reusable Profile instructions and skills. Compatible existing roles SHALL be selectable regardless of their display names. Role names SHALL NOT dispatch runtime code or grant input access. The Coder review invocation SHALL remain independent of implementation and SHALL NOT inherit its private transcript.
 
 #### Scenario: Stages select the configured AI agents
 - **WHEN** reproduction, specification, test authoring, implementation, review, test execution and Delivery are dispatched

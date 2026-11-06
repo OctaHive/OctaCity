@@ -40,6 +40,8 @@ pub struct FactoryRuntimeProtectedValidationProfile {
   pub policy: FactoryProtectedTestPolicy,
   /// Independently installed Artifact inventory contract.
   pub inventory: EvidenceRequirement,
+  /// Installed command supports the frozen supplemental inventory.
+  pub accepts_supplement: bool,
   /// Trusted capture implementation accepted for the original candidate.
   pub capture_tool: ImmutableReference,
 }
@@ -233,6 +235,7 @@ impl FactoryRuntimeResources {
   pub(in crate::runtime) fn protected_test_output_finalizer(
     &self,
     profiles: Vec<FactoryProtectedTestAuthoringProfile>,
+    codex_profiles: Vec<FactoryCodexBuildProfile>,
   ) -> Result<Arc<dyn AgentOutputFinalizer>, FactoryRuntimeInstallationError> {
     let clock = Arc::new(SystemFactoryExecutionClock);
     let commands = profiles.iter().map(|profile| profile.command().clone()).collect();
@@ -251,6 +254,12 @@ impl FactoryRuntimeResources {
         clock,
       )
       .map_err(|_| FactoryRuntimeInstallationError::Invalid)?
+      .with_codex_profiles(codex_profiles, self.runs.clone())
+      .map_err(|_| FactoryRuntimeInstallationError::Invalid)?
+      .with_verification_inputs(Arc::new(FactoryProjectInputReader::new(
+        self.runs.clone(),
+        self.objects.clone(),
+      )))
       .with_retained_candidate_context_source(candidates),
     ))
   }
@@ -344,10 +353,11 @@ impl FactoryRuntimeResources {
     author_profile: ImmutableReference,
     policy: FactoryProtectedTestPolicy,
     inventory: EvidenceRequirement,
+    accepts_supplement: bool,
   ) -> Result<FactoryNodeExecutorBinding, FactoryRuntimeInstallationError> {
     use FactoryRuntimeInstallationError::Invalid;
     let executor = profiles.first().ok_or(Invalid)?.executor.clone();
-    let inputs = self.protected_test_context(author_profile, policy, inventory)?;
+    let inputs = self.protected_test_context(author_profile, policy, inventory, accepts_supplement)?;
     let (builds, outputs) = self.command_ports(CommandInstallation::TestObservation { profiles, inputs })?;
     Ok((
       FlowNodeKind::BuildCommand,
@@ -464,7 +474,12 @@ impl FactoryRuntimeResources {
     &self,
     profile: FactoryRuntimeProtectedValidationProfile,
   ) -> Result<Arc<NativeValidationInputs>, FactoryRuntimeInstallationError> {
-    let tests = self.protected_test_context(profile.author_profile, profile.policy, profile.inventory)?;
+    let tests = self.protected_test_context(
+      profile.author_profile,
+      profile.policy,
+      profile.inventory,
+      profile.accepts_supplement,
+    )?;
     let clock = Arc::new(SystemFactoryExecutionClock);
     let reader = self.retained_artifact_reader();
     let candidates = Arc::new(FactoryStoredCandidateContextSource::new(
@@ -487,20 +502,24 @@ impl FactoryRuntimeResources {
     author_profile: ImmutableReference,
     policy: FactoryProtectedTestPolicy,
     inventory: EvidenceRequirement,
+    accepts_supplement: bool,
   ) -> Result<Arc<NativeProtectedTestInputs>, FactoryRuntimeInstallationError> {
     if inventory.output_kind() != EvidenceOutputKind::Artifact {
       return Err(FactoryRuntimeInstallationError::Invalid);
     }
-    Ok(Arc::new(FactoryStoredProtectedTestContextSource::new(
-      self.runs.clone(),
-      self.retained_artifact_reader(),
-      Arc::new(FactoryStoredProtectedTestPlanSource::new(
+    Ok(Arc::new(
+      FactoryStoredProtectedTestContextSource::new(
         self.runs.clone(),
-        author_profile,
-        policy,
-      )),
-      inventory,
-      Arc::new(SystemFactoryExecutionClock),
-    )))
+        self.retained_artifact_reader(),
+        Arc::new(FactoryStoredProtectedTestPlanSource::new(
+          self.runs.clone(),
+          author_profile,
+          policy,
+        )),
+        inventory,
+        Arc::new(SystemFactoryExecutionClock),
+      )
+      .with_verification_supplement(accepts_supplement),
+    ))
   }
 }

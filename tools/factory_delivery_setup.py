@@ -18,6 +18,11 @@ import factory_triage_setup as triage
 REPOSITORY = Path(__file__).resolve().parents[1]
 MODEL_CREDENTIAL = "delivery-model"
 CAPTURE_OUTPUT = "candidate_facts"
+TEST_INVENTORY_BYTE_RESERVE = 1024  # One file and its optional transcript reference.
+TEST_SCRIPT_MAX_BYTES = 16384
+# The assertion protocol changes the installed instructions. Keep the original
+# Tester Runtime and its Profile pins usable by already published Flows.
+TEST_AUTHOR_RUNTIME = "delivery-tester-assertions"
 
 
 def _json(value) -> bytes:
@@ -76,7 +81,7 @@ def _add(entries: list, key, value: dict) -> None:
 
 def delivery_models(catalog: dict, project_id: str, capture_tool: dict, write_directories: list[str], *,
                     code_build: dict) -> dict:
-    """Extend the effective catalog with three model compilers and Runtime choices."""
+    """Install reusable runtimes and keep any previously approved Coder scope."""
     catalog = copy.deepcopy(catalog)
     project, = (entry for entry in catalog["projects"] if entry["project_id"] == project_id)
     runtimes = project["role_profiles"]
@@ -90,14 +95,17 @@ def delivery_models(catalog: dict, project_id: str, capture_tool: dict, write_di
     mcp_hosts = {urlsplit(entry["server"]["url"]).hostname
                  for entry in original.get("settings_support", {}).get("authenticated_mcp", {}).values()}
     hosts = [host for host in permissions["network_hosts"] if host not in mcp_hosts]
-    for role, purpose, source_mode in (
-        ("coder", "model", "read_write"),
-        ("reviewer", "evaluator", "read_only"),
-        ("devops", "evaluator", None),
-    ):
-        alias = f"delivery-{role}"
+    roles = []
+    if write_directories:
+        roles.append(("delivery-coder", "Coder", "model", "read_write"))
+    elif "delivery-coder" not in runtimes:
+        roles.append(("delivery-coder-readonly", "Coder", "evaluator", "read_only"))
+    roles.extend((("delivery-reviewer", "Reviewer", "evaluator", "read_only"),
+                  ("delivery-devops", "DevOps", "evaluator", None),
+                  (TEST_AUTHOR_RUNTIME, "Tester", "evaluator", "read_only")))
+    for alias, role, purpose, source_mode in roles:
         grants = copy.deepcopy(permissions)
-        grants["secret_profiles"] = [MODEL_CREDENTIAL if role == "coder" else model_credential]
+        grants["secret_profiles"] = [MODEL_CREDENTIAL if purpose == "model" else model_credential]
         grants["network_hosts"] = hosts
         if source_mode:
             grants["mounts"].append({"root": "/workspace/source", "mode": source_mode})
@@ -109,7 +117,27 @@ def delivery_models(catalog: dict, project_id: str, capture_tool: dict, write_di
         entry.pop("mcp_configurations", None)
         if source_mode:
             entry.update(build_configuration=code_build, candidate_capture_tool=capture_tool)
-        if role == "coder":
+        if alias == TEST_AUTHOR_RUNTIME:
+            entry["instructions"] = (
+                "Author a POSIX shell check for the accepted behavior. The candidate source directory is the first "
+                "argument. Exit 0 for a verified pass. After a completed failing assertion, print the exact line "
+                "octacity:assertion:failed to stdout as the final line and exit 1. Exit 2 if the harness or "
+                "environment is unavailable. The isolated verifier runs the check."
+            )
+            entry["protected_tests"] = {
+                "policy": {"classes": ["acceptance"], "max_files": 1, "reserved_inputs": 8,
+                           "max_bytes": TEST_SCRIPT_MAX_BYTES + TEST_INVENTORY_BYTE_RESERVE,
+                           "retention_millis": 3600000},
+                "inventory": {"kind": "protected_inventory", "output_kind": "artifact",
+                    "schema": triage._reference("delivery-test-inventory-assertions"),
+                    "tool": toolchain["executable"], "plugin": toolchain["plugin"]},
+                "files": [{"output": "tester-checks", "class": "acceptance", "path": "checks.sh"}],
+                "transcript": "codex-run-trace",
+            }
+            grants["outputs"]["kinds"].extend(["tester-checks", "protected_inventory", "protected_handoff"])
+            grants["outputs"]["max_artifact_count"] = max(4, grants["outputs"]["max_artifact_count"])
+            grants["outputs"]["max_report_count"] = max(2, grants["outputs"]["max_report_count"])
+        if purpose == "model":
             schema = _schema("candidate_capture_facts")
             grants["outputs"]["kinds"].extend(["change-set.bundle", "change-set-manifest.json", CAPTURE_OUTPUT])
             entry["capture"] = {"tool": capture_tool, "instruction": {
@@ -162,7 +190,7 @@ def read_test_pack(path: Path, *, client=None, project: str | None = None) -> Te
                 or not re.fullmatch(r"[a-zA-Z0-9][a-zA-Z0-9_.-]{0,95}\.sh", data["script"])):
             raise ValueError("invalid pack declaration")
         program = state.read_regular_file(path.parent / data["script"], "reviewed Delivery checks",
-            max_bytes=16384, modes=frozenset({0o600, 0o700}))
+            max_bytes=TEST_SCRIPT_MAX_BYTES, modes=frozenset({0o600, 0o700}))
         if not program.strip() or b"\x00" in program:
             raise ValueError("invalid check program")
         if "issue_id" in data:
@@ -197,11 +225,11 @@ def _enum(*values) -> dict:
     return {"type": "enum", "values": list(values)}
 
 
-def _observation(pack: TestPack, worker: dict, *, protected: bool) -> tuple[dict, dict]:
+def _observation(criterion: dict, worker: dict, *, protected: bool) -> tuple[dict, dict]:
     shape = _object({"failed": {"type": "boolean"}})
     identity, version = "delivery-test-observation", "v1"
     contract = {"environment": triage._reference("delivery-guest", digest=worker["build_configuration"].get("definition_digest")),
-        "criterion": triage._reference("delivery-tests-" + pack.name, digest=pack.digest),
+        "criterion": criterion,
         "observations": {"reference": _schema_pin(identity, version, shape), "shape": shape},
         "completion": {"operation": "exists", "operand": {"source": "path", "path": "/failed"}},
         "symptom": {"operation": "compare", "left": {"source": "path", "path": "/failed"},
@@ -231,35 +259,77 @@ def _choice(project: dict, alias: str, reference: dict, *, node_kind: str | None
     _add(project["references"], lambda row: (row["kind"], row["alias"]), item)
 
 
+def _verification_runner_source() -> str:
+    return (REPOSITORY / "deployment/local-stand/delivery-test-command.mjs").read_text()
+
+
+def _standard_verifiers_current(catalog: dict, project_id: str, author_profile: dict) -> bool:
+    """Keep old immutable commands usable, while installing the current verifier for new Flows."""
+    script = "\n" + _verification_runner_source() + "\nDELIVERY_COMMAND"
+    modes = set()
+    for validator in catalog.get("protected_validation", []):
+        inputs = validator["inputs"]
+        if inputs["author_profile"] != author_profile or not inputs.get("accepts_supplement"):
+            continue
+        for profile in validator["profiles"]:
+            if profile["build_configuration"]["project_id"] != project_id:
+                continue
+            try:
+                program = json.loads(profile["program"]["octafile"])
+            except json.JSONDecodeError:
+                continue
+            if any(task.get("shell", "").endswith(script) for task in program.get("tasks", {}).values()):
+                modes.add("candidate" if "facts" in validator else "baseline")
+    return modes == {"baseline", "candidate"}
+
+
 def install_test_commands(catalog: dict, project: dict, worker: dict, plugins: list[dict], capture: dict,
-                          pack: TestPack, *, author: dict) -> None:
-    """Bind one reviewed suite to an exact author, baseline and candidate verifier."""
+                          pack: TestPack | None, *, author: dict) -> None:
+    """Bind the baseline and candidate verifier to one exact author."""
     shell, = (plugin for plugin in plugins if plugin["identity"] == "shell")
-    baseline, baseline_schema = _observation(pack, worker, protected=True)
-    reproduction, reproduction_schema = _observation(pack, worker, protected=False)
-    observations = {"baseline": baseline, "reproduction": reproduction}
-    runner = (REPOSITORY / "deployment/local-stand/delivery-test-command.mjs").read_text()
-    digest = hashlib.sha256(pack.program).hexdigest()
-    generation = hashlib.sha256(_json([pack.digest, runner, worker["build_configuration"]])).hexdigest()[:12]
-    task = "test"
+    runner = _verification_runner_source()
     private = {"test-script": "checks.sh", "test-transcript": "author-transcript.txt"}
-    definition = {"class": pack.name, "digest": digest,
-                  "timeout": min(60000, worker["project_permissions"]["resources"]["elapsed_millis"] // 2)}
-    checked = {**definition, "task": pack.task_sha256, "acceptance": pack.acceptance_sha256,
-               "program": base64.b64encode(pack.program).decode()}
+    if pack is None:
+        author_profile = author["toolchain"]["model"]
+        policy = author["protected_tests"]
+        name, identity = "tester-assertions", policy
+        entrypoints = [file["path"] for file in policy["files"]]
+        criterion = triage._reference("delivery-tester-acceptance", digest=hashlib.sha256(_json(policy)).hexdigest())
+    else:
+        name, identity = pack.name, pack.digest
+        entrypoints = [private["test-script"]]
+        criterion = triage._reference("delivery-tests-" + name, digest=identity)
+    baseline, baseline_schema = _observation(criterion, worker, protected=True)
+    observations = {"baseline": baseline}
+    timeout = min(60000, worker["project_permissions"]["resources"]["elapsed_millis"] // 2)
+    definition = {"entrypoints": entrypoints, "timeout": timeout, "isolate_checks": True}
+    if pack is None:
+        definition["explicit_assertion_failure"] = True
     config = {
-        "author": (checked, {}),
         "baseline": ({**definition, **{key: baseline[key] for key in ("environment", "criterion")}},
                     {"baseline.report": ("baseline.json", baseline_schema)}),
-        "reproduction": ({**checked, **{key: reproduction[key] for key in ("environment", "criterion")}},
-                         {"reproduction.report": ("baseline.json", reproduction_schema)}),
         "candidate": (definition, {"validation_report": ("validation.json", _schema("protected_validation_report")),
                         "validation_facts": ("validation-facts.json", _schema("protected_validation_facts"))}),
     }
+    bundle_bytes = 0
+    if pack is not None:
+        bundle_bytes = len(pack.program) + TEST_INVENTORY_BYTE_RESERVE
+        checked = {"class": name, "digest": hashlib.sha256(pack.program).hexdigest(), "timeout": timeout,
+                   "task": pack.task_sha256, "acceptance": pack.acceptance_sha256,
+                   "program": base64.b64encode(pack.program).decode()}
+        reproduction, reproduction_schema = _observation(criterion, worker, protected=False)
+        observations["reproduction"] = reproduction
+        config["author"] = (checked, {})
+        config["reproduction"] = ({**checked, "isolate_checks": True,
+                                  **{key: reproduction[key] for key in ("environment", "criterion")}},
+                                  {"reproduction.report": ("baseline.json", reproduction_schema)})
+    generation = hashlib.sha256(_json([identity, runner, worker["build_configuration"], bundle_bytes])).hexdigest()[:12]
+    task = "test"
     commands = {}
     for mode, (parameters, reports) in config.items():
         binding = author if mode == "author" else worker
-        alias = f"delivery-{mode}-{pack.name}-{generation}"
+        isolation = "-isolated-v2" if parameters.get("isolate_checks") else ""
+        alias = f"delivery-{mode}{isolation}-{name}-{generation}"
         arguments = shlex.join([mode, _json(parameters).decode(), "/octacity/protected", "/workspace/source", "/workspace/output"])
         command = {"dir": "/workspace", "shell": f"/usr/local/bin/node --input-type=module - {arguments} <<'DELIVERY_COMMAND'\n{runner}\nDELIVERY_COMMAND"}
         if reports:
@@ -282,9 +352,9 @@ def install_test_commands(catalog: dict, project: dict, worker: dict, plugins: l
         else:
             inventory = output("protected_inventory", "artifact", triage._reference("delivery-test-inventory"))
             outputs = [output("protected_handoff", "report", _schema("protected_test_handoff")), inventory]
-            policy = {"policy": {"classes": [pack.name], "max_files": 1, "max_bytes": len(pack.program),
+            policy = {"policy": {"classes": [name], "max_files": 1, "max_bytes": bundle_bytes,
                                  "reserved_inputs": 8, "retention_millis": 3600000},
-                      "inventory": inventory, "files": [{"output": "test-script", "class": pack.name, "path": "checks.sh"}],
+                      "inventory": inventory, "files": [{"output": "test-script", "class": name, "path": private["test-script"]}],
                       "transcript": "test-transcript"}
         grants["outputs"]["kinds"] = [item["kind"] for item in outputs] + (list(private) if mode == "author" else [])
         identity = triage._reference(alias + "-policy", digest=hashlib.sha256(_json(policy)).hexdigest()
@@ -306,10 +376,13 @@ def install_test_commands(catalog: dict, project: dict, worker: dict, plugins: l
     for plugin in plugins:
         if not any(item["kind"] == "node_capability" and item["reference"] == plugin for item in project["references"]):
             _choice(project, "delivery-plugin-" + plugin["identity"], plugin)
-    _add(catalog.setdefault("protected_test_authors", []), lambda item: item["command"]["identity"],
-         {"command": commands["author"], "policy": policy})
-    _add(catalog.setdefault("commands", []), lambda item: item["identity"], commands["reproduction"])
-    shared_inputs = {"author_profile": commands["author"]["identity"], "policy": policy["policy"], "inventory": inventory}
+    if pack is not None:
+        author_profile = commands["author"]["identity"]
+        _add(catalog.setdefault("protected_test_authors", []), lambda item: item["command"]["identity"],
+             {"command": commands["author"], "policy": policy})
+        _add(catalog.setdefault("commands", []), lambda item: item["identity"], commands["reproduction"])
+    shared_inputs = {"author_profile": author_profile, "policy": policy["policy"], "inventory": policy["inventory"],
+                     "accepts_supplement": True}
     baseline, candidate = commands["baseline"], commands["candidate"]
     for entry in ({"profiles": [baseline], "inputs": shared_inputs, "report": baseline["outputs"][0]},
                   {"profiles": [candidate], "inputs": {**shared_inputs, "capture_tool": capture},
@@ -373,19 +446,26 @@ def _extend_agent(agent_policy: dict, catalog: dict, project: dict, plugins: lis
     runtimes = project["role_profiles"]
     login = next(row["credentials"]["evaluator"] for row in catalog["codex"]
                  if row["toolchain"] == runtimes["triage-runtime"]["ceiling"]["toolchain"])
-    agent_policy["factory_credential_profiles"].setdefault(MODEL_CREDENTIAL, agent_policy["factory_credential_profiles"][login])
-    grants["secret_profiles"] = sorted(set(grants["secret_profiles"]) | {MODEL_CREDENTIAL})
-    if not any(item["root"] == "/workspace/source" for item in grants["mounts"]):
-        grants["mounts"].append({"root": "/workspace/source", "mode": "read_write"})
+    writable = "delivery-coder" in runtimes
+    if writable:
+        agent_policy["factory_credential_profiles"].setdefault(MODEL_CREDENTIAL, agent_policy["factory_credential_profiles"][login])
+        grants["secret_profiles"] = sorted(set(grants["secret_profiles"]) | {MODEL_CREDENTIAL})
+    source = next((item for item in grants["mounts"] if item["root"] == "/workspace/source"), None)
+    if source is None:
+        grants["mounts"].append({"root": "/workspace/source", "mode": "read_write" if writable else "read_only"})
         grants["mounts"].sort(key=lambda item: item["root"])
+    elif writable:
+        source["mode"] = "read_write"
     for plugin in plugins:
         if not any(item["identity"] == plugin["identity"] for item in grants["plugins"]):
             grants["plugins"].append({"identity": plugin["identity"], "version": plugin["version"], "sha256": plugin["digest"]})
     grants["plugins"].sort(key=lambda item: item["identity"])
-    required = [runtimes[f"delivery-{role}"]["ceiling"]["permissions"] for role in ("coder", "reviewer", "devops")]
-    required += [item["command"]["project_permissions"] for item in catalog["protected_test_authors"]
+    required = [runtimes[alias]["ceiling"]["permissions"] for alias in
+                ("delivery-coder", "delivery-coder-readonly", "delivery-reviewer", "delivery-devops",
+                 TEST_AUTHOR_RUNTIME) if alias in runtimes]
+    required += [item["command"]["project_permissions"] for item in catalog.get("protected_test_authors", [])
                  if item["command"]["build_configuration"]["project_id"] == project["project_id"]]
-    required += [profile["project_permissions"] for item in catalog["protected_validation"]
+    required += [profile["project_permissions"] for item in catalog.get("protected_validation", [])
                  for profile in item["profiles"] if profile["build_configuration"]["project_id"] == project["project_id"]]
     grants["outputs"]["kinds"] = sorted(set(grants["outputs"]["kinds"]).union(
         *(item["outputs"]["kinds"] for item in required)))
@@ -397,25 +477,36 @@ def stage(root: Path, directory: Path, installed: dict, project_id: str, reposit
     """Prepare additive immutable inputs for the ordinary installation updater."""
     import configure_local_stand_agent as agent
     import configure_local_stand_server as server
-    if not write_directories or any(not re.fullmatch(r"[a-zA-Z0-9_][a-zA-Z0-9_.-]*(/[a-zA-Z0-9_][a-zA-Z0-9_.-]*)*",
+    if any(not re.fullmatch(r"[a-zA-Z0-9_][a-zA-Z0-9_.-]*(/[a-zA-Z0-9_][a-zA-Z0-9_.-]*)*",
                                                     path) for path in write_directories):
         raise ValueError("Delivery write directories must be explicit repository-relative paths")
     source = installed["factory_profiles"]
     catalog = state.load_json_object(state.read_regular_file(source, "Factory profile catalog",
         max_bytes=server.MAX_FACTORY_PROFILE_BYTES, modes=frozenset({0o600})), "Factory profile catalog")
+    project, = (row for row in catalog["projects"] if row["project_id"] == project_id)
+    runtimes = project["role_profiles"]
+    if not (packs or write_directories or publication) and (
+            {"delivery-reviewer", "delivery-devops", TEST_AUTHOR_RUNTIME} <= runtimes.keys()
+            and {"delivery-coder", "delivery-coder-readonly"} & runtimes.keys()
+            and _standard_verifiers_current(
+                catalog, project_id, runtimes[TEST_AUTHOR_RUNTIME]["ceiling"]["toolchain"]["model"])):
+        return {}
     agent_policy = agent.read_factory_agent_profile(installed["factory_agent_profile"])
     capture = _capture_policy(root, agent_policy)
-    project, = (row for row in catalog["projects"] if row["project_id"] == project_id)
-    ceiling = project["role_profiles"]["triage-runtime"]["ceiling"]
+    ceiling = runtimes["triage-runtime"]["ceiling"]
     template, = (row for row in catalog["codex"] if row["toolchain"] == ceiling["toolchain"]
                  and row["build_configuration"] == ceiling["build_configuration"] and row["credential_purpose"] == "evaluator")
     octa = json.loads((native / "job-spec-policy.json").read_text())["octa"]
     plugins = [triage._reference(name, octa["version"], digest) for name, digest in sorted(octa["plugin_digests"].items())]
     image = triage.prepare_guest_image(root, native, delivery=True)
-    author = install_worker(client, project, template, image, namespace)
     worker = install_worker(client, project, template, image, namespace, repository_id=repository_id)
+    if packs:
+        author = install_worker(client, project, template, image, namespace)
     catalog = delivery_models(catalog, project_id, capture, write_directories, code_build=worker["build_configuration"])
     project, = (row for row in catalog["projects"] if row["project_id"] == project_id)
+    tester_toolchain = project["role_profiles"][TEST_AUTHOR_RUNTIME]["ceiling"]["toolchain"]
+    tester, = (row for row in catalog["codex"] if row["toolchain"] == tester_toolchain)
+    install_test_commands(catalog, project, worker, plugins, capture, None, author=tester)
     for pack in packs:
         install_test_commands(catalog, project, worker, plugins, capture, pack, author=author)
     _extend_agent(agent_policy, catalog, project, plugins)
@@ -446,19 +537,28 @@ def _packaged_github() -> tuple[bytes, str]:
     return read("/bin/cat", "/usr/local/bin/octacity-github"), git[0].decode()
 
 
-def publish_roles(client, project: str, namespace) -> None:
+def publish_roles(client, project: str, namespace, catalog_path: Path) -> None:
     """Publish reusable roles with fixed initial keys through the Project owner."""
     import uuid
+    import configure_local_stand_server as server
+    catalog = state.load_json_object(state.read_regular_file(catalog_path, "Factory profile catalog",
+        max_bytes=server.MAX_FACTORY_PROFILE_BYTES, modes=frozenset({0o600})), "Factory profile catalog")
+    entry, = (row for row in catalog["projects"] if row["project_id"] == project)
+    runtimes = entry["role_profiles"]
     base = f"/api/v1/projects/{project}"
     for name, runtime, description in (
         ("Coder", "delivery-coder", "Implement the explicitly assigned change within the approved source directories."),
-        ("Tester", "delivery-devops", "Explain selected test evidence and distinguish setup errors from confirmed failures."),
+        ("Coder", "delivery-coder-readonly", "Implement the explicitly assigned change within the approved source directories."),
+        ("Tester", TEST_AUTHOR_RUNTIME, "Explain selected test evidence and distinguish setup errors from confirmed failures."),
         ("Reviewer", "delivery-reviewer", "Review the selected candidate against the accepted requirements and record findings."),
         ("DevOps", "delivery-devops", "Prepare a short review title and summary from the selected accepted evidence."),
     ):
+        if runtime not in runtimes:
+            continue
         key = f"stand-delivery-v1-{name.lower()}"
         role_id = str(uuid.uuid5(namespace, key + "-role"))
-        profile_id = str(uuid.uuid5(namespace, key + "-profile"))
+        profile_key = key + {"delivery-coder-readonly": "-readonly", TEST_AUTHOR_RUNTIME: "-author-v2"}.get(runtime, "")
+        profile_id = str(uuid.uuid5(namespace, profile_key + "-profile"))
         ceiling = client.get(f"{base}/factory-profile-capabilities/{runtime}")["definition"]
         settings = {field: ceiling[field] for field in ("toolchain", "permissions")}
         client.post(f"{base}/factory-runtimes/{runtime}", f"{namespace}-{runtime}",
@@ -468,12 +568,13 @@ def publish_roles(client, project: str, namespace) -> None:
                 "name": name, "icon": "bot", "description": description,
                 "instructions": ["Follow the reviewed step assignment. Use only the selected inputs and granted access."]}},
             "profiles": []})["role"]["reference"]
-        definition = {**ceiling, "name": f"{name} · Delivery"}
-        reviewed = client.post(f"{base}/factory-role-profiles/validate", f"{namespace}-{key}-validate",
+        suffix = {"delivery-coder-readonly": " (read-only)", TEST_AUTHOR_RUNTIME: " (test author v2)"}.get(runtime, "")
+        definition = {**ceiling, "name": f"{name} · Delivery{suffix}"}
+        reviewed = client.post(f"{base}/factory-role-profiles/validate", f"{namespace}-{profile_key}-validate",
             {"id": profile_id, "role": role, "capability": runtime, "definition": definition})
         if reviewed["incompatibility"] is not None:
             raise ValueError(f"Delivery {name} profile is incompatible with its installed Runtime")
-        client.post(f"{base}/factory-role-publications", f"{namespace}-{key}-profile", {"profiles": [{
+        client.post(f"{base}/factory-role-publications", f"{namespace}-{profile_key}-profile", {"profiles": [{
             "id": profile_id, "role": role, "expected_current_version": None,
             "definition": reviewed["profile"]["definition"]}]})
 

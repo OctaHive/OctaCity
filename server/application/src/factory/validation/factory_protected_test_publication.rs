@@ -1,4 +1,5 @@
 //! Server-derived private inventory over actual outputs of one fenced Job.
+use super::factory_verification_supplement::{VerificationSupplement, supplement_matches};
 use crate::{AgentOutputFinalization, ApplicationError, FactoryExecutionClock, FactoryProtectedTestInventory};
 use octacity_artifact_store::{ArtifactBytePublisher, ArtifactObject};
 use octacity_server_domain::{ArtifactId, ArtifactName, ArtifactUploadId, Timestamp};
@@ -11,6 +12,10 @@ use uuid::Uuid;
 // Distinct from ordinary runner tasks and the reserved Agent ChangeSet producer.
 const INVENTORY_PRODUCER_ID: u64 = u64::MAX - 1;
 const INVENTORY_UPLOAD_PREFIX: &str = "factory.inventory:";
+
+pub(crate) fn is_author_publication(upload: &ArtifactUploadRecord) -> bool {
+  upload.producer_run_id == INVENTORY_PRODUCER_ID && upload.producer_task_id == INVENTORY_PRODUCER_ID
+}
 
 pub(crate) async fn has_protected_test_inventory(
   artifacts: &impl ArtifactRecordStore,
@@ -56,6 +61,8 @@ pub struct FactoryProtectedTestInventoryPublication<'a> {
   pub files: &'a [FactoryProtectedTestFileOutput],
   /// Optional exact installed private transcript output.
   pub transcript: Option<&'a FactoryKey>,
+  /// Exact attachment already read from its private Project publication.
+  pub supplement: Option<&'a VerificationSupplement>,
   /// Authenticated completion, revalidated by the store before publication.
   pub completion: AgentOutputFinalization,
 }
@@ -92,6 +99,7 @@ impl<A: ArtifactRecordStore, B: ArtifactBytePublisher> FactoryProtectedTestInven
       inventory,
       files,
       transcript,
+      supplement,
       completion,
     } = request;
     let node = admitted
@@ -99,8 +107,10 @@ impl<A: ArtifactRecordStore, B: ArtifactBytePublisher> FactoryProtectedTestInven
       .definition(intent.input().definition())
       .and_then(|definition| definition.node(intent.input().node()))
       .ok_or_else(invalid)?;
-    let binding = node.build().ok_or_else(invalid)?;
+    let binding = intent.admitted_binding(admitted).map_err(|_| invalid())?;
     if files.is_empty()
+      || node.protected_verification() != plan.supplement()
+      || !supplement_matches(plan.supplement(), supplement)
       || files.len() + usize::from(transcript.is_some()) >= usize::from(MAX_ARTIFACT_PAGE_SIZE)
       || transcript.is_some_and(|name| {
         name == inventory.kind() || name == &binding.result_output || files.iter().any(|file| &file.output == name)
@@ -122,15 +132,6 @@ impl<A: ArtifactRecordStore, B: ArtifactBytePublisher> FactoryProtectedTestInven
       )
       .map_err(|_| invalid())?
         != *execution
-      || FlowBuildIntent::new(
-        intent.input().clone(),
-        admitted,
-        intent.node().clone(),
-        intent.usage_before(),
-        intent.priority(),
-      )
-      .map_err(|_| invalid())?
-        != *intent
     {
       return Err(invalid());
     }
@@ -190,6 +191,7 @@ impl<A: ArtifactRecordStore, B: ArtifactBytePublisher> FactoryProtectedTestInven
       node_attempt_id: intent.node().id(),
       files: selected.clone(),
       transcript,
+      supplement: supplement.cloned(),
     };
     let raw = serde_json::to_vec(&data).map_err(|_| invalid())?;
     let digest = FactoryDigest::content_sha256(&raw);
@@ -241,7 +243,10 @@ impl<A: ArtifactRecordStore, B: ArtifactBytePublisher> FactoryProtectedTestInven
       .definition(request.intent.input().definition())
       .and_then(|definition| definition.node(request.intent.input().node()))
       .ok_or_else(invalid)?;
-    let binding = node.build().ok_or_else(invalid)?;
+    let binding = request
+      .intent
+      .admitted_binding(request.admitted)
+      .map_err(|_| invalid())?;
     let schema_ref = node.outcome(&binding.result_outcome).ok_or_else(invalid)?.schema();
     let schema = request.admitted.data_schema(schema_ref).ok_or_else(invalid)?;
     if binding.result_output_kind != EvidenceOutputKind::Report {

@@ -256,7 +256,8 @@ function publicValidationIssues(value: unknown): readonly ManagementValidationIs
         issue.code !== 'permission_exceeds_ceiling' &&
         issue.code !== 'budget_exceeds_ceiling' &&
         issue.code !== 'concurrency_exceeds_ceiling' &&
-        issue.code !== 'ambiguous_issue_presentation_slot')
+        issue.code !== 'ambiguous_issue_presentation_slot' &&
+        issue.code !== 'verification_retention_unavailable')
     )
       return [];
     const ceiling =

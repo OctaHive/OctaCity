@@ -194,6 +194,36 @@ async fn reads_commits_trees_and_bounded_binary_file_fragments_without_checkout(
   };
   assert_eq!(STANDARD.decode(file.content_base64).unwrap(), [3, 4, 5, 6]);
   assert!(file.truncated);
+  let batch = serde_json::json!({
+    "protocol_version": 1, "request_id": "batch",
+    "command": {"operation": "read_files", "payload": {
+      "repository": access(&fixture, "batch"), "revision": fixture.revision,
+      "paths": ["src/data.bin", "README.md"], "max_bytes": 128
+    }}
+  });
+  let request = octacity_vcs_protocol::decode_request(&serde_json::to_vec(&batch).unwrap()).unwrap();
+  let response = adapter.execute(&request, CancellationToken::new()).await;
+  let response = serde_json::to_value(response).unwrap();
+  assert_eq!(response["status"], "files");
+  assert_eq!(response["payload"][0]["path"], "src/data.bin");
+  assert_eq!(response["payload"][1]["path"], "README.md");
+  assert_eq!(
+    STANDARD
+      .decode(response["payload"][0]["content_base64"].as_str().unwrap())
+      .unwrap(),
+    [0, 1, 2, 3, 4, 5, 6, 7, 8, 9]
+  );
+  #[cfg(unix)]
+  {
+    let mut linked = batch;
+    linked["command"]["payload"]["paths"] = serde_json::json!(["README.md", "readme-link"]);
+    let request = octacity_vcs_protocol::decode_request(&serde_json::to_vec(&linked).unwrap()).unwrap();
+    let response = adapter.execute(&request, CancellationToken::new()).await;
+    assert!(
+      !matches!(response, Outcome::Files(_)),
+      "a symlink is not a regular snapshot file"
+    );
+  }
   assert!(!fixture.marker.exists(), "repository hook was executed");
   assert_eq!(
     directory_names(&fixture.adapter_directory),

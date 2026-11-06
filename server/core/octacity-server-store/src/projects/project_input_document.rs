@@ -6,6 +6,30 @@ use serde::{Deserialize, Serialize};
 
 /// Versioned mapping distinguishing standalone documents from task/acceptance inputs.
 pub const PROJECT_CONTEXT_DOCUMENT_MAPPING: &str = "context-document.v1";
+/// Private byte inventory readable only by protected verification preparation.
+pub const PROJECT_PROTECTED_VERIFICATION_MAPPING: &str = "protected-verification.v1";
+
+/// Selects the publication audience within the shared Project input journal.
+#[derive(Clone, Copy, Debug, Default, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum ProjectDocumentPurpose {
+  /// Ordinary named context.
+  #[default]
+  Context,
+  /// Protected verification files and entrypoints.
+  Verification,
+}
+impl ProjectDocumentPurpose {
+  fn is_context(value: &Self) -> bool {
+    *value == Self::Context
+  }
+  fn mapping(self) -> &'static str {
+    match self {
+      Self::Context => PROJECT_CONTEXT_DOCUMENT_MAPPING,
+      Self::Verification => PROJECT_PROTECTED_VERIFICATION_MAPPING,
+    }
+  }
+}
 
 /// One reviewed standalone document; it cannot carry a Configuration, Run or execution authority.
 #[derive(Clone, Eq, PartialEq, Serialize, Deserialize)]
@@ -17,6 +41,9 @@ pub struct ProjectDocumentSubmission {
   pub name: ArtifactName,
   /// Exact private UTF-8 input, never included in diagnostic output.
   pub content: String,
+  /// Ordinary context by default. Verification bodies are kept out of document reads.
+  #[serde(default, skip_serializing_if = "ProjectDocumentPurpose::is_context")]
+  pub purpose: ProjectDocumentPurpose,
   /// Project/security-scoped replay key.
   pub idempotency_key: IdempotencyKey,
 }
@@ -79,6 +106,9 @@ pub struct ProjectDocumentIntent {
   pub mapping: FactoryKey,
   /// Original scoped replay key.
   pub idempotency_key: IdempotencyKey,
+  /// Digest of the original operator selection before reading external inputs.
+  #[serde(default, skip_serializing_if = "Option::is_none")]
+  pub selection_digest: Option<FactoryDigest>,
 }
 /// One journal entry for a named document, using the existing Project input lifecycle.
 #[derive(Clone, Debug, Serialize, Deserialize)]
@@ -145,8 +175,9 @@ impl ProjectDocumentPreparation {
       intent: ProjectDocumentIntent {
         project_id: submission.project_id,
         name: submission.name.clone(),
-        mapping: FactoryKey::new(PROJECT_CONTEXT_DOCUMENT_MAPPING).map_err(|_| document_conflict())?,
+        mapping: FactoryKey::new(submission.purpose.mapping()).map_err(|_| document_conflict())?,
         idempotency_key: submission.idempotency_key.clone(),
+        selection_digest: None,
       },
       objects: vec![object],
       generation: lease.generation,
@@ -163,6 +194,7 @@ impl ProjectDocumentPreparation {
   pub fn matches_submission(&self, submission: &ProjectDocumentSubmission) -> bool {
     self.intent.project_id == submission.project_id
       && self.intent.name == submission.name
+      && self.intent.mapping.as_str() == submission.purpose.mapping()
       && self.intent.idempotency_key == submission.idempotency_key
       && self.objects.len() == 1
       && self.objects[0].artifact.encoded_size() == submission.content.len() as u64
@@ -213,8 +245,27 @@ impl ProjectDocumentPreparation {
 pub struct ReserveProjectDocument {
   /// Exact reviewed input.
   pub submission: ProjectDocumentSubmission,
+  /// Original operator selection identity for transformed documents.
+  pub selection_digest: Option<FactoryDigest>,
   /// Trusted observation time.
   pub now: Timestamp,
+}
+impl ReserveProjectDocument {
+  /// Builds the journal entry with the original selection identity, if any.
+  pub fn preparation(&self, scope: ManagementSecurityScope) -> Result<ProjectDocumentPreparation, StoreError> {
+    let mut preparation = ProjectDocumentPreparation::reserve(&self.submission, scope, self.now)?;
+    preparation.intent.selection_digest = self.selection_digest;
+    Ok(preparation)
+  }
+
+  /// Detects changed operator selections even if they resolved to identical bytes.
+  pub fn matches(&self, original: &ProjectDocumentPreparation) -> bool {
+    original
+      .intent
+      .selection_digest
+      .is_none_or(|digest| self.selection_digest == Some(digest))
+      && original.matches_submission(&self.submission)
+  }
 }
 /// Standalone documents use the same Project input owner, byte store and cleanup journal.
 #[async_trait::async_trait]

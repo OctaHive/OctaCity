@@ -45,9 +45,9 @@ struct Fixture {
   bytes: Arc<Bytes>,
 }
 async fn fixture() -> Fixture {
-  fixture_with_schema(None).await
+  fixture_with_schema(None, false).await
 }
-async fn fixture_with_schema(schema: Option<FlowDataSchema>) -> Fixture {
+async fn fixture_with_schema(schema: Option<FlowDataSchema>, use_profile: bool) -> Fixture {
   let inventory = EvidenceRequirement::new(
     key("private.inventory"),
     EvidenceOutputKind::Artifact,
@@ -75,9 +75,77 @@ async fn fixture_with_schema(schema: Option<FlowDataSchema>) -> Fixture {
     ..FactoryPermissionDraft::default()
   })
   .unwrap();
-  let (_, admitted, _, input, node) =
-    execution_fixture_with_permissions(FlowNodeKind::Reasoning, work, binding, schema, permissions);
-  let intent = FlowBuildIntent::new(input, &admitted, node, BudgetUsage::default(), 7).unwrap();
+  let (work, admitted, _, input, node) = execution_fixture_with_permissions(
+    FlowNodeKind::Reasoning,
+    work,
+    binding.clone(),
+    schema,
+    permissions.clone(),
+  );
+  let (admitted, intent) = if use_profile {
+    let project = work.subject().project_id();
+    let role = FactoryRole::publish(
+      FactoryRoleId::generate(),
+      project,
+      FactoryRoleDefinition {
+        name: FactoryText::new("Tester").unwrap(),
+        avatar: None,
+        skills: Default::default(),
+        instructions: "Prepare checks".into(),
+        template: None,
+        icon: None,
+        description: String::new(),
+        concurrency_limit: None,
+      },
+    )
+    .unwrap();
+    let mut profile = role_profile_contract_definition(project);
+    profile.toolchain = FactoryTaskToolchain {
+      plugin: binding.plugin.clone(),
+      executable: binding.tool.clone(),
+      model: binding.model_or_tool.clone(),
+    };
+    profile.build_configuration = binding.build_configuration.clone();
+    profile.budget = node.budget();
+    profile.permissions = permissions;
+    profile.execution = Default::default();
+    profile.skills.clear();
+    profile.model_parameters.clear();
+    let profile = FactoryRoleProfile::publish(FactoryRoleProfileId::generate(), project, &role, profile).unwrap();
+    let (admitted, input) = with_selected_profile(
+      &work,
+      &admitted,
+      &input,
+      FlowProfileCandidate {
+        profile,
+        build: binding,
+      },
+    );
+    let selection = FlowProfileSelectionRecord::manual(&input, &admitted, node.started_at()).unwrap();
+    let attempt = NodeAttempt::new(
+      admitted.root_run(),
+      admitted.initial_cycle(),
+      admitted.closure().definition(input.definition()).unwrap(),
+      NodeAttemptInput {
+        id: node.id(),
+        node_key: input.node().clone(),
+        node_kind: node.node_kind(),
+        number: node.number(),
+        input_digest: input.digest().unwrap(),
+        budget: node.budget(),
+        started_at: node.started_at(),
+        deadline: selection.deadline(),
+        execution: node.execution().clone(),
+        ownership: FactoryClaimOwnership::new(node.owner().clone(), node.claim()),
+      },
+    )
+    .unwrap();
+    let intent = FlowBuildIntent::selected(input, &admitted, attempt, BudgetUsage::default(), 7, &selection).unwrap();
+    (admitted, intent)
+  } else {
+    let intent = FlowBuildIntent::new(input, &admitted, node, BudgetUsage::default(), 7).unwrap();
+    (admitted, intent)
+  };
   let builds = Builds::new();
   let execution = FlowBuildExecution::new(
     &intent,
@@ -206,6 +274,7 @@ fn protected_inventory_uses_published_file_ids_and_replays_the_same_publication(
     .await;
     let publisher = FactoryProtectedTestInventoryPublisher::new(store.clone(), bytes.clone(), Arc::new(Clock));
     let request = FactoryProtectedTestInventoryPublication {
+      supplement: None,
       transcript: Some(&transcript_name),
       admitted: &admitted,
       intent: &intent,
@@ -278,6 +347,7 @@ fn protected_inventory_rejects_a_replayed_reservation_with_another_storage_ident
   crate::factory::admission::tests::factory_admission_tests::run_ready(async {
     let f = fixture().await;
     let request = FactoryProtectedTestInventoryPublication {
+      supplement: None,
       transcript: None,
       admitted: &f.admitted,
       intent: &f.intent,
@@ -423,6 +493,7 @@ fn protected_inventory_cannot_promise_more_retention_than_the_reserved_artifact(
       Arc::new(Clock),
     );
     let request = FactoryProtectedTestInventoryPublication {
+      supplement: None,
       transcript: None,
       admitted: &f.admitted,
       intent: &f.intent,
@@ -450,10 +521,15 @@ fn protected_authoring_publishes_only_the_closed_public_handoff_under_the_admitt
       .unwrap()
       .remove(&key("protected_test_handoff"))
       .unwrap();
-    for (schema, accepted) in [(None, false), (Some(schema), true)] {
-      let f = fixture_with_schema(schema).await;
+    for (schema, accepted, use_profile) in [
+      (None, false, false),
+      (Some(schema.clone()), true, false),
+      (Some(schema), true, true),
+    ] {
+      let f = fixture_with_schema(schema, use_profile).await;
       let publisher = FactoryProtectedTestInventoryPublisher::new(f.store.clone(), f.bytes.clone(), Arc::new(Clock));
       let request = FactoryProtectedTestInventoryPublication {
+        supplement: None,
         transcript: None,
         admitted: &f.admitted,
         intent: &f.intent,
@@ -559,6 +635,7 @@ fn protected_inventory_cannot_become_visible_when_its_original_deadline_passes_d
     );
     let result = publisher
       .publish(FactoryProtectedTestInventoryPublication {
+        supplement: None,
         transcript: None,
         admitted: &f.admitted,
         intent: &f.intent,

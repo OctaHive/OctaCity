@@ -874,6 +874,8 @@ impl FactoryRuntimeResources {
       author_profile,
       policy,
       inventory,
+      // Evidence revalidates a retained verifier result; it does not launch a command.
+      accepts_supplement: true,
       capture_tool,
     })?;
     let binding = FlowActionBinding::new(identity.clone(), profile.action.clone(), serde_json::json!({}))

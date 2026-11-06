@@ -148,6 +148,34 @@ pub(super) fn insert(schemas: &mut Map<String, Value>) {
           bounded_array(schema_ref("FactoryCommandAuthoringContract"), b.choice_entries),
         ),
         (
+          "verification_authors",
+          bounded_array(
+            object(
+              [
+                (
+                  "build_configuration",
+                  schema_ref("FactoryBuildConfigurationReferenceResource"),
+                ),
+                ("tool", reference()),
+                ("plugin", reference()),
+                ("model_or_tool", reference()),
+                ("task_digest", digest()),
+                ("result_output", key()),
+                ("inventory", schema_ref("FactoryEvidenceRequirement")),
+              ],
+              &[
+                "build_configuration",
+                "tool",
+                "plugin",
+                "model_or_tool",
+                "result_output",
+                "inventory",
+              ],
+            ),
+            b.choice_entries,
+          ),
+        ),
+        (
           "candidate_publications",
           bounded_array(schema_ref("FactoryCandidatePublicationChoice"), b.choice_entries),
         ),

@@ -269,6 +269,7 @@ pub struct FactoryFlowDefinitionHandlers<S> {
   policy: Arc<dyn crate::ManagementAuthorizationPolicy>,
   source_actions: Option<Arc<dyn crate::FactoryStageSourceAuthorizer>>,
   repositories: Option<Arc<dyn octacity_server_store::ConfigurationStore>>,
+  verification_inputs: Option<Arc<dyn octacity_server_store::ProjectInputQueryStore>>,
   issue_status_actions: Option<Arc<dyn crate::FactoryIssueStatusAuthorizer>>,
   issue_properties: Option<Arc<dyn octacity_server_store::IssuePropertyStore>>,
 }
@@ -281,6 +282,7 @@ impl<S> FactoryFlowDefinitionHandlers<S> {
       policy,
       source_actions: None,
       repositories: None,
+      verification_inputs: None,
       issue_status_actions: None,
       issue_properties: None,
     }
@@ -290,6 +292,13 @@ impl<S> FactoryFlowDefinitionHandlers<S> {
   #[must_use]
   pub fn with_repositories(mut self, repositories: Arc<dyn octacity_server_store::ConfigurationStore>) -> Self {
     self.repositories = Some(repositories);
+    self
+  }
+
+  /// Resolves explicit protected verification selections through the private Project input owner.
+  #[must_use]
+  pub fn with_verification_inputs(mut self, inputs: Arc<dyn octacity_server_store::ProjectInputQueryStore>) -> Self {
+    self.verification_inputs = Some(inputs);
     self
   }
 
@@ -394,6 +403,14 @@ impl<S: FactoryFlowDefinitionStore + octacity_server_store::FactoryConfiguration
       super::factory_configuration_choices::FlowChoiceValidation::Authoring,
     )?;
     validate_accepted_predecessor(&flow, project, Some(self.store.as_ref()), self.policy.as_ref(), context).await?;
+    crate::factory::validation::factory_verification_supplement::validate_verification_selections(
+      &flow,
+      project,
+      self.verification_inputs.as_deref(),
+      crate::FactoryExecutionClock::now(&crate::SystemFactoryExecutionClock)?,
+      Some((self.policy.as_ref(), context)),
+    )
+    .await?;
     crate::factory::execution::factory_code_sources::validate_sources(
       &flow.closure,
       project,

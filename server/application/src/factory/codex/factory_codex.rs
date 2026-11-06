@@ -3,8 +3,12 @@ mod flow;
 #[path = "factory_codex_role.rs"]
 mod role;
 pub use flow::{
-  FactoryCodexFlowCompilationOptions, FactoryCodexReviewCompilation, codex_flow_task_digest, compile_codex_flow_task,
-  compile_codex_flow_task_with_context, compile_codex_flow_task_with_options,
+  FactoryCodexFlowCompilationOptions, FactoryCodexReviewCompilation, codex_flow_task_digest,
+  codex_protected_test_task_digest, compile_codex_flow_task, compile_codex_flow_task_with_context,
+  compile_codex_flow_task_with_options,
+};
+pub(crate) use flow::{
+  PROTECTED_TEST_HANDOFF, protected_test_model_schema, protected_test_outputs, valid_protected_test_policy,
 };
 pub(crate) use flow::{RolePrompt, candidate_capture_task_digest, render_context, render_role_prompt};
 

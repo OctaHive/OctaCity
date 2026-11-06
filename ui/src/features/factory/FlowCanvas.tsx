@@ -17,6 +17,7 @@ type Root = components['schemas']['FactoryFlowRootDraft'];
 export function FlowCanvas({
   value,
   selected,
+  stepSelectionDisabled,
   onSelect,
   onAddStep,
   repeatCeiling,
@@ -25,6 +26,7 @@ export function FlowCanvas({
   onAddStep: () => void;
   value: Root;
   selected: number;
+  stepSelectionDisabled: boolean;
   onSelect: (index: number) => void;
   repeatCeiling: number;
   onChange: (value: Root) => void;
@@ -112,8 +114,9 @@ export function FlowCanvas({
         <button
           type="button"
           disabled={
+            stepSelectionDisabled ||
             value.nodes.length >=
-            FACTORY_AUTHORING_SCHEMAS.FactoryFlowRootDraft.properties.nodes.maxItems
+              FACTORY_AUTHORING_SCHEMAS.FactoryFlowRootDraft.properties.nodes.maxItems
           }
           onClick={onAddStep}
         >
@@ -121,6 +124,7 @@ export function FlowCanvas({
         </button>
         <SelectMenu
           ariaLabel={t('factory.graphNode')}
+          disabled={stepSelectionDisabled}
           value={String(selected)}
           options={value.nodes.map((node, index) => ({
             value: String(index),
@@ -289,6 +293,7 @@ export function FlowCanvas({
                   }}
                   data-factory-node-index={index}
                   aria-pressed={selected === index}
+                  disabled={stepSelectionDisabled}
                   onClick={() => {
                     if (connection && keys[index] !== connection.source)
                       setConnection({ ...connection, target: { kind: 'node', key: node.key } });

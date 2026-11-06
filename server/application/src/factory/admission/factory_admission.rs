@@ -68,6 +68,7 @@ pub struct FactoryAdmissionHandlers<S> {
   store: Arc<S>,
   pub(crate) revisions: Arc<dyn RevisionResolver>,
   repositories: Option<Arc<dyn octacity_server_store::ConfigurationStore>>,
+  verification_inputs: Option<Arc<dyn octacity_server_store::ProjectInputQueryStore>>,
   policy: Arc<dyn crate::ManagementAuthorizationPolicy>,
 }
 
@@ -88,6 +89,7 @@ impl<S> FactoryAdmissionHandlers<S> {
       store,
       revisions,
       repositories: None,
+      verification_inputs: None,
       policy,
     }
   }
@@ -96,6 +98,12 @@ impl<S> FactoryAdmissionHandlers<S> {
   #[must_use]
   pub fn with_repositories(mut self, repositories: Arc<dyn octacity_server_store::ConfigurationStore>) -> Self {
     self.repositories = Some(repositories);
+    self
+  }
+
+  /// Checks attached private verification files before admitting new Work.
+  pub fn with_verification_inputs(mut self, inputs: Arc<dyn octacity_server_store::ProjectInputQueryStore>) -> Self {
+    self.verification_inputs = Some(inputs);
     self
   }
 
@@ -347,6 +355,14 @@ impl<S: FactoryAdmissionStore + 'static> FactoryAdmissionHandlers<S> {
     let configuration = &admission_context.configuration.configuration;
     validate_admission_project(&admission_context, command.project_id)?;
     validate_launch_policy(&admission_context, origin)?;
+    crate::factory::validation::factory_verification_supplement::validate_verification_selections(
+      configuration.flow(),
+      command.project_id,
+      self.verification_inputs.as_deref(),
+      command.admitted_at,
+      None,
+    )
+    .await?;
     let handoff = source.as_ref().and_then(|selected| selected.handoff);
     if let Some(handoff) = handoff {
       if !handoff.matches_artifacts(&command.artifacts) {

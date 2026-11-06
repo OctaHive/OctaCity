@@ -1464,6 +1464,7 @@ fn reviewer_profile(work: &WorkEnvelope) -> FactoryCodexBuildProfile {
   grants["outputs"]["kinds"] = serde_json::json!(["codex-run-trace", "codex-run-provenance", "codex-run-result"]);
   let grants: FactoryPermissionSet = serde_json::from_value(grants).unwrap();
   FactoryCodexBuildProfile {
+    protected_tests: None,
     authentication: crate::FactoryCodexAuthentication::default(),
     mcp_configurations: vec![],
     toolchain: FactoryTaskToolchain {

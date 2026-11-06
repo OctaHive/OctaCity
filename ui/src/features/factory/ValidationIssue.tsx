@@ -16,6 +16,7 @@ const fields: Record<string, MessageKey> = {
   hard_budget: 'factory.executionLimits',
   permissions: 'factory.pipelineAccess',
   code: 'factory.stepCode',
+  protected_verification: 'factory.verificationTitle',
   code_sources: 'factory.availableCode',
   context_binding: 'factory.documents',
   input_binding: 'factory.inputMapping',

@@ -33,6 +33,9 @@ class FactoryStandRecoveryTests(unittest.TestCase):
         self.root = self.fixture.root.resolve()
         self.profiles, self.policy = self.fixture._factory_update_inputs()
         self.project = "10000000-0000-4000-8000-000000000001"
+        self.repository = str(uuid.uuid4())
+        self.stage_delivery = mock.Mock(return_value={})
+        self.publish_delivery_roles = mock.Mock()
         self.source_records, self.source_diagnostics, self.source_publications = [], {}, []
         self.policy_requests = []
         self.fail_policy_request = False
@@ -109,7 +112,7 @@ class FactoryStandRecoveryTests(unittest.TestCase):
         self.receipt = {"project": self.project, "configuration": self.retained_configuration["reference"]}
         for name, value in {
             "factory-triage-installation": self.installation,
-            "factory-triage-resources": {"project": self.project},
+            "factory-triage-resources": {"project": self.project, "repository": self.repository},
             "factory-triage-assets": {"profiles": str(self.profiles), "agent_profile": str(self.policy), "issue_mcp_readers": str(self.readers)},
             "factory-triage": self.receipt,
             "factory-github-connection": {"project_id": self.project},
@@ -159,6 +162,8 @@ class FactoryStandRecoveryTests(unittest.TestCase):
                 mock.patch.object(stand.launcher.bootstrapper, "bootstrap", return_value=types.SimpleNamespace(state="registered")), \
                 mock.patch.object(stand.launcher.agent_starter, "start_agent", side_effect=start_agent), \
                 mock.patch.object(stand.integration, "LocalStandClient", return_value=self.management_client), \
+                mock.patch.object(stand.delivery, "stage", self.stage_delivery), \
+                mock.patch.object(stand.delivery, "publish_roles", self.publish_delivery_roles), \
                 mock.patch.object(subprocess, "run", side_effect=artifact_process), \
                 redirect_stdout(output), redirect_stderr(errors):
             code = stand.main(["--root", str(self.root), *arguments])
@@ -196,6 +201,15 @@ class FactoryStandRecoveryTests(unittest.TestCase):
         before = path.read_bytes()
         self._resume()
         self.assertEqual(path.read_bytes(), before)
+
+    def test_default_start_installs_delivery_roles_without_an_issue_or_test_pack(self):
+        before = (self.root / "evidence/factory-triage.json").read_bytes()
+        with mock.patch.object(stand.delivery, "read_test_pack") as read_pack:
+            self._resume()
+        read_pack.assert_not_called()
+        self.stage_delivery.assert_called_once()
+        self.publish_delivery_roles.assert_called_once()
+        self.assertEqual((self.root / "evidence/factory-triage.json").read_bytes(), before)
 
     def test_resume_reports_unresolved_policy_and_rechecks_after_catalog_repair(self):
         self.legacy_access_available = False

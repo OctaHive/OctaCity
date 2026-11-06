@@ -941,6 +941,7 @@ fn compile_author(
     FactoryDigest::content_sha256(b"ordinary configuration"),
   );
   let profile = FactoryCodexBuildProfile {
+    protected_tests: None,
     authentication: octacity_server_application::FactoryCodexAuthentication::default(),
     mcp_configurations: vec![],
     toolchain: FactoryTaskToolchain {

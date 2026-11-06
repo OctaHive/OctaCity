@@ -2,7 +2,7 @@
 import { QueryClientProvider } from '@tanstack/react-query';
 import { cleanup, render, screen, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
-import { createMemoryRouter, RouterProvider } from 'react-router-dom';
+import { createMemoryRouter, MemoryRouter, RouterProvider } from 'react-router-dom';
 import { useState } from 'react';
 import { afterEach, expect, it, vi } from 'vitest';
 import { createConsoleQueryClient } from '../../app/query';
@@ -295,6 +295,42 @@ it.each([
     expect(request.definition.root.nodes[0]?.budget.max_tokens).toBe(321);
   },
 );
+
+it('requires a new review when additional verification changes the draft during confirmation', async () => {
+  const { config, request } = setup();
+  const createFlow = vi.fn<FactoryApi['createFlow']>(async () => ({
+    disposition: 'applied' as const,
+    resource: { flow: config.flow, project_id: request.project_id, published_at_unix_ms: 1 },
+  }));
+  const api = { ...factoryApi, validateFlow: vi.fn(async () => config.flow), createFlow };
+  const client = createConsoleQueryClient();
+  const element = (definition: typeof request.definition) => (
+    <QueryClientProvider client={client}>
+      <MemoryRouter>
+        <FactoryPublication
+          api={api}
+          subject={{ kind: 'flow', request: { ...request, definition } }}
+        />
+      </MemoryRouter>
+    </QueryClientProvider>
+  );
+  const { rerender } = render(element(request.definition));
+  await userEvent.click(screen.getByRole('button', { name: 'Validate draft' }));
+  await userEvent.click(screen.getByRole('button', { name: 'Review publication' }));
+  const updated = structuredClone(request.definition);
+  updated.root.nodes[0]!.protected_verification = {
+    artifact_id: crypto.randomUUID(),
+    content_digest: 'a'.repeat(64),
+    encoded_size: 128,
+  };
+  rerender(element(updated));
+  const confirm = within(await screen.findByRole('dialog')).getByRole('button', {
+    name: 'Confirm publish',
+  });
+  expect(confirm).toHaveProperty('disabled', true);
+  await userEvent.click(confirm);
+  expect(createFlow).not.toHaveBeenCalled();
+});
 
 it('creates a first immutable Flow after confirmation and abandons a reviewed intent without sending it', async () => {
   const { config, request } = setup();

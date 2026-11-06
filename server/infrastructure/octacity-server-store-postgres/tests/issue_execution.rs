@@ -810,6 +810,7 @@ async fn standalone_project_documents_use_the_existing_input_journal_without_adm
     .await
     .unwrap();
   let request = ProjectDocumentSubmission {
+    purpose: Default::default(),
     project_id: project,
     name: "Project rules".parse().unwrap(),
     content: "Private controlling rules\r\n".into(),
@@ -817,6 +818,7 @@ async fn standalone_project_documents_use_the_existing_input_journal_without_adm
   };
   let first = store
     .reserve_project_document(management_mutation(ReserveProjectDocument {
+      selection_digest: None,
       submission: request.clone(),
       now: at(10),
     }))

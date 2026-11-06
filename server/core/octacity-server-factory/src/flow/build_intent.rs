@@ -100,6 +100,17 @@ impl FlowBuildIntent {
     Self::with_selection(input, admitted, node, usage_before, priority, self.selection.clone())
   }
 
+  fn candidate<'a>(
+    node: &'a crate::FlowNodeDefinition,
+    selected: &SelectedProfile,
+  ) -> Option<&'a crate::FlowProfileCandidate> {
+    node
+      .profile_selection()?
+      .candidates
+      .values()
+      .find(|candidate| candidate.profile.reference() == &selected.profile)
+  }
+
   fn with_selection(
     input: FlowNodeInput,
     admitted: &AdmittedFlow,
@@ -112,13 +123,9 @@ impl FlowBuildIntent {
     node.validate_execution_window()?;
     let definition = admitted.closure().definition(input.definition()).ok_or_else(invalid)?;
     let declared = definition.node(input.node()).ok_or_else(invalid)?;
-    let candidate = selection.as_ref().and_then(|selected| {
-      declared
-        .profile_selection()?
-        .candidates
-        .values()
-        .find(|candidate| candidate.profile.reference() == &selected.profile)
-    });
+    let candidate = selection
+      .as_ref()
+      .and_then(|selected| Self::candidate(declared, selected));
     let binding = match &selection {
       None => declared.build(),
       Some(selected) => {
@@ -350,6 +357,21 @@ impl FlowBuildIntent {
     }
     Ok(())
   }
+  /// Resolves the exact binding of this verified intent, including a selected candidate's outputs.
+  pub fn admitted_binding<'a>(&self, admitted: &'a AdmittedFlow) -> Result<&'a crate::FlowBuildBinding, FactoryError> {
+    self.verify_admission(admitted)?;
+    let node = admitted
+      .closure()
+      .definition(self.input.definition())
+      .and_then(|definition| definition.node(self.input.node()))
+      .ok_or_else(invalid)?;
+    match &self.selection {
+      Some(selected) => Self::candidate(node, selected).map(|candidate| &candidate.build),
+      None => node.build(),
+    }
+    .ok_or_else(invalid)
+  }
+
   /// Exact chosen profile identity, available without a mutable catalog during package recovery.
   #[must_use]
   pub fn selected_profile(&self) -> Option<&crate::FactoryRoleProfileRef> {

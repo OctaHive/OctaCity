@@ -94,6 +94,7 @@ fn protected_capture_verifies_actual_files_and_frozen_plan_before_public_handoff
   );
   file.plugin = intent.profile().plugin.clone();
   let manifest = FactoryProtectedTestInventory {
+    supplement: None,
     transcript: None,
     plan_digest: plan.digest().unwrap(),
     input_digest: intent.input().digest().unwrap(),
@@ -447,6 +448,7 @@ pub(crate) fn retained_author_fixture_with_contract_and_reserved_inputs(
     );
     file.plugin = intent.profile().plugin.clone();
     let inventory = FactoryProtectedTestInventory {
+      supplement: None,
       transcript: None,
       plan_digest: plan.digest().unwrap(),
       input_digest: input.digest().unwrap(),

@@ -1,3 +1,4 @@
+import { Buffer } from 'node:buffer';
 import { readFile } from 'node:fs/promises';
 import path from 'node:path';
 import ts from 'typescript';
@@ -55,16 +56,32 @@ function packKeys(keys) {
 // when it saves space, and double the marker on a literal that starts with it.
 function packTranslations(values) {
   const first = new Map();
-  return pack(
+  const unique = [...new Set(values)];
+  const words = new Map();
+  const wordPattern = /[\p{L}]{4,}/gu;
+  for (const value of unique) {
+    for (const [word] of value.matchAll(wordPattern)) words.set(word, (words.get(word) ?? 0) + 1);
+  }
+  const dictionary = new Map();
+  for (const [word, count] of [...words].sort((a, b) => b[1] - a[1])) {
+    const reference = `^${dictionary.size.toString(36)};`;
+    const bytes = Buffer.byteLength(word);
+    if (count * (bytes - reference.length) > bytes + 1) dictionary.set(word, reference);
+  }
+  const compressed = pack(
     values.map((value, index) => {
       const earlier = first.get(value);
       if (earlier === undefined) first.set(value, index);
-      const literal = value.startsWith('~') ? `~${value}` : value;
+      const escaped = value
+        .replaceAll('^', '^^')
+        .replace(wordPattern, (word) => dictionary.get(word) ?? word);
+      const literal = escaped.startsWith('~') ? `~${escaped}` : escaped;
       if (earlier === undefined) return literal;
       const reference = `~${earlier.toString(36)}`;
       return reference.length < literal.length ? reference : literal;
     }),
   );
+  return [compressed, [...dictionary.keys()].join(separator)];
 }
 
 /** @returns {import('vite').Plugin} */
@@ -87,11 +104,13 @@ export function compactMessageCatalogs() {
         return {
           code: `const groups=${JSON.stringify(packed)};
 const unpack=values=>typeof values==='string'?values.split(${JSON.stringify(separator)}):values;
-export function unpackMessages(packed){
+export function unpackMessages([packed,words]){
   const values=unpack(packed);
+  const dictionary=unpack(words);
   for(let i=0;i<values.length;i++){
     const value=values[i];
-    if(value[0]==='~')values[i]=value[1]==='~'?value.slice(1):values[parseInt(value.slice(1),36)];
+    if(value[0]==='~'&&value[1]!=='~')values[i]=values[parseInt(value.slice(1),36)];
+    else values[i]=(value.startsWith('~~')?value.slice(1):value).replace(/\\^([a-z0-9]+;|\\^)/g,(_,key)=>key==='^'?'^':dictionary[parseInt(key,36)]);
   }
   return values;
 }

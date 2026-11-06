@@ -56,7 +56,9 @@ where
       .definition(request.input.definition())
       .and_then(|definition| definition.node(request.input.node()))
       .ok_or_else(ApplicationError::invalid)?;
-    let binding = node.build().ok_or_else(ApplicationError::invalid)?;
+    let binding = intent
+      .admitted_binding(request.admitted)
+      .map_err(|_| ApplicationError::invalid())?;
     let schema = node
       .outcome(intent.result_outcome())
       .ok_or_else(ApplicationError::invalid)?
@@ -82,22 +84,7 @@ where
         source: self.outputs.as_ref(),
         intent,
         verify: |execution: &octacity_server_factory::FlowBuildExecution, outputs: &FactoryNodeBuildOutputs| {
-          let bundle =
-            verify_factory_protected_test_bundle(intent, execution, outputs, &plan, &self.manifest, observed_at)?;
-          let public = crate::factory::execution::factory_node_build::selected_document(
-            &outputs.documents,
-            &intent.profile().result_output,
-            intent.profile().result_output_kind,
-            schema,
-            intent.profile().result_tool(),
-            &intent.profile().plugin,
-          )?;
-          let handoff: octacity_server_factory::ProtectedTestHandoff =
-            serde_json::from_slice(&public.bytes).map_err(|_| ApplicationError::invalid())?;
-          if handoff != bundle.public_handoff() {
-            return Err(ApplicationError::invalid());
-          }
-          Ok(())
+          verify_protected_test_handoff(intent, execution, outputs, &plan, &self.manifest, schema, observed_at)
         },
       },
     );
@@ -115,4 +102,30 @@ where
     )
     .await
   }
+}
+
+pub(crate) fn verify_protected_test_handoff(
+  intent: &FlowBuildIntent,
+  execution: &octacity_server_factory::FlowBuildExecution,
+  outputs: &FactoryNodeBuildOutputs,
+  plan: &ProtectedTestPlan,
+  inventory: &EvidenceRequirement,
+  schema: &octacity_server_factory::ImmutableReference,
+  observed_at: Timestamp,
+) -> Result<(), ApplicationError> {
+  let bundle = verify_factory_protected_test_bundle(intent, execution, outputs, plan, inventory, observed_at)?;
+  let public = crate::factory::execution::factory_node_build::selected_document(
+    &outputs.documents,
+    &intent.profile().result_output,
+    intent.profile().result_output_kind,
+    schema,
+    intent.profile().result_tool(),
+    &intent.profile().plugin,
+  )?;
+  let handoff: octacity_server_factory::ProtectedTestHandoff =
+    serde_json::from_slice(&public.bytes).map_err(|_| ApplicationError::invalid())?;
+  if handoff != bundle.public_handoff() {
+    return Err(ApplicationError::invalid());
+  }
+  Ok(())
 }

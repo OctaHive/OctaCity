@@ -820,6 +820,7 @@ fn competing_installed_pipeline_contracts_remain_unqualified_instead_of_choosing
   let project = ProjectId::generate();
   let reference = |name: &str| ImmutableReference::new(key(name), key("v1"), digest(91));
   let contract = FactoryBuildPipelineContract {
+    protected_tests: None,
     command: None,
     build_configuration: BuildConfigurationRef::new(
       BuildConfigurationId::generate(),

@@ -135,6 +135,25 @@ impl FlowContextBinding {
             .is_ok_and(|value| matches!(serde_json::from_value(value), Ok(FactoryContextReference::Artifact(_)))))
     })
   }
+  /// Checks always-active Artifact mappings against a caller's input provenance rule.
+  /// A guard on a guaranteed input path is always active. Other guarded
+  /// references remain verified when the frozen input selects them.
+  pub fn selects_required_artifact_reference(
+    &self,
+    input: Option<&crate::FlowValueSchema>,
+    mut source: impl FnMut(&str) -> bool,
+  ) -> bool {
+    self.entries.values().any(|entry| {
+      entry
+        .when_present
+        .as_deref()
+        .is_none_or(|path| path.is_empty() || input.is_some_and(|shape| shape.guarantees_pointer(path)))
+        && matches!(entry.source.value(), crate::FlowValueMapping::Object { fields }
+        if fields.iter().any(|(key, kind)| key.as_str() == "kind"
+          && matches!(kind, crate::FlowValueMapping::Constant { value } if value == "artifact")))
+        && entry.source.selects_only("/value", &mut source)
+    })
+  }
   /// Whether the binding unconditionally selects a candidate revision from its input.
   pub fn selects_candidate(&self) -> bool {
     self.candidate_revision.is_some() && self.candidate_when_present.as_ref().is_none_or(String::is_empty)

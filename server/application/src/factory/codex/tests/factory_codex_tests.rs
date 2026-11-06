@@ -1158,6 +1158,109 @@ fn compiled_flow_task_runs_from_the_virtual_workspace_and_keeps_records_in_outpu
 }
 
 #[test]
+fn protected_test_author_compiles_isolated_outputs_without_git_capture() {
+  use crate::factory_node_test_support::fixtures;
+  use octacity_server_factory::*;
+
+  let work = fixtures::work();
+  let plugin = reference("codex", 10);
+  let executable = reference("codex-cli", 11);
+  let mut binding = fixtures::binding(work.subject().project_id());
+  binding.plugin = plugin.clone();
+  binding.tool = executable.clone();
+  binding.model_or_tool = reference("selected-tester-model", 12);
+  binding.result_output = key("protected_handoff");
+  let inventory = EvidenceRequirement::new(
+    key("protected_inventory"),
+    EvidenceOutputKind::Artifact,
+    reference("test-inventory", 50),
+    executable.clone(),
+    plugin.clone(),
+  );
+  let policy = crate::FactoryProtectedTestAuthoringPolicy::new(
+    crate::FactoryProtectedTestPolicy::new(
+      ProtectedTestCoverage::new(vec![key("acceptance")], 1, 20000, 8).unwrap(),
+      3600000,
+    )
+    .unwrap(),
+    inventory.clone(),
+    vec![crate::FactoryProtectedTestFileOutput {
+      output: key("tester-file"),
+      class: key("acceptance"),
+      path: FactoryRepositoryPath::new("checks.sh").unwrap(),
+    }],
+  )
+  .unwrap();
+  binding.evidence = vec![inventory];
+  let instructions = FactoryText::new("Write the acceptance check for the selected requirements.").unwrap();
+  let consumer = FactoryCredentialConsumer::ReadOnlyReview;
+  let usage = crate::FactoryCodexUsagePolicy::ReportedCost;
+  binding.task_digest = crate::codex_protected_test_task_digest(
+    crate::codex_flow_task_digest(
+      &instructions,
+      credential_profiles().profile(consumer.purpose()),
+      consumer,
+      &usage,
+    ),
+    &policy,
+  );
+  let mut grants = serde_json::to_value(permissions(FactoryTaskMode::Evaluate, plugin, executable, true)).unwrap();
+  grants["outputs"]["kinds"] = serde_json::json!([
+    "codex-run-provenance",
+    "codex-run-result",
+    "codex-run-trace",
+    "tester-file",
+    "protected_inventory",
+    "protected_handoff"
+  ]);
+  grants["outputs"]["max_artifact_count"] = serde_json::json!(4);
+  grants["outputs"]["max_report_count"] = serde_json::json!(2);
+  let (_, admitted, _, input, node) = fixtures::execution_fixture_with_permissions(
+    FlowNodeKind::Reasoning,
+    work,
+    binding,
+    None,
+    serde_json::from_value(grants).unwrap(),
+  );
+  let intent = FlowBuildIntent::new(input, &admitted, node, Default::default(), 0).unwrap();
+  let compiled = crate::compile_codex_flow_task_with_options(
+    &intent,
+    &admitted,
+    &instructions,
+    &credential_profiles(),
+    consumer,
+    &usage,
+    crate::FactoryCodexFlowCompilationOptions {
+      protected_tests: Some(&policy),
+      ..Default::default()
+    },
+  )
+  .expect("the exact installed test author can write only its protected output with readonly source");
+  let octafile: Value =
+    serde_json::from_slice(compiled.document(FactoryProtectedDocumentKind::Octafile).bytes()).unwrap();
+  let task = &octafile["tasks"].as_object().unwrap().values().next().unwrap()["cmds"][0]["codex"];
+  assert_eq!(
+    task["deliverables"],
+    serde_json::json!([
+      {"kind": "artifact", "name": "tester-file", "path": "output/protected-tests/checks.sh"}
+    ])
+  );
+  assert_eq!(task["result_schema"]["required"], serde_json::json!(["prepared"]));
+  assert!(intent.profile().capture_write_paths.is_none());
+  assert!(
+    crate::compile_codex_flow_task(
+      &intent,
+      &admitted,
+      &instructions,
+      &credential_profiles(),
+      consumer,
+      &usage
+    )
+    .is_err()
+  );
+}
+
+#[test]
 fn codex_flow_author_compiles_the_exact_capture_contract_with_a_separate_credential() {
   use octacity_server_factory::FactoryCredentialConsumer;
   let (intent, admitted, instructions, _) = codex_flow_author_fixture(true, true, "model-coding", 4);

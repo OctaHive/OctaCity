@@ -2,7 +2,7 @@
 use crate::factory_node_test_support::fixtures;
 use crate::*;
 use async_trait::async_trait;
-use octacity_artifact_store::{ArtifactByteReader, ArtifactObject, ArtifactStoreError};
+use octacity_artifact_store::{ArtifactBytePublisher, ArtifactByteReader, ArtifactObject, ArtifactStoreError};
 use octacity_server_domain::*;
 use octacity_server_factory::*;
 use octacity_server_job::{JobSpecBuildSnapshot, JobState};
@@ -153,9 +153,22 @@ impl BuildQueryStore for Queries {
 #[derive(Default)]
 struct Bytes(Mutex<BTreeMap<ArtifactId, Vec<u8>>>);
 #[async_trait]
+impl ArtifactBytePublisher for Bytes {
+  async fn publish_verified(&self, object: &ArtifactObject, bytes: Vec<u8>) -> Result<(), ArtifactStoreError> {
+    self.0.lock().unwrap().insert(object.artifact_id(), bytes);
+    Ok(())
+  }
+}
+#[async_trait]
 impl ArtifactByteReader for Bytes {
   async fn read_published(&self, object: &ArtifactObject, maximum: u64) -> Result<Vec<u8>, ArtifactStoreError> {
-    let bytes = self.0.lock().unwrap().get(&object.artifact_id()).unwrap().clone();
+    let bytes = self
+      .0
+      .lock()
+      .unwrap()
+      .get(&object.artifact_id())
+      .cloned()
+      .ok_or(ArtifactStoreError::NotFound)?;
     assert!(bytes.len() as u64 <= maximum);
     Ok(bytes)
   }
@@ -233,6 +246,243 @@ impl ArtifactRecordStore for HistoryArtifacts {
 
 async fn prepared_source() -> SourceFixture {
   prepared_source_with_capture(None).await
+}
+
+#[test]
+fn native_tester_completion_publishes_a_closed_handoff_and_denies_model_access_to_tests_and_trace() {
+  struct CompletionClock(Timestamp);
+  impl FactoryExecutionClock for CompletionClock {
+    fn now(&self) -> Result<Timestamp, ApplicationError> {
+      Ok(self.0)
+    }
+  }
+  crate::factory::admission::tests::factory_admission_tests::run_ready(async {
+    use crate::factory::commands::tests::factory_command_output_source_tests::prepared_accepted_author_run;
+
+    let prior = prepared_source().await;
+    let work = prior
+      .runs
+      .factory_run_snapshot(prior.intent.input().factory_run_id())
+      .await
+      .unwrap()
+      .work;
+    let task = work.artifacts().task().artifact_id();
+    let project = work.subject().project_id();
+    let supplement_store = Arc::new(InMemoryFactoryConfigurationStore::new());
+    supplement_store.seed_project(project).unwrap();
+    let supplement_bytes = Arc::new(Bytes::default());
+    let supplement = Box::pin(
+      ProjectTextIntake::new(
+        supplement_store.clone(),
+        supplement_bytes.clone(),
+        Arc::new(ExactRevisionResolver),
+        Arc::new(TrustedNetworkManagementPolicy),
+        Arc::new(CompletionClock(at(1))),
+      )
+      .publish_document(
+        &crate::factory::admission::tests::factory_admission_tests::context(),
+        ProjectDocumentSubmission {
+          project_id: project,
+          name: "Operator checks".parse().unwrap(),
+          purpose: ProjectDocumentPurpose::Verification,
+          content: serde_json::json!({
+            "files": [{"path": "suite/check.sh", "content_base64": "ZXhpdCAwCg=="}],
+            "entries": [{"kind": "shell", "path": "suite/check.sh"}],
+          })
+          .to_string(),
+          idempotency_key: "operator-checks".parse().unwrap(),
+        },
+      ),
+    )
+    .await
+    .unwrap();
+    let mut profile = prior.profile;
+    let mut grants = serde_json::to_value(&profile.project_permissions).unwrap();
+    grants["outputs"]["kinds"] = serde_json::json!([
+      "codex-run-result",
+      "codex-run-provenance",
+      "codex-run-trace",
+      "tester-checks",
+      "protected_inventory",
+      "protected_handoff"
+    ]);
+    grants["outputs"]["max_artifact_count"] = serde_json::json!(4);
+    grants["outputs"]["max_artifact_bytes"] = serde_json::json!(4096);
+    grants["outputs"]["max_report_count"] = serde_json::json!(2);
+    profile.project_permissions = serde_json::from_value(grants).unwrap();
+    profile.local_permissions = LocalPermissionCeiling::fully_enforced(profile.project_permissions.clone());
+    let inventory = EvidenceRequirement::new(
+      fixtures::key("protected_inventory"),
+      EvidenceOutputKind::Artifact,
+      fixtures::reference("test.inventory"),
+      profile.toolchain.executable.clone(),
+      profile.toolchain.plugin.clone(),
+    );
+    let policy: FactoryProtectedTestAuthoringPolicy = serde_json::from_value(serde_json::json!({
+      "policy": {"classes": ["acceptance"], "max_files": 1, "max_bytes": 4000, "reserved_inputs": 8, "retention_millis": 5000},
+      "inventory": inventory,
+      "files": [{"output": "tester-checks", "class": "acceptance", "path": "checks.sh"}],
+      "transcript": "codex-run-trace"
+    })).unwrap();
+    profile.protected_tests = Some(policy);
+    let mut binding = fixtures::binding(work.subject().project_id());
+    binding.tool = profile.toolchain.executable.clone();
+    binding.plugin = profile.toolchain.plugin.clone();
+    binding.model_or_tool = profile.toolchain.model.clone();
+    binding.build_configuration = profile.build_configuration.clone();
+    binding.task_digest = profile.task_digest();
+    binding.result_output = fixtures::key("protected_handoff");
+    binding.evidence = vec![inventory];
+    let schema = fixtures::supplied_base_flow_template()
+      .data_schemas()
+      .unwrap()
+      .remove(&fixtures::key("protected_test_handoff"))
+      .unwrap();
+    let (runs, admitted, intent) = Box::pin(prepared_accepted_author_run(
+      work,
+      binding,
+      schema.clone(),
+      profile.project_permissions.clone(),
+      Some(supplement.artifact),
+    ))
+    .await;
+    let task_bytes = b"Explicitly selected task facts.".to_vec();
+    let compiled = compile_codex_flow_task_with_options(
+      &intent,
+      &admitted,
+      &profile.instructions,
+      &profile.credentials,
+      profile.consumer,
+      &profile.usage_policy,
+      FactoryCodexFlowCompilationOptions {
+        context: Some(&BTreeMap::from([(task, task_bytes.clone())])),
+        protected_tests: profile.protected_tests.as_ref(),
+        ..Default::default()
+      },
+    )
+    .unwrap();
+    let f = Box::pin(finish_prepared_source(PreparedSourceInput {
+      runs: runs.clone(),
+      base: authoritative_store_contract_fixture(),
+      profile: profile.clone(),
+      intent,
+      context: Arc::new(ContextBytes(task, task_bytes)),
+      schema,
+      compiled,
+      source: None,
+      capture_paths: vec![],
+      observation_override: None,
+      model_result: serde_json::json!({"prepared":true}),
+      native_mcp: false,
+      recorded_usage: None,
+    }))
+    .await;
+    let mut running = f.query.as_ref().clone();
+    let job = &mut running.attempt.jobs[0];
+    let now = at(job.terminal.as_ref().unwrap().completed_at.unix_millis() + 2);
+    let completion = AgentOutputFinalization {
+      lease: f.lease,
+      job_id: job.id(),
+      attempt: AttemptNumber::FIRST,
+      observed_at: now,
+    };
+    job.state = JobState::Running;
+    job.terminal = None;
+    running.build.state = BuildState::Running;
+    running.attempt.state = AttemptState::Running;
+    let finalizer = FactoryProtectedTestOutputFinalizer::new(
+      runs.clone(),
+      Arc::new(running),
+      f.artifacts.clone(),
+      f.bytes.clone(),
+      vec![],
+      Arc::new(CompletionClock(now)),
+    )
+    .unwrap()
+    .with_codex_profiles(vec![profile], runs)
+    .unwrap()
+    .with_verification_inputs(Arc::new(FactoryProjectInputReader::new(
+      supplement_store,
+      supplement_bytes,
+    )));
+    finalizer.finalize(completion).await.unwrap();
+    finalizer.finalize(completion).await.unwrap();
+    let verified = f
+      .source(f.query.clone())
+      .published_outputs(f.query.build.build.id, f.query.attempt.id, 1_000_000)
+      .await
+      .unwrap();
+    let FactoryNodeBuildOutputObservation::Verified(outputs) = verified else {
+      panic!("a completed Tester and its verified publications must form a handoff")
+    };
+    assert_eq!(outputs.documents.len(), 2);
+    let handoff = outputs
+      .documents
+      .iter()
+      .find(|doc| doc.record.identity().logical_name.as_str() == "protected_handoff")
+      .unwrap();
+    let value: serde_json::Value = serde_json::from_slice(&handoff.bytes).unwrap();
+    assert_eq!(value["classes"], serde_json::json!(["acceptance"]));
+    assert_eq!(value.as_object().unwrap().len(), 2);
+    let inventory = outputs
+      .documents
+      .iter()
+      .find(|doc| doc.record.identity().logical_name.as_str() == "protected_inventory")
+      .unwrap();
+    let retained: serde_json::Value = serde_json::from_slice(&inventory.bytes).unwrap();
+    assert_eq!(retained["supplement"]["files"][0]["content_base64"], "ZXhpdCAwCg==");
+    assert_eq!(retained["supplement"]["entries"][0]["path"], "suite/check.sh");
+    let publications = f
+      .artifacts
+      .list_published_artifacts(ListPublishedArtifacts {
+        build_id: f.query.build.build.id,
+        attempt_id: Some(f.query.attempt.id),
+        limit: 10,
+        visibility: ArtifactListVisibility::all(),
+      })
+      .await
+      .unwrap();
+    assert_eq!(publications.len(), 6);
+    let reader = FactoryArtifactReader::new(f.artifacts.clone(), f.query.clone(), f.bytes.clone());
+    for name in ["tester-checks", "codex-run-trace", "protected_inventory"] {
+      let row = publications
+        .iter()
+        .find(|row| row.artifact.identity().logical_name.as_str() == name)
+        .unwrap();
+      let identity = row.artifact.identity();
+      let reference = FactoryArtifactReference::new(
+        identity.artifact_id,
+        FactoryDigest::from_bytes(identity.digest.as_bytes()),
+        identity.size_bytes,
+      )
+      .unwrap();
+      let subject = f.intent.input().context().unwrap().subject().clone();
+      let context = ContextManifest::new(
+        ContextManifestId::generate(),
+        subject.clone(),
+        FactoryDigest::from_bytes([3; 32]),
+        vec![
+          ContextManifestEntry::new(
+            ContextSourceKind::Evidence,
+            fixtures::key("explicit-private-output"),
+            subject,
+            FactoryContextReference::Artifact(reference.clone()),
+            reference.content_digest(),
+            reference.encoded_size(),
+            FactorySafeText::new("An explicit model selection must still respect protected storage").unwrap(),
+            FactoryDigest::from_bytes([4; 32]),
+          )
+          .unwrap(),
+        ],
+      )
+      .unwrap();
+      let input = f.intent.input().clone().with_context(context, vec![]).unwrap();
+      assert!(
+        reader.read_context(&input, now, at(2000)).await.is_err(),
+        "{name} is unavailable to other agents"
+      );
+    }
+  });
 }
 
 #[test]
@@ -327,6 +577,55 @@ fn approved_observer_policy(profile: &FactoryCodexBuildProfile) -> crate::JobSpe
     octa: spec.octa,
     validity: octacity_server_job::JobSpecValidity::new(60).unwrap(),
   }
+}
+
+#[test]
+fn installed_tester_respects_the_codex_deliverable_limit() {
+  crate::factory::admission::tests::factory_admission_tests::run_ready(async {
+    let template = prepared_source().await.profile;
+    let approved = approved_observer_policy(&template);
+    for (count, supported) in [(64, true), (65, false)] {
+      let mut profile = template.clone();
+      let inventory = EvidenceRequirement::new(
+        fixtures::key("protected_inventory"),
+        EvidenceOutputKind::Artifact,
+        fixtures::reference("test.inventory"),
+        profile.toolchain.executable.clone(),
+        profile.toolchain.plugin.clone(),
+      );
+      let files = (0..count)
+        .map(|index| {
+          serde_json::json!({
+            "output": format!("check-{index}"), "class": "acceptance", "path": format!("check-{index}.sh")
+          })
+        })
+        .collect::<Vec<_>>();
+      profile.protected_tests = Some(
+        serde_json::from_value(serde_json::json!({
+          "policy": {"classes": ["acceptance"], "max_files": count, "max_bytes": 65536,
+                     "reserved_inputs": 8, "retention_millis": 5000},
+          "inventory": inventory, "files": files, "transcript": "codex-run-trace"
+        }))
+        .unwrap(),
+      );
+      let mut grants = serde_json::to_value(&profile.project_permissions).unwrap();
+      let kinds = grants["outputs"]["kinds"].as_array_mut().unwrap();
+      kinds.extend([
+        serde_json::json!("protected_inventory"),
+        serde_json::json!("protected_handoff"),
+      ]);
+      kinds.extend(files.iter().map(|file| file["output"].clone()));
+      grants["outputs"]["max_artifact_count"] = serde_json::json!(count + 3);
+      grants["outputs"]["max_report_count"] = serde_json::json!(2);
+      profile.project_permissions = serde_json::from_value(grants).unwrap();
+      profile.local_permissions = LocalPermissionCeiling::fully_enforced(profile.project_permissions.clone());
+      assert_eq!(
+        profile.validate_installation(&approved).is_ok(),
+        supported,
+        "{count} files"
+      );
+    }
+  });
 }
 
 #[test]
@@ -659,6 +958,7 @@ async fn prepared_role_options(options: PreparedRoleOptions) -> SourceFixture {
   }
   let base = authoritative_store_contract_fixture();
   let profile = FactoryCodexBuildProfile {
+    protected_tests: None,
     authentication,
     mcp_configurations: vec![],
     toolchain: FactoryTaskToolchain {
@@ -1060,9 +1360,12 @@ async fn finish_prepared_source(input: PreparedSourceInput) -> SourceFixture {
     native_mcp,
     recorded_usage,
   } = input;
-  let canonical = crate::factory::execution::tests::factory_job_test_support::canonical_v3_spec();
+  let mut canonical = crate::factory::execution::tests::factory_job_test_support::canonical_v3_spec();
   let grants = profile.project_permissions.clone();
-  let started_at = if source.is_some() {
+  if profile.protected_tests.is_some() {
+    canonical.outputs.artifact_bytes = grants.outputs().max_artifact_bytes();
+  }
+  let started_at = if source.is_some() || profile.protected_tests.is_some() {
     intent.node().started_at().unix_millis() + 1
   } else {
     1012
@@ -1267,6 +1570,16 @@ async fn finish_prepared_source(input: PreparedSourceInput) -> SourceFixture {
     ),
     ("codex-run-trace", trace, ArtifactType::Artifact, "application/x-ndjson"),
   ];
+  if let Some(policy) = &profile.protected_tests {
+    for file in policy.files() {
+      publications.push((
+        file.output.as_str(),
+        b"test -f \"$1/private-expected-behavior\"\n".to_vec(),
+        ArtifactType::Artifact,
+        "application/octet-stream",
+      ));
+    }
+  }
   if let Some(capture) = &profile.capture {
     use octacity_protocol::{
       CHANGE_SET_BUNDLE_MEDIA_TYPE, CHANGE_SET_BUNDLE_OUTPUT, CHANGE_SET_MANIFEST_MEDIA_TYPE,
@@ -1396,6 +1709,7 @@ async fn finish_prepared_source(input: PreparedSourceInput) -> SourceFixture {
     context,
     schema,
     intent: intent.clone(),
+    lease,
   }
 }
 struct ObservationClock;
@@ -1414,6 +1728,7 @@ struct SourceFixture {
   context: Arc<dyn FactoryNodeContextSource>,
   schema: FlowDataSchema,
   intent: FlowBuildIntent,
+  lease: LeaseAccess,
 }
 impl SourceFixture {
   fn source(

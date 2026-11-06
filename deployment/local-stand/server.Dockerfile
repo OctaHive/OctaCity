@@ -33,7 +33,7 @@ RUN --mount=type=cache,target=/usr/local/cargo/registry,sharing=locked \
     chmod 0700 "$vcs" "$vcs/credentials"; \
     install -m 0700 target/release/octacity-vcs-git "$vcs/adapter"; \
     digest=$(sha256sum "$vcs/adapter" | cut -d ' ' -f 1); \
-    printf 'manifest_version = 1\nadapter_id = "git"\nexecutable = "adapter"\nexecutable_sha256 = "%s"\n[protocol]\nmin = 1\nmax = 1\n[capabilities]\nlist_references = true\nread_commit = true\nlist_tree = true\nread_file = true\nresolve_revision = true\n' "$digest" > "$vcs/adapter.toml"; \
+    printf 'manifest_version = 1\nadapter_id = "git"\nexecutable = "adapter"\nexecutable_sha256 = "%s"\n[protocol]\nmin = 1\nmax = 1\n[capabilities]\nlist_references = true\nread_commit = true\nlist_tree = true\nread_file = true\nread_files = true\nresolve_revision = true\n' "$digest" > "$vcs/adapter.toml"; \
     printf 'config_version = 1\ngit_path = "/usr/bin/git"\ncredential_directory = "credentials"\n' > "$vcs/git-adapter.toml"; \
     chmod 0600 "$vcs/adapter.toml" "$vcs/git-adapter.toml"; \
     chown -R 65532:65532 /out/rootfs/usr/local/lib/octacity/vcs; \

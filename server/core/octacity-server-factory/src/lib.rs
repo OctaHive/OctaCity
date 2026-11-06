@@ -20,7 +20,10 @@ pub use flow::{FlowProfileAdmissionOverride, FlowProfileAdmissionOverrides, Flow
 pub const MAX_FACTORY_EXECUTOR_BINDINGS: usize = 256;
 
 mod build_pipeline;
-pub use build_pipeline::{FactoryBuildCommandContract, FactoryBuildCompilationContract, FactoryBuildPipelineContract};
+pub use build_pipeline::{
+  FactoryBuildCommandContract, FactoryBuildCompilationContract, FactoryBuildPipelineContract,
+  FactoryProtectedTestBuildContract,
+};
 mod assessment;
 mod budget;
 mod budget_cost;
@@ -255,7 +258,8 @@ pub use project_policy::{
   FactoryLaunchPolicy, FactoryLaunchPolicyDefinition, FactoryLaunchPolicyRef, MAX_FACTORY_POLICY_DEFINITION_BYTES,
 };
 pub use protected_test::{
-  ProtectedTestBundle, ProtectedTestCoverage, ProtectedTestFile, ProtectedTestHandoff, ProtectedTestPlan,
+  MAX_PROTECTED_VERIFICATION_BYTES, ProtectedTestBundle, ProtectedTestCoverage, ProtectedTestFile,
+  ProtectedTestHandoff, ProtectedTestPlan,
 };
 pub use review_plan::{
   CriterionPack, EvaluationPlan, EvaluationPlanDefinition, MAX_CRITERION_PACKS, MAX_EVALUATORS, ReviewBranch,

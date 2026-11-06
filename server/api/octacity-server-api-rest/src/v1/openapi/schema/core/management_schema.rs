@@ -62,6 +62,8 @@ pub(super) fn insert_project_schemas(schemas: &mut Map<String, Value>) {
   schemas.insert("PublishProjectDocumentRequest".into(), object([
     ("name", json!({"type":"string", "minLength":1, "maxLength":octacity_server_application::MAX_PROJECT_DOCUMENT_NAME_BYTES})),
     ("content", json!({"type":"string", "minLength":1, "maxLength":octacity_server_application::MAX_PROJECT_DOCUMENT_BYTES})),
+    ("purpose", json!({"type":"string", "enum":["context","verification"],
+      "description":"Verification content is a private JSON selection of files and entrypoints."})),
   ], &["name", "content"]));
   schemas.insert(
     "ProjectDocumentResource".into(),

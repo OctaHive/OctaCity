@@ -5,6 +5,9 @@ use crate::{
 };
 use octacity_server_domain::Timestamp;
 use serde::{Deserialize, Serialize};
+
+/// Maximum canonical JSON size of one protected verification publication.
+pub const MAX_PROTECTED_VERIFICATION_BYTES: u64 = 512 * 1024;
 use std::collections::BTreeSet;
 
 /// Shared configured coverage and signed-input capacity for protected source files.
@@ -86,6 +89,8 @@ pub struct ProtectedTestPlan {
   #[serde(flatten)]
   coverage: ProtectedTestCoverage,
   retain_until: Timestamp,
+  #[serde(default, skip_serializing_if = "Option::is_none")]
+  supplement: Option<FactoryArtifactReference>,
 }
 #[derive(Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -97,16 +102,22 @@ struct PlanWire {
   max_bytes: u64,
   reserved_inputs: u16,
   retain_until: Timestamp,
+  #[serde(default)]
+  supplement: Option<FactoryArtifactReference>,
 }
 impl TryFrom<PlanWire> for ProtectedTestPlan {
   type Error = FactoryError;
   fn try_from(w: PlanWire) -> Result<Self, Self::Error> {
-    Self::new(
+    let plan = Self::new(
       w.accepted_contract,
       w.subject,
       ProtectedTestCoverage::new(w.classes, w.max_files, w.max_bytes, w.reserved_inputs)?,
       w.retain_until,
-    )
+    )?;
+    match w.supplement {
+      Some(supplement) => plan.with_supplement(supplement),
+      None => Ok(plan),
+    }
   }
 }
 impl ProtectedTestPlan {
@@ -122,6 +133,7 @@ impl ProtectedTestPlan {
       subject,
       coverage,
       retain_until,
+      supplement: None,
     })
   }
   /// Returns the immutable accepted Work or specification contract digest.
@@ -143,6 +155,26 @@ impl ProtectedTestPlan {
   /// Returns the aggregate retained byte ceiling for inventory and raw source files.
   pub const fn max_bytes(&self) -> u64 {
     self.coverage.max_bytes()
+      + match &self.supplement {
+        // The original inventory budget already covers the surrounding JSON.
+        Some(supplement) => supplement.encoded_size() + 16,
+        None => 0,
+      }
+  }
+  /// Adds one exact operator publication and reserves its inventory representation.
+  pub fn with_supplement(mut self, supplement: FactoryArtifactReference) -> Result<Self, FactoryError> {
+    if supplement.encoded_size() > MAX_PROTECTED_VERIFICATION_BYTES {
+      return Err(invalid());
+    }
+    self.supplement = Some(supplement);
+    if self.max_bytes() > crate::MAX_CONTEXT_MANIFEST_BYTES {
+      return Err(invalid());
+    }
+    Ok(self)
+  }
+  /// Exact private Project attachment retained with the accepted test plan.
+  pub const fn supplement(&self) -> Option<&FactoryArtifactReference> {
+    self.supplement.as_ref()
   }
   /// Returns configured capacity for inventory, candidate and compiler inputs.
   pub const fn reserved_inputs(&self) -> u16 {

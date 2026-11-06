@@ -1324,7 +1324,7 @@ async fn signal_connector_recovers_after_the_original_deadline_with_bounded_read
   }
 }
 
-fn qualified_codex_profile() -> FactoryCodexBuildProfile {
+pub(super) fn qualified_codex_profile() -> FactoryCodexBuildProfile {
   let key = |text| FactoryKey::new(text).unwrap();
   let mut grants = serde_json::to_value(managed::permissions(false)).unwrap();
   grants["secret_profiles"] = serde_json::json!(["review-credential"]);
@@ -1337,6 +1337,7 @@ fn qualified_codex_profile() -> FactoryCodexBuildProfile {
 
   let grants: FactoryPermissionSet = serde_json::from_value(grants).unwrap();
   FactoryCodexBuildProfile {
+    protected_tests: None,
     authentication: octacity_server_application::FactoryCodexAuthentication::default(),
     mcp_configurations: vec![],
     toolchain: FactoryTaskToolchain {
@@ -1372,7 +1373,7 @@ fn qualified_codex_profile() -> FactoryCodexBuildProfile {
   }
 }
 
-fn codex_catalog_document(profile: &FactoryCodexBuildProfile) -> serde_json::Value {
+pub(super) fn codex_catalog_document(profile: &FactoryCodexBuildProfile) -> serde_json::Value {
   let project = profile.build_configuration.project_id();
   serde_json::json!({
     "version": 1,

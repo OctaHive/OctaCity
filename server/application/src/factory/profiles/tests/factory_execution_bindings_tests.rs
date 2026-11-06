@@ -40,6 +40,23 @@ fn selecting_an_agent_with_mcp_keeps_the_manually_authored_result_contract() {
   });
 }
 
+#[test]
+fn selecting_a_test_author_keeps_its_installed_inventory_evidence() {
+  crate::factory::admission::tests::factory_admission_tests::run_ready(async {
+    let fixture = fixture_with_evidence(true, false, true).await;
+    let queries = AuthorizedQueryHandler::new(Arc::new(TrustedNetworkManagementPolicy), fixture.handlers);
+    let binding = queries
+      .handle_query(&context(), fixture.query)
+      .await
+      .unwrap()
+      .build
+      .expect("the test author is selectable");
+    assert_eq!(binding.evidence.len(), 1);
+    assert_eq!(binding.evidence[0].kind().as_str(), "protected_inventory");
+    assert_eq!(binding.evidence[0].tool(), &binding.tool);
+  });
+}
+
 fn context() -> ManagementRequestContext {
   ManagementRequestContext::trusted_network(ManagementRequestId::new(uuid::Uuid::new_v4()).unwrap())
 }
@@ -51,6 +68,10 @@ struct BindingFixture {
   role: FactoryRoleRef,
 }
 async fn fixture(role_compiler: bool, with_mcp: bool) -> BindingFixture {
+  fixture_with_evidence(role_compiler, with_mcp, false).await
+}
+
+async fn fixture_with_evidence(role_compiler: bool, with_mcp: bool, with_evidence: bool) -> BindingFixture {
   let project = ProjectId::generate();
   let store = Arc::new(InMemoryFactoryConfigurationStore::new());
   store.seed_project(project).unwrap();
@@ -58,6 +79,20 @@ async fn fixture(role_compiler: bool, with_mcp: bool) -> BindingFixture {
     crate::factory::execution::factory_test_support::installed_role_execution_choices(project);
   let mut compiler = installed.build_pipeline_contracts()[0].clone();
   compiler.compilation.as_mut().unwrap().role_profiles = role_compiler;
+  if with_evidence {
+    compiler
+      .compilation
+      .as_mut()
+      .unwrap()
+      .evidence
+      .push(EvidenceRequirement::new(
+        "protected_inventory".parse().unwrap(),
+        EvidenceOutputKind::Artifact,
+        compiler.tool.clone(),
+        compiler.tool.clone(),
+        compiler.plugin.clone(),
+      ));
+  }
   let alias = FactoryKey::new("dependency-1").unwrap();
   let mut entries = installed.entries();
   if with_mcp {

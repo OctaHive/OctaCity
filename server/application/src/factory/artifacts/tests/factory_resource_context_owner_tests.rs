@@ -68,6 +68,7 @@ fn selected_documents(unsupported_repository_context: bool) {
     .publish_document(
       &context(),
       ProjectDocumentSubmission {
+        purpose: Default::default(),
         project_id: request.project_id,
         name: "Component guidance".parse().unwrap(),
         content: "Components are documented here; missing values remain unresolved.".into(),

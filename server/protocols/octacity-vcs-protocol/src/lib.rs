@@ -20,6 +20,8 @@ pub const MAX_FIELD_BYTES: usize = 1024;
 pub const MAX_PAGE_ENTRIES: u16 = 256;
 /// Maximum bytes returned by one file-content request.
 pub const MAX_FILE_CONTENT_BYTES: u32 = 1024 * 1024;
+/// Maximum selected files in one immutable batch.
+pub const MAX_BATCH_FILES: usize = 64;
 /// Maximum base64 characters that can encode one bounded file fragment.
 pub const MAX_FILE_CONTENT_BASE64_BYTES: usize = (MAX_FILE_CONTENT_BYTES as usize).div_ceil(3) * 4;
 /// Maximum bounded implementation metadata entries.
@@ -62,6 +64,9 @@ pub struct Capabilities {
   pub list_tree: bool,
   /// Reads bounded file bytes.
   pub read_file: bool,
+  /// Reads an exact selection of complete files under a shared byte limit.
+  #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+  pub read_files: bool,
   /// Resolves an allowed mutable reference to one immutable revision.
   pub resolve_revision: bool,
 }
@@ -124,6 +129,12 @@ impl Response {
       Outcome::Commit(value) => value.validate(),
       Outcome::Tree(value) => value.validate(),
       Outcome::File(value) => value.validate(),
+      Outcome::Files(files) => {
+        if files.is_empty() || files.len() > MAX_BATCH_FILES {
+          return Err(ProtocolError::LimitExceeded("file count"));
+        }
+        files.iter().try_for_each(FileContent::validate)
+      }
       Outcome::Resolved(value) => {
         field("reference", &value.reference)?;
         field("revision", &value.revision)
@@ -202,6 +213,8 @@ pub enum Outcome {
   Tree(TreePage),
   /// One bounded file-content fragment.
   File(FileContent),
+  /// Exact complete files in request order.
+  Files(Vec<FileContent>),
   /// Exact immutable resolution of one reference.
   Resolved(ResolvedRevision),
   /// Cancellation or another idempotent operation completed.
@@ -255,6 +268,25 @@ impl Request {
         }
         Ok(())
       }
+      Command::ReadFiles(value) => {
+        value.repository.validate()?;
+        field("revision", &value.revision)?;
+        if value.paths.is_empty()
+          || value.paths.len() > MAX_BATCH_FILES
+          || value.max_bytes == 0
+          || value.max_bytes > MAX_FILE_CONTENT_BYTES
+        {
+          return Err(ProtocolError::LimitExceeded("file selection"));
+        }
+        let mut unique = std::collections::BTreeSet::new();
+        for path in &value.paths {
+          repository_path("path", path)?;
+          if !unique.insert(path) {
+            return Err(ProtocolError::Invalid("duplicate file path"));
+          }
+        }
+        Ok(())
+      }
       Command::ResolveRevision(value) => {
         value.repository.validate()?;
         field("reference", &value.reference)
@@ -281,6 +313,8 @@ pub enum Command {
   ListTree(ListTree),
   /// Read bounded file content at one immutable revision.
   ReadFile(ReadFile),
+  /// Read selected complete files in one immutable snapshot.
+  ReadFiles(ReadFiles),
   /// Resolve a mutable reference exactly once.
   ResolveRevision(ResolveRevision),
   /// Cooperatively cancel an in-flight operation.
@@ -375,6 +409,20 @@ pub struct ReadFile {
   /// Byte offset for this bounded read.
   pub offset: u64,
   /// Maximum bytes returned.
+  pub max_bytes: u32,
+}
+
+/// Bounded immutable selection at a single revision.
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(deny_unknown_fields)]
+pub struct ReadFiles {
+  /// Repository and credential context.
+  pub repository: RepositoryAccess,
+  /// Immutable revision identity.
+  pub revision: String,
+  /// Exact repository-relative paths in response order.
+  pub paths: Vec<String>,
+  /// Total bytes across all complete files.
   pub max_bytes: u32,
 }
 
@@ -717,6 +765,20 @@ fn validate_outcome_for(command: &Command, outcome: &Outcome) -> Result<(), Prot
       file.path == request.path
         && file.offset == request.offset
         && decoded_length.is_ok_and(|length| length <= request.max_bytes as usize)
+    }
+    (Command::ReadFiles(request), Outcome::Files(files)) => {
+      files.len() == request.paths.len()
+        && files
+          .iter()
+          .zip(&request.paths)
+          .try_fold(request.max_bytes as usize, |remaining, (file, path)| {
+            if file.path != *path || file.offset != 0 || file.truncated {
+              return None;
+            }
+            let bytes = STANDARD.decode(&file.content_base64).ok()?;
+            remaining.checked_sub(bytes.len())
+          })
+          .is_some()
     }
     (Command::ResolveRevision(request), Outcome::Resolved(resolved)) => resolved.reference == request.reference,
     (Command::Cancel(request), Outcome::Acknowledged { operation_id }) => operation_id == &request.target_operation_id,

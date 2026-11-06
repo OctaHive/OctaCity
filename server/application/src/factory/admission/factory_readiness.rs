@@ -1,9 +1,12 @@
 //! Exact-subject readiness is a bounded metadata observation, never execution authority.
+use crate::factory::validation::factory_verification_supplement::{
+  validate_verification_selections, verification_selections,
+};
 use crate::*;
 use octacity_server_factory::*;
 use octacity_server_store::{FactoryConfigurationStore, FactoryRuntimeSettingsStore};
 use serde::{Deserialize, Serialize};
-use std::{sync::Arc, time::Duration};
+use std::{collections::BTreeSet, sync::Arc, time::Duration};
 
 mod placement;
 mod runtime;
@@ -110,6 +113,7 @@ pub struct FactoryReadinessHandlers<S> {
   clock: Arc<dyn FactoryExecutionClock>,
   maximum_age: Duration,
   artifacts: Option<Arc<dyn IssueArtifactReader>>,
+  verification_inputs: Option<Arc<dyn octacity_server_store::ProjectInputQueryStore>>,
   placement: Option<FactoryReadinessPlacement>,
   sources: Option<sources::SourceReaders>,
   source_actions: Option<Arc<dyn FactoryStageSourceAuthorizer>>,
@@ -134,6 +138,7 @@ impl<S> FactoryReadinessHandlers<S> {
       maximum_age,
       repositories: None,
       artifacts: None,
+      verification_inputs: None,
       placement: None,
       sources: None,
       source_actions: None,
@@ -168,6 +173,11 @@ impl<S> FactoryReadinessHandlers<S> {
   /// Reads only retained Artifact metadata; content/object APIs are never called.
   pub fn with_artifacts(mut self, artifacts: Arc<dyn IssueArtifactReader>) -> Self {
     self.artifacts = Some(artifacts);
+    self
+  }
+  /// Observes retained supplemental verification metadata before execution.
+  pub fn with_verification_inputs(mut self, inputs: Arc<dyn octacity_server_store::ProjectInputQueryStore>) -> Self {
+    self.verification_inputs = Some(inputs);
     self
   }
   /// Installs the existing authorized exact Repository metadata read.
@@ -308,9 +318,31 @@ impl<S: FactoryConfigurationStore + FactoryRuntimeSettingsStore> ManagementQuery
       now,
       end,
     ));
-    if observation_count(&target) > factory_configuration_document_bounds().choice_entries {
+    let verification_reads = verification_selections(target.flow())
+      .map(|(_, _, reference)| reference.artifact_id())
+      .collect::<BTreeSet<_>>()
+      .len();
+    if observation_count(&target).saturating_add(verification_reads)
+      > factory_configuration_document_bounds().choice_entries
+    {
       checks.push(check("coverage", Unknown, "observation_limit", true, now, end));
     } else {
+      if verification_reads > 0 {
+        let (state, reason) = match validate_verification_selections(
+          target.flow(),
+          project,
+          self.verification_inputs.as_deref(),
+          now,
+          None,
+        )
+        .await
+        {
+          Ok(()) => (Ready, "retained"),
+          Err(ApplicationError::FactoryValidation(_)) => (Blocked, "verification_retention_unavailable"),
+          Err(_) => (Unknown, "unavailable"),
+        };
+        checks.push(check("protected_verification", state, reason, true, now, end));
+      }
       if target
         .flow()
         .closure

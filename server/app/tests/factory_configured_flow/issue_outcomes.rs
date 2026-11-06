@@ -269,6 +269,7 @@ async fn issue_outcomes_read_exact_current_accepted_records() {
   let issue_id = IssueId::generate();
   let content = requirements();
   let submission = ProjectDocumentSubmission {
+    purpose: Default::default(),
     project_id,
     name: "Reviewed acceptance".parse().unwrap(),
     content: "A retained specification.".into(),
@@ -288,7 +289,11 @@ async fn issue_outcomes_read_exact_current_accepted_records() {
     flow_contract::configured_fixture_with_work(summary_flow(Some(&document)), work_for(&fixture, original, &content));
   let store = admit(&database.pool, &admission).await;
   let reserved = store
-    .reserve_project_document(management_mutation(ReserveProjectDocument { submission, now: at(1) }))
+    .reserve_project_document(management_mutation(ReserveProjectDocument {
+      submission,
+      selection_digest: None,
+      now: at(1),
+    }))
     .await
     .unwrap();
   store

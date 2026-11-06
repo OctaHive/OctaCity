@@ -310,6 +310,35 @@ export const enMessages = {
   'factory.removeCodeSource': 'Remove code source {name}',
   'factory.codeMetadataUnavailable':
     'Repository details are unavailable. The pinned selection is retained; retry or review Project access.',
+  'factory.verificationTitle': 'Additional verification',
+  'factory.verificationHelp':
+    'Attach verification files to run alongside the tests written by Tester. Only the selected scripts and Octafile tasks run. The other files are fixtures.',
+  'factory.verificationFrozen': 'Verification inputs frozen for this step.',
+  'factory.verificationRetentionUnavailable':
+    'Verification files expire. Replace the selection if it no longer covers the run.',
+  'factory.verificationIncompatible':
+    'The selected Tester and verification commands must support these additional checks.',
+  'factory.verificationExpiresAt': 'Available until {date}.',
+  'factory.verificationDetach': 'Detach verification inputs',
+  'factory.verificationSource': 'Source of verification files',
+  'factory.verificationUpload': 'Upload files or a folder',
+  'factory.verificationFiles': 'Upload verification files',
+  'factory.verificationFolder': 'Upload a verification folder',
+  'factory.verificationPaths': 'Repository paths (one file per line)',
+  'factory.verificationShell': 'Shell scripts to run (one path per line)',
+  'factory.verificationOctaTask': 'Octafile task',
+  'factory.verificationOctafile': 'Octafile path',
+  'factory.verificationTaskName': 'Task name',
+  'factory.verificationInvalidTaskName':
+    'Enter the exact Octa task name, for example Checks:_Verify. Use up to 128 bytes and no wildcards.',
+  'factory.verificationRemoveTask': 'Remove task',
+  'factory.verificationAddTask': 'Add Octafile task',
+  'factory.verificationLimit': 'Select up to 64 files and 256 KiB in total.',
+  'factory.verificationFailed':
+    'Could not freeze verification inputs. Check the paths, file size, and repository access.',
+  'factory.verificationFreeze': 'Freeze verification inputs',
+  'factory.verificationFreezing':
+    'Freezing verification files. You can change steps when this finishes.',
   'factory.stepCode': 'Step code',
   'factory.stepCodeHelp': 'Only the source selected here is connected to this step.',
   'factory.stepCodeSelection': 'Code available to this step',
@@ -2035,6 +2064,8 @@ export const enMessages = {
   'factory.publishConsequence':
     'Publish an immutable version. Existing Runs retain their pinned definitions.',
   'factory.confirmPublish': 'Confirm publish',
+  'factory.publicationReviewStale':
+    'The draft changed. Close this review and validate the draft again.',
   'factory.published': 'Immutable version published.',
   'factory.openPublished': 'Open published version',
   'factory.normalized': 'Normalized values',

@@ -85,6 +85,8 @@ pub struct FlowNodeDefinition {
   #[serde(default, skip_serializing_if = "Option::is_none")]
   task: Option<crate::FactoryInstructions>,
   #[serde(default, skip_serializing_if = "Option::is_none")]
+  protected_verification: Option<crate::FactoryArtifactReference>,
+  #[serde(default, skip_serializing_if = "Option::is_none")]
   code: Option<super::FlowCodeBinding>,
   #[serde(default, skip_serializing_if = "Option::is_none")]
   action: Option<crate::FlowActionBinding>,
@@ -122,6 +124,8 @@ struct FlowNodeDefinitionWire {
   #[serde(default, skip_serializing_if = "Option::is_none")]
   task: Option<crate::FactoryInstructions>,
   #[serde(default, skip_serializing_if = "Option::is_none")]
+  protected_verification: Option<crate::FactoryArtifactReference>,
+  #[serde(default, skip_serializing_if = "Option::is_none")]
   code: Option<super::FlowCodeBinding>,
   #[serde(default, skip_serializing_if = "Option::is_none")]
   action: Option<crate::FlowActionBinding>,
@@ -156,6 +160,13 @@ impl<'de> Deserialize<'de> for FlowNodeDefinition {
 
 impl FlowNodeDefinition {
   fn validate_declaration(&self) -> Result<(), FactoryError> {
+    if self.protected_verification.as_ref().is_some_and(|reference| {
+      self.kind != FlowNodeKind::Reasoning || reference.encoded_size() > crate::MAX_PROTECTED_VERIFICATION_BYTES
+    }) {
+      return Err(FactoryError::InvalidConfiguration {
+        field: "Flow protected verification",
+      });
+    }
     if let Some(task) = &self.task {
       task.validate()?;
       if self.kind != FlowNodeKind::Reasoning || task.entries().is_empty() {
@@ -195,6 +206,7 @@ impl FlowNodeDefinition {
       required: input.required,
       subflow: input.subflow,
       task: None,
+      protected_verification: None,
       code: None,
       action: None,
       phase_pool: None,
@@ -222,6 +234,19 @@ impl FlowNodeDefinition {
   #[must_use]
   pub const fn task(&self) -> Option<&crate::FactoryInstructions> {
     self.task.as_ref()
+  }
+  /// Attaches the immutable Project verification publication to a reasoning step.
+  pub fn with_protected_verification(
+    mut self,
+    reference: crate::FactoryArtifactReference,
+  ) -> Result<Self, FactoryError> {
+    self.protected_verification = Some(reference);
+    self.validate_declaration()?;
+    Ok(self)
+  }
+  /// This selection is private to test preparation and is never an ordinary Context entry.
+  pub const fn protected_verification(&self) -> Option<&crate::FactoryArtifactReference> {
+    self.protected_verification.as_ref()
   }
   /// Permits bounded, explicitly confirmed retries after technical failure.
   /// Each retry owns a new attempt; observing an existing operation is not a retry.

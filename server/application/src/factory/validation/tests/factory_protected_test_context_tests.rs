@@ -323,6 +323,28 @@ fn retained_protected_tests_restore_exact_selected_inventory_and_file_identities
     );
     assert_eq!(restored.manifest().identity().artifact_id, id.artifact_id);
     assert_eq!(bytes.reads.load(Ordering::SeqCst), 1);
+    let legacy = FactoryStoredProtectedTestContextSource::new(
+      store.clone(),
+      reader.clone(),
+      Arc::new(Plan(
+        fixture
+          .bundle
+          .plan()
+          .clone()
+          .with_supplement(
+            FactoryArtifactReference::new(ArtifactId::generate(), FactoryDigest::content_sha256(b"extra"), 5).unwrap(),
+          )
+          .unwrap(),
+      )),
+      fixture.requirement.clone(),
+      crate::factory_node_test_support::clock(),
+    );
+    assert!(legacy.read(&input, at(33), at(899)).await.is_err());
+    assert_eq!(
+      bytes.reads.load(Ordering::SeqCst),
+      1,
+      "legacy verifier must reject an extra suite before reading it"
+    );
     let restarted = FactoryStoredProtectedTestContextSource::new(
       store,
       reader,

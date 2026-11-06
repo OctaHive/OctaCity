@@ -2,7 +2,7 @@
 use super::*;
 use octacity_server_application::{
   ApplicationError, AuthorizedManagementCommandHandler, AuthorizedManagementQueryHandler,
-  ListProjectInputDocumentsQuery, PublishProjectDocumentCommand, ReadProjectInputDocumentQuery,
+  ListProjectInputDocumentsQuery, ProjectDocumentPurpose, PublishProjectDocumentCommand, ReadProjectInputDocumentQuery,
 };
 
 pub(super) struct Endpoints {
@@ -55,6 +55,8 @@ fn endpoints<'a>(app: &'a ManagementApplication, id: &RequestId) -> Result<&'a E
 pub(super) struct Publication {
   name: String,
   content: String,
+  #[serde(default)]
+  purpose: ProjectDocumentPurpose,
 }
 #[derive(Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -72,10 +74,11 @@ pub(super) async fn publish(
 ) -> Result<impl IntoResponse, ApiError> {
   let body = body(payload, &id)?;
   let key = idempotency_key(&headers, &id)?;
-  let command = app
+  let mut command = app
     .inputs
     .publish_project_document(&project, body.name, body.content, key.as_str())
     .map_err(|e| invalid_input(e, &id))?;
+  command.submission.purpose = body.purpose;
   let resource = endpoints(&app, &id)?
     .publish
     .handle_authorized_command(&context, command)

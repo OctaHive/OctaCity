@@ -114,6 +114,7 @@ impl InstalledModel {
     .unwrap();
     Self {
       profile: FactoryCodexBuildProfile {
+        protected_tests: None,
         authentication: octacity_server_application::FactoryCodexAuthentication::default(),
         mcp_configurations: vec![],
         toolchain: FactoryTaskToolchain {

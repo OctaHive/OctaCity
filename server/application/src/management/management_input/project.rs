@@ -21,6 +21,7 @@ impl ManagementInputFactory {
     key: &str,
   ) -> Result<crate::PublishProjectDocumentCommand, ManagementInputError> {
     let submission = crate::ProjectDocumentSubmission {
+      purpose: Default::default(),
       project_id: parse(project, "project id")?,
       name: parse(&name, "document name")?,
       content,

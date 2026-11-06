@@ -43,7 +43,7 @@ pub(crate) fn for_profile(
       result_tool,
       capture_write_paths: None,
       capture_deliverables: None,
-      evidence: vec![],
+      evidence: compilation.evidence.clone(),
     };
     choices.supports_build_binding(&build).then_some(build)
   });

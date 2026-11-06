@@ -365,6 +365,7 @@ impl<R: FactoryRunStore, Q: BuildQueryStore, A: ArtifactRecordStore, B: Artifact
         tool_response_limits: profile.tool_response_limits,
         capture: profile.capture.as_ref(),
         reviewer: review,
+        protected_tests: profile.protected_tests.as_ref(),
       },
     )
     .map_err(|_| Invalid)?;
@@ -415,6 +416,9 @@ impl<R: FactoryRunStore, Q: BuildQueryStore, A: ArtifactRecordStore, B: Artifact
     use octacity_protocol::{CHANGE_SET_BUNDLE_OUTPUT, CHANGE_SET_MANIFEST_OUTPUT, CHANGE_SET_PATCH_OUTPUT};
     let model_names = std::collections::BTreeSet::from([CODEX_RUN_PROVENANCE, CODEX_RUN_RESULT, CODEX_RUN_TRACE]);
     let mut expected_names = model_names.clone();
+    if let Some(policy) = &profile.protected_tests {
+      expected_names.extend(super::factory_codex::protected_test_outputs(policy));
+    }
     if let Some(capture) = capture {
       expected_names.extend([CHANGE_SET_BUNDLE_OUTPUT, CHANGE_SET_MANIFEST_OUTPUT]);
       if capture.instruction().patch_max_bytes.is_some() {
@@ -501,13 +505,23 @@ impl<R: FactoryRunStore, Q: BuildQueryStore, A: ArtifactRecordStore, B: Artifact
     }
     let prompt =
       std::str::from_utf8(compiled.document(FactoryProtectedDocumentKind::Prompt).bytes()).map_err(|_| Invalid)?;
+    let raw_test_schema = profile
+      .protected_tests
+      .as_ref()
+      .map(|_| super::factory_codex::protected_test_model_schema());
+    let mut test_model_profile = None;
+    if raw_test_schema.is_some() {
+      let mut binding = intent.profile().clone();
+      binding.result_output = CODEX_RUN_RESULT.parse().map_err(|_| Invalid)?;
+      test_model_profile = Some(binding);
+    }
     let contract = FactoryCodexNodeRunContract {
       model_identifier: role
         .as_ref()
         .and_then(|role| role.package().inputs().profile.definition().model_identifier.as_deref()),
       usage_policy: &profile.usage_policy,
-      profile: intent.profile(),
-      schema,
+      profile: test_model_profile.as_ref().unwrap_or(intent.profile()),
+      schema: raw_test_schema.as_ref().unwrap_or(schema),
       prompt_digest: codex_prompt_provenance_digest(prompt),
       source_revision: materialization
         .as_ref()
@@ -543,7 +557,7 @@ impl<R: FactoryRunStore, Q: BuildQueryStore, A: ArtifactRecordStore, B: Artifact
       ApplicationError::CapabilityUnavailable => Unavailable,
       _ => Invalid,
     })?;
-    if candidate.is_some() || capture.is_some() {
+    if candidate.is_some() || capture.is_some() || profile.protected_tests.is_some() {
       // Output I/O follows source recovery. A cancellation or superseded cycle
       // during either read cannot turn retained ordinary results into authority.
       let current = self.runs.factory_run_snapshot(origin.run_id).await.map_err(classify)?;
@@ -585,6 +599,83 @@ impl<R: FactoryRunStore, Q: BuildQueryStore, A: ArtifactRecordStore, B: Artifact
         outputs: FactoryNodeBuildOutputObservation::ExecutionStopped {
           usage: BudgetUsage { attempts: 0, ..usage },
         },
+        usage,
+      });
+    }
+    if let Some(policy) = &profile.protected_tests {
+      let execution = FlowBuildExecution::new(intent, build_id, attempt_id, vec![job.id()]).map_err(|_| Invalid)?;
+      let plan = FactoryStoredProtectedTestPlanSource::new(
+        self.runs.clone(),
+        profile.toolchain.model.clone(),
+        policy.policy().clone(),
+      )
+      .frozen_plan(intent)
+      .await
+      .map_err(|_| Invalid)?;
+      if policy.transcript().is_some() {
+        let trace = documents
+          .into_iter()
+          .find(|document| document.identity.logical_name.as_str() == CODEX_RUN_TRACE)
+          .ok_or(Invalid)?;
+        let retained = uploads
+          .iter()
+          .find(|upload| upload.artifact.identity() == &trace.identity)
+          .ok_or(Invalid)?;
+        capture_documents.push((retained.artifact.clone(), trace.bytes));
+      }
+      let mut outputs = FactoryNodeBuildOutputs {
+        execution: FactoryNodeBuildExecutionFacts {
+          profile: intent.profile().clone(),
+          input_digest: intent.input().digest().map_err(|_| Invalid)?,
+          permissions,
+          budget: intent.budget(),
+          deadline: intent.node().deadline(),
+        },
+        documents: Vec::with_capacity(capture_documents.len()),
+        usage,
+        verified_at,
+        fresh_until,
+      };
+      for (record, bytes) in capture_documents {
+        let name = record.identity().logical_name.as_str();
+        let is_result = name == super::factory_codex::PROTECTED_TEST_HANDOFF;
+        if (is_result || name == policy.inventory().kind().as_str())
+          && !uploads.iter().any(|upload| {
+            upload.artifact == record
+              && crate::factory::validation::factory_protected_test_publication::is_author_publication(upload)
+          })
+        {
+          return Err(Invalid);
+        }
+        outputs.documents.push(FactoryNodeBuildOutputDocument {
+          record,
+          bytes,
+          data: None,
+          schema: if is_result {
+            schema.reference().clone()
+          } else {
+            policy.inventory().schema().clone()
+          },
+          tool: policy.inventory().tool().clone(),
+          plugin: policy.inventory().plugin().clone(),
+        });
+      }
+      crate::factory::validation::factory_protected_test_authoring::verify_protected_test_handoff(
+        intent,
+        &execution,
+        &outputs,
+        &plan,
+        policy.inventory(),
+        schema.reference(),
+        now,
+      )
+      .map_err(|_| Invalid)?;
+      outputs.documents.retain(|document| {
+        let name = document.record.identity().logical_name.as_str();
+        name == super::factory_codex::PROTECTED_TEST_HANDOFF || name == policy.inventory().kind().as_str()
+      });
+      return Ok(Observation {
+        outputs: FactoryNodeBuildOutputObservation::Verified(Box::new(outputs)),
         usage,
       });
     }

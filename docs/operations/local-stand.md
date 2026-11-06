@@ -511,16 +511,84 @@ untouched. Unchanged subsequent startup does not replenish attempts again.
 Missing VCS resolution support is a configuration failure, rather than a
 transient provider error retried eight times.
 
-#### Add Delivery capabilities to an existing stand
+#### Delivery on the default stand
 
-Use the same stand root to add the **Coder**, **Tester**, **Reviewer**, and
-**DevOps** profiles. The launcher uses the existing installation updater and
-retains published pipelines, tickets, Runs, integrations, and storage volumes.
-Build and publish the Delivery Flow in Console after installing its capabilities.
+The normal `tools/factory-stand` command installs the **Coder**, **Tester**,
+**Reviewer**, and **DevOps** profiles. Find them under **Factory → AI agents**.
+Reuse the same `--root` when updating an existing stand to retain its published
+pipelines, tickets, Runs, integrations, and storage volumes.
 
-Create the test Issue in OctaCity with a title, description, and acceptance
-criteria. In a private directory outside the repository, save a reviewed
-`checks.sh` and a `pack.json` that identifies that Issue by UUID.
+Delivery is the Flow you build in Console to implement a ticket, verify the
+candidate, and optionally open a draft pull request. Start with an eligible
+ticket from triage. Coder prepares the change, protected commands compare the
+base and candidate with the same checked tests, and Reviewer assesses the
+candidate. DevOps prepares the PR text when the Flow includes publication.
+Tester writes acceptance checks in a separate AI step with read-only access to
+the selected source. Factory keeps the test files and the author's trace private.
+
+The initial Coder profile reads source code. To prepare a change, install the
+writable profile with `tools/factory-stand --delivery-write-directory tools`.
+Replace `tools` with a directory in your repository. Repeat the flag for
+additional directories and select the same write scope on the Coder step.
+
+For a Tester-authored suite, select **Tester · Delivery (test author v2)** in the
+protected authoring step. Connect the admitted task and acceptance criteria,
+the accepted requirements, and the source the Tester may read. The step uses
+the protected test handoff result from the Delivery example. Select
+`delivery-baseline-isolated-v2-tester-assertions-…` for the Build before Coder and
+`delivery-candidate-isolated-v2-tester-assertions-…` for the Build after independent review. Bind both
+to the inventory from the same Tester step. The baseline must observe a
+completed assertion failure before implementation. A passing baseline stops
+with no change, and a setup failure stops preparation.
+
+To add reviewed checks, open **Additional verification** on the Tester
+step. Upload files or a folder, or select a Project repository and give an
+exact revision and the relative paths to read. Select the shell scripts to
+run and/or the Octafile and task names, then **Freeze verification inputs**.
+Files without an entrypoint are fixtures. Factory pins the uploaded or
+fetched bytes and keeps them private alongside the generated suite. The
+original private publication expires after 30 days. The editor shows its
+deadline when you freeze the selection. Replace an expired selection and
+publish a new Flow version before starting a new run. Publication, readiness
+and admission require the selection to cover the configured execution window.
+Use installed baseline and candidate commands that support these inputs.
+The commands with `-isolated-v2-` run each check under the standard non-root
+Factory user. A user namespace lets the verifier set up private process and
+mount namespaces with separate scratch, temporary files and shared-memory files.
+Checks cannot write to the report directory, and their background processes end
+before the verifier writes its reports. If isolation cannot be set up,
+verification is inconclusive. Published Flow versions keep their exact command
+bindings. On an existing stand, update the stand, select the commands with
+`-isolated-v2-` and publish a new Flow version.
+
+An Octafile include must name an explicitly selected file relative to the
+including Octafile. Use its exact, case-sensitive task name, such as
+`Checks:_Verify`. Only literal task names up to 128 UTF-8 bytes are accepted.
+Select regular files when freezing from Git. Absolute include paths, path
+templates and monorepo discovery are rejected. A baseline confirms the defect
+when the generated checks observe an assertion failure. If the generated
+checks pass and a supplementary assertion
+fails, preparation pauses for input. A supplementary failure also rejects the
+reviewed candidate.
+
+Shell scripts receive the source directory as argument 1 and the fixture
+root in `OCTACITY_TESTS_ROOT`. For a Tester-authored script, emit the final
+stdout line `octacity:assertion:failed` and exit 1 only after an assertion
+actually fails. Exit 0 for a pass and use another code for setup failures.
+Operator-supplied shell checks use exit 1 for a completed failed assertion.
+Octafile tasks get the source and fixture paths as `OCTACITY_TEST_SOURCE` and
+`OCTACITY_TESTS_ROOT`. A skipped task or a runner failure leaves verification
+inconclusive.
+
+To run the native verifier regression, set `OCTACITY_DELIVERY_TEST_NATIVE` to
+the installed native bundle and `OCTACITY_DELIVERY_TEST_IMAGE` to the retained
+Delivery image reference. Use the stand's `MSB_HOME`, `MSB_AGENTD_PATH` and
+`MSB_LIBKRUNFW_PATH` when running
+`python3 -m unittest discover -s tools/tests -p test_factory_delivery_setup.py`.
+
+The stand also supports the older workflow with a reviewed, ticket-specific
+pack. In a private directory outside the repository, save a reviewed `checks.sh`
+and a `pack.json` that identifies an Issue with acceptance criteria by UUID.
 
 ```json
 {"name":"issue-23","issue_id":"00000000-0000-0000-0000-000000000023","script":"checks.sh"}
@@ -529,15 +597,13 @@ criteria. In a private directory outside the repository, save a reviewed
 ```shell
 chmod 0600 /absolute/private/issue-23/{pack.json,checks.sh}
 tools/factory-stand --root /absolute/private/triage-stand \
-  --delivery-test-pack /absolute/private/issue-23/pack.json \
-  --delivery-write-directory tools
+  --delivery-test-pack /absolute/private/issue-23/pack.json
 ```
 
 The launcher pins the exact title, description, acceptance criteria, and script.
 Repeat `--delivery-test-pack` for additional Issues. If the Issue or script
 changes, rerun the command and select the newly installed versions in the Flow.
-Reuse the same Coder directory list on later invocations. The Coder source
-selection in the Flow must match those directories and grant scoped write access.
+The installed Coder scope is retained when subsequent invocations omit it.
 
 Use **AI-агент → Команда** (English **AI agent → Command**) for the protected
 test author and select `delivery-author-issue-23-…`. Attach the Work task and
@@ -549,8 +615,7 @@ candidate steps select `delivery-baseline-issue-23-…` and
 same pack revision and connect the accepted protected inventory explicitly.
 The baseline uses the selected base revision and the candidate check uses the
 selected retained candidate. The optional reproduction command checks the base
-against the original Issue. The Tester profile is for a separate AI diagnosis
-step when the Flow needs one.
+against the original Issue.
 
 The reviewed script runs under `/bin/sh` with the source directory as `$1`,
 read-only source, and no credentials or network. Return `0` when the checks pass,
@@ -884,7 +949,7 @@ The same catalog keeps the remaining roles explicit:
 | `review_planning` | An exact `identity` and immutable `profile` describing the independent review plan. |
 | `evaluation_decisions` | An exact action `identity` and `profile` with `action`, immutable `policy`, and all five `{disposition, outcome}` contracts. The policy contains `version`, `required_evidence`, `required_evaluators`, `quorum`, `severity_threshold`, `indeterminate_policy`, and `failure_outcome`; its canonical digest is bound into the action identity. |
 | `protected_test_authors` | Entries contain `command` using the ordinary static command format and canonical `policy` containing protection limits under `policy`, exact `inventory`, and finite private `files` mappings. |
-| `protected_validation` | `profiles` of static commands, `inputs` containing `author_profile`, `policy`, `inventory`, and `capture_tool`, plus distinct declared `report` and `facts` contracts. |
+| `protected_validation` | `profiles` of static commands, `inputs` containing `author_profile`, `policy`, `inventory`, and `capture_tool`, plus distinct declared `report` and `facts` contracts. Set `accepts_supplement` in `inputs` only for installed programs that consume the supplemental inventory. |
 | `protected_validation_evidence` | Exact action `identity`, evidence `profile`, and the original author/policy/inventory/capture references used to verify and publish validation evidence. |
 | `delivery` | An exact action identity and outcome, private `adapter_root`, content-derived `policies`, and bounded process timeouts. |
 | `promotions` | An exact trusted-action `identity` and static command `profiles`; each command's executor and physical plugin must equal that identity. Optional `deployment_authority` explicitly selects the separately qualified external-target role. |

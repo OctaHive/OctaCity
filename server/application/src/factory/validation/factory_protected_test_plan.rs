@@ -75,7 +75,19 @@ impl<S: FactoryRunStore> crate::FactoryProtectedTestPlanSource for FactoryStored
       *source,
     )
     .map_err(|_| ApplicationError::invalid())?;
-    freeze_factory_protected_test_plan(intent, &contract, &self.policy)
+    let plan = freeze_factory_protected_test_plan(intent, &contract, &self.policy)?;
+    let node = snapshot
+      .admitted_flow
+      .closure()
+      .definition(intent.input().definition())
+      .and_then(|flow| flow.node(intent.input().node()))
+      .ok_or_else(ApplicationError::invalid)?;
+    match node.protected_verification() {
+      Some(supplement) => plan
+        .with_supplement(supplement.clone())
+        .map_err(|_| ApplicationError::invalid()),
+      None => Ok(plan),
+    }
   }
 }
 

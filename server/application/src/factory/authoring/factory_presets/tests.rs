@@ -98,6 +98,7 @@ fn resolved_delivery_is_an_editable_ordinary_flow_with_no_implicit_activation() 
     let target = ImmutableReference::new(key("review"), key("v1"), FactoryDigest::from_bytes([44; 32]));
     let mut installed = installed
       .with_build_pipeline_contract(FactoryBuildPipelineContract {
+        protected_tests: None,
         command: None,
         build_configuration: build.build_configuration.clone(),
         tool: build.tool.clone(),
@@ -105,6 +106,7 @@ fn resolved_delivery_is_an_editable_ordinary_flow_with_no_implicit_activation() 
         model_or_tool: build.model_or_tool.clone(),
         pipeline_node: PipelineNodeId::new("step").unwrap(),
         compilation: Some(FactoryBuildCompilationContract {
+          evidence: vec![],
           task_digest: build.task_digest,
           role_profiles: true,
           requires_task_context: false,
@@ -164,6 +166,7 @@ fn resolved_delivery_is_an_editable_ordinary_flow_with_no_implicit_activation() 
           })
           .unwrap()
           .with_build_pipeline_contract(FactoryBuildPipelineContract {
+            protected_tests: None,
             command: Some(FactoryBuildCommandContract {
               task_digest: command.task_digest,
               outputs: std::iter::once(EvidenceRequirement::new(
@@ -976,6 +979,7 @@ fn native_observation_command_is_selectable_with_its_exact_report_and_evidence()
     let mut role_only = command.pipeline_contract();
     role_only.command = None;
     role_only.compilation = Some(FactoryBuildCompilationContract {
+      evidence: vec![],
       task_digest: command.task_digest(),
       role_profiles: true,
       requires_task_context: false,
