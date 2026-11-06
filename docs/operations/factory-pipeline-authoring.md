@@ -293,6 +293,39 @@ an earlier run**, select the earlier Run of this Issue, then review and confirm.
 Factory checks the selected Run against the published predecessor, terminal,
 outcome, repository and current Issue requirements.
 
+### Author ticket delivery
+
+From **Add pipeline**, start with an empty graph and bind **Incoming pipeline
+completion** to the published triage Flow, terminal and accepted outcome.
+Connect the triage fields used by the graph, including kind, size, component,
+priority and applicable reproduction evidence. Put the expected implementation
+behavior in the Issue's acceptance criteria before starting Delivery.
+
+Build the routes in this order:
+
+1. Route unresolved defects through the Tester reproduction step. A conclusive
+   negative check ends in `cannot_reproduce`. Missing evidence or an unavailable
+   environment needs its own stop or wait route.
+2. Route large tickets through OpenSpec authoring. For small and medium tickets,
+   freeze the Issue's explicit acceptance criteria in the Accepted Work Contract.
+   If requirements approval is needed, configure the component, size and priority
+   rules and connect the exact prepared requirements to the operator gate.
+3. Run protected test authoring before implementation. Give the implementer the
+   accepted requirements and public test scope. Connect the captured candidate to
+   an independent review and the original tests to trusted validation. Configure
+   the rework limit and its exhaustion route.
+4. Connect the passing review and validation of the same candidate to DevOps PR
+   metadata preparation and trusted publication. Route the confirmed receipt to
+   `delivered_for_review` and configure a separate blocked outcome for publication
+   failures.
+
+Publish the Flow and a Configuration pinned to that version and the reviewed
+Project policies. Qualify one Issue manually with automatic intake and external
+Reporter effects disabled. Use a test publication target, then inspect the
+original triage handoff, operator decisions, Builds and publication receipt in
+the Run. Check the corresponding cards in the Issue's **Overview**. For a
+reproducible test environment, see [ticket delivery qualification](../testing/manual-factory-authoring.md#ticket-delivery-qualification).
+
 For an optional starting point, open **Add pipeline → Start from an example →
 Ticket delivery · v1**. Select the published triage completion, compatible
 executors and command reports, and an installed review target. The example opens
@@ -331,7 +364,10 @@ For the successful **Publish candidate** outcome, choose
 **Pull request** and use a Delivery receipt that requires the review URL. The
 card links to the original Run and appears only after trusted Delivery has
 confirmed a PR and the viewer can read its repository.
-The link opens the PR for manual review and merge.
+The link opens the PR in the forge. Review the retained head and target branch,
+then merge there under the repository's branch policy, including for production
+branches. `delivered_for_review` records PR publication. The forge records merge,
+and any Issue status or label updates follow their separately configured rules.
 
 In the Run, **Node attempts** shows which step stopped and whether it can be
 retried. Open an attempt to see which accepted step results, admitted Work

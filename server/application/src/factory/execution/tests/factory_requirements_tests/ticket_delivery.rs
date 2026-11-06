@@ -2023,9 +2023,11 @@ fn devops_prepares_an_exact_candidate_for_trusted_production_pr_publication() {
         .all(|attempt| attempt.node_kind() != FlowNodeKind::HumanGate)
     );
 
-    let requests = publisher.requests.lock().unwrap();
-    assert_eq!(requests.len(), 1);
-    let request = &requests[0];
+    let request = {
+      let requests = publisher.requests.lock().unwrap();
+      assert_eq!(requests.len(), 1);
+      requests[0].clone()
+    };
     assert_eq!(request.target.identity(), &key("production.review"));
     assert_eq!(request.permissions.secret_profiles().collect::<Vec<_>>(), [&writer]);
     assert_eq!(request.permissions.network_hosts().collect::<Vec<_>>(), [&host]);

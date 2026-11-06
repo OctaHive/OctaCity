@@ -3,6 +3,7 @@ use super::*;
 use octacity_server_application::*;
 use octacity_server_domain::{ArtifactId, AttemptId, BuildId, ImmutableRevision, JobId, Timestamp};
 use octacity_server_factory::*;
+use std::collections::BTreeMap;
 fn key(value: &str) -> FactoryKey {
   FactoryKey::new(value).unwrap()
 }
@@ -75,7 +76,7 @@ impl Reviewer {
     author: &FactoryProtectedTestAuthoringProfile,
     validator: &workflow_validation::Validator,
   ) -> Self {
-    let directory = if s.prelude {
+    let directory = if s.prelude || s.delivery_target.is_some() {
       let directory = s.directory.join("independent-reviewer");
       fs::create_dir(&directory).unwrap();
       directory
@@ -95,12 +96,24 @@ impl Reviewer {
     profile.reviewer = Some(FactoryCodexReviewerPolicy {
       evaluator: evaluator.clone(),
     });
-    profile.instructions=FactoryText::new(json!({"fixture_version":1,"checks":[
+    let rework = s.ticket_case == Some(workflow_ticket::Case::Rework);
+    let outcome = if rework {
+      json!({"outcome":"violated","summary":"The independently reviewed candidate needs documentation.",
+        "findings":[{"kind":"violation","severity":"high","summary":"Missing public contract explanation",
+          "evidence":["validation.report"],"remediation":"Document the public facts contract."}]})
+    } else {
+      json!({"outcome":"satisfied","summary":"The selected public contract and deterministic evidence satisfy the selected criterion pack.","findings":[]})
+    };
+    profile.instructions = FactoryText::new(
+      json!({"fixture_version":1,"checks":[
       {"path":models::CANDIDATE_FILE,"readable":true,"expected_text":"facts"},
       {"path":"/octacity/protected/test-inventory.json","readable":false},
       {"path":"/octacity/protected/tests/contract.rs","readable":false},
       {"path":"/workspace/output/private-contract.rs","readable":false}],
-      "result":{"outcome":"satisfied","summary":"The selected public contract and deterministic evidence satisfy the selected criterion pack.","findings":[]}}).to_string()).unwrap();
+      "result":outcome})
+      .to_string(),
+    )
+    .unwrap();
     profile.toolchain.model = ImmutableReference::new(
       profile.toolchain.model.identity().clone(),
       profile.toolchain.model.version().clone(),
@@ -217,19 +230,34 @@ impl Reviewer {
       panic!("installed reviewer schema contract")
     };
     let plan_schema = schema("frozen-independent-review-plan", json!(sample_plan));
+    let findings = if rework {
+      let finding = EvaluationResultFinding::Violation {
+        severity: FindingSeverity::High,
+        summary: FactorySafeText::new("Missing public contract explanation").unwrap(),
+        evidence: vec![report.kind().clone()],
+        remediation: FactorySafeText::new("Document the public facts contract.").unwrap(),
+      };
+      vec![AssessmentFinding::from_result(&finding, &sample_evidence).unwrap()]
+    } else {
+      Vec::new()
+    };
     let assessment_sample = Assessment::new(
       AssessmentId::generate(),
       &sample_plan,
       AssessmentInput {
         subject: subject.clone(),
         evaluator: evaluator.clone(),
-        outcome: AssessmentOutcome::Satisfied,
+        outcome: if rework {
+          AssessmentOutcome::Violated
+        } else {
+          AssessmentOutcome::Satisfied
+        },
         summary: BoundedSummary::new(
           FactoryTaskSubject::Candidate(subject.clone()),
           FactorySafeText::new("Selected criteria satisfied.").unwrap(),
           FactoryDigest::content_sha256(b"schema summary only"),
         ),
-        findings: vec![],
+        findings,
         model: profile.toolchain.model.clone(),
         prompt_digest: FactoryDigest::content_sha256(b"schema prompt only"),
         result: artifact.clone(),
@@ -263,8 +291,37 @@ impl Reviewer {
       },
     )
     .unwrap();
-    let decision_sample:Decision=serde_json::from_value(json!({"id":DecisionId::generate(),"plan_id":sample_plan.id(),"subject":subject,"outcome":"accept","assessment_ids":[assessment_sample.id()],"signal_receipt_ids":[],"reasons":["PolicySatisfied"],"input_digest":FactoryDigest::content_sha256(b"schema join only"),"policy_version":decision_policy.version(),"policy_digest":decision_policy.digest()})).unwrap();
-    let decision_schema = schema("deterministic-review-decision", json!(decision_sample));
+    let decision_sample = json!({"id":DecisionId::generate(),"plan_id":sample_plan.id(),"subject":subject,"outcome":DecisionOutcome::Accept,"assessment_ids":[assessment_sample.id()],"signal_receipt_ids":[],"input_digest":FactoryDigest::content_sha256(b"schema join only"),"policy_version":decision_policy.version(),"policy_digest":decision_policy.digest()});
+    let FlowValueSchema::Object { mut fields } = shape(&decision_sample) else {
+      unreachable!("the decision sample is an object")
+    };
+    // Reasons use the Decision wire tags, which are not Flow field names.
+    let threshold = json!(DecisionReason::SeverityThresholdExceeded {
+      evaluator: evaluator.identity().clone(),
+      severity: FindingSeverity::High,
+    });
+    fields.insert(
+      key("reasons"),
+      FlowFieldSchema::required(FlowValueSchema::Array {
+        item: Box::new(FlowValueSchema::ExternallyTagged {
+          variants: BTreeMap::from([
+            ("PolicySatisfied".into(), None),
+            (
+              "SeverityThresholdExceeded".into(),
+              Some(Box::new(shape(&threshold["SeverityThresholdExceeded"]))),
+            ),
+          ]),
+        }),
+        min_items: 1,
+        max_items: 1,
+      }),
+    );
+    let decision_schema = FlowDataSchema::new(
+      key("deterministic-review-decision"),
+      key("v1"),
+      FlowValueSchema::Object { fields },
+    )
+    .unwrap();
     let evidence = FactoryProtectedValidationEvidenceProfile {
       action: key("construct"),
       ready: FlowOutcomeDefinition::new(
@@ -485,7 +542,7 @@ impl Reviewer {
       "bundle":{"source":"record","node":coder,"outcome":"implemented","view":"metadata","path":format!("/build/outputs/{}/artifact",octacity_protocol::CHANGE_SET_BUNDLE_OUTPUT)},
       "manifest":{"source":"record","node":coder,"outcome":"implemented","view":"metadata","path":format!("/build/outputs/{}/artifact",octacity_protocol::CHANGE_SET_MANIFEST_OUTPUT)}},
       "mapping":{"value":{"mapping":"object","fields":{"plan":{"mapping":"pointer","path":"/plan"},"evidence":{"mapping":"pointer","path":"/evidence"},"evaluator":{"mapping":"constant","value":p.reviewer.as_ref().unwrap().evaluator},"candidate_revision":{"mapping":"pointer","path":"/candidate/candidate_revision"},"candidate_bundle":{"mapping":"pointer","path":"/bundle"},"candidate_manifest":{"mapping":"pointer","path":"/manifest"},"criterion":{"mapping":"constant","value":self.pack.artifact()}}}}});
-    evaluate["context_binding"] = json!({"candidate_revision":{"value":{"mapping":"pointer","path":"/candidate_revision"}},"entries":{
+    evaluate["context_binding"] = json!({"work_task":"task","candidate_revision":{"value":{"mapping":"pointer","path":"/candidate_revision"}},"entries":{
       "candidate_bundle":{"source_kind":"evidence","source":{"value":{"mapping":"object","fields":{"kind":{"mapping":"constant","value":"artifact"},"value":{"mapping":"pointer","path":"/candidate_bundle"}}}}},
       "candidate_manifest":{"source_kind":"evidence","source":{"value":{"mapping":"object","fields":{"kind":{"mapping":"constant","value":"artifact"},"value":{"mapping":"pointer","path":"/candidate_manifest"}}}}},
       "criterion":{"source_kind":"policy","source":{"value":{"mapping":"object","fields":{"kind":{"mapping":"constant","value":"artifact"},"value":{"mapping":"pointer","path":"/criterion"}}}}}

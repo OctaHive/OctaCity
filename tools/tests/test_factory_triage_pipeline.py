@@ -367,7 +367,8 @@ class PackagedTriagePipelineTests(unittest.TestCase):
                           "claims": [{"connection": "issues", "tool": "search_issues", "arguments_json": '{"query":"Candidate","limit":1}',
                                       "pointer": "/coverage/has_more", "json_text": 0, "value_json": "false"}]}},
                         {"plan": [], "completion": {"priority_assessment": 75, "work_kind": "defect" if defect else "feature_request", "severity": "medium" if defect else "advisory", "size": "small",
-                          "component": "server", "risk": "low", "dependencies": [], "recommended_route": "development" if defect else "requirements", "reproducibility": "reproduced" if defect else "not_applicable"}},
+                          "component": "server", "risk": "low", "dependencies": [], "recommended_route": "development" if defect else "requirements", "reproducibility": "reproduced" if defect else "not_applicable",
+                          "conclusion": "Classified the ticket using the accepted Project handoff."}},
                     ])
                     if case in {"out_of_scope", "duplicate"}:
                         assessment = invocations[0]["completion"]["assessment"]

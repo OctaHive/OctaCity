@@ -231,7 +231,7 @@ impl InstalledModel {
     profile.instructions=FactoryText::new(serde_json::json!({"fixture_version":1,
       "files":[{"path":CANDIDATE_FILE,"text":"facts"}],
       "checks":[{"path":"/workspace/output/private-contract.rs","readable":false},{"path":"/octacity/protected/test-inventory.json","readable":false}],
-      "result":"implemented"}).to_string()).unwrap();
+      "result":{"value":"implemented"}}).to_string()).unwrap();
     profile.toolchain.model = ImmutableReference::new(
       profile.toolchain.model.identity().clone(),
       profile.toolchain.model.version().clone(),
@@ -289,6 +289,6 @@ impl InstalledModel {
     let p = &self.profile;
     assert_eq!(p.consumer, FactoryCredentialConsumer::CodingNode);
     let capture = p.capture.as_ref().unwrap();
-    serde_json::json!({"toolchain":{"plugin":p.toolchain.plugin,"executable":p.toolchain.executable,"model":p.toolchain.model},"build_configuration":p.build_configuration,"instructions":p.instructions,"credentials":p.credentials,"credential_purpose":"model","usage_policy":p.usage_policy,"pipeline_node":p.pipeline_node,"parameters":p.parameters,"project_permissions":p.project_permissions,"local_permissions":{"grants":p.local_permissions.grants(),"enforceable":PermissionCategory::ALL},"capture":{"tool":capture.tool(),"instruction":capture.instruction()}})
+    serde_json::json!({"toolchain":{"plugin":p.toolchain.plugin,"executable":p.toolchain.executable,"model":p.toolchain.model},"build_configuration":p.build_configuration,"instructions":p.instructions,"credentials":p.credentials,"credential_purpose":"model","usage_policy":p.usage_policy,"pipeline_node":p.pipeline_node,"parameters":p.parameters,"project_permissions":p.project_permissions,"local_permissions":{"grants":p.local_permissions.grants(),"enforceable":PermissionCategory::ALL},"candidate_capture_tool":p.candidate_capture_tool,"capture":{"tool":capture.tool(),"instruction":capture.instruction()}})
   }
 }

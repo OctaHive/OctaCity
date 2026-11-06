@@ -218,7 +218,7 @@ pub(super) struct VerificationNodes<'a> {
   pub(super) leaf: &'a str,
 }
 fn context() -> Value {
-  json!({"candidate_revision":{"value":{"mapping":"pointer","path":"/candidate_revision"}},"entries":{
+  json!({"work_task":"task","candidate_revision":{"value":{"mapping":"pointer","path":"/candidate_revision"}},"entries":{
     "candidate_bundle":{"source_kind":"evidence","source":{"value":{"mapping":"object","fields":{"kind":{"mapping":"constant","value":"artifact"},"value":{"mapping":"pointer","path":"/candidate_bundle"}}}}},
     "candidate_manifest":{"source_kind":"evidence","source":{"value":{"mapping":"object","fields":{"kind":{"mapping":"constant","value":"artifact"},"value":{"mapping":"pointer","path":"/candidate_manifest"}}}}}
   }})
@@ -446,7 +446,19 @@ impl Verifier {
     );
     assert_ne!(leaf["input"]["flow_run_id"], coder["input"]["flow_run_id"]);
     assert!(leaf["input"]["caller_input_digest"].is_string());
-    assert_eq!(leaf["input"]["context"]["entries"].as_array().unwrap().len(), 2);
+    let entries = leaf["input"]["context"]["entries"].as_array().unwrap();
+    let identities = entries
+      .iter()
+      .map(|entry| entry["logical_identity"].as_str().unwrap())
+      .collect::<std::collections::BTreeSet<_>>();
+    assert_eq!(entries.len(), 3);
+    assert_eq!(identities, ["candidate_bundle", "candidate_manifest", "task"].into());
+    let task = entries
+      .iter()
+      .find(|entry| entry["logical_identity"] == "task")
+      .unwrap();
+    assert_eq!(task["source_kind"], "task");
+    assert_eq!(task["source"]["value"], coder["input"]["work_task"]);
     let capture = coder["build"]["outputs"]
       .as_array()
       .unwrap()

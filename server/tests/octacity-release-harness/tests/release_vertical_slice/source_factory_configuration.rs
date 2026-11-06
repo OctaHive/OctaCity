@@ -10,10 +10,22 @@ pub(super) fn reference(name: &str) -> ImmutableReference {
   )
 }
 
+fn issue_action_permissions() -> FactoryPermissionSet {
+  FactoryPermissionSet::try_new(FactoryPermissionDraft {
+    plugins: vec![reference("issue-action")],
+    ..Default::default()
+  })
+  .unwrap()
+}
+
 pub(super) fn catalog(projects: &[String]) -> Value {
+  let metadata = FactoryChoiceMetadata {
+    permission_declarations: Some(issue_action_permissions()),
+    ..Default::default()
+  };
   json!({"version":1,"codex":[],"projects":projects.iter().map(|project|json!({"project_id":project,
     "references":[{"kind":"admission_policy","alias":"source-admission","reference":reference("source-admission")},
-      {"kind":"permission_ceiling","alias":"source-ceiling","reference":reference("source-ceiling")},
+      {"kind":"permission_ceiling","alias":"source-ceiling","reference":reference("source-ceiling"),"metadata":metadata},
       {"kind":"node_capability","alias":"issue-action","reference":reference("issue-action")}],
     "build_configurations":[]})).collect::<Vec<_>>(),
     "issue_status_actions":[{"identity":reference("issue-action"),"principal":"packaged-nginx"}]})
@@ -36,15 +48,9 @@ pub(super) async fn publish(
   )
   .unwrap();
   let budget = BudgetLimit::new(8, 600_000, 0, 0, 131072).unwrap();
-  let permissions = FactoryPermissionSet::try_new(FactoryPermissionDraft {
-    plugins: if action.is_some() {
-      vec![reference("issue-action")]
-    } else {
-      vec![]
-    },
-    ..Default::default()
-  })
-  .unwrap();
+  let permissions = action
+    .as_ref()
+    .map_or_else(FactoryPermissionSet::default, |_| issue_action_permissions());
   let output = action.as_ref().map_or_else(
     || schema.clone(),
     |_| {
@@ -87,11 +93,35 @@ pub(super) async fn publish(
       "limits":{"max_depth":2,"max_expanded_nodes":4,"max_repeat_count":1,"max_fan_out":1,"max_wip":4,
         "budget":budget,"permissions":permissions},"data_schemas":schemas,"pools":{}}
   })).await;
-  let configuration = post_management(client,origin,"/api/v1/factory-configurations",&format!("{identity}-factory"),json!({
-    "id":Uuid::new_v4(),"project_id":project,"definition":{"admission_policy":"source-admission",
-      "permission_ceiling":"source-ceiling","hard_budget":budget,"wip_limits":{"max_active_runs":8,"max_active_nodes":4},
-      "enabled":true,"flow":flow["resource"]["flow"]}
+  let policies = format!("/api/v1/projects/{project}/factory-policies");
+  let launch = post_management(
+    client,
+    origin,
+    &policies,
+    &format!("{identity}-launch"),
+    json!({
+      "kind":"launch","id":Uuid::new_v4(),"definition":{"name":format!("Source launch {identity}"),
+        "allow_manual":true,"allow_automatic_source":true}
+    }),
+  )
+  .await;
+  let access = post_management(client,origin,&policies,&format!("{identity}-access"),json!({
+    "kind":"access","id":Uuid::new_v4(),"definition":{"name":format!("Source access {identity}"),"permissions":permissions}
   })).await;
+  let configuration = post_management(
+    client,
+    origin,
+    "/api/v1/factory-configurations",
+    &format!("{identity}-factory"),
+    json!({
+      "id":Uuid::new_v4(),"project_id":project,"definition":{
+        "admission_policy":{"project_policy":launch["policy"]["policy"]["reference"]},
+        "permission_ceiling":{"project_policy":access["policy"]["policy"]["reference"]},
+        "hard_budget":budget,"wip_limits":{"max_active_runs":8,"max_active_nodes":4},
+        "enabled":true,"flow":flow["resource"]["flow"]}
+    }),
+  )
+  .await;
   let repository = post_management(client,origin,"/api/v1/repositories",&format!("{identity}-code"),json!({
     "project_id":project,"name":format!("Independent code {identity}"),"definition":{"vcs_integration_id":Uuid::new_v4(),
       "repository_locator":format!("https://code.example/engineering/{project}.git"),

@@ -33,10 +33,24 @@ impl SourceEnvironment {
     Self::start_installed(source_installation::Scope::Factory).await
   }
 
+  pub(super) async fn start_with_factory_on(postgres_url: &str) -> Self {
+    Self::start_configured(
+      source_installation::Scope::Factory,
+      &browser::browser_toolchain(),
+      postgres_url,
+    )
+    .await
+  }
+
   /// Execution qualification uses the exact installed Job contract, independently
   /// of the metadata-only browser fixture's deliberately unused runner pins.
   pub(super) async fn start_with_execution(toolchain: &Toolchain) -> Self {
-    Self::start_configured(source_installation::Scope::Factory, toolchain).await
+    Self::start_configured(
+      source_installation::Scope::Factory,
+      toolchain,
+      &required_string("OCTACITY_POSTGRES_URL"),
+    )
+    .await
   }
 
   pub(super) fn agent_origin(&self) -> String {
@@ -95,10 +109,15 @@ impl SourceEnvironment {
   }
 
   async fn start_installed(scope: source_installation::Scope) -> Self {
-    Self::start_configured(scope, &browser::browser_toolchain()).await
+    Self::start_configured(
+      scope,
+      &browser::browser_toolchain(),
+      &required_string("OCTACITY_POSTGRES_URL"),
+    )
+    .await
   }
 
-  async fn start_configured(scope: source_installation::Scope, toolchain: &Toolchain) -> Self {
+  async fn start_configured(scope: source_installation::Scope, toolchain: &Toolchain, postgres_url: &str) -> Self {
     let evidence = required_path("OCTACITY_RELEASE_EVIDENCE_DIR", false).join(format!("source-{}", Uuid::new_v4()));
     fs::create_dir_all(&evidence).unwrap();
     let release = browser::load_browser_release();
@@ -121,7 +140,7 @@ impl SourceEnvironment {
     let config = write_server_config(
       directory.path(),
       &ServerConfigInput {
-        postgres_url: &required_string("OCTACITY_POSTGRES_URL"),
+        postgres_url,
         object_endpoint: &required_string("OCTACITY_MINIO_ENDPOINT"),
         cache_endpoint: "https://cache.invalid",
         toolchain,

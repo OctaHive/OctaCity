@@ -38,6 +38,8 @@ mod backend_config_tests;
 mod browser;
 #[path = "release_vertical_slice/browser_proxy.rs"]
 mod browser_proxy;
+#[path = "factory_pilot/database.rs"]
+mod database;
 #[path = "release_vertical_slice/issue_source_status.rs"]
 mod issue_source_status;
 #[path = "release_vertical_slice/linux_native.rs"]
@@ -62,6 +64,8 @@ mod source_factory;
 mod source_factory_configuration;
 #[path = "release_vertical_slice/source_factory_effect.rs"]
 mod source_factory_effect;
+#[path = "release_vertical_slice/source_factory_lineage.rs"]
+mod source_factory_lineage;
 #[path = "release_vertical_slice/source_factory_second.rs"]
 mod source_factory_second;
 #[path = "release_vertical_slice/source_installation.rs"]
@@ -181,6 +185,12 @@ async fn packaged_source_uses_the_qualified_agent_and_installed_job_contract() {
 #[ignore = "requires packaged Source, reviewed triage profiles, native Codex/MCP peers and qualified Agent"]
 async fn packaged_triage_uses_two_distinct_profiles_before_accepted_results() {
   source_triage_execution::pipeline(false).await;
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+#[ignore = "requires packaged Server/Console and GitHub adapter, PostgreSQL, object storage and nginx"]
+async fn packaged_downstream_source_waits_for_separate_enablement_and_binds_exact_triage() {
+  source_factory_lineage::run().await;
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]

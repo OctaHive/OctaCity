@@ -97,6 +97,7 @@ test('offers a reviewed example without changing existing triage or enabling int
 test('submits the reviewed Flow, Project policies, and manual Issue start to the management API', async ({
   page,
 }) => {
+  test.slow(); // Author the full graph, publish both drafts, then launch from the Issue.
   await installOperatorFixture(page);
   type S = components['schemas'];
   const release = JSON.parse(

@@ -21,15 +21,8 @@ separately checks that the server accepts an empty typed input plus required Wor
 Context, and rejects either missing contract. The disposable end-to-end fixture
 below remains the execution and isolation qualification.
 
-For ticket delivery, `factory-ticket-delivery.spec.ts` checks the Console
-requests for authoring, configuration and manual Issue start against fixture
-responses. The application test
-`devops_prepares_an_exact_candidate_for_trusted_production_pr_publication`
-passes a directly assembled graph through ordinary Flow and Configuration
-publication and runs that graph with a hermetic
-publisher. It checks the retained review and validation proof metadata and the
-final receipt. Live Console qualification of the complete ticket delivery graph
-is tracked in the ticket delivery change.
+The separate [ticket delivery qualification](#ticket-delivery-qualification)
+covers the post-triage path.
 
 `factory_manual_authoring` qualifies tasks 5.1–5.4 of
 `enable-manual-factory-pipeline-authoring`. It starts the actual Server and Agent
@@ -344,6 +337,116 @@ Both Microsandbox release jobs select the physical recovery case and durable
 Reporter cases and propagate their failures. `OCTACITY_RELEASE_EVIDENCE_DIR`
 retains `manual-recovery.json` alongside the isolation reports. Compatibility
 qualification is described below.
+
+## Ticket delivery qualification
+
+Use the [operator walkthrough](../operations/factory-pipeline-authoring.md#author-ticket-delivery)
+to publish a Flow assembled from an empty graph. On the disposable macOS ARM64
+stand, the published Configuration admitted a manual Issue with its exact
+earlier triage Run. The Issue showed its selected Project specification,
+independent review and confirmed test PR. Automatic intake and Reporter effects
+were disabled for that trial.
+
+Run the Console authoring and Issue outcome regressions with
+`pnpm exec playwright test tests/browser/factory-ticket-delivery.spec.ts tests/browser/issue-outcomes.spec.ts`
+from `ui`. They exercise the operator path with fixture responses.
+Run `cargo test --locked -p octacity-server-application --lib ticket_delivery`
+to check Flow publication, policy and input validation, and lifecycle behavior.
+
+For the packaged journeys, reuse the checksummed Server, Agent and Octa
+installations, qualified Microsandbox and disposable services described above.
+The pilot additionally needs the pinned Git executable
+(`OCTACITY_CONTRACT_GIT_EXECUTABLE`), the finite model programs
+(`OCTACITY_FACTORY_PILOT_CLI` and `OCTACITY_FACTORY_VERIFIER_CLI`) and the
+verified GitHub adapter executable (`OCTACITY_FACTORY_GITHUB_PLUGIN`).
+Select the pilot programs from the release harness fixtures and use the
+qualified guest with its configured Node executable. The pilot uses a
+local HTTPS/Git forge and creates its own database. Run the cases serially
+when they share the same guest runtime state:
+
+```sh
+for test in \
+  packaged_delivery_recovers_the_accepted_real_review_after_server_restart \
+  packaged_matching_ticket_waits_for_approved_requirements \
+  packaged_large_ticket_delivers_the_reviewed_specification \
+  packaged_unreproduced_defect_stops_before_test_authoring \
+  packaged_review_findings_stop_delivery_after_one_rework
+do
+  cargo test --locked -p octacity-release-harness --test factory_pilot \
+    "$test" -- --ignored --exact --nocapture || exit
+done
+```
+
+The separate automatic intake case uses the packaged Console proxy settings
+above, a private `OCTACITY_RELEASE_EVIDENCE_DIR` and the verified adapter as
+`OCTACITY_RELEASE_GITHUB_BINARY`. It tests admission and data handoff with
+a deterministic Flow. The pilot above covers ordinary Agent/Build execution
+and actual PR publication against the fixture.
+
+```sh
+cargo test --locked -p octacity-release-harness --test release_vertical_slice \
+  packaged_downstream_source_waits_for_separate_enablement_and_binds_exact_triage \
+  -- --ignored --exact --nocapture
+```
+
+The qualification on macOS ARM64 observed these Red and Green results:
+
+| Case | Red | Green |
+| --- | --- | --- |
+| Small ticket and PR recovery | The graph ended at `finished`. | The graph reached `delivered_for_review` and recovered the original PR URL after losing the creation response and restarting the Server. The forge received one creation request. |
+| Matching requirements policy | The Run ended before asking for approval. | The original pending request gated private test authoring, and the approved Run delivered. |
+| Large ticket | Requirements review began before the specification was captured. | All four OpenSpec files were captured before approval and survived into the published branch. |
+| Non-reproduction | An unresolved defect reached test authoring. | An ordinary command checked the admitted revision and retained `cannot_reproduce` before test authoring. |
+| Bounded rework | The negative review ended after the first implementation. | A new candidate used the retained remediation and received fresh checks. The second rejection waited for an operator. |
+| Separate automatic intake | The downstream Run lacked the immutable triage input. | The exact accepted result passed to the separately enabled downstream input, with one admission retained after restart. |
+
+Use the test PR link to inspect the published revision. A live operator merges
+in the forge under the repository's branch rules.
+
+### Regression checks
+
+Run the portable Rust checks from the repository root. The release harness
+also has opt-in packaged tests, including the protected test case below.
+
+```sh
+cargo test --locked -p octacity-server-application --lib
+cargo test --locked -p octacity-server-application --test manual_trigger
+cargo test --locked -p octacity-server --lib
+cargo test --locked -p octacity-server-factory -p octacity-protocol \
+  -p octacity-delivery-protocol -p octacity-work-source-protocol \
+  -p octacity-github -p octacity-server-delivery -p octacity-server-work-source
+cargo test --locked -p octacity-release-harness --test release_vertical_slice \
+  packaged_triage_prepares_raw_unlabeled_input_without_a_canonical_card \
+  -- --ignored --exact --nocapture
+cargo test --locked -p octacity-release-harness --test release_vertical_slice \
+  packaged_factory_source_admission_retains_canonical_issue_and_configured_status \
+  -- --ignored --exact --nocapture
+cargo test --locked -p octacity-release-harness --test factory_pilot \
+  packaged_protected_author_precedes_real_coder_capture_without_private_context \
+  -- --ignored --exact --nocapture
+```
+
+The protected test case runs on the same qualified Agent and guest used by the
+Delivery pilot. It verifies that the real implementation capture follows the
+protected test author and receives only its approved inputs.
+
+For the two-profile triage regression, use the
+[native Agent prerequisites](../operations/factory.md#qualify-project-policies-with-the-native-agent).
+Stage the Agent with the local-stand Codex fixture and use the image manifest
+digest reported by Microsandbox for the archive. The finite model peer runs
+through native Codex, the installed MCP readers and ordinary Agent Builds.
+
+```sh
+OCTACITY_TEST_PACKAGED_TRIAGE=1 python3 -m unittest -v \
+  tools.tests.test_factory_triage_pipeline.PackagedTriagePipelineTests.test_source_invokes_both_reviewed_profiles_with_native_mcp_evidence
+```
+
+For the browser suite, use `pnpm test:browser` from `ui`. The manual Delivery
+test initially reached the default timeout while publishing and opening the
+Issue. Giving that journey a dedicated timeout let both publications and the
+Issue launch assertions complete. The desktop Project screenshots on macOS
+were updated after verifying the Factory settings entry against the Linux
+references. Both locales passed again in the full browser suite.
 
 ## Compatibility matrix
 

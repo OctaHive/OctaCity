@@ -2246,7 +2246,7 @@ fn installed_readonly_codex_materializer_uses_verified_candidate_source_without_
       tool_risk: None,
       tool_response_limits: None,
       reviewer: None,
-      candidate_capture_tool: None,
+      candidate_capture_tool: Some(flow_fixture::reference("git.capture")),
       capture: None,
       pipeline_node: node.id().clone(),
       parameters: base.parameters,
@@ -2276,10 +2276,9 @@ fn installed_readonly_codex_materializer_uses_verified_candidate_source_without_
       "default installation still rejects candidate authority before publication"
     );
     assert!(inputs.0.lock().unwrap().is_empty());
-    let source = Arc::new(FactoryStoredCandidateContextSource::new(
+    let source = Arc::new(octacity_server_application::FactoryCodexCandidateContextSource::new(
       fixture.runs.clone(),
       fixture.source.clone(),
-      flow_fixture::reference("git.capture"),
       Arc::new(Clock),
     ));
     let materializer = materializer.with_candidate_context_source(source);

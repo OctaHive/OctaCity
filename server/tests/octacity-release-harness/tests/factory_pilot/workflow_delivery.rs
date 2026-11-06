@@ -5,6 +5,8 @@ use octacity_server::{FactoryDeliveryPolicy, FactoryDeliveryPolicyDraft};
 use octacity_server_factory::*;
 use sha2::{Digest as _, Sha256};
 
+const DELIVERED_FOR_REVIEW: &str = "delivered_for_review";
+
 fn key(value: &str) -> FactoryKey {
   FactoryKey::new(value).unwrap()
 }
@@ -23,9 +25,12 @@ fn quote(value: &str) -> String {
   format!("'{}'", value.replace('\'', "'\\''"))
 }
 
-pub(super) struct InstalledDelivery {
+pub(super) struct LocalTarget {
   forge: GithubForge,
   bare: PathBuf,
+}
+pub(super) struct InstalledDelivery {
+  target_peer: LocalTarget,
   adapter_root: PathBuf,
   inputs: PathBuf,
   identity: ImmutableReference,
@@ -36,8 +41,8 @@ pub(super) struct InstalledDelivery {
   input: FlowDataSchema,
   receipt: FlowDataSchema,
 }
-impl InstalledDelivery {
-  pub(super) async fn new(directory: &Path, resources: &resources::PilotResources, remote: &str) -> Self {
+impl LocalTarget {
+  pub(super) async fn start(directory: &Path) -> Self {
     let root = directory.join("installed-delivery");
     fs::create_dir(&root).unwrap();
     set_mode(&root, 0o700);
@@ -54,6 +59,27 @@ impl InstalledDelivery {
       .unwrap();
     assert!(cloned.status.success(), "initialize test-owned real Git target");
     let forge = GithubForge::start(&root, &bare, ForgeResponseMode::HoldReviewResponse).await;
+    Self { forge, bare }
+  }
+
+  pub(super) fn repository(&self) -> String {
+    format!("{}owner/repository.git", self.forge.endpoint())
+  }
+
+  fn review_url(&self) -> String {
+    format!("{}owner/repository/pull/1", self.forge.endpoint())
+  }
+}
+
+impl InstalledDelivery {
+  pub(super) fn new(target_peer: LocalTarget, resources: &resources::PilotResources) -> Self {
+    let root = target_peer.bare.parent().unwrap();
+    let repository = target_peer.repository();
+    let remote = repository.as_str();
+    let forge = &target_peer.forge;
+    let git = required_path("OCTACITY_CONTRACT_GIT_EXECUTABLE", true)
+      .canonicalize()
+      .unwrap();
     let adapter_root = root.join("adapters");
     let adapter = adapter_root.join("github");
     fs::create_dir_all(&adapter).unwrap();
@@ -69,7 +95,7 @@ impl InstalledDelivery {
       FactoryDigest::from_lower_hex(&plugin_sha).unwrap(),
     );
     let wrapper = adapter.join("git-mirror");
-    let local = url::Url::from_directory_path(bare.canonicalize().unwrap()).unwrap();
+    let local = url::Url::from_directory_path(target_peer.bare.canonicalize().unwrap()).unwrap();
     let rewrite = format!("url.{}.insteadOf={remote}", local.as_str().trim_end_matches('/'));
     private_file(
       &adapter,
@@ -114,7 +140,7 @@ impl InstalledDelivery {
     let policy:FactoryDeliveryPolicyDraft=serde_json::from_value(json!({
       "plugin":plugin,"configuration_digest":config_digest,"project_id":resources.project,"repository_id":resources.repository,
       "repository_locator":remote,"credential_profile":"isolated-delivery-credential","credential_handle":handle,
-      "network_hosts":["localhost",url::Url::parse(remote).unwrap().host_str().unwrap()],
+      "network_hosts":["localhost"],
       "target":{"base_reference":"refs/heads/main","candidate_reference_prefix":"refs/heads/pilot/"},
       "review":{"title":"Retained candidate","summary":"Actual isolated verification completed","draft":true}
     })).unwrap();
@@ -179,6 +205,7 @@ impl InstalledDelivery {
             ("branch_reference", text(1, 1024)),
             ("remote_head", text(40, 64)),
             ("review_identity", text(1, 256)),
+            ("review_url", text(1, 2048)),
             (
               "review_state",
               FlowValueSchema::Enum {
@@ -191,8 +218,7 @@ impl InstalledDelivery {
     )
     .unwrap();
     Self {
-      forge,
-      bare,
+      target_peer,
       adapter_root,
       inputs,
       identity,
@@ -214,14 +240,33 @@ impl InstalledDelivery {
   }
   pub(super) fn entry(&self) -> Value {
     json!({"identity":self.identity,"outcome":{"key":"published","kind":"success","schema":self.receipt.reference()},
-      "adapter_root":self.adapter_root,"policies":[{"reference":self.target,"draft":self.policy,"input_directory":self.inputs}],
+      "adapter_root":self.adapter_root,"policies":[{"reference":self.target,"draft":self.policy,"input_directory":self.inputs,"review_links":"github"}],
       "timeout_milliseconds":10000,"termination_grace_milliseconds":1000})
   }
   pub(super) fn accepted(&self) -> bool {
-    self.forge.has_review()
+    self.target_peer.forge.has_review()
   }
   pub(super) fn release_response(&self) {
-    self.forge.release_response();
+    self.target_peer.forge.release_response();
+  }
+  pub(super) fn verify_specification(&self, rows: &[(Vec<u8>, Vec<u8>)], name: &str) {
+    let record = rows
+      .iter()
+      .map(|(_, bytes)| serde_json::from_slice::<Value>(bytes).unwrap())
+      .find(|row| row["input"]["node"] == name)
+      .unwrap();
+    let branch = string(&record["payload"]["value"]["external"], "branch_reference");
+    for (file, text) in workflow_specification::DOCUMENTS {
+      let path = workflow_specification::document_path(file);
+      let content = std::process::Command::new(required_path("OCTACITY_CONTRACT_GIT_EXECUTABLE", true))
+        .arg("--git-dir")
+        .arg(&self.target_peer.bare)
+        .args(["show", &format!("{branch}:{path}")])
+        .output()
+        .unwrap();
+      assert!(content.status.success(), "delivered candidate must contain {path}");
+      assert_eq!(content.stdout, text.as_bytes());
+    }
   }
   pub(super) fn permissions(&self) -> &FactoryPermissionSet {
     &self.permissions
@@ -252,7 +297,7 @@ impl InstalledDelivery {
     );
     node["input_schema"] = json!(self.input.reference());
     node["action"] = json!({"plugin":self.identity,"action":"publish_candidate","parameters":{
-      "bundle":"candidate_bundle","manifest":"candidate_manifest","target":self.target}});
+      "bundle":"candidate_bundle","manifest":"candidate_manifest","target":self.target,"require_review_url":true}});
     node["input_binding"] = json!({"sources":{
       "candidate":{"source":"record","node":coder,"outcome":"implemented","view":"metadata","path":format!("/build/outputs/{}/data/payload/value",models::CANDIDATE_FACTS)},
       "bundle":{"source":"record","node":coder,"outcome":"implemented","view":"metadata","path":format!("/build/outputs/{}/artifact",octacity_protocol::CHANGE_SET_BUNDLE_OUTPUT)},
@@ -288,14 +333,14 @@ impl InstalledDelivery {
       .find(|row| row["predecessor"] == previous.0 && row["outcome"] == previous.1)
       .unwrap();
     previous["target"] = json!({"kind":"node","key":name});
-    transitions.push(workflow::edge(name, "published", "terminal", "finished"));
+    transitions.push(workflow::edge(name, "published", "terminal", DELIVERED_FOR_REVIEW));
     if retained_alternative {
       draft["root"]["terminals"]
         .as_array_mut()
         .unwrap()
         .push(json!({"key":unpublished,"schema":prior_schema}));
     }
-    draft["root"]["terminals"][0]["schema"] = json!(self.receipt.reference());
+    draft["root"]["terminals"][0] = json!({"key":DELIVERED_FOR_REVIEW,"schema":self.receipt.reference()});
     draft["data_schemas"]
       .as_array_mut()
       .unwrap()
@@ -321,7 +366,12 @@ impl InstalledDelivery {
     assert_eq!(receipt["external"]["review_state"], "open");
     assert_eq!(receipt["external"]["review_identity"], "1");
     assert_eq!(
-      self.forge.review_posts(),
+      receipt["external"]["review_url"],
+      self.target_peer.review_url(),
+      "the confirmed receipt exposes the installed repository's review URL"
+    );
+    assert_eq!(
+      self.target_peer.forge.review_posts(),
       1,
       "accepted unknown POST is observed, never repeated"
     );
@@ -329,7 +379,7 @@ impl InstalledDelivery {
     let read = |revision: &str| {
       let output = std::process::Command::new(&git)
         .arg("--git-dir")
-        .arg(&self.bare)
+        .arg(&self.target_peer.bare)
         .args(["rev-parse", "--verify", revision])
         .output()
         .unwrap();
@@ -341,7 +391,7 @@ impl InstalledDelivery {
     assert_eq!(read(&branch), string(facts, "candidate_revision"));
     let content = std::process::Command::new(&git)
       .arg("--git-dir")
-      .arg(&self.bare)
+      .arg(&self.target_peer.bare)
       .args(["show", &format!("{branch}:public/facts.txt")])
       .output()
       .unwrap();
@@ -358,6 +408,6 @@ impl InstalledDelivery {
     }
   }
   pub(super) async fn stop(self) {
-    self.forge.stop().await;
+    self.target_peer.forge.stop().await;
   }
 }

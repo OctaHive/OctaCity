@@ -303,7 +303,7 @@ impl InstalledDeployment {
       workflow::edge(&check_key, "continue", "terminal", "finished"),
       workflow::edge(&check_key, "failed", "terminal", "deployment-failed"),
     ]);
-    draft["root"]["terminals"][0]["schema"] = json!(self.report.reference());
+    draft["root"]["terminals"][0] = json!({"key":"finished","schema":self.report.reference()});
     draft["root"]["terminals"]
       .as_array_mut()
       .unwrap()

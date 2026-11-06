@@ -10,7 +10,6 @@ import { queryKeys } from '../../app/query';
 import { usePresentation } from '../../app/presentation/PresentationProvider';
 import { PagedExplorerBranch, useCursorPage } from '../../shared/PagedExplorerBranch';
 import { QueryFailureNotice, QueryLoadingNotice } from '../../shared/QueryStateNotice';
-import { SelectMenu } from '../../shared/SelectMenu';
 import type { FactoryApi, FactoryConfiguration, FactoryFlowDetails } from './api';
 import { FactoryPipelineInputs } from './FactoryPipelineInputs';
 import { FactoryPools } from './FactoryPools';

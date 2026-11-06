@@ -62,12 +62,20 @@ mod workflow_delivery;
 mod workflow_deployment;
 #[path = "factory_pilot/workflow_prelude.rs"]
 mod workflow_prelude;
+#[path = "factory_pilot/workflow_reproduction.rs"]
+mod workflow_reproduction;
 #[path = "factory_pilot/workflow_review.rs"]
 mod workflow_review;
+#[path = "factory_pilot/workflow_rework.rs"]
+mod workflow_rework;
 #[path = "factory_pilot/workflow_roles.rs"]
 mod workflow_roles;
 #[path = "factory_pilot/workflow_shadow.rs"]
 mod workflow_shadow;
+#[path = "factory_pilot/workflow_specification.rs"]
+mod workflow_specification;
+#[path = "factory_pilot/workflow_ticket.rs"]
+mod workflow_ticket;
 #[path = "factory_pilot/workflow_tools.rs"]
 mod workflow_tools;
 #[path = "factory_pilot/workflow_validation.rs"]
@@ -78,6 +86,8 @@ mod workflow_variants;
 mod workflow_verification;
 use backend::ReleaseBackend;
 use environment::*;
+#[path = "factory_pilot/database.rs"]
+mod database;
 use server::*;
 use support::{get_json, post_management, resource_id, string};
 
@@ -86,40 +96,6 @@ const RELEASE_CACHE_REQUEST_TIMEOUT_SECONDS: u64 = 5;
 const RELEASE_JOB_AUTHORITY_LIFETIME_MILLISECONDS: u64 = 600_000;
 const RELEASE_OBJECT_OPERATION_TIMEOUT_MILLISECONDS: u64 = 5_000;
 const RELEASE_READINESS_TIMEOUT_MILLISECONDS: u64 = 15_000;
-
-struct PilotDatabase {
-  admin: sqlx::PgPool,
-  name: String,
-  url: String,
-}
-impl PilotDatabase {
-  async fn create() -> Self {
-    let original = required_string("OCTACITY_POSTGRES_URL");
-    let admin = sqlx::PgPool::connect(&original).await.unwrap();
-    let name = format!("octacity_pilot_{}", Uuid::new_v4().simple());
-    sqlx::query(sqlx::AssertSqlSafe(format!("CREATE DATABASE \"{name}\"")))
-      .execute(&admin)
-      .await
-      .unwrap();
-    let mut url = url::Url::parse(&original).unwrap();
-    url.set_path(&name);
-    Self {
-      admin,
-      name,
-      url: url.into(),
-    }
-  }
-  async fn cleanup(self) {
-    sqlx::query(sqlx::AssertSqlSafe(format!(
-      "DROP DATABASE \"{}\" WITH (FORCE)",
-      self.name
-    )))
-    .execute(&self.admin)
-    .await
-    .unwrap();
-    self.admin.close().await;
-  }
-}
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
 #[ignore = "requires checksummed current server/Agent, released Octa, PostgreSQL, object storage and qualified Microsandbox"]
@@ -166,7 +142,34 @@ async fn packaged_original_evidence_plan_reviewer_and_decision_retain_exact_type
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
 #[ignore = "requires actual packaged candidate roles, pinned Github provider and real HTTPS/Git target"]
 async fn packaged_delivery_recovers_the_accepted_real_review_after_server_restart() {
-  run_pilot(Scenario::DeliveredCandidate).await;
+  run_pilot(Scenario::DeliveredCandidate(workflow_ticket::Case::Small)).await;
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+#[ignore = "requires checksummed current server/Agent, released Octa, PostgreSQL, object storage and qualified Microsandbox"]
+async fn packaged_matching_ticket_waits_for_approved_requirements() {
+  run_pilot(Scenario::DeliveredCandidate(workflow_ticket::Case::Medium)).await;
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+#[ignore = "requires packaged Server/Agent, a qualified sandbox and an isolated GitHub fixture"]
+async fn packaged_large_ticket_delivers_the_reviewed_specification() {
+  run_pilot(Scenario::DeliveredCandidate(workflow_ticket::Case::Large)).await;
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+#[ignore = "requires packaged Server/Agent, isolated reviewer and qualified Microsandbox"]
+async fn packaged_review_findings_stop_delivery_after_one_rework() {
+  run_pilot(Scenario::DeliveredCandidate(workflow_ticket::Case::Rework)).await;
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+#[ignore = "requires checksummed current server/Agent, released Octa, PostgreSQL, object storage and qualified Microsandbox"]
+async fn packaged_unreproduced_defect_stops_before_test_authoring() {
+  run_pilot(Scenario::DeliveredCandidate(
+    workflow_ticket::Case::NonReproducingDefect,
+  ))
+  .await;
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
@@ -196,7 +199,7 @@ enum Scenario {
   ValidatedCandidate,
   IndependentVerifier,
   TypedReview,
-  DeliveredCandidate,
+  DeliveredCandidate(workflow_ticket::Case),
   DeployedCandidate,
   ConfiguredJourney,
   RequirementsReview,
@@ -206,7 +209,7 @@ async fn run_pilot(scenario: Scenario) {
   let controlled = matches!(scenario, Scenario::Controlled);
   let backend = ReleaseBackend::from_environment();
   let release = release::load(&backend);
-  let database = PilotDatabase::create().await;
+  let database = database::PilotDatabase::create(&required_string("OCTACITY_POSTGRES_URL")).await;
   let work_root = match &backend {
     ReleaseBackend::Native { work_root, .. }
     | ReleaseBackend::Microsandbox { work_root, .. }
@@ -236,7 +239,10 @@ async fn run_pilot(scenario: Scenario) {
   }}}).to_string()).unwrap();
   if matches!(
     scenario,
-    Scenario::TypedReview | Scenario::ConfiguredJourney | Scenario::RequirementsReview
+    Scenario::TypedReview
+      | Scenario::ConfiguredJourney
+      | Scenario::RequirementsReview
+      | Scenario::DeliveredCandidate(workflow_ticket::Case::Rework)
   ) {
     let path = repository.join("Octafile.yml");
     let mut octafile: Value = serde_json::from_slice(&fs::read(&path).unwrap()).unwrap();
@@ -258,7 +264,7 @@ async fn run_pilot(scenario: Scenario) {
         | Scenario::ValidatedCandidate
         | Scenario::IndependentVerifier
         | Scenario::TypedReview
-        | Scenario::DeliveredCandidate
+        | Scenario::DeliveredCandidate(_)
         | Scenario::DeployedCandidate
         | Scenario::ConfiguredJourney
         | Scenario::RequirementsReview
@@ -338,7 +344,18 @@ async fn run_pilot(scenario: Scenario) {
   );
   wait_for_server_ready(&client, &origin, &mut server, &server_log).await;
   let run = Uuid::new_v4().simple().to_string();
-  let repository_url = format!("https://pilot.invalid/{run}.git");
+  let delivery_target = if matches!(
+    scenario,
+    Scenario::DeliveredCandidate(_) | Scenario::DeployedCandidate | Scenario::ConfiguredJourney
+  ) {
+    Some(workflow_delivery::LocalTarget::start(&fixture_root).await)
+  } else {
+    None
+  };
+  let repository_url = delivery_target.as_ref().map_or_else(
+    || format!("https://pilot.invalid/{run}.git"),
+    workflow_delivery::LocalTarget::repository,
+  );
   let source_plugins = source::install_local_mirror(
     &fixture_root.join("source-mirror"),
     &release.source_plugins,
@@ -426,7 +443,7 @@ async fn run_pilot(scenario: Scenario) {
     scenario,
     Scenario::IndependentVerifier
       | Scenario::TypedReview
-      | Scenario::DeliveredCandidate
+      | Scenario::DeliveredCandidate(_)
       | Scenario::DeployedCandidate
       | Scenario::ConfiguredJourney
       | Scenario::RequirementsReview
@@ -456,7 +473,10 @@ async fn run_pilot(scenario: Scenario) {
     artifacts["items"].as_array().unwrap().len(),
     if matches!(
       scenario,
-      Scenario::TypedReview | Scenario::ConfiguredJourney | Scenario::RequirementsReview
+      Scenario::TypedReview
+        | Scenario::ConfiguredJourney
+        | Scenario::RequirementsReview
+        | Scenario::DeliveredCandidate(workflow_ticket::Case::Rework)
     ) {
       3
     } else {
@@ -471,18 +491,18 @@ async fn run_pilot(scenario: Scenario) {
       | Scenario::ValidatedCandidate
       | Scenario::IndependentVerifier
       | Scenario::TypedReview
-      | Scenario::DeliveredCandidate
+      | Scenario::DeliveredCandidate(_)
       | Scenario::DeployedCandidate
       | Scenario::ConfiguredJourney
       | Scenario::RequirementsReview
   ) {
-    let coder = if matches!(
+    let mut coder = if matches!(
       scenario,
       Scenario::AuthorThenCoder
         | Scenario::ValidatedCandidate
         | Scenario::IndependentVerifier
         | Scenario::TypedReview
-        | Scenario::DeliveredCandidate
+        | Scenario::DeliveredCandidate(_)
         | Scenario::DeployedCandidate
         | Scenario::ConfiguredJourney
         | Scenario::RequirementsReview
@@ -491,6 +511,12 @@ async fn run_pilot(scenario: Scenario) {
     } else {
       None
     };
+    if matches!(scenario, Scenario::DeliveredCandidate(workflow_ticket::Case::Large)) {
+      workflow_specification::inherit_specification(coder.as_mut().unwrap());
+    }
+    if matches!(scenario, Scenario::DeliveredCandidate(workflow_ticket::Case::Rework)) {
+      workflow_rework::configure_coder(coder.as_mut().unwrap());
+    }
     workflow_author::run(workflow_author::AuthorScenario {
       directory: &fixture_root,
       release: &release,
@@ -507,22 +533,25 @@ async fn run_pilot(scenario: Scenario) {
         Scenario::ValidatedCandidate
           | Scenario::IndependentVerifier
           | Scenario::TypedReview
-          | Scenario::DeliveredCandidate
+          | Scenario::DeliveredCandidate(_)
           | Scenario::DeployedCandidate
           | Scenario::ConfiguredJourney
           | Scenario::RequirementsReview
       ),
       review: matches!(
         scenario,
-        Scenario::TypedReview | Scenario::ConfiguredJourney | Scenario::RequirementsReview
+        Scenario::TypedReview
+          | Scenario::ConfiguredJourney
+          | Scenario::RequirementsReview
+          | Scenario::DeliveredCandidate(workflow_ticket::Case::Rework)
       ),
-      deliver: matches!(
-        scenario,
-        Scenario::DeliveredCandidate | Scenario::DeployedCandidate | Scenario::ConfiguredJourney
-      ),
+      delivery_target,
+      ticket_case: match scenario {
+        Scenario::DeliveredCandidate(size) => Some(size),
+        _ => None,
+      },
       prelude: matches!(scenario, Scenario::ConfiguredJourney | Scenario::RequirementsReview),
       deployment_configuration: deployment_configuration.as_ref(),
-      repository_locator: &repository_url,
       isolated: isolated.as_ref(),
     })
     .await;

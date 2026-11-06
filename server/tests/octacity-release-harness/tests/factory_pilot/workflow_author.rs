@@ -176,10 +176,10 @@ pub(super) struct AuthorScenario<'a> {
   pub(super) coder: Option<&'a models::InstalledModel>,
   pub(super) validate: bool,
   pub(super) review: bool,
-  pub(super) deliver: bool,
+  pub(super) delivery_target: Option<workflow_delivery::LocalTarget>,
+  pub(super) ticket_case: Option<workflow_ticket::Case>,
   pub(super) prelude: bool,
   pub(super) deployment_configuration: Option<&'a BuildConfigurationRef>,
-  pub(super) repository_locator: &'a str,
   pub(super) isolated: Option<&'a workflow_verification::VerifierResources>,
 }
 
@@ -436,34 +436,37 @@ fn flow_definition(
   draft
 }
 
-pub(super) async fn run(s: AuthorScenario<'_>) {
+pub(super) async fn run(mut s: AuthorScenario<'_>) {
   let public_schema = handoff_schema();
   let profile = installed_profile(&s, &public_schema);
   let command = profile.command();
+  let reproduction = (s.ticket_case == Some(workflow_ticket::Case::NonReproducingDefect))
+    .then(|| workflow_reproduction::Reproduction::new(command));
+  let specification = (s.ticket_case == Some(workflow_ticket::Case::Large))
+    .then(|| workflow_specification::Specification::new(s.coder.unwrap()));
   let validator = s
     .validate
     .then(|| workflow_validation::Validator::new(&profile, s.coder.unwrap()));
-  let verifier = s.isolated.filter(|_| !s.review || s.prelude).map(|isolated| {
-    workflow_verification::Verifier::new(
-      s.directory,
-      s.release,
-      s.resources,
-      isolated,
-      s.backend,
-      s.coder.unwrap(),
-    )
-  });
+  let verifier = s
+    .isolated
+    .filter(|_| !s.review || s.prelude || s.delivery_target.is_some())
+    .map(|isolated| {
+      workflow_verification::Verifier::new(
+        s.directory,
+        s.release,
+        s.resources,
+        isolated,
+        s.backend,
+        s.coder.unwrap(),
+      )
+    });
   let reviewer = s
     .review
     .then(|| workflow_review::Reviewer::new(&s, &profile, validator.as_ref().unwrap()));
-  let prelude = s
-    .prelude
-    .then(|| workflow_prelude::Prelude::new(s.directory, s.release, s.resources, s.backend));
-  let delivery = if s.deliver {
-    Some(workflow_delivery::InstalledDelivery::new(s.directory, s.resources, s.repository_locator).await)
-  } else {
-    None
-  };
+  let delivery = s
+    .delivery_target
+    .take()
+    .map(|target| workflow_delivery::InstalledDelivery::new(target, s.resources));
   let deployment = if let Some(configuration) = s.deployment_configuration {
     Some(
       workflow_deployment::InstalledDeployment::new(
@@ -478,6 +481,8 @@ pub(super) async fn run(s: AuthorScenario<'_>) {
   } else {
     None
   };
+  let prelude = (s.prelude || s.ticket_case.is_some())
+    .then(|| workflow_prelude::Prelude::new(s.directory, s.release, s.resources, s.backend));
   let shadow = if s.prelude && deployment.is_some() {
     Some(workflow_shadow::Shadow::new(s.directory, s.release, s.resources, s.backend).await)
   } else {
@@ -503,7 +508,6 @@ pub(super) async fn run(s: AuthorScenario<'_>) {
   let mut catalog = json!({"version":1,"projects":[{"project_id":s.resources.project,
     "references":[
       {"kind":"admission_policy","alias":"pilot-admission","reference":reference("pilot.admission")},
-      {"kind":"permission_ceiling","alias":"pilot-ceiling","reference":reference("pilot.ceiling")},
       {"kind":"node_capability","alias":"author","reference":command.executor},
       {"kind":"node_capability","alias":"author-policy","reference":command.identity}
     ],"build_configurations":[{"alias":"author-build","reference":command.build_configuration}]}],
@@ -557,6 +561,12 @@ pub(super) async fn run(s: AuthorScenario<'_>) {
     shadow.install(&mut catalog);
     include_permissions(&mut ceiling, &shadow.model.profile.project_permissions);
   }
+  if let Some(reproduction) = &reproduction {
+    reproduction.install(&mut catalog, &mut ceiling);
+  }
+  if let Some(specification) = &specification {
+    specification.install(&mut catalog);
+  }
   let agent_permissions = ceiling.clone();
   if let Some(shadow) = &shadow {
     include_permissions(&mut ceiling, &shadow.tools.permissions);
@@ -596,6 +606,11 @@ pub(super) async fn run(s: AuthorScenario<'_>) {
     delivery.install(&mut catalog, &mut ceiling);
   }
   let references = catalog["projects"][0]["references"].as_array_mut().unwrap();
+  references.push(json!({
+    "kind":"permission_ceiling","alias":"pilot-ceiling","reference":reference("pilot.ceiling"),
+    "metadata":{"node_kinds":[],"signal_purposes":[],"enforcement":[],"compatible_choices":[],
+      "permission_declarations":ceiling}
+  }));
   for (index, plugin) in command.project_permissions.plugins().enumerate() {
     references.push(json!({"kind":"node_capability","alias":format!("installed-plugin-{index}"),"reference":plugin}));
   }
@@ -806,18 +821,18 @@ pub(super) async fn run(s: AuthorScenario<'_>) {
     None
   };
   let budget = BudgetLimit::new(
-    if s.prelude {
+    if s.prelude || s.ticket_case == Some(workflow_ticket::Case::Rework) {
       32
-    } else if s.review || deployment.is_some() {
+    } else if s.review || deployment.is_some() || s.ticket_case.is_some() {
       12
     } else {
       8
     },
     if s.prelude {
       3_600_000
-    } else if deployment.is_some() {
+    } else if deployment.is_some() || s.ticket_case == Some(workflow_ticket::Case::Rework) {
       2_400_000
-    } else if s.review || s.deliver {
+    } else if s.review || delivery.is_some() {
       1_200_000
     } else {
       600_000
@@ -879,7 +894,7 @@ pub(super) async fn run(s: AuthorScenario<'_>) {
       1,
       if s.review {
         120_000
-      } else if s.deliver {
+      } else if delivery.is_some() {
         180_000
       } else if s.isolated.is_some() {
         150_000
@@ -911,7 +926,7 @@ pub(super) async fn run(s: AuthorScenario<'_>) {
       &mut draft,
       coder,
       &public_schema,
-      if s.review && !s.deliver {
+      if s.review && delivery.is_none() {
         BudgetLimit::new(1, 600_000, 100, 100, 8 * 1024 * 1024).unwrap()
       } else {
         node_budget
@@ -992,7 +1007,7 @@ pub(super) async fn run(s: AuthorScenario<'_>) {
   if let Some(deployment) = &deployment {
     deployment.extend(&mut draft, &delivering, "published", &coding, node_budget);
   }
-  let prelude_publication = if let Some(prelude) = &prelude {
+  let prelude_publication = if let Some(prelude) = prelude.as_ref().filter(|_| s.prelude) {
     let required = prelude.budget();
     assert!(required.max_elapsed_millis() < budget.max_elapsed_millis());
     draft["limits"]["max_expanded_nodes"] = json!(64);
@@ -1031,7 +1046,7 @@ pub(super) async fn run(s: AuthorScenario<'_>) {
       },
     );
   }
-  if let Some(coder) = s.coder.filter(|_| s.deliver) {
+  if let Some(coder) = s.coder.filter(|_| delivery.is_some()) {
     let continuation = candidate_continuation_millis(&draft, &coding);
     let producer_window = coder.profile.project_permissions.resources().elapsed_millis() + continuation;
     assert!(producer_window + continuation <= budget.max_elapsed_millis());
@@ -1043,6 +1058,62 @@ pub(super) async fn run(s: AuthorScenario<'_>) {
       .unwrap();
     node["budget"]["max_elapsed_millis"] = json!(producer_window);
   }
+  let policy_path = format!("/api/v1/projects/{}/factory-policies", s.resources.project);
+  let launch_policy = post_management(
+    &client,
+    &origin,
+    &policy_path,
+    &format!("author-launch-{identity}"),
+    json!({"kind":"launch","id":Uuid::new_v4(),"definition":{
+      "name":"Pilot manual launch","allow_manual":true,"allow_automatic_source":false
+    }}),
+  )
+  .await;
+  let access_policy = post_management(
+    &client,
+    &origin,
+    &policy_path,
+    &format!("author-access-{identity}"),
+    json!({"kind":"access","id":Uuid::new_v4(),"definition":{"name":"Pilot access","permissions":ceiling}}),
+  )
+  .await;
+  let mut definition = json!({
+    "admission_policy":{"project_policy":launch_policy["policy"]["policy"]["reference"]},
+    "permission_ceiling":{"project_policy":access_policy["policy"]["policy"]["reference"]},
+    "hard_budget":budget,"wip_limits":{"max_active_runs":4,"max_active_nodes":4},"enabled":true
+  });
+  let ticket = if s.ticket_case.is_some() {
+    Some(
+      workflow_ticket::Ticket::prepare(
+        &client,
+        &origin,
+        &s,
+        &prelude.as_ref().unwrap().model,
+        &definition,
+        &mut draft,
+        &acceptance,
+      )
+      .await,
+    )
+  } else {
+    None
+  };
+  if let Some(reproduction) = &reproduction {
+    reproduction.extend(&mut draft);
+  }
+  if let Some(specification) = &specification {
+    specification.extend(&mut draft, &coding, &public_schema);
+  }
+  if s.ticket_case == Some(workflow_ticket::Case::Rework) {
+    workflow_rework::extend(
+      &mut draft,
+      &selected,
+      &coding,
+      &review_nodes[2],
+      &review_nodes[3],
+      &public_schema,
+    );
+  }
   let _: octacity_server_application::FactoryFlowDefinitionDraft =
     serde_json::from_value(draft.clone()).expect("typed author parent draft");
   let flow = post_management(
@@ -1053,9 +1124,15 @@ pub(super) async fn run(s: AuthorScenario<'_>) {
     json!({"id":Uuid::new_v4(),"project_id":s.resources.project,"definition":draft}),
   )
   .await;
-  let configuration = post_management(&client,&origin,"/api/v1/factory-configurations",&format!("author-config-{identity}"),json!({"id":Uuid::new_v4(),"project_id":s.resources.project,"definition":{
-    "admission_policy":"pilot-admission","permission_ceiling":"pilot-ceiling","hard_budget":budget,"wip_limits":{"max_active_runs":4,"max_active_nodes":4},"enabled":true,"flow":flow["resource"]["flow"]
-  }})).await;
+  definition["flow"] = flow["resource"]["flow"].clone();
+  let configuration = post_management(
+    &client,
+    &origin,
+    "/api/v1/factory-configurations",
+    &format!("author-config-{identity}"),
+    json!({"id":Uuid::new_v4(),"project_id":s.resources.project,"definition":definition}),
+  )
+  .await;
   let artifact = |name: &str| {
     let value = s.artifacts["items"]
       .as_array()
@@ -1065,18 +1142,50 @@ pub(super) async fn run(s: AuthorScenario<'_>) {
       .unwrap();
     json!({"artifact_id":value["id"],"content_digest":value["sha256"],"encoded_size":value["size_bytes"]})
   };
-  let admitted = post_management(&client,&origin,&format!("/api/v1/projects/{}/factory-work",s.resources.project),&format!("author-work-{identity}"),json!({
+  let run = if let Some(ticket) = &ticket {
+    ticket
+      .start(&client, &origin, &s, &configuration, Some(&ticket.triage))
+      .await
+  } else {
+    let admitted = post_management(&client,&origin,&format!("/api/v1/projects/{}/factory-work",s.resources.project),&format!("author-work-{identity}"),json!({
     "configuration_id":configuration["resource"]["configuration"]["reference"]["id"],"configuration_version":1,
     "repository_id":s.resources.repository,"repository_version":1,"external_identity":format!("protected-author/{identity}"),
     "source":{"kind":"exact_revision","value":s.revision},"artifacts":{"task":artifact("task"),"acceptance":artifact("acceptance"),"specifications":[]},
     "classification":{"priority":40,"risk":"low","metadata":{}}
   })).await;
-  let run = string(&admitted, "factory_run_id");
+    string(&admitted, "factory_run_id")
+  };
+  if workflow_ticket::requires_review(s.ticket_case) {
+    workflow_ticket::approve_requirements(&client, &origin, &run, s.ticket_case.unwrap()).await;
+  }
+  let stopped_before_delivery = match s.ticket_case {
+    Some(workflow_ticket::Case::NonReproducingDefect) => {
+      workflow_ticket::assert_non_reproduction(&client, &origin, &run).await;
+      true
+    }
+    Some(workflow_ticket::Case::Rework) => {
+      workflow_ticket::assert_bounded_rework(&client, &origin, &run, &coding, &review_nodes[3]).await;
+      true
+    }
+    _ => false,
+  };
+  if stopped_before_delivery {
+    assert!(!delivery.as_ref().unwrap().accepted());
+    worker.kill().await.unwrap();
+    worker.wait().await.unwrap();
+    if let Some(verifier) = verifier_worker.as_mut() {
+      verifier.worker.kill().await.unwrap();
+      verifier.worker.wait().await.unwrap();
+    }
+    shutdown_server(&mut server, &server_log).await;
+    delivery.unwrap().stop().await;
+    return;
+  }
   let mut delivery_restarted = false;
   let completed = timeout(
     Duration::from_secs(if s.review || deployment.is_some() {
       budget.max_elapsed_millis().div_ceil(1000)
-    } else if s.deliver {
+    } else if delivery.is_some() {
       240
     } else {
       180
@@ -1140,17 +1249,79 @@ pub(super) async fn run(s: AuthorScenario<'_>) {
     },
   )
   .await
-  .expect("the real author Job did not complete its configured Flow");
+  .unwrap_or_else(|_| panic!("Flow {run} did not settle; private evidence: {}", s.directory.display()));
   let completions = workflow::diagnostic(&client, &origin, &run, "node-completions").await;
+  if let Some(ticket) = &ticket {
+    assert_eq!(completed["issue_association"]["issue_id"], ticket.issue);
+    let rows = completions["items"].as_array().unwrap();
+    let has = |node: &str, outcome: &str| {
+      rows
+        .iter()
+        .any(|row| row["record"]["node_key"] == node && row["record"]["outcome"] == outcome)
+    };
+    if workflow_ticket::requires_review(s.ticket_case) {
+      assert!(has(workflow_ticket::REQUIREMENTS_POLICY, "review"));
+      assert!(has(workflow_ticket::REQUIREMENTS_REVIEW, "approved"));
+      assert!(has(workflow_ticket::REQUIREMENTS_APPROVED, "accepted"));
+    } else {
+      assert!(has(workflow_ticket::REQUIREMENTS_POLICY, "automatic"));
+      assert!(!has(workflow_ticket::REQUIREMENTS_REVIEW, "approved"));
+    }
+    assert_eq!(
+      rows
+        .iter()
+        .any(|row| row["record"]["node_key"] == "specification_author"),
+      s.ticket_case == Some(workflow_ticket::Case::Large),
+      "only a large Delivery ticket must author a specification"
+    );
+    let attempts = workflow::diagnostic(&client, &origin, &run, "node-attempts").await;
+    assert!(
+      attempts["items"].as_array().unwrap().iter().any(|row| {
+        row["record"]["node_key"] == workflow_ticket::REQUIREMENTS_POLICY
+          && row["record"]["input_summary"]["incoming_digest"].is_string()
+      }),
+      "the first Delivery step consumed the admitted triage result"
+    );
+
+    let published = completions["items"]
+      .as_array()
+      .unwrap()
+      .iter()
+      .find(|row| row["record"]["node_key"] == delivering)
+      .expect("the released Delivery step completed");
+    assert_eq!(published["record"]["outcome"], "published");
+    let flow = &flow["resource"]["flow"];
+    let root = flow["closure"]["definitions"]
+      .as_array()
+      .unwrap()
+      .iter()
+      .find(|definition| definition["reference"] == flow["closure"]["root"])
+      .expect("the published root is retained");
+    let transition = root["transitions"]
+      .as_array()
+      .unwrap()
+      .iter()
+      .find(|edge| edge["predecessor"] == delivering && edge["outcome"] == "published")
+      .expect("the observed publication outcome is routed");
+    assert_eq!(
+      transition["target"],
+      json!({"kind":"terminal","key":"delivered_for_review"})
+    );
+    assert!(root["terminals"].as_array().unwrap().iter().any(|terminal| {
+      terminal["key"] == "delivered_for_review" && terminal["schema"] == published["record"]["output_schema"]
+    }));
+  }
   assert_eq!(
     completions["items"].as_array().unwrap().len(),
     (if s.prelude {
-      if s.deliver { 20 } else { 17 }
+      if delivery.is_some() { 20 } else { 17 }
     } else if deployment.is_some() {
       9
     } else if s.review {
       8
-    } else if s.deliver {
+    } else if ticket.is_some() {
+      8 + 2 * usize::from(workflow_ticket::requires_review(s.ticket_case))
+    } else if delivery.is_some() {
       7
     } else if s.isolated.is_some() {
       6
@@ -1161,12 +1332,13 @@ pub(super) async fn run(s: AuthorScenario<'_>) {
     } else {
       2
     }) + shadow.as_ref().map_or(0, |_| 3)
+      + usize::from(specification.is_some())
   );
   let builds = workflow::diagnostic(&client, &origin, &run, "builds").await;
   assert_eq!(
     builds["items"].as_array().unwrap().len(),
     (if s.prelude {
-      if s.deliver { 9 } else { 8 }
+      if delivery.is_some() { 9 } else { 8 }
     } else if deployment.is_some() {
       5
     } else if s.isolated.is_some() {
@@ -1177,7 +1349,8 @@ pub(super) async fn run(s: AuthorScenario<'_>) {
       2
     } else {
       1
-    }) + 2 * usize::from(shadow.is_some()),
+    }) + 2 * usize::from(shadow.is_some())
+      + usize::from(specification.is_some()),
     "each installed role executes through its actual ordinary Build"
   );
   let pool = sqlx::PgPool::connect(s.postgres).await.unwrap();
@@ -1260,7 +1433,7 @@ pub(super) async fn run(s: AuthorScenario<'_>) {
     },
     "the retained private output came from the actual released command"
   );
-  if let Some(prelude) = &prelude {
+  if let Some(prelude) = prelude.as_ref().filter(|_| s.prelude) {
     let accepted = rows
       .iter()
       .map(|(_, bytes)| serde_json::from_slice::<Value>(bytes).unwrap())
@@ -1284,7 +1457,12 @@ pub(super) async fn run(s: AuthorScenario<'_>) {
     }
   }
   if s.coder.is_some() {
-    verify_coder(&client, &origin, &run, &coding, s.revision, &rows).await;
+    let parent = if let Some(specification) = &specification {
+      specification.verify(&client, &origin, &rows, s.revision).await
+    } else {
+      s.revision.to_owned()
+    };
+    verify_coder(&client, &origin, &run, &coding, &parent, &rows).await;
   }
   if let Some(validator) = &validator {
     validator
@@ -1327,6 +1505,9 @@ pub(super) async fn run(s: AuthorScenario<'_>) {
       "unknown accepted review crossed actual Server restart"
     );
     delivery.verify(&rows, &delivering, &coding, s.revision);
+    if specification.is_some() {
+      delivery.verify_specification(&rows, &delivering);
+    }
   }
   if let Some(deployment) = &deployment {
     deployment.verify(&client, &origin, &rows).await;
@@ -1493,6 +1674,7 @@ fn extend_coder_flow(
     "implemented",
   );
   node["input_schema"] = json!(public_schema.reference());
+  node["context_binding"] = json!({"work_task":"task","entries":{}});
   node["input_binding"] = json!(
     FlowInputBinding::new(
       BTreeMap::from([(
