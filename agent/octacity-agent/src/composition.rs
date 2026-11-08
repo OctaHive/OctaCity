@@ -247,6 +247,7 @@ impl BackendAssembly {
       self.factory_executions.push(FactoryExecutionCapabilityV3 {
         workspace_anchor,
         controlled_tools,
+        scoped_validation: controlled_tools,
         execution: capability.clone(),
         enforcement: capabilities.to_vec(),
       });

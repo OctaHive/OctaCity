@@ -782,6 +782,8 @@ pub enum FactoryToolControlModeV3 {
   Deterministic,
   /// Ambiguous in-envelope actions may use a server-side Decision Signal.
   ToolRisk,
+  /// Deterministic tool control with start/status for the admitted verification runner.
+  ScopedValidation,
 }
 
 /// Maximum physical tool-response bytes produced by one controlled read call.

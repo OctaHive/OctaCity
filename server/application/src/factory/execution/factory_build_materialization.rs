@@ -127,9 +127,9 @@ pub(crate) fn factory_capture_source_paths(
 ) -> Result<Option<Vec<String>>, OrdinaryBuildApplicationError> {
   use OrdinaryBuildApplicationError::Invalid;
   let profile = intent.profile();
-  if profile.capture_write_paths.is_some() != capture.is_some()
-    || (profile.capture_deliverables.is_some() && capture.is_none())
-  {
+  // A consumer can verify the producer's required deliverables without
+  // capturing another candidate. Only declared capture paths require capture.
+  if profile.capture_write_paths.is_some() != capture.is_some() {
     return Err(Invalid);
   }
   let Some(capture) = capture else { return Ok(None) };
@@ -285,6 +285,29 @@ pub fn materialize_factory_managed_build_with_source(
     })
     .collect::<Result<_, _>>()?;
   let mut signing_context = context.clone();
+  // The ordinary configuration is a ceiling shared by different node profiles.
+  // Signed managed Jobs must expose exactly this node's narrower host set.
+  if let octacity_server_store::ConfigurationNetworkPolicy::Restricted { allowed_hosts } = &definition.runtime.network {
+    let selected: std::collections::BTreeSet<_> = allowed_hosts
+      .iter()
+      .filter(|host| {
+        permissions
+          .network_hosts()
+          .any(|selected| selected.as_str() == host.as_str())
+      })
+      .cloned()
+      .collect();
+    if selected.len() != permissions.network_hosts().count() {
+      return Err(Invalid);
+    }
+    signing_context.configuration.definition.runtime.network = if selected.is_empty() {
+      octacity_server_store::ConfigurationNetworkPolicy::Disabled
+    } else {
+      octacity_server_store::ConfigurationNetworkPolicy::Restricted {
+        allowed_hosts: selected,
+      }
+    };
+  }
   signing_context
     .job_spec_toolchain
     .octa

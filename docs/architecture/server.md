@@ -409,7 +409,10 @@ The requested terminal Attempt must still be the latest ordinary Build Attempt;
 retained predecessor results cannot complete a node after a retry becomes current.
 The adapter verifies immutable bytes, trace structure, invocation provenance,
 schema and reported consumption; only declared structured data enters the common
-result. Private harness records stay in ordinary Build Artifacts. A technical
+result. Trace values preserve bounded JSON-encoded tool output, including NUL
+and terminal control sequences; event names and field names remain restricted,
+and capture hashes and sensitive-material checks still apply. Private harness
+records stay in ordinary Build Artifacts. A technical
 harness or ordinary execution failure retains verified consumption without a
 semantic node outcome. Missing measurement remains unavailable, never zero.
 
@@ -1542,6 +1545,12 @@ acknowledgement repeats the same object and transaction identities. An object
 store outage cannot advance the cursor; a database rollback can leave only an
 invisible object, which orphan cleanup deletes after checking that no committed
 visible manifest owns the identity.
+
+The PostgreSQL adapter stores event payloads as JSON, rather than JSONB, because
+bounded process output may contain escaped NUL characters. It binds serialized
+text directly to that JSON column, preserving the accepted payload and canonical
+event digest across replay. Existing JSONB rows are converted by migration; the
+event, lease, acknowledgement and log-chunk contracts stay unchanged.
 
 ## State-machine interfaces
 

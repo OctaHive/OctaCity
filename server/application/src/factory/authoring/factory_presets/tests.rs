@@ -106,6 +106,8 @@ fn resolved_delivery_is_an_editable_ordinary_flow_with_no_implicit_activation() 
         model_or_tool: build.model_or_tool.clone(),
         pipeline_node: PipelineNodeId::new("step").unwrap(),
         compilation: Some(FactoryBuildCompilationContract {
+          capture_write_paths: None,
+          scoped_validation: false,
           evidence: vec![],
           task_digest: build.task_digest,
           role_profiles: true,
@@ -979,6 +981,8 @@ fn native_observation_command_is_selectable_with_its_exact_report_and_evidence()
     let mut role_only = command.pipeline_contract();
     role_only.command = None;
     role_only.compilation = Some(FactoryBuildCompilationContract {
+      capture_write_paths: None,
+      scoped_validation: false,
       evidence: vec![],
       task_digest: command.task_digest(),
       role_profiles: true,
@@ -1004,6 +1008,36 @@ fn native_observation_command_is_selectable_with_its_exact_report_and_evidence()
     assert!(
       matches!(outcome, Err(ManagementHandlerError::Application(ApplicationError::FactoryValidation(report))) if report.errors[0].field == "/build"),
       "a role-only Build must not be accepted as a command"
+    );
+  });
+}
+#[test]
+fn authoring_exposes_only_installed_scoped_validation_profiles() {
+  run_ready(async {
+    let project = octacity_server_domain::ProjectId::from_uuid(uuid::Uuid::new_v4()).unwrap();
+    let (installed, _) = crate::factory::execution::factory_test_support::installed_role_execution_choices(project);
+    let mut contract = installed.build_pipeline_contracts()[0].clone();
+    contract.compilation.as_mut().unwrap().scoped_validation = true;
+    let expected = contract.model_or_tool.clone();
+    let choices = FactoryConfigurationChoices::try_new(installed.entries())
+      .unwrap()
+      .with_build_pipeline_contract(contract)
+      .unwrap();
+    let store = Arc::new(InMemoryFactoryConfigurationStore::new());
+    store.seed_project(project).unwrap();
+    store.enable_project(project, choices).unwrap();
+    let policy = Arc::new(TrustedNetworkManagementPolicy);
+    let context = ManagementRequestContext::trusted_network(ManagementRequestId::new(uuid::Uuid::new_v4()).unwrap());
+    let result = AuthorizedQueryHandler::new(
+      policy.clone(),
+      Arc::new(FactoryRoleProfileHandlers::with_policy(store, policy)),
+    )
+    .handle_query(&context, GetFactoryAuthoringCapabilitiesQuery { project_id: project })
+    .await
+    .unwrap();
+    assert_eq!(
+      serde_json::to_value(result).unwrap()["scoped_validation_profiles"],
+      serde_json::json!([expected])
     );
   });
 }

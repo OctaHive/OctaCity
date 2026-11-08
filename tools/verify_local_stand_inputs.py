@@ -340,6 +340,7 @@ def validate_octa(value: dict[str, Any]) -> None:
             "codex.task-runtime-settings.v1",
             "model-catalog.v1",
             "codex.native-mcp-evidence.v1",
+            "codex.execution-workspace.v1",
         ],
         "selection_environment": "OCTA_CODEX_EXECUTABLE",
         "supported_cli_versions": ["0.161.0"],

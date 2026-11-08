@@ -318,11 +318,10 @@ fn valid_trace_value(value: &serde_json::Value, depth: usize, remaining: &mut us
   match value {
     serde_json::Value::Null | serde_json::Value::Bool(_) | serde_json::Value::Number(_) => true,
     serde_json::Value::String(value) => {
-      value.len() <= MAX_TRACE_STRING_BYTES
-        && value
-          .chars()
-          .all(|character| !character.is_control() || matches!(character, '\n' | '\r' | '\t'))
-        && !octacity_server_factory::contains_sensitive_material(value)
+      // Tool output is data: JSON-escaped NULs and terminal sequences are valid.
+      // Event discriminators and field names remain control-free; framing,
+      // capture integrity, size limits and sensitive-material checks still apply.
+      value.len() <= MAX_TRACE_STRING_BYTES && !octacity_server_factory::contains_sensitive_material(value)
     }
     serde_json::Value::Array(values) => values
       .iter()

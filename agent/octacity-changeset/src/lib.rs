@@ -31,6 +31,7 @@ pub use materialize::{
 };
 
 const MAX_GIT_IDENTITY_OUTPUT_BYTES: usize = 4 * 1024;
+const MAX_GIT_SHALLOW_BYTES: u64 = 64 * 1024;
 
 /// Local trusted Git installation used only by the Agent capture boundary.
 #[derive(Clone, Debug)]
@@ -271,6 +272,15 @@ impl GitChangeSetCapturer {
       &cancellation,
     )
     .await?;
+    // Alternates share objects, but not shallow ancestry boundaries. Keep the
+    // source boundary so Git never follows missing parents beyond the frozen
+    // checkout while checking or bundling the new candidate.
+    match octacity_private_fs::read_bounded_regular_file(&request.workspace.join(".git/shallow"), MAX_GIT_SHALLOW_BYTES)
+    {
+      Ok(shallow) => fs::write(repository.join("shallow"), shallow)?,
+      Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
+      Err(error) => return Err(error.into()),
+    }
     let index = repository.join("index");
     let hooks = repository.join("hooks");
     fs::remove_dir_all(&hooks)?;

@@ -111,10 +111,14 @@ class RegistrationObserver:
         not_before_unix_ms: int | None,
         *,
         require_factory: bool = False,
+        name: str = AGENT_NAME,
+        pool_id: str | None = None,
     ):
         self._client = client
         self._not_before_unix_ms = not_before_unix_ms
         self._require_factory = require_factory
+        self._name = name
+        self._pool_id = pool_id
 
     def registered(self, remaining_seconds: float) -> bool:
         try:
@@ -135,13 +139,15 @@ class RegistrationObserver:
         matches = [
             item
             for item in page["items"]
-            if isinstance(item, dict) and item.get("name") == AGENT_NAME
+            if isinstance(item, dict) and item.get("name") == self._name
         ]
         if len(matches) > 1:
             raise AgentStartupError("server reported duplicate local stand Agents")
         if not matches or matches[0].get("status") != "online":
             return False
         item = matches[0]
+        if self._pool_id is not None and item.get("pool_id") != self._pool_id:
+            raise AgentStartupError("registered Agent belongs to an unexpected Pool")
         last_seen = item.get("last_seen_at_unix_ms")
         if (
             not isinstance(last_seen, int)
@@ -257,6 +263,8 @@ def _start_locked(
             timeout_seconds=startup_timeout_seconds,
             poll_interval_seconds=0.25,
         )
+        import factory_delivery_worker
+        factory_delivery_worker.start(root, owner, plan, client, startup_timeout_seconds)
     except (AgentStartupError, lifecycle.LifecycleError) as cause:
         if launched:
             _cleanup_failed_start(owner, cause)

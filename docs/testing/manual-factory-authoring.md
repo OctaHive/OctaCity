@@ -448,6 +448,127 @@ Issue launch assertions complete. The desktop Project screenshots on macOS
 were updated after verifying the Factory settings entry against the Linux
 references. Both locales passed again in the full browser suite.
 
+### Native Tester and verification launch modes
+
+The standard stand installs the test author and the scoped validation Tester
+with a separate single-slot validation Agent. In Console, select either
+**CI/CD Build** or **Tester** for the verification step. Both execute the
+retained protected inventory against the reviewed candidate; changing the
+launch mode does not publish a new test suite. Upload supplementary checks
+in the test-author step and freeze their explicit shell entrypoints or
+Octafile tasks before publishing the Flow.
+
+The Microsandbox scoped Tester reserves two vCPUs in its signed Job: one
+for the model and one for its private reader. Its ordinary Build Configuration
+must allocate both vCPUs; raising permission ceilings alone does not allocate
+resources. Its installed Runtime, Profile, enclosing Flow, Project access profile
+and Agent ceiling must cover
+that allocation. The direct verifier and other AI steps keep their own
+allocations; the separately registered verification Agent remains single-slot.
+
+For a bounded smoke ticket, request a new file under a permitted source path,
+state its exact contents in the original acceptance, and retain the original
+triage Run at manual launch. Verify the following through Run details and
+the Issue outcome cards:
+
+- Tester publishes the protected handoff before Coder starts. The baseline
+  retains an expected behavioral failure, rather than a setup error.
+- Coder captures a candidate and a separate Reviewer inspects that revision.
+  Reviewer reports the exact frozen node input identity, candidate revision
+  and candidate digest. Its `findings` contain actionable defects only;
+  uncertainty remains an indeterminate quality judgment.
+- In the verification step, choose **Accepted candidate from another step**,
+  its implementation step and the accepted outcome as the step code revision.
+  A base-revision checkout cannot carry a candidate-bound Context. The trusted
+  publication step also selects that accepted candidate as its read-only
+  resource when consuming the bundle and manifest; **No code** deliberately
+  carries no repository authority.
+- Candidate verification starts after accepted review and consumes the same
+  protected handoff digest as the baseline. The scoped mode uses a separate
+  ordinary Build and returns only the bounded runner verdict to Tester.
+- The trusted publication step records a confirmed draft PR receipt. The
+  Issue's PR link belongs to this exact Run and reviewed candidate. No merge
+  or external Issue Reporter action is required for this check.
+
+The macOS ARM64 standard stand qualified both modes on 8 November 2026 with
+real model calls, native Microsandbox Jobs and GitHub draft publication:
+
+| Mode | Flow | Completed Run | Confirmed draft PR |
+| --- | --- | --- | --- |
+| CI/CD Build | v40 | `26b8f939-9e4e-4b14-9bdd-db4eb61928d1` | [#4](https://github.com/OctaHive/OctaCity/pull/4) |
+| Scoped Tester | v44 | `1744f85a-47c2-4ab8-bf86-0fdf696104b2` | [#5](https://github.com/OctaHive/OctaCity/pull/5) |
+
+Both Runs retained the expected-failure baseline and the same original
+protected handoff at candidate verification, accepted independent review,
+confirmed publication and the exact PR card on the Issue. GitHub's draft head
+and base matched each retained receipt. The base was
+`3205c5415ba4b32c4bed71038b593439aeba0b37`; candidate revisions were
+`5b88d0dddca11b0de625fd8b81054e4e85539f78` (direct) and
+`5a0e818b10bbd5ea4bd4ef7760a2e24c858433ec` (Tester).
+
+The scoped caller Build `5b067ffc-355e-5f38-bca9-f80fa3ea6ab6` and runner Build
+`fa5d6e88-9d74-5098-88ba-5c1d476d74b1` had successful Jobs on different Agents.
+The original protected handoff digest was
+`789fc5239cd9d66497551500812240b96e85ecc0654ec953df35f2b8a4838eda` for both its
+baseline and candidate check. The native Console journey passed in 6.3 minutes.
+Its scoped Profile v5 used the qualified Codex adapter digest
+`0f72eeb3efd443b54c4730384ae0b994455d3a744640c4c1fba6d15a47a66d51`.
+Those historical Runs used the source-pinned qualification adapter. The same
+workspace and MCP behavior is now published in Octa 0.9.0; the stand pins that
+release without a local plugin replacement. See the
+[installation and release pin](../operations/local-stand.md).
+
+The native qualification exposed transport and materialization failures.
+Each was reproduced before its fix through an existing public boundary:
+
+| Boundary | Observed Red | Observed Green |
+| --- | --- | --- |
+| Stand integration restart | Replacing the Server image rejected the retained integration because the image shipped another provider binary. | Restart retains the manifest-pinned executable and credentials; changing the installed executable still prevents startup. |
+| Delivery provider upgrade | Installing a repaired provider conflicted with the original immutable adapter installation. | The installer retains the original provider and policy identities, installs the new exact provider separately and reuses an unchanged installation on replay. |
+| Git publication scratch | The hardened Server had no writable system temporary directory, so the provider rejected candidate publication. | Git publication confines temporary state to its installed private input directory and removes it after rejection. |
+| Trusted action deadline | A lost publication response followed by deadline expiry repeatedly returned invalid input and left the Run running. | The successor settles only the original operation through its cancellation boundary and records its measured usage and stopped state without requiring a user cancellation or reporting successful publication. |
+| Reconciliation batches | Old failing Runs repeatedly opened the shared worker circuit, so newer Runs outside the first batch could remain admitted. | Individual failures are counted and logged with the exact Run ID, retain their original claim expiry and permit the next batch immediately; shared claim-store failures still fail the worker pass. |
+| Built-in fan-out | A native fork looked up an external executor and repeatedly returned invalid input before either verification branch started. | The ordinary Flow owner retains the frozen typed payload and its declared fork outcome without an external executor. A separate cancellation regression verifies that an unfinished fork requires no external stop receipt. |
+| Reader time allocation | Preparation consumed part of the Job window, so reserving the entire installed reader time ceiling rejected the scoped Tester before model startup. | The existing controlled execution regression fails at the physical backend boundary with a 29-second remaining Job and a 30-second installed ceiling, then passes when the helper is narrowed to the remaining allocation. Resource partition and isolation checks remain enforced. |
+| Microsandbox CPU allocation | A 100-mCPU reader reservation left a 900-mCPU main workload, which Microsandbox cannot run. | Stand installation regressions require a whole vCPU for the reader, two in the scoped ordinary Build and matching local authority. Upgrades retain earlier Build and compiler identities and repair incomplete installations. |
+| Unattended scoped MCP approval | Native Codex rejected `verify_candidate` before the host hook because its MCP default required interactive approval under policy `never`. | The public Octa invocation regression requires delegation only for explicitly listed MCP tools when the required blocking host authorizer is installed. Without that authorizer, or without an explicit list, no approval override is emitted. All 146 adapter tests pass, with one optional test ignored. |
+| Published Octa installation | The previous pins selected 0.8.0; source staging tried to apply the qualification patch, and release staging rejected the published workspace capability. | The 0.9.0 pin, unmodified source staging, unchanged native bundle installation and common release staging pass. A package without the workspace capability is rejected before publication. Actual released Linux ARM64 bytes and the pinned source archive pass the OctaCity verifiers. |
+| Exact access reference review | Console rejected an already covered plugin request when profile and resource responses serialized its fields in different orders. | Draft validation accepts the same identity, version and digest regardless of object key order; a different digest still requires an enclosing grant. The existing grant representation is retained. |
+| Git capture | A depth-one checkout with omitted parents could not produce the candidate bundle. | The private capture Git retains the bounded shallow boundary and produces a verified bundle without running checkout hooks. |
+| Completed runner accounting | Capture rejection discarded the completed model usage. | The failed Job retains completed runner records and usage without promoting a candidate. |
+| Read-only candidate verification | A required-deliverable policy was mistaken for a request to capture another candidate, so Job signing failed. | The verifier retains that policy and all original private inputs while signing a read-only Job with materialization and no new capture. |
+| Selected role preparation | Candidate bundle bytes were read as model text. | The selected role uses the exact retained candidate reader, excludes capture bodies and retains its selected textual context. |
+| Job event persistence | PostgreSQL JSONB rejected a command's NUL byte before terminal completion. | The JSON payload column preserves the exact event through upgrade, restart, overlap and replay; conflicting bytes remain rejected. |
+| Retained native trace | An otherwise successful reviewer was rejected because its JSON-encoded tool output contained NUL. | Original tool output bytes are accepted without rewriting; JSON framing, metadata, sensitive-material, size, sequence and capture-digest checks remain enforced. |
+| Agent HTTP event delivery | A reverse proxy's HTML 502 response ended the Agent. | Transient non-protocol responses retry the original fenced batch and idempotency key; permanent authentication failures do not retry. |
+
+Run the focused regression commands from the repository root (the PostgreSQL
+case requires the disposable database prerequisites):
+
+```sh
+cargo test --locked -p octacity-changeset --lib
+cargo test --locked -p octacity-github --lib publication_uses_only_its_installed_private_directory_for_git_scratch
+cargo test --locked -p octacity-job --lib capture_rejection_keeps_completed_runner_accounting_without_a_candidate
+cargo test --locked -p octacity-server-application --all-features --lib selected_role_prepares_candidate_context_without_reading_capture_files_as_text
+cargo test --locked -p octacity-server-application --all-features --lib validation_materializer_publishes_the_invocation_contract_and_signs_every_original_input_once
+cargo test --locked -p octacity-server-application --lib an_expired_trusted_action_settles_its_original_operation_and_leaves_running_without_a_user_cancel
+cargo test --locked -p octacity-server-application --lib native_capture_preserves_json_encoded_control_bytes_in_tool_results
+cargo test --locked -p octacity-server-application --lib factory_reconciliation_tests
+cargo test --locked -p octacity-server-application --lib factory::execution::tests::factory_flow_tests
+cargo test --locked -p octacity-server-store-postgres --all-features --test store_contract nul_bearing_job_output_survives_upgrade_replay_and_terminal_completion -- --ignored --exact
+cargo test --locked -p octacity-coordinator --test coordinator
+cargo test --locked -p octacity-lifecycle -p octacity-execution
+python3 -m unittest tools.tests.test_local_stand_entrypoint
+python3 -m unittest tools.tests.test_factory_delivery_setup
+python3 -m unittest tools.tests.test_factory_stand_triage.FactoryStandTriageTests.test_guest_image_contains_only_the_public_ca_and_returns_the_verified_msb_identity
+```
+
+The guest image also qualifies local Git from the pinned Rust image before
+publishing its immutable identity. The native probe first returned command
+not found; the repaired guest ran Git and compared two fixture files. This
+adds local candidate inspection without changing the step's read-only source
+mount or granting forge credentials.
+
 ## Compatibility matrix
 
 Task 5.5 uses the same disposable PostgreSQL/S3 prerequisites. It checks the

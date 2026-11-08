@@ -56,6 +56,42 @@ mod protected_read_dispatcher_tests {
     .unwrap()
   }
 
+  #[tokio::test]
+  async fn private_channel_invokes_only_the_configured_runner_without_guest_fence_or_selection() {
+    let coordinator = Arc::new(BlockingCoordinator::new(FactoryToolActionDispositionV3::Allow));
+    let dispatcher = ProtectedReadDispatcher::new(
+      read_broker(coordinator.clone(), CancellationToken::new()),
+      Arc::new(CancellingReader),
+      64,
+      reader_response_limits(),
+    )
+    .unwrap();
+    let frame = |request: serde_json::Value| {
+      let body = serde_json::to_vec(&request).unwrap();
+      [u32::try_from(body.len()).unwrap().to_be_bytes().as_slice(), &body].concat()
+    };
+    let start = frame(serde_json::json!({"schema_version":1,"operation":"scoped_validation","action":"start"}));
+    assert_eq!(
+      dispatcher.read_channel(start.as_slice()).await.unwrap_err(),
+      AgentToolActionBrokerError::Denied
+    );
+    let dispatcher = dispatcher.with_scoped_validation();
+    let substituted = frame(serde_json::json!({
+      "schema_version":1,"operation":"scoped_validation","action":"start","job_id":"someone-else"
+    }));
+    assert_eq!(
+      dispatcher.read_channel(substituted.as_slice()).await.unwrap_err(),
+      AgentToolActionBrokerError::Denied
+    );
+    assert!(coordinator.validation_requests.lock().unwrap().is_empty());
+    let bytes = dispatcher.read_channel(start.as_slice()).await.unwrap();
+    assert_eq!(serde_json::from_slice::<serde_json::Value>(&bytes).unwrap(), serde_json::json!({"status":"waiting"}));
+    let calls = coordinator.validation_requests.lock().unwrap();
+    assert_eq!(calls.len(), 1);
+    assert_eq!(calls[0].action, octacity_protocol::ScopedValidationAction::Start);
+    assert!(coordinator.requests.lock().unwrap().is_empty());
+  }
+
   struct CancellingReader;
 
   impl ProtectedReadBackend for CancellingReader {

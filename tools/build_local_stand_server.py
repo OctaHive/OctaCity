@@ -40,6 +40,10 @@ def docker_arguments(
     """Create the deterministic BuildKit command for the server target."""
 
     octa = document["native"]["octa"]
+    # Share the qualified static Linux guest builder with the runtime staging
+    # plane. These helpers execute inside the guest, independently of host ABI.
+    guest = json.loads((REPOSITORY / "config/runtime/microsandbox-agentd-v1/inputs.json").read_text())["builders"]["aarch64"]
+    inputs.image_tag(guest["image"], "Factory guest control builder")
     return [
         "docker",
         "build",
@@ -55,6 +59,8 @@ def docker_arguments(
         f"octa-source={octa_source.resolve()}",
         "--build-arg",
         f"RUST_IMAGE={document['images']['rust']['reference']}",
+        "--build-arg",
+        f"GUEST_RUST_IMAGE={guest['image']}",
         "--build-arg",
         f"ALPINE_IMAGE={document['images']['alpine']['reference']}",
         "--build-arg",
@@ -158,6 +164,12 @@ def verify_image(
     if metadata.get("manual_model") is not True or not isinstance(metadata.get("models"), list):
         raise LocalStandBuildError("server image has invalid model-catalog metadata")
     vcs_adapter_digest(image)
+    subprocess.run([
+        "docker", "run", "--rm", "--platform", CONTAINER_PLATFORM, "--network", "none", "--read-only",
+        "--entrypoint", "/bin/sh", image, "-ec",
+        "test -x /usr/local/lib/octacity/factory-tools/octacity-protected-reader && "
+        "test -x /usr/local/lib/octacity/factory-tools/octacity-codex-reader",
+    ], check=True, capture_output=True, text=True, timeout=20)
 
 
 def build(image: str, manifest: Path, fixture: Path, repository: Path) -> None:

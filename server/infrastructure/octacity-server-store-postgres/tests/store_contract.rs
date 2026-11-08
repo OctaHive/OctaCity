@@ -1182,3 +1182,106 @@ where
 {
   format!("00000000-0000-0000-0000-{value:012x}").parse().unwrap()
 }
+
+#[tokio::test]
+#[ignore = "requires an explicitly configured disposable PostgreSQL service"]
+async fn nul_bearing_job_output_survives_upgrade_replay_and_terminal_completion() {
+  let database = TestDatabase::empty().await;
+  let previous = sqlx::migrate::Migrator::with_migrations(
+    octacity_server_store_postgres::MIGRATOR
+      .iter()
+      .filter(|migration| migration.version <= 117)
+      .cloned()
+      .collect(),
+  );
+  octacity_server_store_postgres::run_migrator(&database.pool, &previous)
+    .await
+    .unwrap();
+  let fixture = authoritative_store_contract_fixture();
+  seed_authoritative_prerequisites(&database.pool, &fixture)
+    .await
+    .unwrap();
+  let store = PostgresAuthoritativeStore::new(database.pool.clone(), support::test_signer());
+  store.accept_trigger(fixture.request.clone()).await.unwrap();
+  let claim = JobClaim::new(
+    id(980),
+    LeaseFence::from_bytes([8; 32]),
+    fixture.agent_id,
+    fixture.registration_epoch,
+    fixture.allowed_pool,
+    compatible_snapshot(),
+    LeaseWindow::new(time(1_000), time(253_402_300_799_000)).unwrap(),
+  )
+  .unwrap();
+  let JobClaimOutcome::Claimed(grant) = store.claim_ready_job(claim).await.unwrap() else {
+    panic!("seeded root Job must be claimable");
+  };
+  let access = LeaseAccess {
+    lease_id: grant.lease_id,
+    fence: grant.fence,
+    agent_id: grant.agent_id,
+    registration_epoch: grant.registration_epoch,
+  };
+  let legacy = one_event(access);
+  store.append_job_events(legacy.clone()).await.unwrap();
+  // Upgrade a database with retained history, as a running stand does.
+  octacity_server_store_postgres::migrate(&database.pool).await.unwrap();
+  let event = DurableJobEvent::new(
+    EventSequence::new(2).unwrap(),
+    JobEventKind::new("runner").unwrap(),
+    time(1_501),
+    json!({"line\0key":"left\0right", "literal":r"\u0000", "nested":["\0", "😀"]}),
+  )
+  .unwrap();
+  let request = AppendJobEvents::new(access, vec![event.clone()], time(1_601)).unwrap();
+  let appended = store
+    .append_job_events(request.clone())
+    .await
+    .expect("valid bounded JSON output must not prevent Job settlement");
+  assert_eq!(appended.acknowledged_through.get(), 2);
+  assert_eq!(appended.inserted, 1);
+  let restarted = PostgresAuthoritativeStore::new(database.pool.clone(), support::test_signer());
+  let retained = restarted
+    .read_job_events(
+      ReadJobEvents::new(
+        grant.job_id,
+        0,
+        10,
+        octacity_server_store::JobEventReadVisibility::all(),
+      )
+      .unwrap(),
+    )
+    .await
+    .unwrap();
+  assert_eq!(retained.events, vec![legacy.events[0].clone(), event.clone()]);
+  assert_eq!(restarted.append_job_events(request).await.unwrap(), appended);
+  let overlap = AppendJobEvents::new(access, retained.events, time(1_602)).unwrap();
+  assert_eq!(restarted.append_job_events(overlap).await.unwrap().inserted, 0);
+  let substituted = DurableJobEvent::new(
+    event.sequence(),
+    event.kind().clone(),
+    event.occurred_at(),
+    json!({"line":"changed"}),
+  )
+  .unwrap();
+  assert!(matches!(
+    restarted
+      .append_job_events(AppendJobEvents::new(access, vec![substituted], time(1_603)).unwrap())
+      .await,
+    Err(StoreError::Conflict {
+      entity: EntityKind::Job
+    })
+  ));
+  restarted
+    .complete_job(JobCompletion {
+      completion_id: IdempotencyKey::new("nul-output-completion").unwrap(),
+      lease: access,
+      final_sequence: Some(event.sequence()),
+      kind: JobCompletionKind::Failed(JobFailureClass::Execution),
+      execution: None,
+      completed_at: time(2_000),
+    })
+    .await
+    .expect("acknowledged binary-bearing output must allow terminal completion");
+  database.cleanup().await;
+}

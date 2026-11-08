@@ -74,7 +74,7 @@ impl ConfinedProtectedReadBackend {
         .factory
         .as_ref()
         .is_none_or(|layout| layout.process_limit != resources.process_count)
-      || helper.max_duration != Duration::from_millis(resources.elapsed_millis)
+      || helper.max_duration > Duration::from_millis(resources.elapsed_millis)
       || program.plugin_projection.is_some()
       || !program.external_executables.is_empty()
     {

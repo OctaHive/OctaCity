@@ -57,6 +57,30 @@ fn selecting_a_test_author_keeps_its_installed_inventory_evidence() {
   });
 }
 
+#[test]
+fn selecting_a_coder_keeps_the_installed_capture_write_scope() {
+  crate::factory::admission::tests::factory_admission_tests::run_ready(async {
+    let fixture = fixture_with_outputs(
+      true,
+      false,
+      false,
+      Some(vec![FactoryRepositoryPath::new("public").unwrap()]),
+    )
+    .await;
+    let queries = AuthorizedQueryHandler::new(Arc::new(TrustedNetworkManagementPolicy), fixture.handlers);
+    let binding = queries
+      .handle_query(&context(), fixture.query)
+      .await
+      .unwrap()
+      .build
+      .expect("the installed Coding profile is selectable");
+    assert_eq!(
+      binding.capture_write_paths,
+      Some(vec![FactoryRepositoryPath::new("public").unwrap()])
+    );
+  });
+}
+
 fn context() -> ManagementRequestContext {
   ManagementRequestContext::trusted_network(ManagementRequestId::new(uuid::Uuid::new_v4()).unwrap())
 }
@@ -72,6 +96,14 @@ async fn fixture(role_compiler: bool, with_mcp: bool) -> BindingFixture {
 }
 
 async fn fixture_with_evidence(role_compiler: bool, with_mcp: bool, with_evidence: bool) -> BindingFixture {
+  fixture_with_outputs(role_compiler, with_mcp, with_evidence, None).await
+}
+async fn fixture_with_outputs(
+  role_compiler: bool,
+  with_mcp: bool,
+  with_evidence: bool,
+  capture_write_paths: Option<Vec<FactoryRepositoryPath>>,
+) -> BindingFixture {
   let project = ProjectId::generate();
   let store = Arc::new(InMemoryFactoryConfigurationStore::new());
   store.seed_project(project).unwrap();
@@ -79,6 +111,7 @@ async fn fixture_with_evidence(role_compiler: bool, with_mcp: bool, with_evidenc
     crate::factory::execution::factory_test_support::installed_role_execution_choices(project);
   let mut compiler = installed.build_pipeline_contracts()[0].clone();
   compiler.compilation.as_mut().unwrap().role_profiles = role_compiler;
+  compiler.compilation.as_mut().unwrap().capture_write_paths = capture_write_paths;
   if with_evidence {
     compiler
       .compilation

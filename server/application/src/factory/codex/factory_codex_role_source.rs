@@ -109,16 +109,53 @@ impl<
     .ok_or_else(invalid)?;
     if !matches!(
       installed.consumer,
-      FactoryCredentialConsumer::ReadOnlyReview | FactoryCredentialConsumer::ToolReasoning
+      FactoryCredentialConsumer::ReadOnlyReview
+        | FactoryCredentialConsumer::ToolReasoning
+        | FactoryCredentialConsumer::CodingNode
     ) {
       return Err(invalid());
     }
+    let coding = installed.consumer == FactoryCredentialConsumer::CodingNode;
+    if coding && installed.capture.is_none() {
+      return Err(invalid());
+    }
     let context = intent.input().context().ok_or_else(invalid)?;
-    let bytes = self
-      .context
-      .read_context(intent.input(), observed_at, required_until)
-      .await?;
-    let rendered = crate::factory::codex::factory_codex::render_context(intent, &bytes).map_err(|_| invalid())?;
+    // Candidate capture files are verified source inputs, never model text.
+    // Resolve the same retained lineage used by the compiler before rendering
+    // only the explicitly selected textual context for the role package.
+    let candidate = if context.subject().candidate().is_some() {
+      Some(
+        self
+          .candidate_context
+          .as_ref()
+          .ok_or_else(invalid)?
+          .for_capture(installed.candidate_capture_tool.as_ref().ok_or_else(invalid)?)
+          .read_retained_candidate_context(intent, observed_at, required_until)
+          .await?,
+      )
+    } else {
+      None
+    };
+    let bytes = if let Some(candidate) = &candidate {
+      candidate.model_context().clone()
+    } else {
+      self
+        .context
+        .read_context(intent.input(), observed_at, required_until)
+        .await?
+    };
+    let source_inputs = candidate.as_ref().map(|candidate| {
+      [
+        candidate.bundle().identity().artifact_id,
+        candidate.manifest().identity().artifact_id,
+      ]
+    });
+    let rendered = crate::factory::codex::factory_codex::render_selected_context(
+      intent,
+      &bytes,
+      source_inputs.as_ref().map_or(&[], |inputs| inputs.as_slice()),
+    )
+    .map_err(|_| invalid())?;
     let mut rules = Vec::new();
     let mut tasks = Vec::new();
     let mut specifications = Vec::new();
@@ -176,7 +213,15 @@ impl<
           .map_err(|_| invalid())?,
         node_attempt_id: intent.node().id(),
         subject: context.subject().clone(),
-        mode: FactoryTaskMode::Observe,
+        mode: if coding {
+          if context.subject().candidate().is_some() {
+            FactoryTaskMode::Rework
+          } else {
+            FactoryTaskMode::Implement
+          }
+        } else {
+          FactoryTaskMode::Observe
+        },
       },
       FactoryTaskDefinition {
         task,
@@ -184,8 +229,21 @@ impl<
         prior_findings: prior_findings.into_iter().collect(),
         permissions: intent.permissions().clone(),
         budget: intent.budget(),
-        result_schema: FactoryTaskResultSchema::FlowV1,
-        deliverables: vec![],
+        result_schema: if coding {
+          FactoryTaskResultSchema::ImplementationV1
+        } else {
+          FactoryTaskResultSchema::FlowV1
+        },
+        // The trusted capture produces this canonical bundle independently of model prose.
+        deliverables: if coding {
+          vec![FactoryTaskDeliverable::new(
+            FactoryKey::new(octacity_protocol::CHANGE_SET_BUNDLE_OUTPUT).map_err(|_| invalid())?,
+            FactoryRepositoryPath::new(octacity_protocol::CHANGE_SET_BUNDLE_OUTPUT).map_err(|_| invalid())?,
+            true,
+          )]
+        } else {
+          vec![]
+        },
       },
       context,
       profile.definition().toolchain.clone(),

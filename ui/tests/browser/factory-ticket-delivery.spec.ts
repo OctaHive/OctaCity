@@ -635,7 +635,7 @@ test('submits the reviewed Flow, Project policies, and manual Issue start to the
 
   await addStep('validate_candidate', 'Command');
   await addResult('checked');
-  await choose('Installed command', 'Run protected checks · v1 · checks.json · test.runner');
+  await choose('Installed command', 'Run protected checks · v1 · checks.json · test.runner v1');
   await page.getByRole('button', { name: 'Use command', exact: true }).click();
   await useResult('implementation', 'candidate_revision');
   await page.getByText('Advanced input and Context mappings', { exact: true }).click();

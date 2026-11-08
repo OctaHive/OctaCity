@@ -108,17 +108,23 @@ pub struct JobCompletion {
 pub struct JobFailure {
   error: JobError,
   job_root: Option<PathBuf>,
+  post_run_completion: Option<Box<JobCompletion>>,
 }
 
 impl JobFailure {
   fn without_workspace(error: JobError) -> Self {
-    Self { error, job_root: None }
+    Self {
+      error,
+      job_root: None,
+      post_run_completion: None,
+    }
   }
 
   fn with_workspace(error: JobError, job_root: PathBuf) -> Self {
     Self {
       error,
       job_root: Some(job_root),
+      post_run_completion: None,
     }
   }
 
@@ -127,9 +133,19 @@ impl JobFailure {
     &self.error
   }
 
+  /// Transfers a completed runner after trusted capture rejected its candidate.
+  /// The Job remains failed; only ordinary runner records can be settled. The
+  /// returned completion owns cleanup and never contains a captured ChangeSet.
+  pub fn take_post_run_completion(&mut self) -> Option<JobCompletion> {
+    self.post_run_completion.take().map(|completion| *completion)
+  }
+
   /// Removes retained filesystem state after the caller durably records its
   /// cleaning phase. Absence is valid for preflight failures.
   pub async fn cleanup(mut self) -> Result<(), JobError> {
+    if let Some(completion) = self.take_post_run_completion() {
+      return completion.cleanup().await;
+    }
     let Some(job_root) = self.job_root.as_ref() else {
       return Ok(());
     };
@@ -687,6 +703,7 @@ impl JobExecutor {
       (None, _) => None,
       (Some(_), None) => unreachable!("managed execution checked protected-input policy before workspace creation"),
     };
+    let mut capture_failure = None;
     let result = async {
       let private_variables = match (&managed, &staged) {
         (Some(intent), Some(staged)) => self.authorize_factory_credentials(intent, staged)?,
@@ -980,7 +997,7 @@ impl JobExecutor {
 
       let change_set = if let Some(source) = &source {
         let capture_cancellation = cancellation.child_token();
-        deadline_operation(
+        let captured = deadline_operation(
           deadline,
           self.cancellation_grace,
           &capture_cancellation,
@@ -993,7 +1010,15 @@ impl JobExecutor {
             &capture_cancellation,
           ),
         )
-        .await?
+        .await;
+        match captured {
+          Ok(captured) => captured,
+          Err(error @ JobError::ChangeSetCapture(_)) => {
+            capture_failure = Some(error);
+            None
+          }
+          Err(error) => return Err(error),
+        }
       } else {
         None
       };
@@ -1020,7 +1045,7 @@ impl JobExecutor {
     let result = finish_protected_inputs(result, staged);
     match result {
       Ok((source, runner, workspace, change_set, publication_workspace, private_credential, sensitive_values)) => {
-        Ok(JobCompletion {
+        let completion = JobCompletion {
           source,
           runner,
           output_limits: spec.outputs,
@@ -1031,7 +1056,16 @@ impl JobExecutor {
           change_set,
           private_credential,
           sensitive_values,
-        })
+        };
+        if let Some(error) = capture_failure {
+          Err(JobFailure {
+            error,
+            job_root: None,
+            post_run_completion: Some(Box::new(completion)),
+          })
+        } else {
+          Ok(completion)
+        }
       }
       Err(operation) => Err(JobFailure::with_workspace(operation, job_root)),
     }

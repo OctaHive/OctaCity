@@ -371,6 +371,7 @@ fn lifecycle_transition_is_valid(
             octacity_server_factory::FlowNodeKind::HumanGate
               | octacity_server_factory::FlowNodeKind::SubflowCall
               | octacity_server_factory::FlowNodeKind::DeterministicGate
+              | octacity_server_factory::FlowNodeKind::FanOut
           )
       });
   }

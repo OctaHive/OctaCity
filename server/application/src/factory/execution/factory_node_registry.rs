@@ -1,6 +1,9 @@
 //! Exact installed executor selection; logical node names carry no dispatch meaning.
 
-use crate::{ApplicationError, FactoryNodeExecutionRequest, FactoryNodeExecutionStep, FactoryNodeExecutor};
+use crate::{
+  ApplicationError, FactoryNodeExecutionRequest, FactoryNodeExecutionStep, FactoryNodeExecutor,
+  FactoryScopedValidationCall,
+};
 use async_trait::async_trait;
 use octacity_server_factory::{FlowNodeKind, NodeExecutionIdentity};
 use std::sync::Arc;
@@ -29,31 +32,38 @@ impl FactoryNodeExecutorRegistry {
     }
     Ok(Self { bindings })
   }
+
+  fn select(&self, request: &FactoryNodeExecutionRequest<'_>) -> Result<&dyn FactoryNodeExecutor, ApplicationError> {
+    self
+      .bindings
+      .iter()
+      .find(|(kind, identity, _)| *kind == request.attempt.node_kind() && identity == request.attempt.execution())
+      .map(|(_, _, executor)| executor.as_ref())
+      .ok_or_else(ApplicationError::invalid)
+  }
 }
 
 #[async_trait]
 impl FactoryNodeExecutor for FactoryNodeExecutorRegistry {
+  async fn scoped_validation(
+    &self,
+    action: FactoryScopedValidationCall,
+    request: FactoryNodeExecutionRequest<'_>,
+  ) -> Result<crate::FactoryScopedValidationVerdict, ApplicationError> {
+    self.select(&request)?.scoped_validation(action, request).await
+  }
+
   async fn cancel(
     &self,
     request: FactoryNodeExecutionRequest<'_>,
     requested_at: octacity_server_domain::Timestamp,
   ) -> Result<crate::FactoryNodeCancellationStep, ApplicationError> {
-    let (_, _, executor) = self
-      .bindings
-      .iter()
-      .find(|(kind, identity, _)| *kind == request.attempt.node_kind() && identity == request.attempt.execution())
-      .ok_or_else(ApplicationError::invalid)?;
-    executor.cancel(request, requested_at).await
+    self.select(&request)?.cancel(request, requested_at).await
   }
   async fn observe(
     &self,
     request: FactoryNodeExecutionRequest<'_>,
   ) -> Result<FactoryNodeExecutionStep, ApplicationError> {
-    let (_, _, executor) = self
-      .bindings
-      .iter()
-      .find(|(kind, identity, _)| *kind == request.attempt.node_kind() && identity == request.attempt.execution())
-      .ok_or_else(ApplicationError::invalid)?;
-    executor.observe(request).await
+    self.select(&request)?.observe(request).await
   }
 }

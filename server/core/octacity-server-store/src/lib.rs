@@ -56,7 +56,7 @@ pub use factory::execution::factory_admission_intent::{
 };
 pub use factory::execution::factory_build_acceptance::{
   AcceptFactoryBuild, AcceptedFactoryBuild, CancelFactoryBuildExecution, FactoryBuildAcceptanceStore,
-  FactoryBuildCancellationStore, MAX_FACTORY_BUILD_JOBS,
+  FactoryBuildCancellationStore, FactoryScopedBuildCaller, MAX_FACTORY_BUILD_JOBS,
 };
 pub use factory::sources::factory_source::*;
 pub use factory::sources::factory_source_artifact::*;

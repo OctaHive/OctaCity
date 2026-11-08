@@ -64,6 +64,8 @@ class LocalStandServerBuildTests(unittest.TestCase):
             "ALPINE_IMAGE=" + self.document["images"]["alpine"]["reference"],
             arguments,
         )
+        self.assertTrue(any(item.startswith("GUEST_RUST_IMAGE=docker.io/library/rust:1.99.0-alpine3.24@sha256:") for item in arguments),
+                        "the server packages native Linux guest controls from a pinned static builder")
         self.assertIn(
             "OCTA_REVISION=" + self.document["native"]["octa"]["source_revision"],
             arguments,
@@ -119,6 +121,21 @@ class LocalStandServerBuildTests(unittest.TestCase):
             with self.subTest(value=value):
                 with self.assertRaises(BUILDER.LocalStandBuildError):
                     BUILDER.validate_runtime_user(value)
+
+    def test_reuse_rejects_a_server_without_the_packaged_guest_controller(self):
+        import subprocess
+        results = [
+            subprocess.CompletedProcess([], 0, json.dumps({"User": "65532:65532", "Labels": {
+                "org.opencontainers.image.version": "0.1.0", "org.opencontainers.image.revision": "a" * 40}})),
+            subprocess.CompletedProcess([], 0, "octacity-server 0.1.0"),
+            subprocess.CompletedProcess([], 0, "server configuration is valid"),
+            subprocess.CompletedProcess([], 0, '{"manual_model":true,"models":[]}'),
+            subprocess.CompletedProcess([], 0, "b" * 64 + "  /usr/local/lib/octacity/vcs/git/adapter\n"),
+            subprocess.CalledProcessError(1, ["docker", "run"]),
+        ]
+        with mock.patch.object(BUILDER.subprocess, "run", side_effect=results):
+            with self.assertRaises(subprocess.CalledProcessError):
+                BUILDER.verify_image("local:test", Path("fixture.toml"), "0.1.0", "a" * 40)
 
     def test_verification_runs_version_and_configuration_without_network_or_writes(self):
         with tempfile.TemporaryDirectory() as temporary:

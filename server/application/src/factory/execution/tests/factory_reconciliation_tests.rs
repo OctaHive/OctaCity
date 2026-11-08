@@ -182,6 +182,7 @@ struct MeasuredStore {
   max_active: AtomicUsize,
   cancel_once: AtomicBool,
   fail_snapshot_once: AtomicBool,
+  fail_claim: bool,
   committed: AtomicUsize,
   shutdown: Option<Arc<FactoryReconciliationShutdown>>,
 }
@@ -194,6 +195,7 @@ impl MeasuredStore {
       max_active: AtomicUsize::new(0),
       cancel_once: AtomicBool::new(false),
       fail_snapshot_once: AtomicBool::new(false),
+      fail_claim: false,
       committed: AtomicUsize::new(0),
       shutdown: None,
     }
@@ -216,6 +218,7 @@ impl MeasuredStore {
       max_active: AtomicUsize::new(0),
       cancel_once: AtomicBool::new(true),
       fail_snapshot_once: AtomicBool::new(false),
+      fail_claim: false,
       committed: AtomicUsize::new(0),
       shutdown: Some(shutdown),
     }
@@ -265,6 +268,9 @@ impl FactoryRunStore for MeasuredStore {
   }
 
   async fn claim_factory_runs(&self, request: ClaimFactoryRuns) -> Result<Vec<ClaimedFactoryRun>, StoreError> {
+    if self.fail_claim {
+      return Err(StoreError::Unavailable);
+    }
     self.inner.claim_factory_runs(request).await
   }
 
@@ -293,15 +299,58 @@ fn a_run_failure_does_not_skip_other_claimed_runs() {
       let measured = Arc::new(MeasuredStore::with_snapshot_failure(seeded_store(3)));
       let worker = reconciler(measured.clone(), "worker.failure", 3, concurrency, 11);
 
-      assert!(matches!(
-        worker
-          .run_once(time(10), time(20), &FactoryReconciliationShutdown::new())
-          .await,
-        Err(FactoryReconciliationError::Store(StoreError::Unavailable))
-      ));
+      let outcome = worker
+        .run_once(time(10), time(20), &FactoryReconciliationShutdown::new())
+        .await
+        .expect("a failed Run must not back off the shared worker and starve the next batch");
+      assert_eq!(outcome.claimed, 3);
+      assert_eq!(outcome.actions_committed, 2);
+      assert_eq!(outcome.failed, 1);
       assert_eq!(measured.committed.load(Ordering::SeqCst), 2);
       assert_eq!(measured.active.load(Ordering::SeqCst), 0);
     }
+  });
+}
+
+#[test]
+fn an_individual_failure_leaves_the_next_batch_eligible_without_waiting_for_claim_expiry() {
+  run_to_completion(async {
+    let measured = Arc::new(MeasuredStore::with_snapshot_failure(seeded_store(2)));
+    let shutdown = FactoryReconciliationShutdown::new();
+    let first = reconciler(measured.clone(), "worker.next-batch", 1, 1, 11)
+      .run_once(time(10), time(40), &shutdown)
+      .await
+      .expect("a local failure must not open the shared worker circuit");
+    assert_eq!(first.claimed, 1);
+    assert_eq!(first.actions_committed, 0);
+    assert_eq!(first.failed, 1);
+    let next = reconciler(measured.clone(), "worker.next-batch", 1, 1, 12)
+      .run_once(time(12), time(42), &shutdown)
+      .await
+      .unwrap();
+    assert_eq!(next.claimed, 1);
+    assert_eq!(next.failed, 0);
+    assert_eq!(
+      next.actions_committed, 1,
+      "the unrelated Run advances while the failed Run's original lease remains live"
+    );
+  });
+}
+
+#[test]
+fn a_shared_claim_store_failure_still_fails_the_worker_pass() {
+  run_to_completion(async {
+    let store = Arc::new(MeasuredStore {
+      fail_claim: true,
+      ..MeasuredStore::new(seeded_store(1))
+    });
+    assert!(matches!(
+      reconciler(store.clone(), "worker.claim-unavailable", 1, 1, 11)
+        .run_once(time(10), time(40), &FactoryReconciliationShutdown::new())
+        .await,
+      Err(FactoryReconciliationError::Store(StoreError::Unavailable))
+    ));
+    assert_eq!(store.committed.load(Ordering::SeqCst), 0);
   });
 }
 

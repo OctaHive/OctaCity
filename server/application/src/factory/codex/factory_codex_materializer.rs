@@ -39,6 +39,15 @@ impl FactoryCodexCapturePolicy {
     }) {
       return Err(crate::CodexCompilationError::MissingAuthority);
     }
+    if let Some(output) = &instruction.observation {
+      // Protocol versions are bounded text; Flow schema references require a
+      // canonical key. Reject incompatible installation metadata before authoring.
+      output
+        .schema
+        .version
+        .parse::<octacity_server_factory::FactoryKey>()
+        .map_err(|_| crate::CodexCompilationError::MissingAuthority)?;
+    }
     Ok(Self { tool, instruction })
   }
   /// Implementation whose exact pin must match declared trusted capture evidence.
@@ -48,6 +57,56 @@ impl FactoryCodexCapturePolicy {
   /// Validated instruction later signed with the exact admitted source paths.
   pub fn instruction(&self) -> &octacity_protocol::ChangeSetCaptureV3 {
     &self.instruction
+  }
+  /// Compiler-owned output defaults for common Role/Profile authoring. Artifact
+  /// schema pins describe the versioned protocol media contract; observation
+  /// Reports retain the exact independently installed data schema.
+  fn evidence(
+    &self,
+    plugin: &octacity_server_factory::ImmutableReference,
+  ) -> Vec<octacity_server_factory::EvidenceRequirement> {
+    use octacity_protocol::{
+      CHANGE_SET_BUNDLE_MEDIA_TYPE, CHANGE_SET_BUNDLE_OUTPUT, CHANGE_SET_MANIFEST_MEDIA_TYPE,
+      CHANGE_SET_MANIFEST_OUTPUT, CHANGE_SET_PATCH_MEDIA_TYPE, CHANGE_SET_PATCH_OUTPUT,
+    };
+    use octacity_server_factory::{EvidenceOutputKind, EvidenceRequirement, FactoryDigest, ImmutableReference};
+    let mut outputs = vec![
+      (CHANGE_SET_BUNDLE_OUTPUT, CHANGE_SET_BUNDLE_MEDIA_TYPE),
+      (CHANGE_SET_MANIFEST_OUTPUT, CHANGE_SET_MANIFEST_MEDIA_TYPE),
+    ];
+    if self.instruction.patch_max_bytes.is_some() {
+      outputs.push((CHANGE_SET_PATCH_OUTPUT, CHANGE_SET_PATCH_MEDIA_TYPE));
+    }
+    let mut evidence: Vec<_> = outputs
+      .into_iter()
+      .map(|(name, media)| {
+        EvidenceRequirement::new(
+          name.parse().expect("protocol capture output key"),
+          EvidenceOutputKind::Artifact,
+          ImmutableReference::new(
+            name.parse().expect("protocol capture output key"),
+            "v1".parse().expect("protocol version"),
+            FactoryDigest::content_sha256(media.as_bytes()),
+          ),
+          self.tool.clone(),
+          plugin.clone(),
+        )
+      })
+      .collect();
+    if let Some(output) = &self.instruction.observation {
+      evidence.push(EvidenceRequirement::new(
+        output.name.parse().expect("validated observation key"),
+        EvidenceOutputKind::Report,
+        ImmutableReference::new(
+          output.schema.identity.parse().expect("validated observation identity"),
+          output.schema.version.parse().expect("validated observation version"),
+          output.schema.sha256.parse().expect("validated observation digest"),
+        ),
+        self.tool.clone(),
+        plugin.clone(),
+      ));
+    }
+    evidence
   }
   pub(crate) fn task_digest(
     &self,
@@ -198,6 +257,18 @@ impl FactoryCodexBuildProfile {
       model_or_tool: self.toolchain.model.clone(),
       pipeline_node: self.pipeline_node.clone(),
       compilation: Some(octacity_server_factory::FactoryBuildCompilationContract {
+        scoped_validation: self.consumer == FactoryCredentialConsumer::ToolReasoning && self.tool_risk.is_none(),
+        capture_write_paths: self.capture.as_ref().map(|capture| {
+          capture
+            .instruction()
+            .policy
+            .allowed_path_prefixes
+            .iter()
+            .map(|path| {
+              octacity_server_factory::FactoryRepositoryPath::new(path).expect("validated installed capture path")
+            })
+            .collect()
+        }),
         task_digest: self.task_digest(),
         role_profiles: true,
         requires_task_context: true,
@@ -211,6 +282,12 @@ impl FactoryCodexBuildProfile {
           .protected_tests
           .iter()
           .map(|policy| policy.inventory().clone())
+          .chain(
+            self
+              .capture
+              .iter()
+              .flat_map(|capture| capture.evidence(&self.toolchain.plugin)),
+          )
           .collect(),
       }),
     }

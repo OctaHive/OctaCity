@@ -275,6 +275,7 @@ fn source_free_placement(fixture: &mut StoreContractFixture) -> (AgentInventory,
   inventory.factory_executions = vec![FactoryExecutionCapabilityV3 {
     workspace_anchor: false,
     controlled_tools: false,
+    scoped_validation: false,
     execution: execution.clone(),
     enforcement: canonical.required_enforcement,
   }];

@@ -338,7 +338,10 @@ See the [example's prerequisite guide](../../config/factory/presets/ticket-deliv
 
 For trusted Delivery, choose **Server action** and **Publish candidate**.
 Select the installed Project target and review its receipt result. Connect the
-candidate revision, bundle and manifest explicitly. Under **Publication inputs**,
+candidate revision, bundle and manifest explicitly. In **Step code**, select the
+read-only source and **Accepted candidate from another step**, naming the original
+implementation step and its accepted outcome. This binds the publication resource
+to the candidate without allowing source changes. Under **Publication inputs**,
 select the expiry paths for the accepted validation and review and the path to
 the PR title and summary. The expiry paths must come from the accepted Build
 proofs for review and validation. Both proofs must belong to the candidate being

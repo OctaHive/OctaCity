@@ -4,6 +4,7 @@ import { FACTORY_AUTHORING_SCHEMAS } from '../../../.generated/api/factory-autho
 import { FlowCodeSources, type CodeResourceServices } from './FlowCodeSources';
 import { StepTask } from './StepTask';
 import { StepVerification } from './StepVerification';
+import { InstalledVerificationLaunch } from './VerificationLaunch';
 import { StepCode } from './StepCode';
 import { emptyFactoryPermissions } from './emptyFlowDraft';
 import { factoryFieldId } from './fieldFocus';
@@ -344,7 +345,14 @@ export function FlowGraphEditor({
               if (target === undefined || !Object.hasOwn(NODE_KINDS, kind)) return;
               changeStepDraft(undefined);
               target.kind = kind as keyof typeof NODE_KINDS;
-              if (target.kind !== 'reasoning') target.task = null;
+              if (target.kind !== 'reasoning') {
+                target.task = null;
+                target.scoped_validation_runner = null;
+              }
+              if (target.kind !== 'build_command')
+                for (const caller of next.root.nodes)
+                  if (caller.scoped_validation_runner === target.key)
+                    caller.scoped_validation_runner = null;
               target.profile_selection = null;
               target.build = null;
               target.action = null;
@@ -406,6 +414,14 @@ export function FlowGraphEditor({
             onChange={updateNode}
           />
           <StepCapture node={node} onChange={updateNode} />
+          {authoring && node.kind === 'build_command' ? (
+            <InstalledVerificationLaunch
+              root={value.root}
+              node={node}
+              services={authoring}
+              onChange={(root) => onChange({ ...value, root })}
+            />
+          ) : null}
           <FlowBindings
             onRemoveClassification={(root) => {
               onChange({
@@ -452,7 +468,7 @@ export function FlowGraphEditor({
           ) : null}
           {documents && (node.kind === 'reasoning' || node.protected_verification) ? (
             <StepVerification
-              key={nodeKeys[selected]}
+              key={`verification:${nodeKeys[selected]}`}
               node={node}
               authoring={authoring}
               documents={documents}
@@ -538,7 +554,13 @@ export function FlowGraphEditor({
                     ? { process: updateProcessRecipients(value.root.process, key, null) }
                     : {}),
                   entry: value.root.entry === key ? '' : value.root.entry,
-                  nodes: value.root.nodes.filter((_, index) => index !== selected),
+                  nodes: value.root.nodes
+                    .filter((_, index) => index !== selected)
+                    .map((node) =>
+                      node.scoped_validation_runner === key
+                        ? { ...node, scoped_validation_runner: null }
+                        : node,
+                    ),
                   transitions: value.root.transitions.filter(
                     (edge) =>
                       edge.predecessor !== key &&
@@ -602,6 +624,7 @@ function renameNode(value: Draft, index: number, name: string): Draft {
     if (edge.successor === old) edge.successor = name;
   }
   for (const target of next.root.nodes) {
+    if (target.scoped_validation_runner === old) target.scoped_validation_runner = name;
     if (
       target.code?.kind === 'source' &&
       target.code.revision.kind === 'accepted_candidate' &&

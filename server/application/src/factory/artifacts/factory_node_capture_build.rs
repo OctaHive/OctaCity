@@ -41,13 +41,15 @@ impl<B: OrdinaryBuildCancellationApplication + BuildQueryStore, O: FactoryNodeBu
     request: FactoryNodeExecutionRequest<'_>,
   ) -> Result<FactoryNodeExecutionStep, ApplicationError> {
     let intent = request.build.ok_or_else(ApplicationError::invalid)?;
-    let binding = request
+    let definition = request
       .admitted
       .closure()
       .definition(request.input.definition())
-      .and_then(|definition| definition.node(request.input.node()))
-      .and_then(|node| node.build())
       .ok_or_else(ApplicationError::invalid)?;
+    let binding = intent
+      .profile()
+      .binding(definition)
+      .map_err(|_| ApplicationError::invalid())?;
     // Reject a substituted capability selection before creating an ordinary operation.
     let primary_manifest = intent.profile().result_tool() == &self.capture_tool
       && binding.result_output.as_str() == CHANGE_SET_MANIFEST_OUTPUT

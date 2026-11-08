@@ -111,6 +111,15 @@ The table supplies defaults and allowed inputs, not an implicit grant of every i
 
 Tester authoring requires an AI invocation. The Flow can choose either a Tester invocation that requests and observes the prepared plan with a scoped tool, or a separate CI/CD Build step that runs it directly. Both modes use the same protected runner and can qualify only the retained suite on the exact selected candidate. The runner publishes the verdict and bounded diagnostics. A missing, failed or skipped required check cannot become a passing result. DevOps hands only the prepared metadata to the trusted Delivery action.
 
+On Microsandbox, the scoped Tester and its private reader reserve one whole
+vCPU each inside the original two-vCPU Job allocation. The installed Runtime,
+selected Profile, ordinary Build Configuration, enclosing requests and Agent
+policy must agree on that allocation; the verifier's separately registered single-slot Agent is unchanged.
+The reader's installed time ceiling is narrowed to the Job's remaining window.
+Neither partitioning nor a new Profile version expands an already admitted Job.
+
+The scoped tool starts a separate ordinary Build for the frozen verifier node. Bind the tool to the current Tester lease, admitted Run and Workflow Cycle and to one qualified verifier binding in that Flow. The call supplies no repository, revision, file, command or Build override. The normal Factory journal owns the verifier intent and the Build owner deduplicates acceptance of that operation. Reconciliation waits for scoped acceptance and retains the same independently verified reports as direct execution. The Tester observes only the bounded status and class verdicts. The two executions need independent worker capacity while the Tester awaits the verdict.
+
 Isolation is an implementation deliverable of this change, including configuration and behavioral verification through the ordinary execution path. A Context Manifest or prompt instruction alone does not enforce access. Apply effective stage permissions to filesystem/mounts, Artifact reads, commands and child processes, network/MCP tools and credential bindings. Do not inherit another invocation's workspace, session, environment or secret access. If the selected backend cannot enforce a required restriction, stop dispatch without a permissive fallback.
 
 Analytic writes only its allowed requirements paths and outputs; the test author writes its owned protected-test workspace; the implementation Coder writes allowed implementation paths. Review Coder can read the selected candidate but cannot alter it. Test execution uses isolated scratch/output paths without modifying the retained candidate or protected bundle. DevOps has no forge credential or merge tool. The Flow grants the trusted publication action its own access. All stages may write their explicitly allowed reports. These permissions are configured per stage and remain independent of display role names.
@@ -137,3 +146,24 @@ Qualify a manually assembled Flow first using existing publication and recovery 
 
 
 Rollback disables new intake and publication for future work; retain admitted history, PRs and publication receipts. Disabling does not close existing PRs or undo any manual repository changes.
+
+### Native Codex workspace roots
+
+The approved common adapter extension keeps the Octa task/resource directory at
+`/workspace` and selects `/workspace/scratch` as the native Codex working
+directory. The compiler adds `/workspace/output` as writable and adds
+`/workspace/source` only for an admitted writable source. Read-only and no-code
+consumers receive no writable source root. Prompts name the absolute source and
+output paths. This avoids Codex attempting to create its protected metadata
+beneath the intentionally read-only parent; the parent and mount policy remain
+unchanged.
+
+The plugin advertises `codex.execution-workspace.v1`. Its optional task setting
+accepts only bounded, existing, normalized workspace-relative directories and
+rejects links and escapes. Older plugins reject the setting; native installation
+qualification also requires the advertised capability. The local stand uses the published Octa 0.9.0 release, verified against its
+pinned archive digest and GitHub build provenance. The immutable installation
+retains the upstream plugin, manifest, lock and compatibility data unchanged.
+Server builds use the same pinned upstream source without a local patch. Previous installations and published profile bindings are retained;
+new compatible Delivery profiles use separate identities rather than replacing
+the installed declarations behind an existing profile.

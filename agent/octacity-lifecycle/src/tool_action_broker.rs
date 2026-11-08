@@ -6,7 +6,7 @@ use octacity_coordinator::{Registration, ToolActionCoordinator};
 use octacity_job::{AuthorizedFactoryToolAction, FactoryToolActionEnforcementError, enforce_factory_tool_action};
 use octacity_protocol::{
   AuthorizeToolActionRequest, COORDINATOR_PROTOCOL_VERSION, FactoryPermissionSetV3, FactoryToolActionProposalV3,
-  LeaseAssignment,
+  LeaseAssignment, ScopedValidationAction, ScopedValidationRequest, ScopedValidationVerdict,
 };
 use thiserror::Error;
 use tokio::time::timeout;
@@ -131,7 +131,51 @@ impl AgentToolActionBroker {
       self
         .coordinator
         .authorize_tool_action(&self.registration, &self.lease, &request, self.cancellation.clone());
+    let response = self.wait_for_response(exchange).await?;
+    response
+      .validate(&request)
+      .map_err(|_| AgentToolActionBrokerError::Mismatch)?;
+    enforce_factory_tool_action(
+      proposal,
+      &response.decision,
+      &self.signed_permissions,
+      &self.local_permissions,
+    )
+    .map_err(map_enforcement)
+  }
+
+  async fn scoped_validation(
+    &self,
+    action: ScopedValidationAction,
+  ) -> Result<ScopedValidationVerdict, AgentToolActionBrokerError> {
+    let request = ScopedValidationRequest {
+      protocol_version: COORDINATOR_PROTOCOL_VERSION,
+      request_id: Uuid::new_v4().simple().to_string(),
+      registration_id: self.registration.registration_id.clone(),
+      lease: (&self.lease).into(),
+      action,
+    };
+    request.validate().map_err(|_| AgentToolActionBrokerError::Denied)?;
+    let response = self
+      .wait_for_response(self.coordinator.scoped_validation(
+        &self.registration,
+        &self.lease,
+        &request,
+        self.cancellation.clone(),
+      ))
+      .await?;
+    response
+      .validate(&request.request_id)
+      .map_err(|_| AgentToolActionBrokerError::Mismatch)?;
+    Ok(response.verdict)
+  }
+
+  async fn wait_for_response<T>(
+    &self,
+    exchange: impl Future<Output = Result<T, octacity_coordinator::CoordinatorError>>,
+  ) -> Result<T, AgentToolActionBrokerError> {
     let response = tokio::select! {
+      biased;
       () = self.cancellation.cancelled() => return Err(AgentToolActionBrokerError::Cancelled),
       response = timeout(self.deadline, exchange) => match response {
         Err(_) => return Err(AgentToolActionBrokerError::TimedOut),
@@ -144,16 +188,7 @@ impl AgentToolActionBroker {
     if self.cancellation.is_cancelled() {
       return Err(AgentToolActionBrokerError::Cancelled);
     }
-    response
-      .validate(&request)
-      .map_err(|_| AgentToolActionBrokerError::Mismatch)?;
-    enforce_factory_tool_action(
-      proposal,
-      &response.decision,
-      &self.signed_permissions,
-      &self.local_permissions,
-    )
-    .map_err(map_enforcement)
+    Ok(response)
   }
 }
 
@@ -191,6 +226,7 @@ mod tests {
     disposition: FactoryToolActionDispositionV3,
     mismatch: bool,
     requests: Mutex<Vec<AuthorizeToolActionRequest>>,
+    validation_requests: Mutex<Vec<octacity_protocol::ScopedValidationRequest>>,
   }
 
   impl BlockingCoordinator {
@@ -201,6 +237,7 @@ mod tests {
         disposition,
         mismatch: false,
         requests: Mutex::new(Vec::new()),
+        validation_requests: Mutex::new(Vec::new()),
       }
     }
 
@@ -214,6 +251,23 @@ mod tests {
 
   #[async_trait]
   impl ToolActionCoordinator for BlockingCoordinator {
+    async fn scoped_validation(
+      &self,
+      registration: &Registration,
+      lease: &LeaseAssignment,
+      request: &octacity_protocol::ScopedValidationRequest,
+      _: CancellationToken,
+    ) -> Result<octacity_protocol::ScopedValidationResponse, CoordinatorError> {
+      assert_eq!(request.registration_id, registration.registration_id);
+      assert!(request.lease == lease.into());
+      self.validation_requests.lock().unwrap().push(request.clone());
+      Ok(octacity_protocol::ScopedValidationResponse {
+        protocol_version: COORDINATOR_PROTOCOL_VERSION,
+        request_id: request.request_id.clone(),
+        verdict: octacity_protocol::ScopedValidationVerdict::Waiting,
+      })
+    }
+
     async fn authorize_tool_action(
       &self,
       _registration: &Registration,

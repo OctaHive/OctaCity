@@ -87,6 +87,8 @@ pub struct FlowNodeDefinition {
   #[serde(default, skip_serializing_if = "Option::is_none")]
   protected_verification: Option<crate::FactoryArtifactReference>,
   #[serde(default, skip_serializing_if = "Option::is_none")]
+  scoped_validation_runner: Option<FactoryKey>,
+  #[serde(default, skip_serializing_if = "Option::is_none")]
   code: Option<super::FlowCodeBinding>,
   #[serde(default, skip_serializing_if = "Option::is_none")]
   action: Option<crate::FlowActionBinding>,
@@ -125,6 +127,8 @@ struct FlowNodeDefinitionWire {
   task: Option<crate::FactoryInstructions>,
   #[serde(default, skip_serializing_if = "Option::is_none")]
   protected_verification: Option<crate::FactoryArtifactReference>,
+  #[serde(default)]
+  scoped_validation_runner: Option<FactoryKey>,
   #[serde(default, skip_serializing_if = "Option::is_none")]
   code: Option<super::FlowCodeBinding>,
   #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -160,6 +164,9 @@ impl<'de> Deserialize<'de> for FlowNodeDefinition {
 
 impl FlowNodeDefinition {
   fn validate_declaration(&self) -> Result<(), FactoryError> {
+    if self.scoped_validation_runner.is_some() && self.kind != FlowNodeKind::Reasoning {
+      return Err(invalid_scoped_validation_runner());
+    }
     if self.protected_verification.as_ref().is_some_and(|reference| {
       self.kind != FlowNodeKind::Reasoning || reference.encoded_size() > crate::MAX_PROTECTED_VERIFICATION_BYTES
     }) {
@@ -207,6 +214,7 @@ impl FlowNodeDefinition {
       subflow: input.subflow,
       task: None,
       protected_verification: None,
+      scoped_validation_runner: None,
       code: None,
       action: None,
       phase_pool: None,
@@ -247,6 +255,17 @@ impl FlowNodeDefinition {
   /// This selection is private to test preparation and is never an ordinary Context entry.
   pub const fn protected_verification(&self) -> Option<&crate::FactoryArtifactReference> {
     self.protected_verification.as_ref()
+  }
+  /// Pins the runner this reasoning step may invoke within its current Flow and cycle.
+  pub fn with_scoped_validation_runner(mut self, runner: FactoryKey) -> Result<Self, FactoryError> {
+    self.scoped_validation_runner = Some(runner);
+    self.validate_declaration()?;
+    Ok(self)
+  }
+
+  /// Exact runner node in the same immutable definition.
+  pub const fn scoped_validation_runner(&self) -> Option<&FactoryKey> {
+    self.scoped_validation_runner.as_ref()
   }
   /// Permits bounded, explicitly confirmed retries after technical failure.
   /// Each retry owns a new attempt; observing an existing operation is not a retry.
@@ -570,6 +589,7 @@ impl FlowDefinition {
   pub fn new(mut input: FlowDefinitionInput) -> Result<Self, FactoryError> {
     validate_size(input.nodes.len(), input.transitions.len())?;
     validate_bindings(&input.nodes)?;
+    validate_scoped_validation_runners(&input.nodes, &input.transitions, &input.entry, &input.execution)?;
     input.nodes.sort_by(|left, right| left.key.cmp(&right.key));
     input.transitions.sort();
     input.terminals.sort_by(|left, right| left.key().cmp(right.key()));
@@ -731,6 +751,15 @@ impl FlowDefinition {
   pub fn node(&self, key: &FactoryKey) -> Option<&FlowNodeDefinition> {
     self.nodes.iter().find(|node| node.key() == key)
   }
+  /// Returns the sole caller permitted to dispatch a scoped runner in this definition.
+  #[must_use]
+  pub fn scoped_validation_caller(&self, runner: &FactoryKey) -> Option<&FactoryKey> {
+    self
+      .nodes
+      .iter()
+      .find(|caller| caller.scoped_validation_runner() == Some(runner))
+      .map(FlowNodeDefinition::key)
+  }
   /// Returns outcome-selected control transitions.
   #[must_use]
   pub fn transitions(&self) -> &[FlowTransition] {
@@ -759,6 +788,7 @@ impl FlowDefinition {
 
   pub(crate) fn validate_canonical_form(&self) -> Result<(), FactoryError> {
     validate_bindings(&self.nodes)?;
+    validate_scoped_validation_runners(&self.nodes, &self.transitions, &self.entry, &self.execution)?;
     super::code::validate(self.code_sources.as_ref(), &self.nodes)?;
 
     if let Some(policy) = self.execution.verification() {
@@ -823,6 +853,53 @@ fn definition_digest(content: &FlowDefinitionContent<'_>) -> Result<FactoryDiges
     relationship: "Flow Definition serialization",
   })?;
   Ok(FactoryDigest::sha256("octacity.factory.flow-definition.v2", &[&bytes]))
+}
+
+fn invalid_scoped_validation_runner() -> FactoryError {
+  FactoryError::InvalidConfiguration {
+    field: "Flow scoped validation runner",
+  }
+}
+
+fn validate_scoped_validation_runners(
+  nodes: &[FlowNodeDefinition],
+  transitions: &[FlowTransition],
+  entry: &FactoryKey,
+  execution: &FlowExecutionPolicy,
+) -> Result<(), FactoryError> {
+  let mut selected_runners = BTreeSet::new();
+  for caller in nodes {
+    let Some(runner) = caller.scoped_validation_runner() else {
+      continue;
+    };
+    if execution.max_active_nodes() < 2
+      || !selected_runners.insert(runner)
+      || caller.key() == entry
+      || runner == entry
+      || !nodes
+        .iter()
+        .any(|node| node.key() == runner && node.kind() == FlowNodeKind::BuildCommand && node.build().is_some())
+    {
+      return Err(invalid_scoped_validation_runner());
+    }
+    let incoming = |node: &FactoryKey| {
+      transitions
+        .iter()
+        .filter(|edge| edge.node_targets().any(|target| target == node))
+        .map(|edge| {
+          if edge.max_repeats() != 0 || edge.starts_cycle() {
+            return Err(invalid_scoped_validation_runner());
+          }
+          Ok((edge.predecessor(), edge.outcome()))
+        })
+        .collect::<Result<BTreeSet<_>, _>>()
+    };
+    let caller_routes = incoming(caller.key())?;
+    if caller_routes.is_empty() || caller_routes != incoming(runner)? {
+      return Err(invalid_scoped_validation_runner());
+    }
+  }
+  Ok(())
 }
 
 fn validate_bindings(nodes: &[FlowNodeDefinition]) -> Result<(), FactoryError> {

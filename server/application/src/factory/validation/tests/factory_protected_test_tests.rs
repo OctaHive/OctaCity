@@ -7,6 +7,139 @@ fn time(n: i64) -> octacity_server_domain::Timestamp {
 }
 
 #[test]
+fn publication_requires_an_installed_scoped_tester_and_protected_verifier() {
+  let (_, admitted, schema, _, _) = execution_fixture(FlowNodeKind::BuildCommand);
+  let original = admitted.closure().definition(admitted.closure().root()).unwrap();
+  let output = schema.reference().clone();
+  let outcome = || FlowOutcomeDefinition::new(key("observed"), FlowOutcomeKind::Success, output.clone());
+  let node = |name, kind| {
+    FlowNodeDefinition::new(FlowNodeDefinitionInput {
+      key: key(name),
+      kind,
+      input_schema: Some(output.clone()),
+      outcomes: vec![outcome()],
+      budget: original.execution().budget(),
+      permissions: FactoryPermissionSet::deny_all(),
+      required: true,
+      subflow: None,
+    })
+    .unwrap()
+  };
+  let checks = original.nodes()[0].clone();
+  let verifier = checks.build_bindings().next().unwrap().clone();
+  let mut caller = verifier.clone();
+  caller.result_outcome = key("observed");
+  caller.model_or_tool = ImmutableReference::new(key("scoped-tester"), key("v1"), FactoryDigest::from_bytes([15; 32]));
+  let transition = |from, to| FlowTransition::new(from, key("observed"), to);
+  let finish = FlowTransitionTarget::Terminal(key("done"));
+  let definition = FlowDefinition::new(FlowDefinitionInput {
+    id: original.reference().id(),
+    version: original.reference().version(),
+    input_schema: None,
+    entry: key("split"),
+    nodes: vec![
+      node("split", FlowNodeKind::FanOut),
+      node("tester", FlowNodeKind::Reasoning)
+        .with_build(caller.clone())
+        .unwrap()
+        .with_scoped_validation_runner(checks.key().clone())
+        .unwrap(),
+      checks.clone(),
+    ],
+    transitions: vec![
+      transition(key("split"), FlowTransitionTarget::Node(key("tester"))),
+      transition(key("split"), FlowTransitionTarget::Node(checks.key().clone())),
+      transition(key("tester"), finish.clone()),
+      transition(checks.key().clone(), finish),
+    ],
+    terminals: vec![FlowTerminalDefinition::new(key("done"), output.clone())],
+    context_projections: vec![],
+    data_projections: vec![],
+    execution: FlowExecutionPolicy::new(
+      original.execution().budget(),
+      original.execution().permissions().clone(),
+      2,
+    )
+    .unwrap(),
+  })
+  .unwrap();
+  let reference = definition.reference();
+  let flow = FactoryFlowConfiguration {
+    closure: PinnedFlowDefinitionClosure::new(reference, vec![definition]).unwrap(),
+    limits: admitted.limits().clone(),
+    data_schemas: vec![schema],
+    pools: Default::default(),
+    accepted_predecessor: None,
+  };
+  let choices = FactoryConfigurationChoices::try_new(Default::default()).unwrap();
+  let result = super::super::factory_verification_supplement::validate_verification_capabilities(&flow, &choices);
+  let Err(ApplicationError::FactoryValidation(report)) = result else {
+    panic!("the scoped runner would otherwise be dispatched as an ordinary direct step");
+  };
+  assert_eq!(report.errors[0].definition, Some(reference));
+  assert_eq!(report.errors[0].node, Some(key("tester")));
+  assert_eq!(report.errors[0].field, "/scoped_validation_runner");
+
+  for (scoped, protected) in [(false, true), (true, false), (true, true)] {
+    let mut entries = FactoryConfigurationChoiceEntries::default();
+    entries
+      .build_configurations
+      .push((key("worker"), caller.build_configuration.clone()));
+    for (name, reference) in [
+      ("tool", &caller.tool),
+      ("plugin", &caller.plugin),
+      ("model", &caller.model_or_tool),
+      ("verifier", &verifier.model_or_tool),
+    ] {
+      entries.references.push(FactoryReferenceChoice {
+        alias: key(name),
+        kind: FactoryChoiceKind::NodeCapability,
+        reference: reference.clone(),
+      });
+    }
+    let mut installed = FactoryConfigurationChoices::try_new(entries).unwrap();
+    for (binding, is_caller) in [(&caller, true), (&verifier, false)] {
+      installed = installed
+        .with_build_pipeline_contract(FactoryBuildPipelineContract {
+          build_configuration: binding.build_configuration.clone(),
+          tool: binding.tool.clone(),
+          plugin: binding.plugin.clone(),
+          model_or_tool: binding.model_or_tool.clone(),
+          pipeline_node: octacity_server_domain::PipelineNodeId::new("worker").unwrap(),
+          command: None,
+          compilation: Some(FactoryBuildCompilationContract {
+            capture_write_paths: None,
+            scoped_validation: is_caller && scoped,
+            role_profiles: false,
+            task_digest: binding.task_digest,
+            requires_task_context: false,
+            result_output: binding.result_output.clone(),
+            result_output_kind: binding.result_output_kind,
+            mcp_result_tool: None,
+            evidence: vec![],
+          }),
+          protected_tests: (!is_caller && protected).then(|| FactoryProtectedTestBuildContract::Verifier {
+            author_profile: caller.model_or_tool.clone(),
+            accepts_supplement: true,
+            inventory: EvidenceRequirement::new(
+              key("inventory"),
+              EvidenceOutputKind::Artifact,
+              output.clone(),
+              caller.tool.clone(),
+              caller.plugin.clone(),
+            ),
+          }),
+        })
+        .unwrap();
+    }
+    assert_eq!(
+      super::super::factory_verification_supplement::validate_verification_capabilities(&flow, &installed).is_ok(),
+      scoped && protected
+    );
+  }
+}
+
+#[test]
 fn configured_test_policy_accepts_all_declared_families_and_new_project_classes() {
   let policy: FactoryProtectedTestPolicy = serde_json::from_str(include_str!(
     "../../../../../../config/factory/profiles/protected-tests.json"
@@ -1036,13 +1169,19 @@ pub(crate) fn validation_fixture_with_flow(
       fresh_until: time(900),
     };
     #[derive(Clone)]
-    struct Selected(FactoryProtectedValidationMaterialization);
+    struct Selected(
+      FactoryProtectedValidationMaterialization,
+      Option<std::sync::Arc<std::sync::atomic::AtomicUsize>>,
+    );
     #[async_trait::async_trait]
     impl FactoryProtectedValidationInputSource for Selected {
       async fn materialization(
         &self,
         _: &FlowBuildIntent,
       ) -> Result<FactoryProtectedValidationMaterialization, ApplicationError> {
+        if let Some(reads) = &self.1 {
+          reads.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+        }
         Ok(self.0.clone())
       }
     }
@@ -1056,25 +1195,112 @@ pub(crate) fn validation_fixture_with_flow(
       ownership: FactoryClaimOwnership::new(intent.node().owner().clone(), intent.node().claim()),
       observed_at: time(31),
     };
+    use octacity_server_domain::{AgentId, AttemptNumber, JobId, LeaseId};
+    use octacity_server_store::{FactoryScopedBuildCaller, LeaseAccess, LeaseFence, RegistrationEpoch};
+    let caller = FactoryScopedBuildCaller {
+      lease: LeaseAccess {
+        lease_id: LeaseId::generate(),
+        fence: LeaseFence::from_bytes([31; 32]),
+        agent_id: AgentId::generate(),
+        registration_epoch: RegistrationEpoch::new(1).unwrap(),
+      },
+      job_id: JobId::generate(),
+      attempt: AttemptNumber::FIRST,
+    };
+    let reads = std::sync::Arc::new(std::sync::atomic::AtomicUsize::new(0));
+    let scoped = std::sync::Arc::new(
+      FactoryProtectedValidationAdapter::new(
+        validator.clone(),
+        std::sync::Arc::new(crate::factory_node_test_support::Outputs(Some(outputs.clone()))),
+        std::sync::Arc::new(Selected(materialized.clone(), Some(reads.clone()))),
+        requirement.clone(),
+        facts_requirement.clone(),
+      )
+      .with_scoped_launch(),
+    );
+    let registry = FactoryNodeExecutorRegistry::new(vec![(
+      FlowNodeKind::BuildCommand,
+      intent.node().execution().clone(),
+      scoped.clone(),
+    )])
+    .unwrap();
+    assert_eq!(
+      scoped.observe(request()).await.unwrap(),
+      FactoryNodeExecutionStep::Waiting { execution: None },
+      "a scoped runner must not create a Build before its tool request"
+    );
+    assert!(validator.requests.lock().unwrap().is_empty());
+    assert_eq!(
+      serde_json::to_value(
+        registry
+          .scoped_validation(FactoryScopedValidationCall::Status, request())
+          .await
+          .unwrap()
+      )
+      .unwrap(),
+      serde_json::json!({"status":"waiting"}),
+    );
+    assert_eq!(reads.load(std::sync::atomic::Ordering::Relaxed), 0);
+    let deadline = intent.node().deadline();
+    let expired_request = || FactoryNodeExecutionRequest {
+      observed_at: deadline,
+      ownership: FactoryClaimOwnership::new(
+        intent.node().owner().clone(),
+        FactoryClaim::new(
+          FactoryClaimFence::new(FactoryDigest::from_bytes([37; 32])),
+          deadline,
+          time(deadline.unix_millis() + 10),
+        )
+        .unwrap(),
+      ),
+      ..request()
+    };
+    assert_eq!(
+      serde_json::to_value(scoped.scoped_verdict(expired_request()).await.unwrap()).unwrap(),
+      serde_json::json!({"status":"stopped"}),
+    );
+    assert!(scoped.launch_scoped(expired_request(), caller).await.is_err());
+    assert!(validator.requests.lock().unwrap().is_empty());
     let installed = FactoryProtectedValidationAdapter::new(
       validator.clone(),
       std::sync::Arc::new(crate::factory_node_test_support::Outputs(Some(outputs.clone()))),
-      std::sync::Arc::new(Selected(materialized.clone())),
+      std::sync::Arc::new(Selected(materialized.clone(), None)),
       requirement.clone(),
       facts_requirement.clone(),
     );
-    let FactoryNodeExecutionStep::Waiting {
-      execution: Some(accepted),
-    } = installed.observe(request()).await.unwrap()
-    else {
-      panic!("validator admission must retain execution before terminal verification");
-    };
-    assert_eq!(accepted.build_id(), validator.acceptance.build_id);
-    assert_eq!(accepted.attempt_id(), validator.acceptance.attempt_id);
+    assert!(installed.launch_scoped(request(), caller).await.is_err());
+    for _ in 0..2 {
+      registry
+        .scoped_validation(FactoryScopedValidationCall::Start(caller), request())
+        .await
+        .unwrap();
+    }
+    assert_eq!(
+      validator.scoped_callers.lock().unwrap().len(),
+      1,
+      "new dispatch must carry caller authority into ordinary Build acceptance"
+    );
+    let retained_caller = validator.scoped_callers.lock().unwrap()[0];
+    assert_eq!(
+      (retained_caller.lease, retained_caller.job_id, retained_caller.attempt),
+      (caller.lease, caller.job_id, caller.attempt)
+    );
     assert!(matches!(
       installed.observe(request()).await.unwrap(),
       FactoryNodeExecutionStep::Completed { .. }
     ));
+    assert_eq!(
+      scoped.observe(request()).await.unwrap(),
+      installed.observe(request()).await.unwrap(),
+      "both paths must recover the same independently verified Build result"
+    );
+    assert_eq!(
+      serde_json::to_value(scoped.scoped_verdict(request()).await.unwrap()).unwrap(),
+      serde_json::json!({"status":"verified","outcome":"passed", "classes":[{
+        "class":"project.custom", "outcome":"passed"
+      }]}),
+      "the Tester receives bounded class results without private inputs or artifact references"
+    );
     assert_eq!(validator.requests.lock().unwrap().len(), 1);
     let mut substituted = outputs.clone();
     let mut replayed = report.clone();
@@ -1089,8 +1315,8 @@ pub(crate) fn validation_fixture_with_flow(
     );
     let installed = FactoryProtectedValidationAdapter::new(
       validator.clone(),
-      std::sync::Arc::new(crate::factory_node_test_support::Outputs(Some(substituted))),
-      std::sync::Arc::new(Selected(materialized.clone())),
+      std::sync::Arc::new(crate::factory_node_test_support::Outputs(Some(substituted.clone()))),
+      std::sync::Arc::new(Selected(materialized.clone(), None)),
       requirement.clone(),
       facts_requirement.clone(),
     );
@@ -1098,6 +1324,15 @@ pub(crate) fn validation_fixture_with_flow(
       installed.observe(request()).await.is_err(),
       "a replayed command result must be rejected before the common owner can commit it"
     );
+    let scoped = FactoryProtectedValidationAdapter::new(
+      validator.clone(),
+      std::sync::Arc::new(crate::factory_node_test_support::Outputs(Some(substituted))),
+      std::sync::Arc::new(Selected(materialized.clone(), None)),
+      requirement.clone(),
+      facts_requirement.clone(),
+    )
+    .with_scoped_launch();
+    assert!(scoped.scoped_verdict(request()).await.is_err());
     let adapter = FactoryNodeBuildAdapter::new(
       validator.clone(),
       std::sync::Arc::new(crate::factory_node_test_support::Outputs(Some(outputs))),

@@ -850,6 +850,7 @@ struct CaptureProfile {
 #[serde(rename_all = "snake_case")]
 enum CodexExecutionMode {
   ProtectedTools,
+  ScopedValidation,
 }
 
 #[derive(Deserialize)]
@@ -1056,6 +1057,12 @@ impl FactoryRuntimeProfileCatalog {
         Ok((project.project_id, choices))
       })
       .collect::<Result<_, FactoryRuntimeInstallationError>>()?;
+    let scoped_profiles = file
+      .codex
+      .iter()
+      .filter(|profile| matches!(profile.execution_mode, Some(CodexExecutionMode::ScopedValidation)))
+      .map(|profile| (profile.toolchain.model.clone(), profile.build_configuration.clone()))
+      .collect::<Vec<_>>();
     let mut codex: Vec<FactoryCodexBuildProfile> = file
       .codex
       .into_iter()
@@ -1078,9 +1085,11 @@ impl FactoryRuntimeProfileCatalog {
         let consumer = match (profile.execution_mode, profile.credential_purpose, capture.is_some()) {
           (None, FactoryCredentialPurpose::Evaluator, false) => FactoryCredentialConsumer::ReadOnlyReview,
           (None, FactoryCredentialPurpose::Model, true) => FactoryCredentialConsumer::CodingNode,
-          (Some(CodexExecutionMode::ProtectedTools), FactoryCredentialPurpose::Model, false)
-            if profile.candidate_capture_tool.is_none() && profile.tool_response_limits.is_some() =>
-          {
+          (
+            Some(CodexExecutionMode::ProtectedTools | CodexExecutionMode::ScopedValidation),
+            FactoryCredentialPurpose::Model,
+            false,
+          ) if profile.candidate_capture_tool.is_none() && profile.tool_response_limits.is_some() => {
             FactoryCredentialConsumer::ToolReasoning
           }
           _ => return Err(Invalid),
@@ -1228,6 +1237,9 @@ impl FactoryRuntimeProfileCatalog {
       .collect::<Result<_, FactoryRuntimeInstallationError>>()?;
     for profile in &mut codex {
       if profile.consumer != FactoryCredentialConsumer::ToolReasoning {
+        continue;
+      }
+      if scoped_profiles.contains(&(profile.toolchain.model.clone(), profile.build_configuration.clone())) {
         continue;
       }
       let base = profile.base_task_digest();

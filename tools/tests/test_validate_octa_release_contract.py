@@ -111,6 +111,20 @@ class OctaReleaseContractTests(unittest.TestCase):
             with self.assertRaisesRegex(ValueError, "exceeds"):
                 VALIDATOR.validate(path)
 
+    def test_workspace_qualification_rejects_older_adapters_and_accepts_exact_extension(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            path = Path(temporary) / "compatibility.json"
+            document = VALIDATOR.expected_codex_compatibility("candidate")
+            document["plugin"]["capabilities"].append("codex.native-mcp-evidence.v1")
+            path.write_text(json.dumps(document))
+            with self.assertRaisesRegex(ValueError, "execution workspace capability"):
+                VALIDATOR.validate_codex_compatibility(path, "candidate", require_native_capture=True,
+                    require_execution_workspace=True)
+            document["plugin"]["capabilities"].append("codex.execution-workspace.v1")
+            path.write_text(json.dumps(document))
+            VALIDATOR.validate_codex_compatibility(path, "candidate", require_native_capture=True,
+                require_execution_workspace=True)
+
     def test_native_capture_qualification_requires_the_advertised_capability(self):
         with tempfile.TemporaryDirectory() as temporary:
             path = Path(temporary) / "codex-compatibility.json"

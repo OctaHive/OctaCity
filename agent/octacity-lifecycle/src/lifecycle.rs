@@ -294,7 +294,7 @@ impl FinishingAttempt<'_> {
 
   async fn finish_failure(
     &mut self,
-    failure: JobFailure,
+    mut failure: JobFailure,
   ) -> (
     JobCompletionStatus,
     Option<ResourceUsageSnapshot>,
@@ -310,6 +310,13 @@ impl FinishingAttempt<'_> {
       ?status,
       "job execution failed"
     );
+    if let Some(completion) = failure.take_post_run_completion() {
+      // The model consumed resources before trusted capture rejected the
+      // candidate. Retain its ordinary, bounded records for settlement, but
+      // keep the authoritative Job failure and never publish capture products.
+      let (_, usage, execution, results, cleanup) = self.finish_success(completion).await;
+      return (status, usage, execution, results, cleanup);
+    }
     let cleaning_recorded = record_cleaning(self.events, self.delivery_stop, &mut self.active.error).await;
     let cleanup = if cleaning_recorded {
       failure.cleanup().await.map_err(|error| error.to_string())

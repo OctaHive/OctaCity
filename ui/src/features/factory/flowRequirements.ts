@@ -114,11 +114,17 @@ export function mergePermissions(left: Permissions, right: Permissions): Permiss
   const union = <T>(a: T[], b: T[]) => [
     ...new Map([...a, ...b].map((item) => [JSON.stringify(item), item])).values(),
   ];
-  const refs = (a: Permissions['plugins'], b: Permissions['plugins']) => [
-    ...new Map(
-      [...a, ...b].map((item) => [`${item.identity}:${item.version}:${item.digest}`, item]),
-    ).values(),
-  ];
+  const refs = (a: Permissions['plugins'], b: Permissions['plugins']) => {
+    const result = new Map(
+      a.map((item) => [`${item.identity}:${item.version}:${item.digest}`, item]),
+    );
+    for (const item of b) {
+      const key = `${item.identity}:${item.version}:${item.digest}`;
+      // An already granted exact reference is unchanged, including its wire representation.
+      if (!result.has(key)) result.set(key, item);
+    }
+    return [...result.values()];
+  };
   let mounts = [...left.mounts];
   for (const mount of right.mounts) {
     if (mounts.some((allowed) => coversMount(allowed, mount))) continue;

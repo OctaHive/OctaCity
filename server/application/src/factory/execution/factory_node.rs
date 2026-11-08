@@ -111,9 +111,26 @@ pub enum FactoryNodeCancellationStep {
     usage: BudgetUsage,
   },
 }
+/// Internal operation on the runner bound to the current caller's Flow.
+pub enum FactoryScopedValidationCall {
+  /// Accept a Build using the current caller lease as additional dispatch authority.
+  Start(octacity_server_store::FactoryScopedBuildCaller),
+  /// Read the existing verified verdict without dispatching work.
+  Status,
+}
+
 /// Installed execution capabilities for closed primitive kinds, independent of phase names.
 #[async_trait]
 pub trait FactoryNodeExecutor: Send + Sync {
+  /// Starts or reads a runner that the admitted Flow binds to a current Tester lease.
+  async fn scoped_validation(
+    &self,
+    _action: FactoryScopedValidationCall,
+    _request: FactoryNodeExecutionRequest<'_>,
+  ) -> Result<crate::FactoryScopedValidationVerdict, ApplicationError> {
+    Err(ApplicationError::invalid())
+  }
+
   /// Stops or observes the existing operation without creating or replaying effects.
   /// The original accepted cancellation time is retained across owner replacement.
   async fn cancel(
@@ -215,8 +232,15 @@ impl<S: FactoryRunStore, E: FactoryNodeExecutor> FactoryNodeRunner<S, E> {
     self.profile_selectors = Some(selectors);
     self
   }
-  fn current_time(&self, at: Timestamp) -> Result<Timestamp, ApplicationError> {
+  pub(super) fn current_time(&self, at: Timestamp) -> Result<Timestamp, ApplicationError> {
     Ok(at.max(self.clock.now()?))
+  }
+  pub(super) async fn scoped_validation(
+    &self,
+    action: FactoryScopedValidationCall,
+    request: FactoryNodeExecutionRequest<'_>,
+  ) -> Result<crate::FactoryScopedValidationVerdict, ApplicationError> {
+    self.executor.scoped_validation(action, request).await
   }
   /// Prepares input only from immutable incoming data, Work or retained predecessor results.
   pub fn prepare_input(
@@ -410,6 +434,28 @@ impl<S: FactoryRunStore, E: FactoryNodeExecutor> FactoryNodeRunner<S, E> {
             program
               .record(frozen, attempt, definition, schema, at)
               .map_err(invalid)?,
+          ),
+          BudgetUsage::default(),
+        )
+      } else if node.kind() == FlowNodeKind::FanOut {
+        // A fork routes its already frozen payload; it has no external executor.
+        let [outcome] = node.outcomes() else {
+          return Err(ApplicationError::invalid());
+        };
+        (
+          Box::new(
+            FlowNodeRecord::new(
+              frozen,
+              attempt,
+              definition,
+              FlowRecordObservation {
+                outcome: outcome.key().clone(),
+                payload: frozen.payload().clone(),
+                producer: attempt.execution().clone(),
+                observed_at: at,
+              },
+            )
+            .map_err(invalid)?,
           ),
           BudgetUsage::default(),
         )
@@ -737,7 +783,7 @@ impl<S: FactoryRunStore, E: FactoryNodeExecutor> FactoryNodeRunner<S, E> {
     let pending = snapshot.flow.attempts.iter().find(|attempt| {
       !matches!(
         attempt.node_kind(),
-        FlowNodeKind::HumanGate | FlowNodeKind::SubflowCall | FlowNodeKind::DeterministicGate
+        FlowNodeKind::HumanGate | FlowNodeKind::SubflowCall | FlowNodeKind::DeterministicGate | FlowNodeKind::FanOut
       ) && !snapshot
         .flow
         .completions

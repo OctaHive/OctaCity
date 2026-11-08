@@ -41,7 +41,7 @@ pub(crate) fn for_profile(
       result_output_kind: compilation.result_output_kind,
       result_outcome: result_outcome.clone(),
       result_tool,
-      capture_write_paths: None,
+      capture_write_paths: compilation.capture_write_paths.clone(),
       capture_deliverables: None,
       evidence: compilation.evidence.clone(),
     };

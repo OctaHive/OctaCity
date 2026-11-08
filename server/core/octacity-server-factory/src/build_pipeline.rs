@@ -144,6 +144,8 @@ impl FactoryBuildPipelineContract {
 /// Safe compiler-owned selections; a preset supplies its own logical result outcome.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct FactoryBuildCompilationContract {
+  /// This installed compiler can expose the lease-bound validation tool to its caller.
+  pub scoped_validation: bool,
   /// Existing native task identity before an optional exact Role/Profile binding.
   pub task_digest: crate::FactoryDigest,
   /// Whether the native compiler binds this task to an exact Role/Profile reference.
@@ -156,6 +158,9 @@ pub struct FactoryBuildCompilationContract {
   pub result_output_kind: crate::EvidenceOutputKind,
   /// Existing verifier required for captured MCP observations selected by a Profile.
   pub mcp_result_tool: Option<ImmutableReference>,
+  /// Exact installed trusted capture scope, selected with a writable Coding profile.
+  /// This metadata grants no source access independently of the step permissions.
+  pub capture_write_paths: Option<Vec<crate::FactoryRepositoryPath>>,
   /// Additional outputs required by this native compiler.
   pub evidence: Vec<crate::EvidenceRequirement>,
 }

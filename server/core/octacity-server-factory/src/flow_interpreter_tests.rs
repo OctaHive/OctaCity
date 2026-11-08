@@ -1317,6 +1317,80 @@ fn every_ready_fanout_sibling_remains_visible_without_reserving_existing_work_ag
 }
 
 #[test]
+fn scoped_runner_cannot_take_the_first_reconciliation_turn_from_its_caller() {
+  let output = schema("fanout.output");
+  let project = crate::flow_test_support::work().subject().project_id();
+  let mut build = crate::flow_test_support::binding(project);
+  build.result_outcome = key("accepted");
+  let checks = node(
+    "checks",
+    FlowNodeKind::BuildCommand,
+    Some(output.clone()),
+    output.clone(),
+    None,
+    100,
+  )
+  .with_build(build)
+  .unwrap();
+  let tester = node("tester", FlowNodeKind::Reasoning, None, output.clone(), None, 100)
+    .with_scoped_validation_runner(key("checks"))
+    .unwrap();
+  let root = definition(
+    9904,
+    vec![
+      node("split", FlowNodeKind::FanOut, None, output.clone(), None, 100),
+      checks,
+      tester,
+    ],
+    vec![
+      FlowTransition::new(key("split"), key("accepted"), FlowTransitionTarget::Node(key("checks"))),
+      FlowTransition::new(key("split"), key("accepted"), FlowTransitionTarget::Node(key("tester"))),
+      terminal_route("checks", "done"),
+      terminal_route("tester", "done"),
+    ],
+    vec![FlowTerminalDefinition::new(key("done"), output.clone())],
+    vec![FlowDataProjection::new(
+      key("split"),
+      key("accepted"),
+      key("checks"),
+      output.clone(),
+    )],
+    2,
+    100,
+  )
+  .unwrap();
+  let validated = PinnedFlowDefinitionClosure::new(root.reference(), vec![root.clone()])
+    .unwrap()
+    .validate(limits(1, 10, 2, 2, 100))
+    .unwrap();
+  let flow = FlowRun::nested(
+    FlowRunId::generate(),
+    FactoryRunId::generate(),
+    root.reference(),
+    FlowRunParent::new(FlowRunId::generate(), NodeAttemptId::generate()),
+  );
+  let cycle = WorkflowCycle::initial(&flow).unwrap();
+  let split = attempt(9905, 1, &flow, &cycle, &root, "split", 100);
+  let completed = completion(&split, &root, &output, BudgetUsage::default());
+  let history = FlowRuntimeHistory {
+    stops: &[],
+    flow_runs: std::slice::from_ref(&flow),
+    cycles: std::slice::from_ref(&cycle),
+    attempts: std::slice::from_ref(&split),
+    completions: std::slice::from_ref(&completed),
+  };
+  let interpreter = FlowInterpreter::new(&validated);
+  assert_eq!(
+    interpreter.ready_nodes(&flow, &cycle, history).unwrap(),
+    std::collections::BTreeSet::from([key("checks"), key("tester")])
+  );
+  assert_eq!(
+    interpreter.progress(&flow, &cycle, history).unwrap(),
+    crate::FlowProgress::Node(key("tester"))
+  );
+}
+
+#[test]
 fn shared_exhaustion_gate_reads_only_the_attempt_that_entered_it() {
   use crate::{
     AdmittedFlow, FlowDataMapping, FlowDataSchema, FlowInputBinding, FlowInputPreparation, FlowNodeInput,

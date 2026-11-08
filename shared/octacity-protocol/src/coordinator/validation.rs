@@ -140,6 +140,29 @@ impl AuthorizeToolActionResponse {
   }
 }
 
+impl ScopedValidationRequest {
+  /// Validates the lease and correlation metadata before authorization.
+  pub fn validate(&self) -> Result<(), CoordinatorProtocolError> {
+    request(self.protocol_version, &self.request_id)?;
+    identifier("registration_id", &self.registration_id)?;
+    self.lease.validate()
+  }
+}
+
+impl ScopedValidationResponse {
+  /// Verifies response correlation and bounds the projected class results.
+  pub fn validate(&self, expected_request_id: &str) -> Result<(), CoordinatorProtocolError> {
+    response(self.protocol_version, &self.request_id, expected_request_id)?;
+    if let ScopedValidationVerdict::Verified { classes, .. } = &self.verdict {
+      bounded_len("validation classes", classes.len())?;
+      for class in classes {
+        identifier("validation class", &class.class)?;
+      }
+    }
+    Ok(())
+  }
+}
+
 impl FactoryExecutionCapabilityV3 {
   fn validate(&self, inventory: &AgentInventory) -> Result<(), CoordinatorProtocolError> {
     self.execution.validate().map_err(CoordinatorProtocolError::new)?;

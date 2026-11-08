@@ -195,6 +195,7 @@ pub(crate) struct Builds {
   pub(crate) origin_override: Mutex<Option<octacity_server_store::BuildOrigin>>,
   pub(crate) created_at: octacity_server_domain::Timestamp,
   pub(crate) requests: Mutex<Vec<CreateFactoryBuild>>,
+  pub(crate) scoped_callers: Mutex<Vec<octacity_server_store::FactoryScopedBuildCaller>>,
   pub(crate) acceptance: FactoryBuildAcceptance,
   pub(crate) state: Mutex<BuildState>,
   pub(crate) latest: Mutex<Option<AttemptRecord>>,
@@ -210,6 +211,7 @@ impl Builds {
       origin_override: Mutex::new(None),
       created_at,
       requests: Mutex::new(vec![]),
+      scoped_callers: Mutex::new(vec![]),
       acceptance: FactoryBuildAcceptance {
         build_id: octacity_server_domain::BuildId::generate(),
         attempt_id: octacity_server_domain::AttemptId::generate(),
@@ -248,6 +250,14 @@ impl OrdinaryBuildApplication for Builds {
       return Err(OrdinaryBuildApplicationError::Unavailable);
     }
     Ok(self.acceptance.clone())
+  }
+  async fn create_scoped_factory_build(
+    &self,
+    request: CreateFactoryBuild,
+    caller: octacity_server_store::FactoryScopedBuildCaller,
+  ) -> Result<FactoryBuildAcceptance, OrdinaryBuildApplicationError> {
+    self.scoped_callers.lock().unwrap().push(caller);
+    self.create_factory_build(request).await
   }
 }
 

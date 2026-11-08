@@ -19,14 +19,15 @@ use octacity_protocol::{
   AuthorizeToolActionRequest, AuthorizeToolActionResponse, COORDINATOR_PROTOCOL_VERSION, CompleteLeaseRequest,
   CompleteLeaseResponse, CoordinatorErrorResponse, HeartbeatDirective, HeartbeatRequest, HeartbeatResponse,
   LeaseAssignment, MAX_AGENT_TELEMETRY_REQUEST_BYTES, RegisterAgentRequest, RegisterAgentResponse,
+  ScopedValidationRequest, ScopedValidationResponse,
 };
 use octacity_server_application::{
   AcquireAgentLeaseInput, AgentArtifactError, AgentArtifactTransferUseCases, AgentCacheSessionUseCases,
   AgentExecutionError, AgentExecutionUseCases, AgentHeartbeatError, AgentHeartbeatInput, AgentHeartbeatUseCases,
   AgentLeaseError, AgentLeaseOutcome, AgentLeaseUseCases, AgentRegistrationError, AgentRegistrationInput,
-  AgentRegistrationUseCases, AgentToolActionError, AgentToolActionInput, AgentToolActionUseCases,
-  AppendAgentEventsInput, AuthorizeProtectedInputsInput, CompleteAgentLeaseInput, FailAgentLeaseAssignmentInput,
-  LeaseHeartbeatOutcome, Timestamp,
+  AgentRegistrationUseCases, AgentScopedValidationInput, AgentToolActionError, AgentToolActionInput,
+  AgentToolActionUseCases, AppendAgentEventsInput, AuthorizeProtectedInputsInput, CompleteAgentLeaseInput,
+  FailAgentLeaseAssignmentInput, LeaseHeartbeatOutcome, Timestamp,
 };
 
 mod artifact;
@@ -142,6 +143,7 @@ pub fn agent_router(dependencies: AgentRouterDependencies, config: AgentApiConfi
       "/api/v1/leases/{lease_id}/tool-actions:authorize",
       post(authorize_tool_action),
     )
+    .route("/api/v1/leases/{lease_id}/scoped-validation", post(scoped_validation))
     .route("/api/v1/leases/{lease_id}/complete", post(complete_lease))
     .route(
       "/api/v1/leases/{lease_id}/artifacts:begin",
@@ -203,6 +205,46 @@ async fn authorize_tool_action(
       Ok(response) => Json(response).into_response(),
       Err(_) => tool_action_error(&request_id, AgentToolActionError::Unavailable),
     },
+    Err(error) => tool_action_error(&request_id, error),
+  }
+}
+
+async fn scoped_validation(
+  State(state): State<AgentState>,
+  Path(lease_id): Path<String>,
+  request: Request<Body>,
+) -> Response {
+  let headers = request.headers().clone();
+  let parsed = match Json::<ScopedValidationRequest>::from_request(request, &()).await {
+    Ok(Json(request)) => request,
+    Err(rejection) => return rejection_response(rejection),
+  };
+  let request_id = parsed.request_id.clone();
+  let (credential, observed_at_unix_ms) = match operation_context(&headers, &request_id) {
+    Ok(context) => context,
+    Err(error) => return operation_context_error(&request_id, error),
+  };
+  if parsed.validate().is_err() || parsed.lease.lease_id != lease_id {
+    return tool_action_error(&request_id, AgentToolActionError::InvalidRequest);
+  }
+  let Some(tool_actions) = state.tool_actions.as_ref() else {
+    return tool_action_error(&request_id, AgentToolActionError::Unavailable);
+  };
+  match tool_actions
+    .scoped_validation(AgentScopedValidationInput {
+      route_lease_id: lease_id,
+      request: parsed,
+      credential,
+      observed_at_unix_ms,
+    })
+    .await
+  {
+    Ok(verdict) => Json(ScopedValidationResponse {
+      protocol_version: COORDINATOR_PROTOCOL_VERSION,
+      request_id,
+      verdict: verdict.into(),
+    })
+    .into_response(),
     Err(error) => tool_action_error(&request_id, error),
   }
 }

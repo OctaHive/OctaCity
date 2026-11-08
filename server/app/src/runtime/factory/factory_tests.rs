@@ -2081,6 +2081,29 @@ async fn protected_tool_native_composition_does_not_require_candidate_reconstruc
 }
 
 #[tokio::test]
+async fn deployment_scoped_tester_installs_without_a_signal_connector() {
+  let mut profile = qualified_tool_reasoning_profile();
+  profile.tool_risk = None;
+  let mut document = codex_catalog_document(&profile);
+  document["codex"][0]["credential_purpose"] = serde_json::json!("model");
+  document["codex"][0]["execution_mode"] = serde_json::json!("scoped_validation");
+  document["codex"][0]["tool_response_limits"] = serde_json::json!(profile.tool_response_limits);
+  let parsed =
+    FactoryRuntimeProfileCatalog::parse_json_with_signal_providers(&serde_json::to_vec(&document).unwrap(), &[])
+      .expect("scoped validation uses the lease-bound Factory launcher without an external signal provider");
+  resources().codex_executor(parsed.codex.clone()).unwrap();
+  assert_eq!(parsed.codex[0].consumer, FactoryCredentialConsumer::ToolReasoning);
+  assert_eq!(parsed.codex[0].tool_risk, None);
+  assert!(
+    parsed.codex[0]
+      .pipeline_contract()
+      .compilation
+      .unwrap()
+      .scoped_validation
+  );
+}
+
+#[tokio::test]
 async fn deployment_protected_tools_selects_one_exact_installed_signal_policy() {
   let profile = qualified_tool_reasoning_profile();
   let mut signal = tool_risk_profile_fixture();
@@ -2166,6 +2189,74 @@ async fn deployment_protected_tools_selects_one_exact_installed_signal_policy() 
 #[path = "../../../../core/octacity-server-factory/src/flow_test_support.rs"]
 mod selection_fixtures;
 use octacity_server_factory as factory;
+
+#[tokio::test]
+async fn native_command_dispatch_preserves_scoped_runner_status() {
+  struct Verifier;
+  #[async_trait::async_trait]
+  impl FactoryNodeExecutor for Verifier {
+    async fn scoped_validation(
+      &self,
+      action: FactoryScopedValidationCall,
+      _: FactoryNodeExecutionRequest<'_>,
+    ) -> Result<FactoryScopedValidationVerdict, ApplicationError> {
+      assert!(matches!(action, FactoryScopedValidationCall::Status));
+      Ok(FactoryScopedValidationVerdict::Stopped)
+    }
+    async fn observe(&self, _: FactoryNodeExecutionRequest<'_>) -> Result<FactoryNodeExecutionStep, ApplicationError> {
+      panic!("status must not dispatch the installed command")
+    }
+    async fn cancel(
+      &self,
+      _: FactoryNodeExecutionRequest<'_>,
+      _: octacity_server_domain::Timestamp,
+    ) -> Result<FactoryNodeCancellationStep, ApplicationError> {
+      panic!("status must not cancel the installed command")
+    }
+  }
+  let work = selection_fixtures::work();
+  let profile = super::factory_command_runtime_tests::command_profile(work.subject().project_id());
+  let mut binding = selection_fixtures::binding(work.subject().project_id());
+  binding.tool = profile.executor.clone();
+  binding.task_digest = profile.task_digest();
+  let (_, admitted, _, input, node) = selection_fixtures::execution_fixture_for_work_with_binding(
+    FlowNodeKind::BuildCommand,
+    work.clone(),
+    binding,
+    None,
+    None,
+  );
+  let intent = FlowBuildIntent::new(input, &admitted, node, BudgetUsage::default(), 7).unwrap();
+  let mut commands = super::factory_command_runtime::FileCommandExecutors::default();
+  commands
+    .add(
+      &[profile],
+      (
+        FlowNodeKind::BuildCommand,
+        intent.node().execution().clone(),
+        Arc::new(Verifier),
+      ),
+    )
+    .unwrap();
+  let registry = FactoryNodeExecutorRegistry::new(commands.bindings().collect()).unwrap();
+  let verdict = registry
+    .scoped_validation(
+      FactoryScopedValidationCall::Status,
+      FactoryNodeExecutionRequest {
+        run_id: intent.input().factory_run_id(),
+        admitted: &admitted,
+        work: &work,
+        input: intent.input(),
+        attempt: intent.node(),
+        build: Some(&intent),
+        ownership: FactoryClaimOwnership::new(intent.node().owner().clone(), intent.node().claim()),
+        observed_at: intent.node().started_at(),
+      },
+    )
+    .await
+    .unwrap();
+  assert_eq!(verdict, FactoryScopedValidationVerdict::Stopped);
+}
 
 #[tokio::test]
 async fn native_codex_selection_keeps_readonly_and_capture_profiles_separate_under_one_cli() {

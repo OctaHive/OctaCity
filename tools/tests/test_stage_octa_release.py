@@ -38,7 +38,7 @@ class _Response(io.BytesIO):
         self.close()
 
 
-def _release_tar(version: str, revision: str, platform: str, *, native_capture: bool = True) -> bytes:
+def _release_tar(version: str, revision: str, platform: str, *, native_capture: bool = True, execution_workspace: bool = True) -> bytes:
     payload = io.BytesIO()
     files = {
         "octa-runner-capabilities.json": {
@@ -53,6 +53,8 @@ def _release_tar(version: str, revision: str, platform: str, *, native_capture: 
     }
     if native_capture:
         files["codex-compatibility.json"]["plugin"]["capabilities"].append("codex.native-mcp-evidence.v1")
+    if execution_workspace:
+        files["codex-compatibility.json"]["plugin"]["capabilities"].append("codex.execution-workspace.v1")
     with tarfile.open(fileobj=payload, mode="w:gz") as archive:
         for name, document in files.items():
             contents = json.dumps(document).encode()
@@ -63,6 +65,23 @@ def _release_tar(version: str, revision: str, platform: str, *, native_capture: 
 
 
 class StageOctaReleaseTests(unittest.TestCase):
+    def test_stage_requires_released_workspace_capability_before_publishing(self):
+        version, revision = "0.9.0", "a" * 40
+        asset = "octa-Linux-amd64.tar.gz"
+        for workspace in (True, False):
+            archive = _release_tar(version, revision, "linux-x86_64", execution_workspace=workspace)
+            checksum = f"{STAGE.hashlib.sha256(archive).hexdigest()}  {asset}\n".encode()
+            with self.subTest(workspace=workspace), tempfile.TemporaryDirectory() as temporary, mock.patch.object(
+                STAGE, "download_release_assets", return_value={asset: archive, f"{asset}.sha256": checksum}
+            ):
+                destination = Path(temporary) / "release"
+                if workspace:
+                    self.assertEqual(STAGE.stage(version, "linux-amd64", revision, destination), destination.resolve())
+                else:
+                    with self.assertRaisesRegex(ValueError, "execution workspace capability"):
+                        STAGE.stage(version, "linux-amd64", revision, destination)
+                    self.assertFalse(destination.exists())
+
     def test_stage_rejects_missing_native_capture_without_publishing(self):
         version, revision = "0.8.0", "a" * 40
         asset = "octa-Linux-amd64.tar.gz"
@@ -162,7 +181,7 @@ class StageOctaReleaseTests(unittest.TestCase):
         asset = "octa-Linux-amd64.tar.gz"
         archive = io.BytesIO()
         compatibility = STAGE.release_contract.expected_codex_compatibility(version)
-        compatibility["plugin"]["capabilities"].append("codex.native-mcp-evidence.v1")
+        compatibility["plugin"]["capabilities"].extend(["codex.native-mcp-evidence.v1", "codex.execution-workspace.v1"])
         compatibility["executable"]["supported_versions"] = ["9.9.9"]
         files = {
             "octa-runner-capabilities.json": {

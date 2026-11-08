@@ -159,6 +159,7 @@ pub struct FactoryNodeBuildAdapter<B, O> {
   builds: Arc<B>,
   outputs: Arc<O>,
   action_input: Option<serde_json::Value>,
+  accepted_build: Option<FactoryBuildAcceptance>,
 }
 impl<B, O> FactoryNodeBuildAdapter<B, O>
 where
@@ -172,7 +173,13 @@ where
       builds,
       outputs,
       action_input: None,
+      accepted_build: None,
     }
+  }
+  /// Observe an acceptance read by operation from the ordinary Build owner.
+  pub(crate) fn with_accepted_build(mut self, accepted: FactoryBuildAcceptance) -> Self {
+    self.accepted_build = Some(accepted);
+    self
   }
   // Installed capabilities derive this bounded document from the frozen owner
   // request. The common adapter does not interpret business policy or Flow names.
@@ -189,6 +196,7 @@ where
       builds: self.builds.clone(),
       outputs: self.outputs.clone(),
       action_input: Some(input),
+      accepted_build: self.accepted_build.clone(),
     })
   }
   /// Dispatches or observes the stable operation under current fenced ownership.
@@ -217,8 +225,13 @@ where
       return Err(ApplicationError::invalid());
     }
     request.causality.action_input = self.action_input.clone();
-    let Some(observation) = observe_build(self.builds.as_ref(), request, intent.node(), ownership.clone(), at).await?
-    else {
+    let observation = if let Some(accepted) = &self.accepted_build {
+      intent.node().verify_observer(&ownership, at).map_err(invalid)?;
+      Some(observe_accepted_build(self.builds.as_ref(), &request, accepted.clone(), at).await?)
+    } else {
+      observe_build(self.builds.as_ref(), request, intent.node(), ownership.clone(), at).await?
+    };
+    let Some(observation) = observation else {
       return Ok(FactoryNodeBuildStep::DispatchExpired);
     };
     match observation {

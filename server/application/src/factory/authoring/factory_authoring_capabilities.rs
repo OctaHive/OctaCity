@@ -153,6 +153,12 @@ pub struct FactoryAuthoringCapabilities {
   /// Visible installed authors that can freeze supplemental verification inputs.
   #[serde(skip_serializing_if = "Vec::is_empty")]
   pub verification_authors: Vec<FactoryVerificationAuthorChoice>,
+  /// Exact installed model identities supporting the lease-bound validation tool.
+  #[serde(skip_serializing_if = "Vec::is_empty")]
+  pub scoped_validation_profiles: Vec<ImmutableReference>,
+  /// Exact installed commands that verify a frozen protected test inventory.
+  #[serde(skip_serializing_if = "Vec::is_empty")]
+  pub verification_runners: Vec<ImmutableReference>,
   /// Visible installed publication targets, independent of previously published Flows.
   #[serde(skip_serializing_if = "Vec::is_empty")]
   pub candidate_publications: Vec<FactoryCandidatePublicationChoice>,
@@ -254,54 +260,79 @@ impl<S: FactoryConfigurationStore> ManagementQueryUseCase<GetFactoryAuthoringCap
         resource_modes: vec!["none"],
       });
     }
-    let (commands, verification_authors, candidate_publications, issue_classification) =
-      match crate::factory::authoring::factory_configuration_choices::visible_installed_factory_choices(
-        self.store.as_ref(),
-        self.policy.as_ref(),
-        context,
-        query.project_id,
-      )
-      .await
-      {
-        Ok(choices) => {
-          let entries = choices.entries();
-          let publications = choices
-            .candidate_publications()
-            .iter()
-            .filter(|choice| {
-              choice.receipt_schema.as_ref().is_some_and(|schema| {
-                crate::factory::artifacts::factory_candidate_publication::publication_receipt_is_compatible(
-                  schema,
-                  choice.review_url,
-                )
-              }) && super::factory_configuration_choices::permissions_selectable(
-                &choice.permissions,
-                &entries.references,
+    let (
+      commands,
+      verification_authors,
+      scoped_validation_profiles,
+      verification_runners,
+      candidate_publications,
+      issue_classification,
+    ) = match crate::factory::authoring::factory_configuration_choices::visible_installed_factory_choices(
+      self.store.as_ref(),
+      self.policy.as_ref(),
+      context,
+      query.project_id,
+    )
+    .await
+    {
+      Ok(choices) => {
+        let entries = choices.entries();
+        let publications = choices
+          .candidate_publications()
+          .iter()
+          .filter(|choice| {
+            choice.receipt_schema.as_ref().is_some_and(|schema| {
+              crate::factory::artifacts::factory_candidate_publication::publication_receipt_is_compatible(
+                schema,
+                choice.review_url,
+              )
+            }) && super::factory_configuration_choices::permissions_selectable(&choice.permissions, &entries.references)
+          })
+          .cloned()
+          .collect();
+        let classification = crate::factory::reporting::factory_issue_classification_authoring::current_choices(
+          &choices,
+          self.issue_properties.as_deref(),
+          self.policy.as_ref(),
+          context,
+          query.project_id,
+        )
+        .await?;
+        (
+          command_contracts(&choices),
+          verification_authors(&choices),
+          choices
+            .unambiguous_build_pipeline_contracts()
+            .filter(|contract| {
+              contract
+                .compilation
+                .as_ref()
+                .is_some_and(|compiler| compiler.scoped_validation)
+            })
+            .map(|contract| contract.model_or_tool.clone())
+            .collect(),
+          choices
+            .unambiguous_build_pipeline_contracts()
+            .filter(|contract| {
+              matches!(
+                contract.protected_tests,
+                Some(FactoryProtectedTestBuildContract::Verifier { .. })
               )
             })
-            .cloned()
-            .collect();
-          let classification = crate::factory::reporting::factory_issue_classification_authoring::current_choices(
-            &choices,
-            self.issue_properties.as_deref(),
-            self.policy.as_ref(),
-            context,
-            query.project_id,
-          )
-          .await?;
-          (
-            command_contracts(&choices),
-            verification_authors(&choices),
-            publications,
-            classification,
-          )
-        }
-        Err(ApplicationError::CapabilityUnavailable) => (vec![], vec![], vec![], None),
-        Err(error) => return Err(error),
-      };
+            .map(|contract| contract.model_or_tool.clone())
+            .collect(),
+          publications,
+          classification,
+        )
+      }
+      Err(ApplicationError::CapabilityUnavailable) => (vec![], vec![], vec![], vec![], vec![], None),
+      Err(error) => return Err(error),
+    };
     Ok(FactoryAuthoringCapabilities {
       commands,
       verification_authors,
+      scoped_validation_profiles,
+      verification_runners,
       candidate_publications,
       issue_classification,
       deterministic_gate: FactoryDeterministicGateContract {

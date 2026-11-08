@@ -22,7 +22,24 @@ impl FactoryBuildAcceptanceStore for PostgresAuthoritativeStore {
   async fn accept_factory_build(&self, request: AcceptFactoryBuild) -> Result<AcceptedFactoryBuild, StoreError> {
     crate::telemetry::observe(
       Operation::Accept,
-      crate::factory::execution::accept_factory_build::accept(&self.store.pool, &self.job_spec_signer, request),
+      crate::factory::execution::accept_factory_build::accept(&self.store.pool, &self.job_spec_signer, request, None),
+    )
+    .await
+  }
+
+  async fn accept_scoped_factory_build(
+    &self,
+    request: AcceptFactoryBuild,
+    caller: FactoryScopedBuildCaller,
+  ) -> Result<AcceptedFactoryBuild, StoreError> {
+    crate::telemetry::observe(
+      Operation::Accept,
+      crate::factory::execution::accept_factory_build::accept(
+        &self.store.pool,
+        &self.job_spec_signer,
+        request,
+        Some(caller),
+      ),
     )
     .await
   }

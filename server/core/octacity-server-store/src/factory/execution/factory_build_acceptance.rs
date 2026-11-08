@@ -1,8 +1,8 @@
 //! Atomic ordinary Build admission for a persisted common node operation.
 
-use crate::{ImmutableBuildInput, MaterializedJob, StoreError, StoreInputError, StoreOperation};
+use crate::{ImmutableBuildInput, LeaseAccess, MaterializedJob, StoreError, StoreInputError, StoreOperation};
 use async_trait::async_trait;
-use octacity_server_domain::{AttemptId, BuildId, JobId, Timestamp};
+use octacity_server_domain::{AttemptId, AttemptNumber, BuildId, JobId, Timestamp};
 use octacity_server_factory::{FactoryClaimOwnership, FactoryDigest, FlowBuildIntent};
 
 /// Absolute bound for one managed Build DAG and its retained ordinary observations.
@@ -138,6 +138,17 @@ pub struct AcceptedFactoryBuild {
   pub effective_policy_digest: FactoryDigest,
 }
 
+/// Ordinary Job lease that must remain current when a scoped runner is accepted.
+#[derive(Clone, Copy)]
+pub struct FactoryScopedBuildCaller {
+  /// Exact lease, registration epoch and fence.
+  pub lease: LeaseAccess,
+  /// Job that owns the configured caller node.
+  pub job_id: JobId,
+  /// Current ordinary attempt of the caller Build.
+  pub attempt: AttemptNumber,
+}
+
 /// Fenced atomic acceptance using the ordinary Build/Attempt/Job machinery.
 #[async_trait]
 pub trait FactoryBuildAcceptanceStore: Send + Sync {
@@ -150,6 +161,16 @@ pub trait FactoryBuildAcceptanceStore: Send + Sync {
   /// New dispatch must verify the exact persisted intent, current claim and
   /// cancellation under the same transaction. Identical replay creates no work.
   async fn accept_factory_build(&self, request: AcceptFactoryBuild) -> Result<AcceptedFactoryBuild, StoreError>;
+
+  /// Accepts the same ordinary Build with the caller lease and Flow binding checked
+  /// in the acceptance transaction. A replay still requires current caller authority.
+  async fn accept_scoped_factory_build(
+    &self,
+    _request: AcceptFactoryBuild,
+    _caller: FactoryScopedBuildCaller,
+  ) -> Result<AcceptedFactoryBuild, StoreError> {
+    Err(StoreError::Unavailable)
+  }
 }
 
 /// Current authority and stable original operation for ordinary cancellation.

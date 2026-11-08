@@ -1,6 +1,7 @@
 //! Bounded configuration-driven graph ownership over the common node executor.
 use crate::*;
 use async_trait::async_trait;
+use octacity_protocol::ScopedValidationAction;
 use octacity_server_domain::Timestamp;
 use octacity_server_factory::*;
 use octacity_server_store::*;
@@ -24,6 +25,58 @@ pub struct FactoryFlowRunner<S, E, I: ?Sized> {
   nodes: FactoryNodeRunner<S, E>,
   inputs: Arc<I>,
 }
+
+/// Resolves the Tester Job to its exact admitted Flow and invokes its bound runner.
+pub struct FactoryScopedValidationService<S, E, I: ?Sized> {
+  flow: Arc<FactoryFlowRunner<S, E, I>>,
+  builds: Arc<dyn BuildQueryStore>,
+  leases: Arc<dyn JobExecutionStore>,
+}
+
+impl<S, E, I: ?Sized> FactoryScopedValidationService<S, E, I> {
+  /// Connects ordinary Build queries to the existing Flow owner.
+  pub fn new(
+    flow: Arc<FactoryFlowRunner<S, E, I>>,
+    builds: Arc<dyn BuildQueryStore>,
+    leases: Arc<dyn JobExecutionStore>,
+  ) -> Self {
+    Self { flow, builds, leases }
+  }
+}
+
+#[async_trait]
+impl<S, E, I> LeaseBoundScopedValidation for FactoryScopedValidationService<S, E, I>
+where
+  S: FactoryRunStore + FactoryPhasePoolStore,
+  E: FactoryNodeExecutor,
+  I: FactoryFlowInputPreparer + ?Sized,
+{
+  async fn run(
+    &self,
+    input: LeaseBoundScopedValidationInput,
+  ) -> Result<FactoryScopedValidationVerdict, AgentToolActionError> {
+    let job = self.builds.job(input.job_id).await?;
+    let attempt = self.builds.attempt(job.attempt_id).await?;
+    let build = self.builds.build(attempt.build_id).await?;
+    let BuildOrigin::Factory(origin) = build.origin else {
+      return Err(AgentToolActionError::InvalidRequest);
+    };
+    if attempt.number != input.attempt
+      || job.terminal.is_some()
+      || job
+        .assignment
+        .is_none_or(|assignment| assignment.agent_id != input.lease.agent_id)
+      || self.builds.latest_attempt(attempt.build_id).await?.id != attempt.id
+    {
+      return Err(AgentToolActionError::Fenced);
+    }
+    self
+      .flow
+      .invoke_scoped_validation(&origin, &input, self.leases.as_ref())
+      .await
+  }
+}
+
 impl<S: FactoryRunStore + FactoryPhasePoolStore, E: FactoryNodeExecutor, I: FactoryFlowInputPreparer + ?Sized>
   FactoryFlowRunner<S, E, I>
 {
@@ -45,6 +98,175 @@ impl<S: FactoryRunStore + FactoryPhasePoolStore, E: FactoryNodeExecutor, I: Fact
     self.nodes = self.nodes.with_profile_selectors(selectors);
     self
   }
+
+  async fn invoke_scoped_validation(
+    &self,
+    origin: &FactoryBuildOrigin,
+    caller: &LeaseBoundScopedValidationInput,
+    leases: &dyn JobExecutionStore,
+  ) -> Result<FactoryScopedValidationVerdict, AgentToolActionError> {
+    use AgentToolActionError::{Expired, InvalidRequest, Unavailable};
+    let at = self.nodes.current_time(caller.observed_at).map_err(|_| Unavailable)?;
+    let mut snapshot = self.store.factory_run_snapshot(origin.run_id).await?;
+    let target = scoped_validation_target(&snapshot, origin, at)?;
+    let find_runner = |snapshot: &FactoryRunSnapshot| {
+      snapshot
+        .flow
+        .attempts
+        .iter()
+        .filter(|node| {
+          node.flow_run_id() == target.flow_run_id
+            && node.workflow_cycle_id() == target.cycle_id
+            && node.node_key() == &target.node
+        })
+        .max_by_key(|node| node.number())
+        .map(NodeAttempt::id)
+    };
+    if find_runner(&snapshot).is_none() {
+      if caller.action == ScopedValidationAction::Status {
+        return Ok(FactoryScopedValidationVerdict::Waiting);
+      }
+      let claim = snapshot.current_claim.as_ref().ok_or(Unavailable)?.id;
+      let selected = self.inputs.prepare(&snapshot, &target).await.map_err(|_| Unavailable)?;
+      let at = self.nodes.current_time(at).map_err(|_| Unavailable)?;
+      leases
+        .authorize_tool_action_lease(caller.lease, caller.job_id, caller.attempt, at)
+        .await?;
+      self
+        .nodes
+        .run_once(origin.run_id, claim, target.clone(), Some(selected), at)
+        .await
+        .map_err(|_| Unavailable)?;
+      snapshot = self.store.factory_run_snapshot(origin.run_id).await?;
+    }
+    let at = self.nodes.current_time(at).map_err(|_| Unavailable)?;
+    if scoped_validation_target(&snapshot, origin, at)? != target {
+      return Err(InvalidRequest);
+    }
+    let id = find_runner(&snapshot).ok_or(Unavailable)?;
+    if snapshot.flow.data.stops.iter().any(|row| row.node_attempt_id() == id) {
+      return Ok(FactoryScopedValidationVerdict::Stopped);
+    }
+    let intent = snapshot
+      .flow
+      .data
+      .build_intents
+      .iter()
+      .find(|row| row.node().id() == id)
+      .ok_or(Unavailable)?;
+    let claim = snapshot.current_claim.as_ref().ok_or(Unavailable)?;
+    claim.claim.verify_fence(claim.claim.fence(), at).map_err(|_| Expired)?;
+    leases
+      .authorize_tool_action_lease(caller.lease, caller.job_id, caller.attempt, at)
+      .await?;
+    self
+      .nodes
+      .scoped_validation(
+        match caller.action {
+          ScopedValidationAction::Start => FactoryScopedValidationCall::Start(FactoryScopedBuildCaller {
+            lease: caller.lease,
+            job_id: caller.job_id,
+            attempt: caller.attempt,
+          }),
+          ScopedValidationAction::Status => FactoryScopedValidationCall::Status,
+        },
+        FactoryNodeExecutionRequest {
+          run_id: origin.run_id,
+          admitted: &snapshot.admitted_flow,
+          work: &snapshot.work,
+          input: intent.input(),
+          attempt: intent.node(),
+          build: Some(intent),
+          ownership: FactoryClaimOwnership::new(claim.owner.clone(), claim.claim),
+          observed_at: at,
+        },
+      )
+      .await
+      .map_err(|_| Unavailable)
+  }
+}
+
+fn scoped_validation_target(
+  snapshot: &FactoryRunSnapshot,
+  origin: &FactoryBuildOrigin,
+  at: Timestamp,
+) -> Result<FactoryNodeTarget, AgentToolActionError> {
+  use AgentToolActionError::{Expired, InvalidRequest};
+  let checkpoint = snapshot
+    .lifecycle_checkpoints
+    .iter()
+    .find(|row| row.id == snapshot.current.lifecycle_checkpoint_id)
+    .ok_or(InvalidRequest)?;
+  let caller = snapshot
+    .flow
+    .data
+    .build_intents
+    .iter()
+    .find(|intent| intent.node().id() == origin.node_attempt_id)
+    .filter(|intent| FactoryBuildOrigin::from_intent(intent).ok().as_ref() == Some(origin))
+    .ok_or(InvalidRequest)?;
+  let attempt = caller.node();
+  if checkpoint.cancellation_requested
+    || snapshot.run.state().is_terminal()
+    || !snapshot
+      .flow
+      .runtime()
+      .active_nodes()
+      .any(|row| row.id() == attempt.id())
+  {
+    return Err(InvalidRequest);
+  }
+  if at >= attempt.deadline() {
+    return Err(Expired);
+  }
+  let definition = snapshot
+    .admitted_flow
+    .closure()
+    .definition(caller.input().definition())
+    .ok_or(InvalidRequest)?;
+  let node = definition
+    .node(caller.input().node())
+    .and_then(FlowNodeDefinition::scoped_validation_runner)
+    .filter(|node| {
+      definition
+        .node(node)
+        .is_some_and(|runner| runner.phase_pool().is_none())
+    })
+    .ok_or(InvalidRequest)?;
+  let flow = snapshot
+    .flow
+    .runs
+    .iter()
+    .find(|row| row.id() == attempt.flow_run_id())
+    .ok_or(InvalidRequest)?;
+  let cycle = snapshot
+    .flow
+    .cycles
+    .iter()
+    .find(|row| row.id() == attempt.workflow_cycle_id() && row.flow_run_id() == flow.id())
+    .ok_or(InvalidRequest)?;
+  let history = snapshot.flow.runtime();
+  if !history.is_current_cycle(cycle.id()) {
+    return Err(InvalidRequest);
+  }
+  let validated = snapshot.admitted_flow.validated().map_err(|_| InvalidRequest)?;
+  let ready = FlowInterpreter::new(&validated)
+    .ready_nodes(flow, cycle, history)
+    .map_err(|_| InvalidRequest)?;
+  if !ready.contains(node)
+    && !snapshot
+      .flow
+      .attempts
+      .iter()
+      .any(|row| row.flow_run_id() == flow.id() && row.workflow_cycle_id() == cycle.id() && row.node_key() == node)
+  {
+    return Err(InvalidRequest);
+  }
+  Ok(FactoryNodeTarget {
+    flow_run_id: flow.id(),
+    cycle_id: cycle.id(),
+    node: node.clone(),
+  })
 }
 #[async_trait]
 impl<S: FactoryRunStore + FactoryPhasePoolStore, E: FactoryNodeExecutor, I: FactoryFlowInputPreparer + ?Sized>

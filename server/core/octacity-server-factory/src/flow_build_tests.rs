@@ -3,6 +3,90 @@ use crate::*;
 use crate::flow_test_support::*;
 
 #[test]
+fn scoped_validation_selects_only_a_distinct_runner_on_the_same_fanout() {
+  let (_, admitted, _, _, _) = execution_fixture(FlowNodeKind::BuildCommand);
+  let original = admitted.closure().definition(admitted.closure().root()).unwrap();
+  let runner = |key: &str, kind: &str| {
+    let mut node = serde_json::to_value(&original.nodes()[0]).unwrap();
+    node["key"] = serde_json::json!(key);
+    node["kind"] = serde_json::json!(kind);
+    if kind == "fan_out" {
+      node.as_object_mut().unwrap().remove("build");
+      node.as_object_mut().unwrap().remove("context_binding");
+      node.as_object_mut().unwrap().remove("input_binding");
+    }
+    serde_json::from_value::<FlowNodeDefinition>(node).unwrap()
+  };
+  let define = |runner_kind, target, serial, slots| {
+    let outcome = original.nodes()[0].build().unwrap().result_outcome.clone();
+    let branch = |from, to| FlowTransition::new(key(from), outcome.clone(), FlowTransitionTarget::Node(key(to)));
+    let finish = |node| FlowTransition::new(key(node), outcome.clone(), FlowTransitionTarget::Terminal(key("done")));
+    FlowDefinition::new(FlowDefinitionInput {
+      id: original.reference().id(),
+      version: original.reference().version(),
+      input_schema: original.input_schema().cloned(),
+      entry: key("review"),
+      nodes: vec![
+        runner("review", "fan_out"),
+        runner("tester", "reasoning").with_scoped_validation_runner(key(target))?,
+        runner("checks", runner_kind),
+      ],
+      transitions: vec![
+        branch("review", "tester"),
+        if serial {
+          branch("tester", "checks")
+        } else {
+          branch("review", "checks")
+        },
+        finish("checks"),
+        finish("tester"),
+      ],
+      terminals: vec![FlowTerminalDefinition::new(
+        key("done"),
+        original.terminals()[0].schema().clone(),
+      )],
+      context_projections: vec![],
+      data_projections: vec![],
+      execution: FlowExecutionPolicy::new(
+        original.execution().budget(),
+        original.execution().permissions().clone(),
+        slots,
+      )
+      .unwrap(),
+    })
+  };
+  let definition = define("build_command", "checks", false, 2).unwrap();
+  assert_eq!(
+    definition.node(&key("tester")).unwrap().scoped_validation_runner(),
+    Some(&key("checks"))
+  );
+  assert_eq!(
+    definition.scoped_validation_caller(&key("checks")),
+    Some(&key("tester"))
+  );
+  assert!(definition.scoped_validation_caller(&key("tester")).is_none());
+  for (kind, target, serial) in [
+    ("reasoning", "checks", false),
+    ("build_command", "missing", false),
+    ("build_command", "tester", false),
+    ("build_command", "checks", true),
+  ] {
+    assert!(matches!(
+      define(kind, target, serial, 2),
+      Err(FactoryError::InvalidConfiguration {
+        field: "Flow scoped validation runner"
+      })
+    ));
+  }
+  assert!(matches!(
+    define("build_command", "checks", false, 1),
+    Err(FactoryError::InvalidConfiguration {
+      field: "Flow scoped validation runner"
+    })
+  ));
+}
+
+#[test]
 fn retained_project_access_restricts_build_authority_and_survives_round_trip() {
   let work = work();
   let binding = binding(work.subject().project_id());

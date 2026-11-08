@@ -16,7 +16,7 @@ use octacity_protocol::{
   AuthorizeToolActionRequest, AuthorizeToolActionResponse, BeginCacheSessionRequest, BeginCacheSessionResponse,
   BeginOutputUploadRequest, BeginOutputUploadResponse, CompleteLeaseRequest, CompleteOutputUploadRequest,
   HeartbeatDirective, HostCapacity, HostSnapshot, IngestAgentTelemetryResponse, JobSpecError, LeaseAssignment,
-  RevokeCacheSessionRequest, VerifiedJobSpec,
+  RevokeCacheSessionRequest, ScopedValidationRequest, ScopedValidationResponse, VerifiedJobSpec,
 };
 use thiserror::Error;
 use tokio_util::sync::CancellationToken;
@@ -269,6 +269,17 @@ pub trait ToolActionCoordinator: Send + Sync {
     request: &AuthorizeToolActionRequest,
     cancellation: CancellationToken,
   ) -> Result<AuthorizeToolActionResponse, CoordinatorError>;
+
+  /// Starts or observes the protected runner selected for this Tester lease.
+  async fn scoped_validation(
+    &self,
+    _registration: &Registration,
+    _lease: &LeaseAssignment,
+    _request: &ScopedValidationRequest,
+    _cancellation: CancellationToken,
+  ) -> Result<ScopedValidationResponse, CoordinatorError> {
+    Err(invalid("scoped validation unavailable"))
+  }
 }
 
 /// Narrow coordinator interface used only by immutable output publication.

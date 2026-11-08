@@ -291,6 +291,31 @@ pub(crate) fn validate_verification_capabilities(
       .iter()
       .flat_map(|definition| definition.nodes().iter().map(move |node| (definition, node)))
   };
+  for (definition, caller) in nodes().filter(|(_, node)| node.scoped_validation_runner().is_some()) {
+    let callers = caller.build_bindings().collect::<Vec<_>>();
+    let runner = definition
+      .nodes()
+      .iter()
+      .find(|node| Some(node.key()) == caller.scoped_validation_runner());
+    let qualified = !callers.is_empty()
+      && callers.iter().all(|binding| {
+        choices
+          .build_pipeline_contract(binding)
+          .and_then(|contract| contract.compilation.as_ref())
+          .is_some_and(|compiler| compiler.scoped_validation)
+      })
+      && runner
+        .and_then(|runner| runner.build())
+        .and_then(|binding| choices.build_pipeline_contract(binding))
+        .is_some_and(|contract| matches!(contract.protected_tests, Some(Verifier { .. })));
+    if !qualified {
+      return Err(crate::FactoryValidationDiagnostics::unavailable_binding(
+        definition.reference(),
+        Some(caller.key()),
+        "/scoped_validation_runner",
+      ));
+    }
+  }
   let mut has_supplement = false;
   for (definition, node) in nodes().filter(|(_, node)| node.protected_verification().is_some()) {
     has_supplement = true;

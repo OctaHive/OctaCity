@@ -1,6 +1,10 @@
 //! Private transports for authorizing and executing a rooted read.
 use serde::{Deserialize, Serialize};
 
+/// Per-execution guest entrypoint for the explicitly configured scoped MCP server.
+/// The Agent binds it to its verified immutable helper before starting the workload.
+pub const FACTORY_SCOPED_BRIDGE_PATH: &str = "/workspace/scratch/.octacity/scoped-bridge";
+
 /// Versioned private Agent channel request. Authorization checks return no file
 /// bytes and consume no response allocation. Reading always obtains fresh
 /// lease-bound authorization; this request never carries a reusable permission.
@@ -23,6 +27,27 @@ pub enum ProtectedReadChannelOperationV1 {
   Authorize,
   /// Revalidate authority and execute one bounded physical read.
   Read,
+}
+
+/// Private request to the active Job's scoped verification tool.
+/// The host supplies all registration and lease information.
+#[derive(Clone, Deserialize, Serialize)]
+#[serde(deny_unknown_fields)]
+pub struct ScopedValidationChannelRequestV1 {
+  /// Exact private channel version, currently 1.
+  pub schema_version: u16,
+  /// Private channel operation selector.
+  pub operation: ScopedValidationChannelOperationV1,
+  /// Start or status for the one admitted runner.
+  pub action: crate::ScopedValidationAction,
+}
+
+/// Operation discriminator shared by the trusted host and the guest tool.
+#[derive(Clone, Copy, Deserialize, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum ScopedValidationChannelOperationV1 {
+  /// Invoke or observe the one scoped verification runner.
+  ScopedValidation,
 }
 
 /// Frame ceiling covering a maximally escaped portable path and fixed fields.

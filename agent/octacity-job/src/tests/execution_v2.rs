@@ -917,7 +917,7 @@ async fn source_free_job_preserves_absent_source_authority_through_the_backend_r
 #[tokio::test]
 async fn explicit_source_free_job_runs_with_selected_inputs_without_source_lookup_or_checkout() {
   let (completion, _, _root) =
-    captured_factory_job_with_observation(None, false, &[], None, FixtureSource::Absent, false).await;
+    captured_factory_job_with_observation(None, false, &[], None, FixtureSource::Absent, false, false).await;
   let completion = completion.expect("explicit source-free execution must not need a bootstrap repository");
   assert!(completion.source().is_none());
   assert!(completion.change_set().is_none());
@@ -1488,6 +1488,7 @@ async fn captured_factory_job_with_visibility(
       FixtureSource::HiddenLegacy
     },
     false,
+    false,
   )
   .await
 }
@@ -1506,6 +1507,7 @@ async fn captured_factory_job_with_observation(
   source_write_paths: Option<&[&str]>,
   source_mode: FixtureSource,
   observation: bool,
+  reject_capture: bool,
 ) -> (Result<JobCompletion, JobFailure>, Arc<AtomicBool>, tempfile::TempDir) {
   use sha2::Digest as _;
   use std::time::SystemTime;
@@ -1671,6 +1673,7 @@ async fn captured_factory_job_with_observation(
   let executor = executor
     .with_protected_input_stager(stager)
     .with_change_set_capturer(Arc::new(FakeChangeSetCapturer {
+      reject: reject_capture,
       observation: observation.then(|| octacity_changeset::CaptureObservationContext {
         input_digest: DIGEST.to_owned(),
         fresh_until_unix_ms: spec.execution_deadline_unix_ms,
@@ -1874,6 +1877,7 @@ async fn rejects_requested_change_set_materialization_before_source_when_unconfi
 }
 
 struct FakeChangeSetCapturer {
+  reject: bool,
   observation: Option<octacity_changeset::CaptureObservationContext>,
   called: Arc<AtomicBool>,
   starts: Arc<AtomicUsize>,
@@ -1909,6 +1913,11 @@ impl ChangeSetCapturer for FakeChangeSetCapturer {
           return Err(CaptureError::Cancelled);
         }
       }
+    }
+    if self.reject {
+      return Err(CaptureError::Policy(
+        octacity_changeset::CapturePolicyViolation::BaseMismatch,
+      ));
     }
     let bundle = CapturedFile {
       name: "change-set.bundle".to_owned(),
@@ -2380,10 +2389,32 @@ async fn explicit_tool_execution_owner_is_bound_before_any_input_source_or_crede
 #[tokio::test]
 async fn managed_capture_binds_observations_to_signed_input_and_original_deadline() {
   let (completion, _, _root) =
-    captured_factory_job_with_observation(None, false, &[], None, FixtureSource::Visible, true).await;
+    captured_factory_job_with_observation(None, false, &[], None, FixtureSource::Visible, true, false).await;
   completion
     .expect("an opted-in capture can retain its independently signed observation context")
     .cleanup()
     .await
     .unwrap();
+}
+
+#[tokio::test]
+async fn capture_rejection_keeps_completed_runner_accounting_without_a_candidate() {
+  let (completion, _, _root) =
+    captured_factory_job_with_observation(None, false, &[], None, FixtureSource::Visible, false, true).await;
+  let mut failure = completion.expect_err("trusted capture rejection fails the Job");
+  assert!(matches!(failure.error(), JobError::ChangeSetCapture(_)));
+  let completed = failure
+    .take_post_run_completion()
+    .expect("completed runner evidence remains settleable");
+  assert_eq!(completed.runner().status, RunStatus::Succeeded);
+  assert!(
+    completed.change_set().is_none(),
+    "rejected candidate is never publishable"
+  );
+  assert!(
+    failure.take_post_run_completion().is_none(),
+    "cleanup ownership transfers once"
+  );
+  completed.cleanup().await.unwrap();
+  failure.cleanup().await.unwrap();
 }

@@ -1115,6 +1115,32 @@ fn native_capture_preserves_multiline_mcp_results() {
   assert_eq!(observed.status(), FactoryCodexObservationStatus::Succeeded);
 }
 
+#[test]
+fn native_capture_preserves_json_encoded_control_bytes_in_tool_results() {
+  // NUL-delimited paths and terminal colour sequences are ordinary command data.
+  // JSON framing, exact capture integrity and sensitive-field checks still apply.
+  let fixture = native_capture_fixture("path-a\0path-b\0\u{1b}[32mcomplete\u{1b}[0m\n");
+  let observed = observe_codex_implementation(
+    &fixture.envelope,
+    &fixture.build,
+    10,
+    &fixture.runner_events,
+    &fixture.documents,
+  );
+  assert_eq!(observed.status(), FactoryCodexObservationStatus::Succeeded);
+  assert_eq!(
+    observed.trace().unwrap().artifact_id(),
+    fixture
+      .documents
+      .iter()
+      .find(|document| document.identity.logical_name.as_str() == "codex-run-trace")
+      .unwrap()
+      .identity
+      .artifact_id,
+    "accept the original retained trace without stripping or rewriting its bytes",
+  );
+}
+
 pub(crate) fn native_capture_fixture(result_text: &str) -> Fixture {
   let mut fixture = Fixture::successful();
   let item = json!({"id":"call-1","type":"mcp_tool_call","server":"issues","tool":"lookup",

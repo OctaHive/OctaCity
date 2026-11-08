@@ -583,6 +583,7 @@ fn factory_configuration_documents_publish_a_closed_graph_contract_for_managemen
     "#/components/schemas/FactoryFlowDefinitionClosure"
   );
   assert_eq!(schemas["FactoryFlowNodeDefinition"]["additionalProperties"], false);
+  assert!(schemas["FactoryFlowNodeDefinition"]["properties"]["scoped_validation_runner"].is_object());
   assert_eq!(
     schemas["FactoryFlowNodeDefinition"]["properties"]["kind"]["$ref"],
     "#/components/schemas/FactoryFlowNodeKind"

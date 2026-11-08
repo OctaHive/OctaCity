@@ -135,6 +135,10 @@ pub struct FactoryExecutionCapabilityV3 {
   /// private confined reader lifecycle. Missing inventory means unsupported.
   #[serde(default, skip_serializing_if = "is_false")]
   pub controlled_tools: bool,
+  /// This route installs the lease-bound scoped validation launcher. A legacy
+  /// read controller alone cannot run a sibling verification Build.
+  #[serde(default, skip_serializing_if = "is_false")]
+  pub scoped_validation: bool,
   /// Provider-neutral execution route proved by backend startup validation.
   pub execution: ExecutionCapabilityV2,
   /// Ordered semantic controls enforced by this exact route.
@@ -625,6 +629,83 @@ pub struct AuthorizeToolActionResponse {
   pub decision: FactoryToolActionDecisionV3,
   /// Digest binding the decision and optional receipt to the exact fenced request.
   pub authorization_sha256: String,
+}
+
+/// Operations available to a Tester through its lease-scoped validation tool.
+#[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum ScopedValidationAction {
+  /// Accept the exact configured protected runner Build, idempotently.
+  Start,
+  /// Read its verified verdict without accepting a new Build.
+  Status,
+}
+
+/// Request for the verifier selected by the current admitted Tester invocation.
+#[derive(Clone, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(deny_unknown_fields)]
+pub struct ScopedValidationRequest {
+  /// Coordinator wire version.
+  pub protocol_version: u16,
+  /// Response-correlation identifier. Build replay uses the retained operation.
+  pub request_id: String,
+  /// Current registration epoch.
+  pub registration_id: String,
+  /// Exact lease that authorizes the caller. It supplies no runner selection.
+  pub lease: LeaseFence,
+  /// Requested action on the server-selected runner.
+  pub action: ScopedValidationAction,
+}
+
+/// Runner result derived from verified output.
+#[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum ScopedValidationOutcome {
+  /// Every required check passed.
+  Passed,
+  /// At least one required check failed.
+  Failed,
+  /// A required check could not give a conclusive result.
+  Indeterminate,
+}
+
+/// Bounded class result with no diagnostic or Artifact data.
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(deny_unknown_fields)]
+pub struct ScopedValidationClass {
+  /// Declared check class.
+  pub class: String,
+  /// Independently verified class result.
+  pub outcome: ScopedValidationOutcome,
+}
+
+/// The complete subset of runner output visible to the calling Tester.
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(tag = "status", rename_all = "snake_case", deny_unknown_fields)]
+pub enum ScopedValidationVerdict {
+  /// No verified terminal result has been retained.
+  Waiting,
+  /// The runner stopped without a verified verdict.
+  Stopped,
+  /// Verified aggregate and class outcomes.
+  Verified {
+    /// Result across the complete declared classes.
+    outcome: ScopedValidationOutcome,
+    /// Results by class, without assertions or diagnostics.
+    classes: Vec<ScopedValidationClass>,
+  },
+}
+
+/// Correlated result for one start or status request.
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(deny_unknown_fields)]
+pub struct ScopedValidationResponse {
+  /// Coordinator wire version.
+  pub protocol_version: u16,
+  /// Echo of the originating request identifier.
+  pub request_id: String,
+  /// Safe runner verdict.
+  pub verdict: ScopedValidationVerdict,
 }
 
 /// Terminal status of one fenced attempt.

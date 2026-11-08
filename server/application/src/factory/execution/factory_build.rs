@@ -185,6 +185,15 @@ pub trait OrdinaryBuildApplication: Send + Sync {
     &self,
     request: CreateFactoryBuild,
   ) -> Result<FactoryBuildAcceptance, OrdinaryBuildApplicationError>;
+
+  /// Accepts a new ordinary Build only under the exact current caller lease.
+  async fn create_scoped_factory_build(
+    &self,
+    _request: CreateFactoryBuild,
+    _caller: octacity_server_store::FactoryScopedBuildCaller,
+  ) -> Result<FactoryBuildAcceptance, OrdinaryBuildApplicationError> {
+    Err(OrdinaryBuildApplicationError::Invalid)
+  }
 }
 
 /// Exact cancellation of an already accepted Factory-owned ordinary Build.

@@ -337,6 +337,21 @@ pub(crate) async fn candidate_context_fixture_with_preparation(
     }
   }
   let runs = Arc::new(octacity_server_store::testing::InMemoryFactoryConfigurationStore::new());
+  let selected_consumer = admitted
+    .closure()
+    .definitions()
+    .iter()
+    .flat_map(|definition| definition.nodes())
+    .any(|node| node.profile_selection().is_some());
+  if selected_consumer {
+    runs.seed_project(work.subject().project_id()).unwrap();
+    runs
+      .enable_project(
+        work.subject().project_id(),
+        octacity_server_store::testing::factory_profile_selection_capabilities(&admitted),
+      )
+      .unwrap();
+  }
   let run = FactoryRun::admitted(input.factory_run_id(), &work);
   let audit = octacity_server_store::testing::management_mutation_with_request((), "candidate-consumer")
     .audit()
@@ -380,7 +395,8 @@ pub(crate) async fn candidate_context_fixture_with_preparation(
     runs.clone(),
     Arc::new(PreparationOnly),
     crate::factory_node_test_support::clock(),
-  );
+  )
+  .with_profile_catalog(runs.clone());
   run_candidate_fixture_step(
     &owner,
     run.id(),
@@ -539,9 +555,21 @@ pub(crate) async fn candidate_context_fixture_with_preparation(
     vec![],
   )
   .unwrap();
-  run_candidate_fixture_step(&owner, run.id(), claim.id, consumer_target, Some(selected), consumer_at)
-    .await
-    .unwrap();
+  run_candidate_fixture_step(
+    &owner,
+    run.id(),
+    claim.id,
+    consumer_target.clone(),
+    Some(selected),
+    consumer_at,
+  )
+  .await
+  .unwrap();
+  if selected_consumer {
+    run_candidate_fixture_step(&owner, run.id(), claim.id, consumer_target, None, consumer_at)
+      .await
+      .unwrap();
+  }
   let snapshot = runs.factory_run_snapshot(run.id()).await.unwrap();
   let consumer_intent = snapshot
     .flow

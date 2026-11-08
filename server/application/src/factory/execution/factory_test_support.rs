@@ -60,6 +60,8 @@ pub fn installed_role_execution_choices(
       model_or_tool: definition.toolchain.model.clone(),
       pipeline_node: octacity_server_domain::PipelineNodeId::new("worker").unwrap(),
       compilation: Some(FactoryBuildCompilationContract {
+        capture_write_paths: None,
+        scoped_validation: false,
         evidence: vec![],
         task_digest: FactoryDigest::from_bytes([73; 32]),
         role_profiles: true,
@@ -614,6 +616,8 @@ async fn qualify_pipeline_fixture(
   use octacity_server_store::FactoryConfigurationStore;
   let binding: FlowBuildBinding = serde_json::from_value(binding).unwrap();
   let compilation = include_compilation.then(|| FactoryBuildCompilationContract {
+    capture_write_paths: None,
+    scoped_validation: false,
     evidence: vec![],
     task_digest: binding.task_digest,
     role_profiles: true,
@@ -737,6 +741,7 @@ impl ReadinessExecutionFixture {
       execution: execution.clone(),
       workspace_anchor: true,
       controlled_tools: true,
+      scoped_validation: true,
       enforcement: FactoryEnforcementCapabilityV3::ALL.to_vec(),
     }];
     inventory.octa.plugins = vec![TaskPluginInventory {

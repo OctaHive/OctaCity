@@ -10,6 +10,7 @@
     "version": "v1",
     "digest": "6921e3ae725944f5f3969ea11dc7a264d12e205774e4b92195f2f82933c08886"
   },
+  "mcp_evidence_stages": ["eligibility"],
   "mcp_credential_lifetime_millis": 2592000000,
   "stage_budget": {
     "max_attempts": 1,

@@ -142,16 +142,16 @@ class NativeStandStagingTests(unittest.TestCase):
             octa_root / "plugins/octa_plugin_codex", "#!/bin/sh\nexit 0\n"
         )
         (octa_root / "plugins/codex.plugin.yml").write_text(
-            "manifest_version: 1\nname: codex\n", encoding="utf-8"
+            f"manifest_version: 1\nname: codex\nsha256: {digest(octa_root / 'plugins/octa_plugin_codex')}\ncapabilities:\n  - codex.native-mcp-evidence.v1\n  - codex.execution-workspace.v1\n", encoding="utf-8"
         )
-        (octa_root / "Octa.lock").write_text("version: 1\nplugins: {}\n", encoding="utf-8")
+        (octa_root / "Octa.lock").write_text(f"version: 1\nplugins:\n  codex:\n    sha256: {digest(octa_root / 'plugins/octa_plugin_codex')}\n    capabilities:\n    - codex.native-mcp-evidence.v1\n  - codex.execution-workspace.v1\n", encoding="utf-8")
         (octa_root / "octa-release-contract.json").write_text(
             json.dumps(STAGER.release_contract.EXPECTED_CONTRACT), encoding="utf-8"
         )
         compatibility = STAGER.release_contract.expected_codex_compatibility(
             document["native"]["octa"]["version"]
         )
-        compatibility["plugin"]["capabilities"].append("codex.native-mcp-evidence.v1")
+        compatibility["plugin"]["capabilities"].extend(["codex.native-mcp-evidence.v1", "codex.execution-workspace.v1"])
         (octa_root / "codex-compatibility.json").write_text(
             json.dumps(compatibility),
             encoding="utf-8",
@@ -244,11 +244,11 @@ class NativeStandStagingTests(unittest.TestCase):
         name = STAGER.input_set_name(self.document, REVISION)
         self.assertEqual(
             name,
-            "inputs-agent-0.1.0-aaaaaaaaaaaa-octa-0.8.0-msb-0.7.6",
+            "inputs-agent-0.1.0-aaaaaaaaaaaa-octa-0.9.0-msb-0.7.6",
         )
         self.assertEqual(
             STAGER.installation_name(self.document, REVISION),
-            "agent-0.1.0-aaaaaaaaaaaa-octa-0.8.0-msb-0.7.6",
+            "agent-0.1.0-aaaaaaaaaaaa-octa-0.9.0-msb-0.7.6",
         )
 
     def test_octa_bundle_requires_native_capture_even_with_valid_checksums(self):
@@ -378,6 +378,27 @@ class NativeStandStagingTests(unittest.TestCase):
                     ),
                     installed,
                 )
+
+    @unittest.skipUnless(os.name == "posix", "native staging requires POSIX ownership")
+    def test_installs_released_workspace_adapter_without_rewriting_its_inventory(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            inputs_root = root / "inputs"
+            inputs_root.mkdir()
+            document = self.create_inputs(inputs_root)
+            with tarfile.open(inputs_root / self.entries["octa"]["filename"], "r:gz") as bundle:
+                expected = {m.name.removeprefix("./"): bundle.extractfile(m).read() for m in bundle.getmembers() if m.isfile()}
+            with self.native_processes():
+                installed = STAGER.install_native_bundle(inputs_root, root / "installed", document, self.entries, REVISION,
+                    REPOSITORY / "deployment/local-stand/fixtures/agent.toml.in")
+                self.assertEqual(installed, (root / "installed").resolve())
+                self.assertEqual((installed / "octa/plugins/octa_plugin_codex").read_bytes(), expected["plugins/octa_plugin_codex"])
+                for name in ("SHA256SUMS", "Octa.lock", "codex-compatibility.json", "plugins/codex.plugin.yml"):
+                    self.assertEqual((installed / "octa" / name).read_bytes(), expected[name])
+                manifest = json.loads((installed / "installation-manifest.json").read_text())
+                self.assertNotIn("codex_workspace_sha256", manifest)
+                self.assertEqual(STAGER.install_native_bundle(inputs_root, root / "installed", document, self.entries, REVISION,
+                    REPOSITORY / "deployment/local-stand/fixtures/agent.toml.in"), installed)
 
     @unittest.skipUnless(os.name == "posix", "native staging requires POSIX ownership and executable modes")
     def test_qualified_guest_is_installed_under_a_distinct_immutable_identity(self):

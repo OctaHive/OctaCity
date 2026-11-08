@@ -115,7 +115,7 @@ mod codex_reader_runtime_tests {
         control: octacity_protocol::FactoryToolControlV3 {
           plugin: "codex".into(),
           capability: "codex.blocking-pre-tool-authorization.v1".into(),
-          mode: octacity_protocol::FactoryToolControlModeV3::Deterministic,
+          mode: octacity_protocol::FactoryToolControlModeV3::ScopedValidation,
           response_limits: reader_response_limits(),
         },
         permissions: permissions(),
@@ -147,7 +147,8 @@ mod codex_reader_runtime_tests {
       cpu_millis: 2000,
       memory_bytes: 16 * 1024 * 1024,
       writable_disk_bytes: 16 * 1024 * 1024,
-      max_duration: Duration::from_secs(30),
+      // Job preparation has consumed part of the installed 30-second ceiling.
+      max_duration: Duration::from_secs(29),
       root: target,
       network: NetworkAccess::Disabled,
     };
@@ -159,9 +160,16 @@ mod codex_reader_runtime_tests {
       1,
       "valid selected-source execution must reach the qualified physical backend"
     );
+    assert!(starts[0].max_duration <= Duration::from_secs(29));
     let main = starts[0].factory.as_ref().unwrap();
     assert!(!main.source_visible);
     assert!(main.source_view.is_none());
+    let bridge_config: serde_json::Value = serde_json::from_slice(
+      &fs::read(main.scratch.join(".octacity/controlled-reader.json")).unwrap(),
+    )
+    .unwrap();
+    assert_eq!(bridge_config["scoped_validation"], true);
+    assert_eq!(fs::read_link(main.scratch.join(".octacity/scoped-bridge")).unwrap().parent().unwrap(), std::path::Path::new("/octacity/tools"));
     assert!(coordinator.requests.lock().unwrap().is_empty());
   }
 }

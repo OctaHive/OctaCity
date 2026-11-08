@@ -178,6 +178,14 @@ impl InstalledCommandExecutor {
 
 #[async_trait]
 impl FactoryNodeExecutor for InstalledCommandExecutor {
+  async fn scoped_validation(
+    &self,
+    action: FactoryScopedValidationCall,
+    request: FactoryNodeExecutionRequest<'_>,
+  ) -> Result<FactoryScopedValidationVerdict, ApplicationError> {
+    self.select(&request)?.scoped_validation(action, request).await
+  }
+
   async fn observe(
     &self,
     request: FactoryNodeExecutionRequest<'_>,

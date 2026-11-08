@@ -27,6 +27,7 @@ PUBLIC_OPERATION_OBSERVATIONS_CAPABILITY = "public-command-file-observations.v1"
 CODEX_RUNTIME_SETTINGS_CAPABILITY = "codex.task-runtime-settings.v1"
 MODEL_CATALOG_CAPABILITY = "model-catalog.v1"
 CODEX_NATIVE_MCP_EVIDENCE_CAPABILITY = "codex.native-mcp-evidence.v1"
+CODEX_EXECUTION_WORKSPACE_CAPABILITY = "codex.execution-workspace.v1"
 CODEX_TOOL_AUTHORIZER_ENVIRONMENT = "OCTA_CODEX_TOOL_AUTHORIZER"
 MAX_RELEASE_METADATA_BYTES = 1024 * 1024
 
@@ -95,7 +96,8 @@ def validate(path: Path) -> None:
 
 
 def validate_codex_compatibility(
-    path: Path, octa_version: str, *, require_native_capture: bool = False
+    path: Path, octa_version: str, *, require_native_capture: bool = False,
+    require_execution_workspace: bool = False
 ) -> None:
     """Require exact plugin and Codex CLI compatibility metadata."""
 
@@ -107,6 +109,12 @@ def validate_codex_compatibility(
         if not isinstance(capabilities, list) or CODEX_NATIVE_MCP_EVIDENCE_CAPABILITY not in capabilities:
             raise ValueError("Octa release lacks the required native MCP capture capability")
         expected["plugin"]["capabilities"].append(CODEX_NATIVE_MCP_EVIDENCE_CAPABILITY)
+    if require_execution_workspace:
+        plugin = document.get("plugin")
+        capabilities = plugin.get("capabilities") if isinstance(plugin, dict) else None
+        if not isinstance(capabilities, list) or CODEX_EXECUTION_WORKSPACE_CAPABILITY not in capabilities:
+            raise ValueError("Octa release lacks the required execution workspace capability")
+        expected["plugin"]["capabilities"].append(CODEX_EXECUTION_WORKSPACE_CAPABILITY)
     if document != expected:
         raise ValueError("Octa Codex compatibility metadata does not match the supported identity")
 

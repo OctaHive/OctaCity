@@ -105,6 +105,7 @@ class LocalStandLauncherTests(unittest.TestCase):
             self.assertRaisesRegex(RuntimeError,"native installation boundary"),
         ):
             launcher.run(self.arguments("up"))
+        self.assertNotIn("codex_plugin", installed[0])
         self.assertEqual(len(produced),1)
         self.assertEqual(installed[0]["guest_agent"],produced[0].resolve())
 

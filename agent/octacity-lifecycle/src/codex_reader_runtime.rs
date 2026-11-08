@@ -10,7 +10,7 @@ use octacity_execution::{
   FactoryExecutionLayout, FactoryExecutionPartition, NetworkAccess, RunningExecution, StartExecution,
 };
 use octacity_job::{FactoryPreflightError, FactoryToolExecutionOwner, FactoryToolExecutionScope};
-use octacity_protocol::{FACTORY_SOURCE_ROOT, FactoryPermissionSetV3, LeaseAssignment};
+use octacity_protocol::{FACTORY_SOURCE_ROOT, FactoryPermissionSetV3, FactoryToolControlModeV3, LeaseAssignment};
 use std::{
   path::{Path, PathBuf},
   sync::Arc,
@@ -230,6 +230,7 @@ impl FactoryToolExecutionOwner for LeasedReader {
       cancellation: scope.cancellation,
       broker,
       limits: scope.control.response_limits,
+      scoped_validation: scope.control.mode == FactoryToolControlModeV3::ScopedValidation,
     }))
   }
 }
@@ -242,6 +243,7 @@ struct ControlledBackend {
   cancellation: CancellationToken,
   broker: Arc<AgentToolActionBroker>,
   limits: octacity_protocol::FactoryToolResponseLimitsV3,
+  scoped_validation: bool,
 }
 #[async_trait]
 impl ExecutionBackend for ControlledBackend {
@@ -280,7 +282,9 @@ impl ExecutionBackend for ControlledBackend {
     helper.cpu_millis = template.resources.cpu_millis;
     helper.memory_bytes = template.resources.memory_bytes;
     helper.writable_disk_bytes = template.resources.disk_bytes;
-    helper.max_duration = Duration::from_millis(template.resources.elapsed_millis);
+    // The installed limit is a ceiling; preparation has already spent part of
+    // the original Job window shared by the workload and its reader.
+    helper.max_duration = Duration::from_millis(template.resources.elapsed_millis).min(main.max_duration);
     let roots = [
       job.join("controlled-reader-scratch"),
       job.join("controlled-reader-output"),
@@ -312,15 +316,18 @@ impl ExecutionBackend for ControlledBackend {
       ConfinedProtectedReadBackend::prepare(&self.installation, self.inner.clone(), partition, self.deadline)
         .map_err(|_| execution_error())?;
     let reader = Arc::new(reader);
-    let dispatcher = Arc::new(
-      ProtectedReadDispatcher::new(
-        self.broker.clone(),
-        reader.clone(),
-        self.limits.per_call_bytes,
-        self.limits,
-      )
-      .map_err(|_| execution_error())?,
-    );
+    let dispatcher = ProtectedReadDispatcher::new(
+      self.broker.clone(),
+      reader.clone(),
+      self.limits.per_call_bytes,
+      self.limits,
+    )
+    .map_err(|_| execution_error())?;
+    let dispatcher = Arc::new(if self.scoped_validation {
+      dispatcher.with_scoped_validation()
+    } else {
+      dispatcher
+    });
     let control_root = self.state_root.join(uuid::Uuid::new_v4().simple().to_string());
     octacity_private_fs::create_private_directory(&control_root).map_err(|_| execution_error())?;
     let mut directory = OwnedDirectory(Some(control_root.clone()));
@@ -358,7 +365,8 @@ impl ExecutionBackend for ControlledBackend {
       recipe.arguments.clear();
       recipe.paths.clear();
       let config = serde_json::to_vec(
-        &serde_json::json!({"port":PORT,"hook_tool_name":self.installation.hook_tool_name,"recipe":recipe}),
+        &serde_json::json!({"port":PORT,"hook_tool_name":self.installation.hook_tool_name,"recipe":recipe,
+          "scoped_validation":self.scoped_validation}),
       )
       .map_err(|_| execution_error())?;
       write_new(&data.join("controlled-reader.json"), &config)?;
@@ -376,6 +384,14 @@ impl ExecutionBackend for ControlledBackend {
         serde_json::to_string(guest.to_str().ok_or_else(execution_error)?).map_err(|_| execution_error())?
       );
       write_new(&home.join("config.toml"), config.as_bytes())?;
+      if self.scoped_validation {
+        let path = Path::new(octacity_protocol::FACTORY_SCOPED_BRIDGE_PATH)
+          .strip_prefix(octacity_protocol::FACTORY_SCRATCH_ROOT)
+          .map_err(|_| execution_error())?;
+        // The signed task explicitly names this MCP entrypoint. Ambient Codex
+        // configuration and the selected native-login directory are irrelevant.
+        std::os::unix::fs::symlink(&guest, scratch.join(path)).map_err(|_| execution_error())?;
+      }
       Ok(program)
     })();
     let started = match prepared {

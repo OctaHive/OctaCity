@@ -59,6 +59,11 @@ impl CodexPreToolUseInput {
     Ok(input)
   }
 
+  /// Returns the bounded arguments only for the exact requested tool name.
+  pub fn arguments_for_tool(&self, name: &str) -> Option<&Value> {
+    (self.tool_name == name).then_some(&self.tool_input)
+  }
+
   /// Normalizes only an installed MCP reader with the strict `{path}` contract.
   /// Operator-pinned identities and limits supply the executable envelope;
   /// input cannot select a command, add authority, or invoke a native shell.

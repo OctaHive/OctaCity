@@ -372,8 +372,20 @@ fn native_login_compilation_pins_authentication_and_uses_only_private_codex_home
   let document: Value =
     serde_json::from_slice(compiled.document(FactoryProtectedDocumentKind::Octafile).bytes()).unwrap();
   let task = &document["tasks"]["observe"]["cmds"][0]["codex"];
+  assert_eq!(
+    task["execution_workspace"],
+    serde_json::json!({
+      "working_directory":"scratch", "writable_directories":["output"]
+    })
+  );
+  assert_eq!(document["tasks"]["observe"]["dir"], "/workspace");
+  assert_eq!(task["run_records"], "output/codex-runs");
   let home = task["environment"]["public"]["CODEX_HOME"].as_str().unwrap();
   assert_eq!(document["vars"][home], "/workspace/scratch/.credentials/codex");
+  let path = task["environment"]["public"]["PATH"]
+    .as_str()
+    .expect("the isolated client needs system executable discovery");
+  assert_eq!(document["vars"][path], "/usr/local/bin:/usr/bin:/bin");
   assert_eq!(task["environment"]["secret"], serde_json::json!({}));
   assert!(document["vars"].get("OCTACITY_CODEX_AUTH").is_none());
   let envelope: Value =
@@ -1283,6 +1295,12 @@ fn codex_flow_author_compiles_the_exact_capture_contract_with_a_separate_credent
   let octafile: Value =
     serde_json::from_slice(compiled.document(FactoryProtectedDocumentKind::Octafile).bytes()).unwrap();
   let task = &octafile["tasks"].as_object().unwrap().values().next().unwrap()["cmds"][0]["codex"];
+  assert_eq!(
+    task["execution_workspace"],
+    serde_json::json!({
+      "working_directory":"scratch", "writable_directories":["output", "source/operator-owned/plans"]
+    })
+  );
   assert_eq!(task["model"], "an-exact-model");
   assert_eq!(
     task["result_schema"]["properties"]["count"],
@@ -1341,6 +1359,7 @@ fn codex_flow_tool_fixture(
     policy,
     attempts,
     octacity_server_factory::FactoryCredentialConsumer::ToolReasoning,
+    false,
   )
 }
 
@@ -1348,6 +1367,7 @@ fn codex_flow_tool_fixture_for_consumer(
   policy: Option<crate::FactoryCodexToolRiskPolicy>,
   attempts: u32,
   consumer: octacity_server_factory::FactoryCredentialConsumer,
+  scoped: bool,
 ) -> (
   octacity_server_factory::FlowBuildIntent,
   octacity_server_factory::AdmittedFlow,
@@ -1390,17 +1410,82 @@ fn codex_flow_tool_fixture_for_consumer(
   node["build"]["task_digest"] =
     serde_json::json!(policy.map_or(response_policy, |policy| { policy.task_digest(response_policy) }));
   let node: FlowNodeDefinition = serde_json::from_value(node).unwrap();
+  let mut data_projections = original.data_projections().to_vec();
+  let (entry, nodes, transitions) = if scoped {
+    let split = FactoryKey::new("start-verification").unwrap();
+    let runner = FactoryKey::new("verify-candidate").unwrap();
+    let outcome = node.outcomes()[0].key().clone();
+    let mut verifier = serde_json::to_value(&node).unwrap();
+    verifier["key"] = serde_json::json!(runner);
+    verifier["kind"] = serde_json::json!("build_command");
+    let verifier: FlowNodeDefinition = serde_json::from_value(verifier).unwrap();
+    let split_node = FlowNodeDefinition::new(FlowNodeDefinitionInput {
+      key: split.clone(),
+      kind: FlowNodeKind::FanOut,
+      input_schema: original.input_schema().cloned(),
+      outcomes: node.outcomes().to_vec(),
+      budget: node.budget(),
+      permissions: FactoryPermissionSet::deny_all(),
+      required: true,
+      subflow: None,
+    })
+    .unwrap();
+    for node in [&node, &verifier] {
+      if let Some(schema) = node.input_schema().filter(|_| node.input_binding().is_none()) {
+        data_projections.push(FlowDataProjection::new(
+          split.clone(),
+          outcome.clone(),
+          node.key().clone(),
+          schema.clone(),
+        ));
+      }
+    }
+    let mut transitions = original.transitions().to_vec();
+    transitions.extend([
+      FlowTransition::new(
+        split.clone(),
+        outcome.clone(),
+        FlowTransitionTarget::Node(node.key().clone()),
+      ),
+      FlowTransition::new(
+        split.clone(),
+        outcome.clone(),
+        FlowTransitionTarget::Node(runner.clone()),
+      ),
+      FlowTransition::new(
+        runner.clone(),
+        outcome,
+        FlowTransitionTarget::Terminal(original.terminals()[0].key().clone()),
+      ),
+    ]);
+    (
+      split,
+      vec![
+        split_node,
+        node.with_scoped_validation_runner(runner).unwrap(),
+        verifier,
+      ],
+      transitions,
+    )
+  } else {
+    (original.entry().clone(), vec![node], original.transitions().to_vec())
+  };
   let definition = FlowDefinition::new(FlowDefinitionInput {
     id: FlowDefinitionId::generate(),
     version: FlowDefinitionVersion::INITIAL,
     input_schema: original.input_schema().cloned(),
-    entry: original.entry().clone(),
-    nodes: vec![node],
-    transitions: original.transitions().to_vec(),
+    entry,
+    nodes,
+    transitions,
     terminals: original.terminals().to_vec(),
     context_projections: original.context_projections().to_vec(),
-    data_projections: original.data_projections().to_vec(),
-    execution: FlowExecutionPolicy::new(original.execution().budget(), grants.clone(), 1).unwrap(),
+    data_projections,
+    execution: FlowExecutionPolicy::new(
+      original.execution().budget(),
+      grants.clone(),
+      if scoped { 2 } else { 1 },
+    )
+    .unwrap(),
   })
   .unwrap();
   let root = FactoryRun::admitted(old.input().factory_run_id(), &work);
@@ -1438,7 +1523,7 @@ fn codex_flow_tool_fixture_for_consumer(
       node_kind: old.node().node_kind(),
       number: old.node().number(),
       input_digest: input.digest().unwrap(),
-      budget: definition.nodes()[0].budget(),
+      budget: definition.node(input.node()).unwrap().budget(),
       started_at: old.node().started_at(),
       deadline: old.node().deadline(),
       execution: old.node().execution().clone(),
@@ -1451,6 +1536,74 @@ fn codex_flow_tool_fixture_for_consumer(
     admitted,
     instructions,
   )
+}
+
+#[test]
+fn codex_compiles_scoped_control_only_for_the_exact_bound_caller() {
+  use octacity_server_factory::FactoryCredentialConsumer;
+  for scoped in [false, true] {
+    let (intent, admitted, instructions) =
+      codex_flow_tool_fixture_for_consumer(None, 1, FactoryCredentialConsumer::ToolReasoning, scoped);
+    let compiled = crate::compile_codex_flow_task_with_options(
+      &intent,
+      &admitted,
+      &instructions,
+      &credential_profiles(),
+      FactoryCredentialConsumer::ToolReasoning,
+      &crate::FactoryCodexUsagePolicy::ReportedCost,
+      crate::FactoryCodexFlowCompilationOptions {
+        tool_response_limits: Some(octacity_protocol::FactoryToolResponseLimitsV3 {
+          per_call_bytes: 32,
+          total_bytes: 64,
+        }),
+        ..Default::default()
+      },
+    )
+    .unwrap();
+    if scoped {
+      let octafile: Value = serde_json::from_slice(
+        compiled
+          .documents()
+          .iter()
+          .find(|doc| doc.destination().ends_with("Octafile.yml"))
+          .unwrap()
+          .bytes(),
+      )
+      .unwrap();
+      assert_eq!(
+        octafile["tasks"]["execute"]["cmds"][0]["codex"]["mcp_servers"]["factory"]["command"],
+        "/workspace/scratch/.octacity/scoped-bridge",
+        "the scoped tool must survive explicit MCP settings and a private native-login home"
+      );
+    }
+    let mut inputs = compiled
+      .documents()
+      .iter()
+      .map(|doc| octacity_protocol::ProtectedInputV3 {
+        artifact_id: ArtifactId::generate().to_string(),
+        destination: doc.destination().to_owned(),
+        size_bytes: doc.bytes().len() as u64,
+        sha256: doc.content_digest().to_string(),
+        media_type: doc.media_type().to_owned(),
+      })
+      .collect::<Vec<_>>();
+    inputs.sort_by(|a, b| a.artifact_id.cmp(&b.artifact_id));
+    let mode = compiled
+      .managed_program(octacity_protocol::ProtectedInputManifestV3 { inputs })
+      .unwrap()
+      .execution
+      .tool_control
+      .unwrap()
+      .mode;
+    assert_eq!(
+      mode,
+      if scoped {
+        octacity_protocol::FactoryToolControlModeV3::ScopedValidation
+      } else {
+        octacity_protocol::FactoryToolControlModeV3::Deterministic
+      }
+    );
+  }
 }
 
 #[test]
@@ -1865,8 +2018,12 @@ fn protected_tool_reasoning_compiles_without_source_write_or_evaluator_authority
 
 #[test]
 fn writable_coding_consumer_cannot_combine_capture_authority_with_protected_tools() {
-  let (intent, admitted, instructions) =
-    codex_flow_tool_fixture_for_consumer(None, 3, octacity_server_factory::FactoryCredentialConsumer::CodingNode);
+  let (intent, admitted, instructions) = codex_flow_tool_fixture_for_consumer(
+    None,
+    3,
+    octacity_server_factory::FactoryCredentialConsumer::CodingNode,
+    false,
+  );
   assert!(
     crate::compile_codex_flow_task_with_options(
       &intent,

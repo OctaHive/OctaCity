@@ -87,6 +87,58 @@ fn installed_codex_compilation_metadata_reuses_native_task_and_output_contracts(
   });
 }
 
+#[test]
+fn installed_coding_binding_retains_all_trusted_capture_outputs() {
+  crate::factory::admission::tests::factory_admission_tests::run_ready(async {
+    let policy = observation_capture_policy();
+    let mut profile = prepared_source_with_capture(Some(policy.clone())).await.profile;
+    let mut instruction = policy.instruction().clone();
+    instruction.patch_max_bytes = Some(256);
+    let policy = FactoryCodexCapturePolicy::new(policy.tool().clone(), instruction).unwrap();
+    profile.capture = Some(policy.clone());
+    let metadata = profile.pipeline_contract().compilation.unwrap();
+    assert_eq!(
+      metadata.capture_write_paths,
+      Some(vec![FactoryRepositoryPath::new("public/approved").unwrap()]),
+      "the installed writer scope must be selected with the Coding profile"
+    );
+    let outputs: Vec<_> = metadata
+      .evidence
+      .iter()
+      .map(|output| (output.kind().as_str(), output.output_kind()))
+      .collect();
+    assert_eq!(
+      outputs,
+      vec![
+        ("change-set.bundle", EvidenceOutputKind::Artifact),
+        ("change-set-manifest.json", EvidenceOutputKind::Artifact),
+        ("change-set.patch", EvidenceOutputKind::Artifact),
+        ("operator.capture-summary", EvidenceOutputKind::Report),
+      ],
+      "selecting a Coder must preserve the installed capture outputs without hand-edited evidence"
+    );
+    for output in &metadata.evidence {
+      assert_eq!(output.tool(), policy.tool());
+      assert_eq!(output.plugin(), &profile.toolchain.plugin);
+    }
+    let observation = policy.instruction().observation.as_ref().unwrap();
+    let report = metadata.evidence.last().unwrap();
+    assert_eq!(report.schema().identity().as_str(), observation.schema.identity);
+    assert_eq!(report.schema().version().as_str(), observation.schema.version);
+    assert_eq!(report.schema().digest().to_string(), observation.schema.sha256);
+    assert!(
+      prepared_source()
+        .await
+        .profile
+        .pipeline_contract()
+        .compilation
+        .unwrap()
+        .evidence
+        .is_empty()
+    );
+  });
+}
+
 struct Clock;
 impl FactoryExecutionClock for Clock {
   fn now(&self) -> Result<Timestamp, ApplicationError> {
@@ -2678,6 +2730,17 @@ fn installed_capture_observations_cannot_reuse_model_publication_names() {
   }
 }
 #[test]
+fn installed_capture_observation_requires_a_factory_schema_version() {
+  let valid = observation_capture_policy();
+  let mut instruction = valid.instruction().clone();
+  instruction.observation.as_mut().unwrap().schema.version = "Version 1".into();
+  assert!(
+    FactoryCodexCapturePolicy::new(valid.tool().clone(), instruction).is_err(),
+    "installation must reject a schema version that cannot be selected as a Flow schema"
+  );
+}
+
+#[test]
 fn installed_model_policy_accepts_independent_mcp_profiles_and_rejects_other_consumers() {
   crate::factory::admission::tests::factory_admission_tests::run_ready(async {
     let mut profile = prepared_source().await.profile;
@@ -2772,6 +2835,105 @@ fn installed_reviewer_policy_repins_the_task_and_qualifies_only_readonly_evaluat
 
 #[path = "factory_codex_review_tests.rs"]
 mod review;
+
+#[test]
+fn selected_coding_role_prepares_its_initial_package_through_the_published_catalog() {
+  crate::factory::admission::tests::factory_admission_tests::run_ready(async {
+    let fixture = prepared_role_source(Some(capture_policy(true, 2)), vec![], None, true).await;
+    let retained = fixture
+      .role
+      .as_ref()
+      .unwrap()
+      .factory_role_invocation(fixture.intent.operation_id().unwrap())
+      .await
+      .unwrap()
+      .unwrap();
+    let content = retained.package.inputs();
+    let store = Arc::new(InMemoryFactoryConfigurationStore::new());
+    let project = content.profile.reference().project_id;
+    store.seed_project(project).unwrap();
+    AuthorizedCommandHandler::new(
+      Arc::new(TrustedNetworkManagementPolicy),
+      Arc::new(FactoryRoleProfileHandlers::new(store.clone())),
+    )
+    .handle_command(
+      &crate::factory::admission::tests::factory_admission_tests::context(),
+      PublishFactoryRoleProfilesCommand {
+        intent: FactoryRoleProfilesIntent {
+          project_id: project,
+          role: Some(FactoryRoleIntent {
+            id: content.role.reference().id,
+            expected_current_version: None,
+            definition: content.role.definition().clone(),
+          }),
+          profiles: vec![FactoryRoleProfileIntent {
+            id: content.profile.reference().id,
+            expected_current_version: None,
+            role: content.profile.role().clone(),
+            definition: content.profile.definition().clone(),
+          }],
+        },
+        idempotency_key: "coding-role".parse().unwrap(),
+        published_at: at(1),
+      },
+    )
+    .await
+    .unwrap();
+    let source = FactoryStoredCodexRoleInvocationSource::new(
+      store,
+      fixture.bytes.clone(),
+      fixture.context.clone(),
+      vec![fixture.profile.clone()],
+    );
+    let invocation = source
+      .invocation(&fixture.intent, at(1003), fixture.intent.node().deadline())
+      .await
+      .expect("a selected coding profile must prepare before its first ordinary Build")
+      .unwrap();
+    assert_eq!(invocation.package().inputs().task.mode(), FactoryTaskMode::Implement);
+    assert_eq!(
+      invocation.package().inputs().task.result_schema(),
+      FactoryTaskResultSchema::ImplementationV1
+    );
+    assert!(!invocation.package().inputs().task.deliverables().is_empty());
+    invocation.verify_intent(&fixture.intent).unwrap();
+  });
+}
+
+#[test]
+fn selected_coding_role_dispatches_capture_through_the_ordinary_build_boundary() {
+  crate::factory::admission::tests::factory_admission_tests::run_ready(async {
+    let fixture = prepared_role_source(Some(capture_policy(true, 2)), vec![], None, true).await;
+    let snapshot = fixture
+      .runs
+      .factory_run_snapshot(fixture.intent.input().factory_run_id())
+      .await
+      .unwrap();
+    let mut builds = crate::factory_node_test_support::Builds::new_at(at(1003));
+    builds.acceptance.effective_policy_digest = fixture.intent.permissions().digest();
+    let builds = Arc::new(builds);
+    let adapter = FactoryNodeCaptureBuildAdapter::new(
+      builds.clone(),
+      Arc::new(fixture.source(fixture.query.clone())),
+      fixture.profile.capture.as_ref().unwrap().tool().clone(),
+    );
+    let step = adapter
+      .observe(FactoryNodeExecutionRequest {
+        run_id: fixture.intent.input().factory_run_id(),
+        admitted: &snapshot.admitted_flow,
+        work: &snapshot.work,
+        input: fixture.intent.input(),
+        attempt: fixture.intent.node(),
+        build: Some(&fixture.intent),
+        ownership: FactoryClaimOwnership::new(fixture.intent.node().owner().clone(), fixture.intent.node().claim()),
+        observed_at: at(1003),
+      })
+      .await
+      .expect("a selected Coding profile must dispatch its own capture binding");
+    assert!(matches!(step, FactoryNodeExecutionStep::Waiting { execution: Some(_) }));
+    assert_eq!(builds.requests.lock().unwrap().len(), 1);
+  });
+}
 
 #[test]
 fn selected_role_outputs_recover_the_original_package_and_verify_the_ordinary_job() {
@@ -2949,6 +3111,151 @@ fn scoped_codex_observation_rejects_a_different_retained_source_scope() {
     assert!(
       matches!(observed, Err(OrdinaryBuildApplicationError::Invalid)),
       "a valid report cannot authorize a different executed code scope"
+    );
+  });
+}
+
+#[test]
+fn selected_role_prepares_candidate_context_without_reading_capture_files_as_text() {
+  crate::factory::admission::tests::factory_admission_tests::run_ready(async {
+    use crate::factory_candidate_context_test_support::{
+      ReadonlyCandidateFixtureProfile, candidate_context_fixture_with_definition,
+    };
+    let ordinary = prepared_source().await;
+    let previous = ordinary
+      .runs
+      .factory_run_snapshot(ordinary.intent.input().factory_run_id())
+      .await
+      .unwrap();
+    let mut profile = ordinary.profile;
+    profile.candidate_capture_tool = Some(fixtures::reference("git.capture"));
+    let role = FactoryRole::publish(
+      FactoryRoleId::generate(),
+      previous.work.subject().project_id(),
+      FactoryRoleDefinition {
+        name: FactoryText::new("Independent inspector").unwrap(),
+        instructions: "Inspect selected candidate".into(),
+        skills: Default::default(),
+        avatar: None,
+        template: None,
+        icon: None,
+        description: String::new(),
+        concurrency_limit: None,
+      },
+    )
+    .unwrap();
+    let mut definition = role_profile_contract_definition(previous.work.subject().project_id());
+    definition.toolchain = profile.toolchain.clone();
+    definition.build_configuration = profile.build_configuration.clone();
+    definition.permissions = profile.project_permissions.clone();
+    definition.budget = ordinary.intent.budget();
+    definition.execution = Default::default();
+    definition.model_parameters.clear();
+    definition.skills.clear();
+    definition.context_requirements.clear();
+    definition.credential_purpose = profile.consumer.purpose();
+    let selected = FactoryRoleProfile::publish(
+      FactoryRoleProfileId::generate(),
+      previous.work.subject().project_id(),
+      &role,
+      definition,
+    )
+    .unwrap();
+    let selected_for_flow = selected.clone();
+    let task_digest = profile.task_digest();
+    let candidate = candidate_context_fixture_with_definition(
+      ReadonlyCandidateFixtureProfile {
+        work: previous.work,
+        build_configuration: profile.build_configuration.clone(),
+        toolchain: profile.toolchain.clone(),
+        permissions: profile.project_permissions.clone(),
+        credentials: profile.credentials.clone(),
+        instructions: profile.instructions.clone(),
+      },
+      None,
+      move |flow| {
+        let node = &mut flow.nodes[1];
+        let mut encoded = serde_json::to_value(&*node).unwrap();
+        let mut binding = node.build().unwrap().clone();
+        binding.task_digest = factory_role_task_digest(task_digest, &selected_for_flow);
+        encoded.as_object_mut().unwrap().remove("build");
+        encoded["profile_selection"] = serde_json::json!({
+          "role": selected_for_flow.role(),
+          "candidates": {"chosen": {"profile": selected_for_flow, "build": binding}},
+          "policy": {"mode": "manual", "candidate": "chosen"},
+          "failure": {"kind": "manual_selection"},
+          "selection_budget": BudgetUsage::default(),
+        });
+        *node = serde_json::from_value(encoded).unwrap();
+      },
+    )
+    .await;
+    let store = Arc::new(InMemoryFactoryConfigurationStore::new());
+    let project = selected.reference().project_id;
+    store.seed_project(project).unwrap();
+    AuthorizedCommandHandler::new(
+      Arc::new(TrustedNetworkManagementPolicy),
+      Arc::new(FactoryRoleProfileHandlers::new(store.clone())),
+    )
+    .handle_command(
+      &crate::factory::admission::tests::factory_admission_tests::context(),
+      PublishFactoryRoleProfilesCommand {
+        intent: FactoryRoleProfilesIntent {
+          project_id: project,
+          role: Some(FactoryRoleIntent {
+            id: role.reference().id,
+            expected_current_version: None,
+            definition: role.definition().clone(),
+          }),
+          profiles: vec![FactoryRoleProfileIntent {
+            id: selected.reference().id,
+            expected_current_version: None,
+            role: selected.role().clone(),
+            definition: selected.definition().clone(),
+          }],
+        },
+        idempotency_key: "candidate-role".parse().unwrap(),
+        published_at: at(1),
+      },
+    )
+    .await
+    .unwrap();
+    struct NeverRawContext;
+    #[async_trait]
+    impl FactoryNodeContextSource for NeverRawContext {
+      async fn read_context(
+        &self,
+        _: &FlowNodeInput,
+        _: Timestamp,
+        _: Timestamp,
+      ) -> Result<BTreeMap<ArtifactId, Vec<u8>>, ApplicationError> {
+        panic!("capture bundle must be recovered as a source, never read as model text")
+      }
+    }
+    struct Clock;
+    impl FactoryExecutionClock for Clock {
+      fn now(&self) -> Result<Timestamp, ApplicationError> {
+        Ok(at(40))
+      }
+    }
+    let contexts = Arc::new(FactoryCodexCandidateContextSource::new(
+      candidate.runs.clone(),
+      candidate.source.clone(),
+      Arc::new(Clock),
+    ));
+    let source =
+      FactoryStoredCodexRoleInvocationSource::new(store, ordinary.bytes, Arc::new(NeverRawContext), vec![profile])
+        .with_candidate_context_source(contexts);
+    let invocation = source
+      .invocation(&candidate.intent, at(40), candidate.intent.node().deadline())
+      .await
+      .unwrap()
+      .unwrap();
+    invocation.verify_intent(&candidate.intent).unwrap();
+    assert_eq!(invocation.package().inputs().task.mode(), FactoryTaskMode::Observe);
+    assert_eq!(
+      invocation.package().inputs().task.task().artifact_id(),
+      candidate.text.record.identity().artifact_id
     );
   });
 }

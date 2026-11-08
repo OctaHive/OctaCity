@@ -128,7 +128,8 @@ impl ServerRuntime {
       factory_installation.as_mut(),
     )
     .await?;
-    let (registration_store, mut factory) = super::factory::assemble(&config, &mut resources, factory_installation)?;
+    let (registration_store, mut factory) =
+      super::factory::assemble(&config, &mut resources, factory_installation, placement_store.clone())?;
     let log_search_index = Arc::new(PostgresLogSearchIndex::new(resources.postgres.clone()));
     let notification_pool = resources.postgres.clone();
     let registration_service = Arc::new(
@@ -387,11 +388,14 @@ impl ServerRuntime {
     let api_config =
       AgentApiConfig::new(config.agent_max_retry_delay_milliseconds()).ok_or(ServerRuntimeError::InvalidAgentPolicy)?;
     let tool_actions = factory.as_ref().map(|worker| {
-      Arc::new(octacity_server_application::AgentToolActionService::new(
-        registration_service.clone(),
-        placement_store.clone(),
-        worker.tool_authorizer.clone(),
-      )) as Arc<dyn octacity_server_application::AgentToolActionUseCases>
+      Arc::new(
+        octacity_server_application::AgentToolActionService::new(
+          registration_service.clone(),
+          placement_store.clone(),
+          worker.tool_authorizer.clone(),
+        )
+        .with_scoped_validation(worker.scoped_validation.clone()),
+      ) as Arc<dyn octacity_server_application::AgentToolActionUseCases>
     });
     let webhook_deliveries = if config.webhook_bind().is_some() {
       let health = Arc::new(WorkerHealth::new(

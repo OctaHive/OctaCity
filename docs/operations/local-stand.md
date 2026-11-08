@@ -257,7 +257,11 @@ the stand stopped so the operator can retry its previous explicit setup.
 
 Updates preserve PostgreSQL/object volumes, registration credentials, Agent work
 and cache, integration authority and installation receipts. Optional installed
-Runtime/Delivery/Signal bundles are retained when omitted from an update. Repeating
+Runtime/Delivery/Signal bundles are retained when omitted from an update. A retained
+GitHub integration keeps the executable pinned by its installed manifest even
+when the new Server image ships another version. Startup verifies the retained
+executable digest; it does not overwrite that version or accept modified bytes.
+Repeating
 identical inputs does not stop the stand for replacement. For an ordinary later
 `up`, repeat the installed catalog, Agent policy and optional bundle selections;
 `down` followed by `up` needs no reset. Installation updates do not publish profile
@@ -540,6 +544,32 @@ the protected test handoff result from the Delivery example. Select
 to the inventory from the same Tester step. The baseline must observe a
 completed assertion failure before implementation. A passing baseline stops
 with no change, and a setup failure stops preparation.
+
+The post-review verifier's **Verification launch** selects **CI/CD Build** or a
+separate **Tester · Delivery (verification)** step. The latter asks the same
+ordinary Build to run and receives only its bounded verdict and safe summary.
+It cannot replace the candidate, inspect private test bodies, or publish a
+runner verdict itself. Use a parallel-start node after the accepted review to
+connect both steps to the same predecessor outcome, and allow at least two
+active node slots. The stand provisions a separate one-slot validation Agent
+and pool so the waiting Tester cannot occupy the verifier's worker. Each Agent
+retains its own Microsandbox image installation.
+
+The Delivery guest includes the checksum-pinned Bubblewrap companion from the
+selected Codex release. Shell execution keeps Codex sandboxing enabled. A new
+guest recipe is installed beside earlier image archives. Updating an existing
+stand adds profiles with a short installation suffix when their Build binding
+changes; existing profiles and published Flows keep their original bindings.
+Select the new profile and matching verification commands, then publish a new
+Flow version to use the updated guest.
+
+The installation adds a content-pinned Delivery access ceiling covering the
+installed runtimes, verification commands and explicitly installed publisher.
+Create or select a Project access profile within that ceiling for the Delivery
+Configuration. Existing Project policies, including **Standard**, remain pinned
+and unchanged. The bundled triage example independently selects MCP evidence
+verification for its eligibility result; classification consumes that accepted
+handoff using its ordinary classification result contract.
 
 To add reviewed checks, open **Additional verification** on the Tester
 step. Upload files or a folder, or select a Project repository and give an
@@ -1311,3 +1341,41 @@ user Keychain. Never bypass certificate validation or trust the private key.
   does not replace release-candidate packaging, the Agent Ready matrix,
   production security review, disaster-recovery rehearsal, or release
   qualification.
+
+The native Factory stand uses published [Octa 0.9.0](https://github.com/OctaHive/octa/releases/tag/v0.9.0).
+The pinned release archive, upstream source revision, checksums and GitHub build
+provenance form its installation identity. No local Codex adapter patch or
+plugin replacement is applied. Codex runs from
+its own writable scratch directory; output and exact writable source directories
+are selected from the step's existing grants and installed capture paths. Octa resource paths and the read-only workspace
+parent stay unchanged. The launcher installs matching plugin metadata under a
+new immutable native installation and publishes separate compatible Delivery
+profiles. Existing installation directories and published Flow definitions are
+retained. Select the new compatible profiles when publishing a new Flow version.
+The active compiler catalogue contains only bindings compatible with the current
+native plugin inventory. Before that selection, the updater retains the complete
+installation input under `evidence/factory-runtime-catalog-<sha256>.json`.
+Historical published profiles and Flows keep their original dependencies; the
+update does not silently repin an earlier Run to the new executable.
+For explicitly listed MCP tools behind Octa's required blocking authorizer,
+the adapter delegates the CLI approval to that hook. This avoids an interactive
+Codex prompt before the existing Agent owner can check the invocation. Servers
+without an explicit tool list and invocations without the required hook keep
+their original approval behavior. The scoped tool still verifies the current
+lease and admitted runner before accepting an ordinary Build.
+Both workspace selection and unattended, explicitly authorized MCP execution
+are included in that upstream release. Its installed compatibility metadata
+must advertise `codex.execution-workspace.v1`; an older adapter is rejected.
+The Delivery guest also includes `cmp` from the pinned Node image so a Tester
+can write a POSIX shell check for exact file content, and local Git inspection
+from the pinned Rust build image so Reviewer can compare the candidate. The
+image build checks both executables before publishing its immutable identity;
+source mounts and tool authorization still determine what a step may do. The native verifier test
+executes that comparison inside the isolated check namespace. A guest upgrade
+retains the approved Coder write paths from its installed compatible profiles;
+missing or conflicting retained scopes require an explicit operator selection.
+The installation also declares the exact trusted Git capture implementation in
+its capability catalogue. Selecting a Coding profile derives its required bundle,
+manifest, capture report outputs and write scope automatically from the installed compiler;
+these are separate from the model's tool permissions. Ordinary startup repairs
+that declaration on older installations without changing retained Flow versions.

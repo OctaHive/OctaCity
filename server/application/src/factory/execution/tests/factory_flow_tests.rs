@@ -4,7 +4,8 @@ use crate::{
   ApplicationError, CreateFactoryBuild, FactoryBuildAcceptance, FactoryFlowCoordinator, FactoryFlowInputPreparer,
   FactoryFlowRunner, FactoryFlowStep, FactoryNodeBuildAdapter, FactoryNodeBuildExecutionFacts,
   FactoryNodeBuildOutputSource, FactoryNodeBuildOutputs, FactoryNodeExecutionRequest, FactoryNodeExecutionStep,
-  FactoryNodeExecutor, FactoryNodeRunner, FactoryNodeTarget, OrdinaryBuildApplication, OrdinaryBuildApplicationError,
+  FactoryNodeExecutor, FactoryNodeRunner, FactoryNodeTarget, ManagementCommandUseCase, OrdinaryBuildApplication,
+  OrdinaryBuildApplicationError,
 };
 use async_trait::async_trait;
 use fixtures::{key, reference};
@@ -2163,45 +2164,15 @@ fn append_request(
 
 #[test]
 fn every_ready_fanout_sibling_can_be_published_to_its_configured_pool() {
-  struct Fork;
-  #[async_trait]
-  impl FactoryNodeExecutor for Fork {
-    async fn cancel(
-      &self,
-      _: FactoryNodeExecutionRequest<'_>,
-      _: octacity_server_domain::Timestamp,
-    ) -> Result<crate::FactoryNodeCancellationStep, ApplicationError> {
-      panic!("the fork has no external operation")
-    }
-    async fn observe(
-      &self,
-      request: FactoryNodeExecutionRequest<'_>,
-    ) -> Result<FactoryNodeExecutionStep, ApplicationError> {
-      let definition = request
-        .admitted
-        .closure()
-        .definition(request.input.definition())
-        .unwrap();
-      let record = FlowNodeRecord::new(
-        request.input,
-        request.attempt,
-        definition,
-        FlowRecordObservation {
-          outcome: key("observed"),
-          payload: request.input.payload().clone(),
-          producer: request.attempt.execution().clone(),
-          observed_at: request.observed_at,
-        },
-      )
-      .unwrap();
-      Ok(FactoryNodeExecutionStep::Completed {
-        execution: None,
-        record: Box::new(record),
-        usage: BudgetUsage::default(),
-        outbox: vec![],
-      })
-    }
-  }
+  verify_builtin_fanout(false);
+}
+
+#[test]
+fn cancellation_of_a_started_fanout_does_not_require_an_external_executor() {
+  verify_builtin_fanout(true);
+}
+
+fn verify_builtin_fanout(cancel_before_completion: bool) {
   let mut template = correction_template();
   template.nodes[0].kind = FlowNodeKind::FanOut;
   template.nodes[0].build_profile = None;
@@ -2254,11 +2225,11 @@ fn every_ready_fanout_sibling_can_be_published_to_its_configured_pool() {
       .unwrap();
     let owner = FactoryFlowRunner::new(
       store.clone(),
-      Arc::new(Fork),
+      Arc::new(crate::FactoryNodeExecutorRegistry::new(vec![]).unwrap()),
       Arc::new(Inputs),
       crate::factory_node_test_support::clock(),
     );
-    for time in 31..34 {
+    for time in 31..if cancel_before_completion { 32 } else { 34 } {
       assert_eq!(
         crate::factory_node_test_support::reconcile_admission_then_observe(
           &owner,
@@ -2273,7 +2244,72 @@ fn every_ready_fanout_sibling_can_be_published_to_its_configured_pool() {
       );
     }
     let snapshot = store.factory_run_snapshot(admission.run.id()).await.unwrap();
+    if cancel_before_completion {
+      assert_eq!(snapshot.flow.attempts.len(), 1);
+      assert!(snapshot.flow.completions.is_empty());
+      crate::FactoryControlHandlers::new(store.clone())
+        .execute_management_command(
+          &crate::ManagementRequestContext::trusted_network(
+            crate::ManagementRequestId::new(uuid::Uuid::new_v4()).unwrap(),
+          ),
+          &crate::ManagementAuthorizationGrant::new(crate::ManagementVisibility::all()),
+          crate::CancelFactoryRunCommand {
+            run_id: admission.run.id(),
+            expected_version: snapshot.run.version(),
+            idempotency_key: IdempotencyKey::new("stop-builtin-fork").unwrap(),
+            requested_at: at(33),
+          },
+        )
+        .await
+        .unwrap();
+      let requested = store.factory_run_snapshot(admission.run.id()).await.unwrap();
+      let successor = FactoryRunClaimRecord::new(
+        admission.run.id(),
+        claim.owner.clone(),
+        FactoryClaim::new(
+          FactoryClaimFence::new(FactoryDigest::from_bytes([3; 32])),
+          at(34),
+          at(100),
+        )
+        .unwrap(),
+      );
+      store
+        .claim_factory_run(ClaimFactoryRun {
+          run_id: admission.run.id(),
+          expected_version: requested.run.version(),
+          record: successor.clone(),
+          audit: FactoryAuditFact::new(
+            admission.run.id(),
+            AuditActorKind::Worker,
+            None,
+            key("factory.claimed"),
+            FactoryDigest::from_bytes([3; 32]),
+            key("accepted"),
+            at(34),
+          ),
+        })
+        .await
+        .unwrap();
+      assert_eq!(
+        owner
+          .reconcile_flow(admission.run.id(), successor.id, at(35))
+          .await
+          .unwrap(),
+        FactoryFlowStep::Cancelled,
+      );
+      let cancelled = store.factory_run_snapshot(admission.run.id()).await.unwrap();
+      assert_eq!(cancelled.run.state(), FactoryRunState::Cancelled);
+      assert!(cancelled.flow.data.records.is_empty());
+      assert!(cancelled.flow.data.build_executions.is_empty());
+      return;
+    }
     assert_eq!(snapshot.flow.completions.len(), 1);
+    assert!(snapshot.flow.data.build_intents.is_empty());
+    assert!(snapshot.flow.data.build_executions.is_empty());
+    assert_eq!(
+      snapshot.flow.data.records[0].payload(),
+      snapshot.flow.data.inputs[0].payload()
+    );
     let mut append = FactoryRunHistoryAppend::default();
     for name in ["write_policy", "inspect_policy"] {
       append.flow.data.inputs.push(

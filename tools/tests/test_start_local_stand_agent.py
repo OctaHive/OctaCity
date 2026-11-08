@@ -196,7 +196,7 @@ class NativeAgentStartupTests(unittest.TestCase):
             mock.patch.object(
                 starter.subprocess,
                 "run",
-                return_value=subprocess.CompletedProcess([], 0),
+                return_value=subprocess.CompletedProcess([], 0, stdout=json.dumps({"digest": "sha256:" + "c" * 64, "os": "linux", "architecture": "arm64"})),
             ) as run,
         ):
             result = starter.start_agent(
@@ -272,6 +272,43 @@ class NativeAgentStartupTests(unittest.TestCase):
         self.assertEqual(result.state, "registered")
         self.assertEqual(result.pid, 4242)
         self.assertEqual(owner.shutdown_calls, 0)
+
+    def test_validation_worker_readiness_requires_its_own_registration_and_pool(self):
+        page = json.loads(json.dumps(self.online_page))
+        page["items"][0]["name"] = "local-stand-delivery-validation"
+        page["items"][0]["pool_id"] = "validation-pool"
+        client = bootstrap.BootstrapClient(AgentTransport([page]), bootstrap.RetryPolicy(attempts=1))
+        observer = starter.RegistrationObserver(client, None, name="local-stand-delivery-validation", pool_id="validation-pool")
+        self.assertTrue(observer.registered(1))
+        self.assertFalse(starter.RegistrationObserver(client, None).registered(1))
+        with self.assertRaisesRegex(starter.AgentStartupError, "Pool"):
+            starter.RegistrationObserver(client, None, name="local-stand-delivery-validation", pool_id="primary-pool").registered(1)
+
+    def test_delivery_start_waits_for_a_distinct_validation_worker(self):
+        directory = self.root / "agent-validation"
+        directory.mkdir(mode=0o700)
+        marker = directory / "worker.json"
+        marker.write_text(json.dumps({"agent_name": "local-stand-delivery-validation", "pool_id": "validation-pool"}))
+        marker.chmod(0o600)
+        page = json.loads(json.dumps(self.online_page))
+        page["items"][0].update(name="local-stand-delivery-validation", pool_id="validation-pool")
+        page["items"][0]["inventory"]["execution_contract"] = {"min": 1, "max": 4}
+        page["items"][0]["inventory"]["factory_executions"] = [{"execution": {"mode": "virtualization"}, "enforcement": ["managed_octa_execution"]}]
+        owner = FakeLifecycle(self.root)
+        (self.root / "pki").mkdir(mode=0o700)
+        (self.root / "pki/local-ca.pem").write_text("public CA")
+        (self.root / "pki/local-ca.pem").chmod(0o644)
+        (self.root / "delivery-guest").mkdir(mode=0o700)
+        image = self.root / "delivery-guest/image.json"
+        image.write_text(json.dumps({"reference": "local.octacity/factory-delivery@sha256:" + "c" * 64}))
+        image.chmod(0o600)
+        _, _, runner = self.start(owner, AgentTransport([self.online_page, page]))
+        self.assertTrue(any("inspect" in call.args[0] and call.kwargs["env"]["MSB_HOME"] != str(self.state_root / "microsandbox")
+                            for call in runner.call_args_list), "the independent worker must possess its pinned guest image")
+        self.assertIn("agent-validation/config-", owner.launched[0][-1])
+        import tomllib
+        document = tomllib.loads(Path(owner.launched[0][-1]).read_text())
+        self.assertEqual(document["agent_id"], "local-stand-delivery-validation")
 
     def test_registration_still_rejects_malformed_or_paginated_agent_pages(self):
         for page, message in (

@@ -1504,3 +1504,80 @@ it.each(['files', 'folder', 'repository'])(
     expect(screen.getByRole('textbox', { name: 'Step name' })).toHaveProperty('value', 'next_step');
   },
 );
+
+it('keeps a scoped Tester bound when its verifier step is renamed', async () => {
+  const draft = emptyFlowDraft();
+  const sample =
+    factoryProfileConfigurationFixture().configuration.flow.closure.definitions[0]!.nodes[0]!;
+  draft.root.nodes = [
+    { ...sample, key: 'checks', kind: 'build_command' },
+    { ...sample, key: 'tester', scoped_validation_runner: 'checks' },
+  ];
+  draft.root.entry = 'checks';
+  let observed = draft;
+  function Harness() {
+    const [value, setValue] = useState(draft);
+    return (
+      <FlowGraphEditor
+        value={value}
+        choices={[]}
+        subflows={[]}
+        onChange={(next) => {
+          observed = next;
+          setValue(next);
+        }}
+      />
+    );
+  }
+  render(
+    <QueryClientProvider client={createConsoleQueryClient()}>
+      <Harness />
+    </QueryClientProvider>,
+  );
+  const name = screen.getByRole('textbox', { name: 'Step name' });
+  await userEvent.clear(name);
+  await userEvent.type(name, 'verified_checks');
+  expect(observed.root.nodes[1]!.scoped_validation_runner).toBe('verified_checks');
+});
+
+it.each(['remove', 'change kind'] as const)(
+  'clears the scoped binding when the verifier is no longer a command (%s)',
+  async (action) => {
+    const draft = emptyFlowDraft();
+    const sample =
+      factoryProfileConfigurationFixture().configuration.flow.closure.definitions[0]!.nodes[0]!;
+    draft.root.nodes = [
+      { ...sample, key: 'checks', kind: 'build_command' },
+      { ...sample, key: 'tester', scoped_validation_runner: 'checks' },
+    ];
+    let observed = draft;
+    function Harness() {
+      const [value, setValue] = useState(draft);
+      return (
+        <FlowGraphEditor
+          value={value}
+          choices={[]}
+          subflows={[]}
+          onChange={(next) => {
+            observed = next;
+            setValue(next);
+          }}
+        />
+      );
+    }
+    render(
+      <QueryClientProvider client={createConsoleQueryClient()}>
+        <Harness />
+      </QueryClientProvider>,
+    );
+    if (action === 'remove')
+      await userEvent.click(screen.getByRole('button', { name: 'Remove step' }));
+    else {
+      await userEvent.click(screen.getByRole('combobox', { name: 'Step type' }));
+      await userEvent.click(screen.getByRole('option', { name: 'AI agent' }));
+    }
+    expect(
+      observed.root.nodes.find((node) => node.key === 'tester')!.scoped_validation_runner,
+    ).toBeNull();
+  },
+);

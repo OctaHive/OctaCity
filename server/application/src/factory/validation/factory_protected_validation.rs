@@ -68,6 +68,25 @@ pub struct FactoryProtectedValidationReport {
   /// Canonical complete declared-class outcomes, with no unbounded diagnostics.
   pub classes: Vec<FactoryProtectedValidationClassResult>,
 }
+impl FactoryProtectedValidationReport {
+  pub(super) fn verdict(&self) -> DeterministicGateOutcome {
+    if self
+      .classes
+      .iter()
+      .any(|item| item.outcome == DeterministicGateOutcome::Failed)
+    {
+      DeterministicGateOutcome::Failed
+    } else if self
+      .classes
+      .iter()
+      .any(|item| item.outcome == DeterministicGateOutcome::Indeterminate)
+    {
+      DeterministicGateOutcome::Indeterminate
+    } else {
+      DeterministicGateOutcome::Passed
+    }
+  }
+}
 #[derive(Deserialize)]
 #[serde(deny_unknown_fields)]
 struct ValidationFacts {
@@ -256,23 +275,7 @@ impl FactoryProtectedValidationMaterialization {
     {
       return Err(ApplicationError::invalid());
     }
-    Ok(
-      if report
-        .classes
-        .iter()
-        .any(|item| item.outcome == DeterministicGateOutcome::Failed)
-      {
-        DeterministicGateOutcome::Failed
-      } else if report
-        .classes
-        .iter()
-        .any(|item| item.outcome == DeterministicGateOutcome::Indeterminate)
-      {
-        DeterministicGateOutcome::Indeterminate
-      } else {
-        DeterministicGateOutcome::Passed
-      },
-    )
+    Ok(report.verdict())
   }
   pub(crate) fn verify_facts(
     &self,

@@ -2,6 +2,20 @@ ARG RUST_IMAGE=scratch
 ARG NODE_IMAGE=scratch
 ARG NGINX_IMAGE=scratch
 ARG ALPINE_IMAGE=scratch
+ARG GUEST_RUST_IMAGE=scratch
+
+FROM ${GUEST_RUST_IMAGE} AS factory-control-builder
+WORKDIR /workspace
+COPY --from=octa-source . /workspace/octa
+COPY . /workspace/octacity
+WORKDIR /workspace/octacity
+RUN --mount=type=cache,target=/usr/local/cargo/registry,sharing=locked \
+    --mount=type=cache,target=/usr/local/cargo/git,sharing=locked \
+    --mount=type=cache,id=octacity-factory-control,target=/workspace/octacity/target,sharing=locked \
+    set -eu; \
+    cargo build --locked --release -p octacity-lifecycle --bin octacity-protected-reader --bin octacity-codex-reader; \
+    mkdir -p /out; \
+    cp target/release/octacity-protected-reader target/release/octacity-codex-reader /out/
 
 FROM ${RUST_IMAGE} AS rust-builder
 WORKDIR /workspace
@@ -54,6 +68,7 @@ LABEL org.opencontainers.image.title="OctaCity server" \
       dev.octacity.octa.revision="${OCTA_REVISION}" \
       dev.octacity.octa.source-sha256="${OCTA_SOURCE_SHA256}"
 COPY --from=server-builder /out/rootfs /
+COPY --from=factory-control-builder --chmod=0555 /out/ /usr/local/lib/octacity/factory-tools/
 COPY --chmod=0755 deployment/local-stand/server-entrypoint.sh /usr/local/bin/octacity-server-entrypoint
 USER 65532:65532
 ENTRYPOINT ["/usr/local/bin/octacity-server-entrypoint"]

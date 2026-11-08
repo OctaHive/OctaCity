@@ -11,6 +11,7 @@ import socket
 import ssl
 import subprocess
 import tempfile
+import tarfile
 from pathlib import Path
 import sys
 import threading
@@ -42,7 +43,14 @@ class FactoryStandTriageTests(unittest.TestCase):
                 calls.append(arguments)
                 if "build" in arguments:
                     context = Path(arguments[-1])
-                    self.assertEqual({path.name for path in context.iterdir()}, {"Dockerfile", "local-ca.pem"})
+                    expected = {"Dockerfile", "local-ca.pem"}
+                    if "factory-delivery" in arguments[arguments.index("--tag") + 1]:
+                        expected.add("bwrap")
+                        self.assertEqual((context / "bwrap").read_bytes(), b"qualified sandbox")
+                        self.assertIn("/usr/bin/bwrap --version", (context / "Dockerfile").read_text())
+                        self.assertIn("/usr/bin/git --version", (context / "Dockerfile").read_text(),
+                            "Delivery must qualify local candidate inspection before publishing its guest")
+                    self.assertEqual({path.name for path in context.iterdir()}, expected)
                     self.assertEqual((context / "local-ca.pem").read_bytes(), (root / "pki/local-ca.pem").read_bytes())
                     recipe = (context / "Dockerfile").read_text()
                     self.assertIn("@sha256:", recipe)
@@ -70,10 +78,31 @@ class FactoryStandTriageTests(unittest.TestCase):
             self.assertFalse(any("build" in command for command in calls),
                 "cache recovery must reimport the retained immutable archive without rebuilding its identity")
             calls.clear()
-            delivery_image = setup.prepare_guest_image(root, root / "native", delivery=True, execute=execute)
+            legacy = root / "delivery-guest"
+            legacy.mkdir(mode=0o700)
+            (legacy / "image.docker.tar").write_bytes(b"previously-published-guest")
+            (legacy / "inputs.json").write_text('{"recipe":"previous"}')
+            def download_sandbox(source, target):
+                self.assertEqual(source["tag"], "rust-v0.161.0")
+                self.assertEqual(source["sha256"], "1c96e12519c4b6ee1c634c822f8ea2775b006b3d6f4ca16e0648d1dd54f441fe")
+                with tarfile.open(target, "w:gz") as archive:
+                    member = tarfile.TarInfo("bwrap-aarch64-unknown-linux-musl")
+                    member.size = len(b"qualified sandbox")
+                    archive.addfile(member, io.BytesIO(b"qualified sandbox"))
+            with mock.patch.object(setup.runtime, "download", side_effect=download_sandbox):
+                delivery_image = setup.prepare_guest_image(root, root / "native", delivery=True, execute=execute)
             self.assertEqual(delivery_image, "local.octacity/factory-delivery@" + digest)
-            self.assertIn("/usr/local/bin/node --version", (root / "delivery-guest/context/Dockerfile").read_text())
+            self.assertEqual((legacy / "image.docker.tar").read_bytes(), b"previously-published-guest")
+            self.assertEqual((legacy / "inputs.json").read_text(), '{"recipe":"previous"}')
+            self.assertTrue(any("/usr/local/bin/node --version" in path.read_text()
+                for path in (root / "delivery-guest").rglob("Dockerfile")))
             self.assertEqual(setup.prepare_guest_image(root, root / "native", execute=execute), image)
+            second_home = root / "separate-worker/microsandbox"
+            missing["image"] = True
+            calls.clear()
+            self.assertEqual(setup.prepare_guest_image(root, root / "native", delivery=True,
+                microsandbox_home=second_home, execute=execute), delivery_image)
+            self.assertTrue(any("load" in command for command in calls))
 
     def test_plain_cli_selects_the_triage_installer_instead_of_automatic_demonstration_runs(self):
         expected = {"project": "selected-project", "configuration": {"id": "triage", "version": 1}, "input": {"enabled": False}}

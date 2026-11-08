@@ -113,11 +113,14 @@ pub use factory::execution::factory_decision_signal_node::{
   FactoryDecisionSignalNodeProfile,
 };
 pub use factory::execution::factory_decision_signal_plan::FactoryDecisionSignalRequestPlan;
-pub use factory::execution::factory_flow::{FactoryFlowInputPreparer, FactoryFlowRunner};
+pub use factory::execution::factory_flow::{
+  FactoryFlowInputPreparer, FactoryFlowRunner, FactoryScopedValidationService,
+};
 pub use factory::execution::factory_node::{
   FactoryExecutionClock, FactoryFlowCoordinator, FactoryFlowStep, FactoryNodeCancellationStep,
   FactoryNodeExecutionRequest, FactoryNodeExecutionStep, FactoryNodeExecutor, FactoryNodeOutboxEffect,
-  FactoryNodeRunner, FactoryNodeStep, FactoryNodeTarget, SystemFactoryExecutionClock, prepare_factory_flow_input,
+  FactoryNodeRunner, FactoryNodeStep, FactoryNodeTarget, FactoryScopedValidationCall, SystemFactoryExecutionClock,
+  prepare_factory_flow_input,
 };
 pub use factory::execution::factory_node_build::{
   FactoryNodeBuildAdapter, FactoryNodeBuildCancellation, FactoryNodeBuildCompletion, FactoryNodeBuildExecutionFacts,
@@ -192,7 +195,7 @@ pub use factory::validation::factory_protected_validation::{
   FactoryProtectedValidationRequest, factory_protected_validation_materialization,
 };
 pub use factory::validation::factory_protected_validation_build::{
-  FactoryProtectedValidationAdapter, FactoryProtectedValidationInputSource,
+  FactoryProtectedValidationAdapter, FactoryProtectedValidationInputSource, FactoryScopedValidationVerdict,
 };
 pub use factory::validation::factory_protected_validation_evidence_action::{
   FactoryProtectedValidationEvidenceAction, FactoryProtectedValidationEvidenceProfile,
@@ -250,8 +253,9 @@ pub use agents::agent_telemetry::{
   AgentTelemetryService, AgentTelemetryUseCases,
 };
 pub use agents::agent_tool_action::{
-  AgentToolActionError, AgentToolActionInput, AgentToolActionService, AgentToolActionUseCases,
-  FailClosedToolActionAuthorizer, LeaseBoundToolActionAuthorizer, LeaseBoundToolActionInput,
+  AgentScopedValidationInput, AgentToolActionError, AgentToolActionInput, AgentToolActionService,
+  AgentToolActionUseCases, FailClosedToolActionAuthorizer, LeaseBoundScopedValidation, LeaseBoundScopedValidationInput,
+  LeaseBoundToolActionAuthorizer, LeaseBoundToolActionInput,
 };
 pub use agents::lease_expiry::{LeaseExpiryBatchOutcome, LeaseExpiryWorker};
 pub use agents::pool_cqrs::{

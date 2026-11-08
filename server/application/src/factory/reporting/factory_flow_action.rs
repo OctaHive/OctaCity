@@ -177,6 +177,19 @@ impl crate::FactoryNodeExecutor for FactoryFlowActionAdapter {
     &self,
     request: crate::FactoryNodeExecutionRequest<'_>,
   ) -> Result<crate::FactoryNodeExecutionStep, ApplicationError> {
+    if request.observed_at >= request.attempt.deadline() {
+      // A lost response can leave an external effect outstanding. Settle only
+      // that original operation and its measured usage; never dispatch it again.
+      let deadline = request.attempt.deadline();
+      return match self.cancel(request, deadline).await? {
+        crate::FactoryNodeCancellationStep::Waiting { execution } => {
+          Ok(crate::FactoryNodeExecutionStep::Waiting { execution })
+        }
+        crate::FactoryNodeCancellationStep::Stopped { execution, usage } => {
+          Ok(crate::FactoryNodeExecutionStep::ExecutionStopped { execution, usage })
+        }
+      };
+    }
     let scoped = self.scoped_request(&request, true)?;
     let definition = request
       .admitted

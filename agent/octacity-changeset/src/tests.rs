@@ -25,6 +25,13 @@ async fn creates_reproducible_hook_free_bundle_manifest_patch_and_provenance() {
   let origin = root.path().join("origin");
   fs::create_dir(&origin).unwrap();
   git_run(&git, &origin, &["init", "--quiet", "--initial-branch=main"]);
+  // A normal shallow checkout omits real parents, rather than just marking a
+  // root commit shallow. Capture must retain this boundary in its private Git.
+  git_run_with_identity(
+    &git,
+    &origin,
+    &["commit", "--quiet", "--allow-empty", "-m", "earlier history"],
+  );
   fs::write(origin.join("existing.txt"), "base\n").unwrap();
   git_run(&git, &origin, &["add", "--all"]);
   git_run_with_identity(&git, &origin, &["commit", "--quiet", "-m", "base"]);

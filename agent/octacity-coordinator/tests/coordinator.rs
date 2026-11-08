@@ -13,7 +13,7 @@ use ed25519_dalek::{Signer as _, SigningKey, VerifyingKey};
 use octacity_coordinator::{
   AgentTelemetryCoordinator, CacheSessionCoordinator, CoordinatorClient, CoordinatorError, HttpCoordinatorClient,
   HttpCoordinatorConfig, LeaseMonitor, LeaseMonitorOutcome, LeaseMonitorPolicy, LeasePollOutcome, LeasePoller,
-  OutputUploadCoordinator, Registration, RetryPolicy,
+  OutputUploadCoordinator, Registration, RetryPolicy, ToolActionCoordinator,
 };
 use octacity_private_fs::test_support::PrivateDirectoryFixture;
 use octacity_protocol::{
@@ -26,7 +26,7 @@ use octacity_protocol::{
   OciIsolation, OctaInventory, OctaSpec, OutputKind, OutputLimits, OutputUploadMetadata, PlatformArchitecture,
   PlatformOs, PlatformSpec, RegisterAgentResponse, RemoteCacheGrant, RevokeCacheSessionRequest,
   RevokeCacheSessionResponse, RuntimeCapability, RuntimeMode, RuntimeSpec, RuntimeTarget, SIGNATURE_ALGORITHM,
-  SignedEnvelope, SourceSpec,
+  ScopedValidationAction, ScopedValidationRequest, ScopedValidationVerdict, SignedEnvelope, SourceSpec,
 };
 use serde_json::json;
 use tokio::{
@@ -44,10 +44,12 @@ enum Action {
   PartialBodyHang,
   Delay(Duration, Box<Action>),
   Error { status: u16, retryable: bool },
+  RawError { status: u16, body: Vec<u8> },
   Register { request_id: Option<String> },
   Acquire(LeaseAssignment),
   Heartbeat(HeartbeatDirective),
   AppendEvents(u64),
+  ScopedValidation { stale: bool },
   BeginOutput,
   CompleteOutput,
   BeginCache,
@@ -169,6 +171,10 @@ async fn respond(stream: &mut TcpStream, action: Action, request: &RecordedReque
           .await;
         std::future::pending::<()>().await
       }
+      Action::RawError { status, body } => {
+        write_response(stream, status, &body).await;
+        return;
+      }
       Action::Error { status, retryable } => {
         let body = serde_json::to_vec(&CoordinatorErrorResponse {
           protocol_version: COORDINATOR_PROTOCOL_VERSION,
@@ -220,6 +226,16 @@ async fn respond(stream: &mut TcpStream, action: Action, request: &RecordedReque
           request_id: request.request_id.clone(),
           acknowledged_sequence,
         })
+        .unwrap();
+        write_response(stream, 200, &body).await;
+        return;
+      }
+      Action::ScopedValidation { stale } => {
+        let body = serde_json::to_vec(&json!({
+          "protocol_version": COORDINATOR_PROTOCOL_VERSION,
+          "request_id": if stale { "earlier-request" } else { request.request_id.as_str() },
+          "verdict": {"status":"waiting"}
+        }))
         .unwrap();
         write_response(stream, 200, &body).await;
         return;
@@ -673,6 +689,55 @@ async fn shutdown_cancels_a_blocked_long_poll_and_requests_time_out() {
 }
 
 #[tokio::test]
+async fn scoped_validation_uses_the_current_lease_and_rejects_a_stale_response() {
+  let lease = signed_lease(&SigningKey::from_bytes(&[7; 32]), unix_now());
+  let server = MockServer::start(vec![
+    Action::ScopedValidation { stale: false },
+    Action::ScopedValidation { stale: true },
+  ])
+  .await;
+  let client = client(&server, 1, Duration::from_secs(1), 16 * 1024);
+  let registration = registration();
+  let request = ScopedValidationRequest {
+    protocol_version: COORDINATOR_PROTOCOL_VERSION,
+    request_id: "validation-1".to_owned(),
+    registration_id: registration.registration_id.clone(),
+    lease: (&lease).into(),
+    action: ScopedValidationAction::Start,
+  };
+  let mut wrong = request.clone();
+  wrong.lease.fencing_token = "other-fence".to_owned();
+  assert!(
+    client
+      .scoped_validation(&registration, &lease, &wrong, CancellationToken::new())
+      .await
+      .is_err()
+  );
+  let response = client
+    .scoped_validation(&registration, &lease, &request, CancellationToken::new())
+    .await
+    .unwrap();
+  assert_eq!(response.verdict, ScopedValidationVerdict::Waiting);
+  let status = ScopedValidationRequest {
+    request_id: "validation-2".to_owned(),
+    action: ScopedValidationAction::Status,
+    ..request.clone()
+  };
+  assert!(
+    client
+      .scoped_validation(&registration, &lease, &status, CancellationToken::new())
+      .await
+      .is_err()
+  );
+  let records = server.records.lock().unwrap();
+  assert_eq!(records.len(), 2);
+  assert_eq!(records[0].path, "/api/v1/leases/lease-1/scoped-validation");
+  assert_eq!(records[0].idempotency_key, "validation-1");
+  assert_eq!(records[0].body, serde_json::to_value(request).unwrap());
+  assert_eq!(records[1].body, serde_json::to_value(status).unwrap());
+}
+
+#[tokio::test]
 async fn sends_fenced_lease_and_heartbeat_documents_to_exact_endpoints() {
   let signing_key = SigningKey::from_bytes(&[7; 32]);
   let lease = signed_lease(&signing_key, unix_now());
@@ -897,3 +962,55 @@ async fn begins_and_revokes_cache_authority_on_exact_fenced_endpoints() {
 }
 
 include!("coordinator/poller.rs");
+
+#[tokio::test]
+async fn replays_fenced_event_batches_after_non_protocol_gateway_failures() {
+  for (status, body) in [
+    (502, b"<html>Bad Gateway</html>".to_vec()),
+    (503, vec![]),
+    (504, b"<html>Gateway Timeout</html>".to_vec()),
+  ] {
+    let lease = signed_lease(&SigningKey::from_bytes(&[7; 32]), unix_now());
+    let server = MockServer::start(vec![Action::RawError { status, body }, Action::AppendEvents(1)]).await;
+    let client = client(&server, 2, Duration::from_secs(1), 16 * 1024);
+    let events = vec![AttemptEventEnvelope {
+      job_id: lease.job_id.clone(),
+      attempt: lease.attempt,
+      lease_id: lease.lease_id.clone(),
+      fencing_token: lease.fencing_token.clone(),
+      stream_sequence: 1,
+      occurred_at_unix_ms: 1,
+      kind: AttemptEventKind::Agent {
+        event: AgentLifecycleEvent::StateChanged {
+          state: JobLifecycleState::Preparing,
+        },
+      },
+    }];
+    let response = client
+      .append_events(&registration(), &lease, &events, CancellationToken::new())
+      .await
+      .expect("a bounded transient gateway body cannot terminate durable event delivery");
+    assert_eq!(response.acknowledged_sequence, 1);
+    let records = server.records.lock().unwrap();
+    assert_eq!(records.len(), 2);
+    assert_eq!(records[0].body, records[1].body);
+    assert_eq!(records[0].idempotency_key, records[1].idempotency_key);
+  }
+}
+
+#[tokio::test]
+async fn non_protocol_authentication_failures_are_not_retried() {
+  for status in [401, 403] {
+    let server = MockServer::start(vec![Action::RawError {
+      status,
+      body: b"<html>Access denied</html>".to_vec(),
+    }])
+    .await;
+    let client = client(&server, 3, Duration::from_secs(1), 4096);
+    assert!(matches!(
+      client.register(&inventory(), CancellationToken::new()).await,
+      Err(CoordinatorError::Json { .. })
+    ));
+    assert_eq!(server.records.lock().unwrap().len(), 1);
+  }
+}

@@ -5,10 +5,10 @@ use octacity_server_domain::{AttemptId, BuildId, EntityKind, JobId};
 use octacity_server_factory::{FactoryDigest, FactoryKey};
 use octacity_server_job::JobSpecSigner;
 use octacity_server_store::{
-  AcceptFactoryBuild, AcceptedFactoryBuild, AuditActorKind, FactoryAuditFact, FactoryBuildOrigin, StoreError,
-  StoreOperation,
+  AcceptFactoryBuild, AcceptedFactoryBuild, AuditActorKind, FactoryAuditFact, FactoryBuildOrigin,
+  FactoryScopedBuildCaller, StoreError, StoreOperation,
 };
-use sqlx::{PgPool, Postgres, Transaction};
+use sqlx::{PgPool, Postgres, Transaction, types::Json};
 
 type AcceptanceRow = (uuid::Uuid, uuid::Uuid, Vec<uuid::Uuid>, Vec<u8>, Vec<u8>);
 
@@ -54,6 +54,7 @@ pub(crate) async fn accept(
   pool: &PgPool,
   signer: &JobSpecSigner,
   request: AcceptFactoryBuild,
+  caller: Option<FactoryScopedBuildCaller>,
 ) -> Result<AcceptedFactoryBuild, StoreError> {
   request.validate()?;
   let operation = request.intent.operation_id().map_err(|_| conflict())?;
@@ -61,14 +62,23 @@ pub(crate) async fn accept(
   let bytes = serde_json::to_vec(&(&request.intent, &request.build, request.attempt_id, &request.jobs))
     .map_err(|_| StoreError::Unavailable)?;
   let materialization = FactoryDigest::sha256("octacity.factory.build-materialization.v1", &[&bytes]);
-  if let Some((accepted, retained)) = lookup(pool, operation).await? {
+  if caller.is_none()
+    && let Some((accepted, retained)) = lookup(pool, operation).await?
+  {
     return identical(accepted, retained, materialization);
   }
   let mut transaction = pool.begin().await.map_err(unavailable)?;
-  crate::factory::execution::factory_run::verify_build_dispatch(&mut transaction, &request).await?;
+  if let Some(caller) = caller {
+    verify_scoped_caller(&mut transaction, &request, caller).await?;
+  } else {
+    crate::factory::execution::factory_run::verify_build_dispatch(&mut transaction, &request).await?;
+  }
   // The Run lock serializes competing owners of this exact persisted operation.
   if let Some((accepted, retained)) = lookup(&mut *transaction, operation).await? {
     return identical(accepted, retained, materialization);
+  }
+  if caller.is_some() {
+    crate::factory::execution::factory_run::verify_build_dispatch(&mut transaction, &request).await?;
   }
   request.validate_fresh()?;
   require_references(&mut transaction, &request).await?;
@@ -151,6 +161,73 @@ pub(crate) async fn accept(
     job_ids: request.jobs.iter().map(|job| job.id).collect(),
     effective_policy_digest: request.intent.permissions().digest(),
   })
+}
+
+async fn verify_scoped_caller(
+  transaction: &mut Transaction<'_, Postgres>,
+  request: &AcceptFactoryBuild,
+  caller: FactoryScopedBuildCaller,
+) -> Result<(), StoreError> {
+  let runner = request.intent.node();
+  // Hold the Run before the lease rows, as with Factory tool signal reservation.
+  let snapshot =
+    crate::factory::execution::factory_run::read_snapshot_in_transaction(transaction, runner.factory_run_id()).await?;
+  let lease = crate::cicd::builds::lease::authorize_tool_action_in_transaction(
+    transaction,
+    caller.lease,
+    caller.job_id,
+    caller.attempt,
+    request.accepted_at,
+  )
+  .await?;
+  let origin: Option<Json<FactoryBuildOrigin>> = sqlx::query_scalar(
+    "SELECT build.factory_origin FROM builds build JOIN attempts attempt ON attempt.build_id=build.id \
+     JOIN jobs job ON job.attempt_id=attempt.id WHERE job.id=$1 AND job.state IN ('leased','running') \
+       AND build.state='running' AND attempt.state='running' AND NOT EXISTS (SELECT 1 FROM attempts successor \
+         WHERE successor.build_id=build.id AND successor.attempt_number>attempt.attempt_number)",
+  )
+  .bind(lease.job_id)
+  .fetch_optional(&mut **transaction)
+  .await
+  .map_err(unavailable)?
+  .flatten();
+  let Json(origin) = origin.ok_or_else(conflict)?;
+  let history = snapshot.flow.runtime();
+  let intent = snapshot
+    .flow
+    .data
+    .build_intents
+    .iter()
+    .find(|intent| {
+      intent.node().id() == origin.node_attempt_id
+        && FactoryBuildOrigin::from_intent(intent).ok().as_ref() == Some(&origin)
+    })
+    .ok_or_else(conflict)?;
+  let node = intent.node();
+  let binding = snapshot
+    .admitted_flow
+    .closure()
+    .definition(intent.input().definition())
+    .and_then(|definition| definition.node(node.node_key()))
+    .and_then(octacity_server_factory::FlowNodeDefinition::scoped_validation_runner);
+  if origin.run_id != runner.factory_run_id()
+    || lease.project_id != request.build.project_id.as_uuid()
+    || node.flow_run_id() != runner.flow_run_id()
+    || node.workflow_cycle_id() != runner.workflow_cycle_id()
+    || binding != Some(runner.node_key())
+    || request.accepted_at >= node.deadline()
+    || !history.is_current_cycle(node.workflow_cycle_id())
+    || !history.active_nodes().any(|active| active.id() == node.id())
+    || snapshot.run.state().is_terminal()
+    || snapshot
+      .lifecycle_checkpoints
+      .iter()
+      .find(|row| row.id == snapshot.current.lifecycle_checkpoint_id)
+      .is_none_or(|row| row.cancellation_requested)
+  {
+    return Err(conflict());
+  }
+  Ok(())
 }
 
 fn identical(

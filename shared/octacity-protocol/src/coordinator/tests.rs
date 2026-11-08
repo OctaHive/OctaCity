@@ -10,6 +10,43 @@ use crate::{
 use super::*;
 
 #[test]
+fn scoped_validation_request_accepts_only_an_action_and_the_current_lease() {
+  let mut wire = serde_json::json!({
+    "protocol_version": COORDINATOR_PROTOCOL_VERSION,
+    "request_id": "request-1",
+    "registration_id": "registration-1",
+    "lease": {
+      "lease_id": "lease-1",
+      "job_id": "job-1",
+      "attempt": 1,
+      "fencing_token": "fence-1"
+    },
+    "action": "start"
+  });
+  let request: ScopedValidationRequest = serde_json::from_value(wire.clone()).unwrap();
+  request.validate().unwrap();
+  assert_eq!(request.action, ScopedValidationAction::Start);
+  wire["action"] = serde_json::json!("status");
+  let request: ScopedValidationRequest = serde_json::from_value(wire.clone()).unwrap();
+  assert_eq!(request.action, ScopedValidationAction::Status);
+  let mut unbound = wire.clone();
+  unbound["lease"]["attempt"] = serde_json::json!(0);
+  assert!(
+    serde_json::from_value::<ScopedValidationRequest>(unbound)
+      .unwrap()
+      .validate()
+      .is_err()
+  );
+  for field in ["run_id", "build_id", "candidate", "test_path", "command"] {
+    let mut override_request = wire.clone();
+    override_request[field] = serde_json::json!("untrusted-selection");
+    assert!(serde_json::from_value::<ScopedValidationRequest>(override_request).is_err());
+  }
+  wire["action"] = serde_json::json!("cancel");
+  assert!(serde_json::from_value::<ScopedValidationRequest>(wire).is_err());
+}
+
+#[test]
 fn inventory_accepts_bounded_host_details_without_requiring_them_for_older_agents() {
   let legacy = serde_json::to_value(inventory()).unwrap();
   let mut value = legacy.clone();
@@ -150,6 +187,7 @@ fn factory_execution_capabilities_are_bound_to_v3_isolated_routes() {
   inventory.factory_executions.push(FactoryExecutionCapabilityV3 {
     workspace_anchor: false,
     controlled_tools: false,
+    scoped_validation: false,
     execution: execution.clone(),
     enforcement: FactoryEnforcementCapabilityV3::ALL.to_vec(),
   });
@@ -170,6 +208,7 @@ fn factory_execution_capabilities_are_bound_to_v3_isolated_routes() {
   inventory.factory_executions[0] = FactoryExecutionCapabilityV3 {
     workspace_anchor: false,
     controlled_tools: false,
+    scoped_validation: false,
     execution,
     enforcement: FactoryEnforcementCapabilityV3::ALL.to_vec(),
   };

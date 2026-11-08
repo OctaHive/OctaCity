@@ -203,6 +203,73 @@ fn accepted_project_access_reaches_signed_jobs_and_current_revocation_has_no_fal
 }
 
 #[test]
+fn a_narrow_factory_node_does_not_inherit_unused_configuration_network_hosts() {
+  crate::factory::admission::tests::factory_admission_tests::run_ready(async {
+    let (_, _, mut profile) = crate::factory::commands::tests::factory_command_tests::command_fixture();
+    let work = crate::factory_node_test_support::fixtures::work();
+    crate::factory::commands::tests::factory_command_output_source_tests::configure_profile(&mut profile, &work);
+    let mut grants = serde_json::to_value(&profile.project_permissions).unwrap();
+    grants["resources"]["elapsed_millis"] = serde_json::json!(1000);
+    profile.project_permissions = serde_json::from_value(grants).unwrap();
+    profile.local_permissions = LocalPermissionCeiling::fully_enforced(profile.project_permissions.clone());
+    let mut binding = crate::factory_node_test_support::fixtures::binding(work.subject().project_id());
+    binding.build_configuration = profile.build_configuration.clone();
+    binding.task_digest = profile.task_digest();
+    let (_, admitted, _, input, node) = crate::factory_node_test_support::fixtures::execution_fixture_with_code_scope(
+      FlowNodeKind::BuildCommand,
+      work,
+      binding,
+      profile.project_permissions.clone(),
+      FlowCodeScope::Repository,
+    );
+    let intent = FlowBuildIntent::new(input, &admitted, node, Default::default(), 0).unwrap();
+    assert_eq!(intent.permissions().network_hosts().count(), 0);
+    let mut installed = context(&profile, &intent);
+    installed.configuration.definition.runtime.network = ConfigurationNetworkPolicy::Restricted {
+      allowed_hosts: BTreeSet::from([octacity_server_domain::NetworkHost::new("unused.example.test").unwrap()]),
+    };
+    let original = installed.clone();
+    let compiler = FactoryCommandBuildMaterializer::new(
+      Arc::new(Context(installed)),
+      Arc::new(FactoryExecutionInputPublisher::new(
+        Arc::new(Inputs::default()),
+        Arc::new(Bytes),
+        Arc::new(Clock),
+      )),
+      vec![profile],
+      Arc::new(Clock),
+    )
+    .unwrap();
+    let accepted = compiler
+      .materialize(
+        &intent,
+        &admitted,
+        FactoryClaimOwnership::new(intent.node().owner().clone(), intent.node().claim()),
+        at(41),
+      )
+      .await
+      .expect("a runtime ceiling may contain hosts unused by this node");
+    let policy = accepted.jobs[0].job_spec_template.placement_policy();
+    let octacity_server_job::JobRuntimePolicy::Current(runtime) = policy.runtime else {
+      panic!("managed runtime")
+    };
+    assert_eq!(runtime.network, octacity_protocol::NetworkPolicy::Disabled);
+    assert_eq!(
+      original
+        .configuration
+        .definition
+        .runtime
+        .network
+        .allowed_hosts()
+        .unwrap()
+        .len(),
+      1
+    );
+    accepted.validate_fresh().unwrap();
+  });
+}
+
+#[test]
 fn selected_repository_mismatch_is_rejected_before_publishing_private_command_inputs() {
   crate::factory::admission::tests::factory_admission_tests::run_ready(async {
     let (_, _, mut profile) = crate::factory::commands::tests::factory_command_tests::command_fixture();
@@ -417,7 +484,7 @@ fn validation_materializer_publishes_the_invocation_contract_and_signs_every_ori
     let (_, _, mut profile) = crate::factory::commands::tests::factory_command_tests::command_fixture();
     let fixture =
       crate::factory::validation::tests::factory_protected_validation_input_source_tests::retained_validation_fixture(
-        false,
+        true,
         6,
         |work, binding, permissions| {
           profile.identity = binding.model_or_tool.clone();
@@ -497,7 +564,11 @@ fn validation_materializer_publishes_the_invocation_contract_and_signs_every_ori
       "the private test file is a trusted Job input, not a Context selection"
     );
     assert!(managed.factory().unwrap().change_set_materialization.is_some());
-    assert!(managed.factory().unwrap().change_set_capture.is_none());
+    assert!(fixture.intent.profile().capture_deliverables.is_some());
+    assert!(
+      managed.factory().unwrap().change_set_capture.is_none(),
+      "verification of required deliverables must not capture or modify the candidate"
+    );
     assert!(managed.permissions().secret_profiles.is_empty());
   });
 }

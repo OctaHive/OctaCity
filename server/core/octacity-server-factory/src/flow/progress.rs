@@ -127,7 +127,14 @@ impl FlowInterpreter<'_> {
     let position = if let Some(pending) = pending.first() {
       FlowProgress::Node(pending.node_key().clone())
     } else if let Some(node) = ready.iter().next() {
-      FlowProgress::Node(node.clone())
+      // A scoped runner stays eligible for the tool. Its caller needs the first
+      // reconciliation turn when both branches become ready.
+      let definition = self.definition(flow)?;
+      let selected = definition
+        .scoped_validation_caller(node)
+        .filter(|caller| ready.contains(*caller))
+        .unwrap_or(node);
+      FlowProgress::Node(selected.clone())
     } else if let Some((_, key, source)) = terminal {
       FlowProgress::Terminal { key, source }
     } else {

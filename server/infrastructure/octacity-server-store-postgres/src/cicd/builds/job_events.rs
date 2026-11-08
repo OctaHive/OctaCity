@@ -7,7 +7,7 @@ use octacity_server_store::{
 };
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
-use sqlx::{FromRow, PgPool, Postgres, QueryBuilder, types::Json};
+use sqlx::{FromRow, PgPool, Postgres, QueryBuilder};
 
 use crate::{
   cicd::builds::lease,
@@ -128,7 +128,8 @@ pub(crate) async fn execute(pool: &PgPool, request: AppendJobEvents) -> Result<A
         actual: sequence,
       });
     }
-    new_events.push((event, number(sequence, StoreOperation::AppendJobEvents)?));
+    let payload = serde_json::to_string(event.payload()).map_err(|_| StoreError::Unavailable)?;
+    new_events.push((event, number(sequence, StoreOperation::AppendJobEvents)?, payload));
     expected = expected.checked_add(1).ok_or(StoreError::Unavailable)?;
   }
   validate_new_log_chunks(&request.events, durable_through, &request.log_chunks)?;
@@ -140,16 +141,19 @@ pub(crate) async fn execute(pool: &PgPool, request: AppendJobEvents) -> Result<A
       "INSERT INTO job_events \
          (job_id, sequence, lease_id, event_kind, event_time, payload, event_digest, created_at) ",
     );
-    query.push_values(new_events.iter().copied(), |mut values, (event, sequence)| {
+    query.push_values(new_events.iter(), |mut values, (event, sequence, payload)| {
       values
         .push_bind(lease.job_id)
-        .push_bind(sequence)
+        .push_bind(*sequence)
         .push_bind(lease_id)
         .push_bind(event.kind().as_str())
         .push("to_timestamp(")
         .push_bind_unseparated(event.occurred_at().unix_millis())
         .push_unseparated("::double precision / 1000.0)")
-        .push_bind(Json(event.payload().clone()))
+        // Bind text and cast directly to JSON: SQLx's generic Json parameter
+        // uses JSONB, which rejects escaped NUL before column conversion.
+        .push_bind(payload)
+        .push_unseparated("::json")
         .push_bind(event.digest().as_bytes().to_vec())
         .push("now()");
     });

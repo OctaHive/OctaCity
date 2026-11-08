@@ -10,7 +10,7 @@ pub use flow::{
 pub(crate) use flow::{
   PROTECTED_TEST_HANDOFF, protected_test_model_schema, protected_test_outputs, valid_protected_test_policy,
 };
-pub(crate) use flow::{RolePrompt, candidate_capture_task_digest, render_context, render_role_prompt};
+pub(crate) use flow::{RolePrompt, candidate_capture_task_digest, render_role_prompt, render_selected_context};
 
 use std::collections::{BTreeMap, BTreeSet};
 
@@ -370,6 +370,7 @@ pub fn compile_codex_task(
         cmds: vec![OctaCommand {
           id: CODEX_PLUGIN_IDENTITY,
           codex: CodexTask {
+            execution_workspace: None,
             reasoning_effort: None,
             cli_arguments: vec![],
             mcp_servers: None,
@@ -888,6 +889,8 @@ struct OctaCommand<'a> {
 #[derive(Serialize)]
 struct CodexTask<'a> {
   #[serde(skip_serializing_if = "Option::is_none")]
+  execution_workspace: Option<CodexExecutionWorkspace>,
+  #[serde(skip_serializing_if = "Option::is_none")]
   reasoning_effort: Option<&'a str>,
   #[serde(skip_serializing_if = "Vec::is_empty")]
   cli_arguments: Vec<String>,
@@ -903,6 +906,14 @@ struct CodexTask<'a> {
   deliverables: Vec<CodexDeliverable<'a>>,
   #[serde(skip_serializing_if = "Option::is_none")]
   tool_authorization: Option<ToolAuthorization>,
+}
+
+/// Native client roots derived only from the admitted mount policy. Octa's
+/// task directory and relative artifact/record paths remain unchanged.
+#[derive(Serialize)]
+struct CodexExecutionWorkspace {
+  working_directory: &'static str,
+  writable_directories: Vec<String>,
 }
 
 #[derive(Serialize)]

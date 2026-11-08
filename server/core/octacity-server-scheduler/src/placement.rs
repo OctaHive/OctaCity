@@ -95,7 +95,7 @@ pub fn matches_placement(
       policy.runtime,
       required.factory_enforcement,
       required.workspace_anchor,
-      required.tool_control.is_some(),
+      required.tool_control,
     )
     && capabilities_match(inventory, requirements, requirements.runtime_class.is_legacy())
     && inventory.octa.version == policy.octa.version
@@ -167,7 +167,7 @@ fn backend_is_available(
   runtime_policy: &JobRuntimePolicy,
   required_factory_enforcement: Option<&[FactoryEnforcementCapabilityV3]>,
   requires_workspace_anchor: bool,
-  requires_controlled_tools: bool,
+  tool_control: Option<&octacity_protocol::FactoryToolControlV3>,
 ) -> bool {
   let platform = PlatformSpec {
     os: requirements.operating_system,
@@ -190,7 +190,7 @@ fn backend_is_available(
           execution,
           required_factory_enforcement,
           requires_workspace_anchor,
-          requires_controlled_tools,
+          tool_control,
         )
         && snapshot.backends.iter().any(|health| {
           health.backend == execution.provider.as_str()
@@ -223,13 +223,16 @@ fn factory_enforcement_matches(
   execution: &ExecutionCapabilityV2,
   required: Option<&[FactoryEnforcementCapabilityV3]>,
   requires_workspace_anchor: bool,
-  requires_controlled_tools: bool,
+  tool_control: Option<&octacity_protocol::FactoryToolControlV3>,
 ) -> bool {
   required.is_none_or(|required| {
     inventory.factory_executions.iter().any(|candidate| {
       candidate.execution == *execution
         && (!requires_workspace_anchor || candidate.workspace_anchor)
-        && (!requires_controlled_tools || candidate.controlled_tools)
+        && (tool_control.is_none() || candidate.controlled_tools)
+        && (tool_control
+          .is_none_or(|control| control.mode != octacity_protocol::FactoryToolControlModeV3::ScopedValidation)
+          || candidate.scoped_validation)
         && required
           .iter()
           .all(|capability| candidate.enforcement.binary_search(capability).is_ok())
@@ -565,6 +568,7 @@ mod tests {
       inventory.factory_executions = vec![FactoryExecutionCapabilityV3 {
         workspace_anchor: false,
         controlled_tools: false,
+        scoped_validation: false,
         execution: execution.clone(),
         enforcement: required.to_vec(),
       }];
@@ -573,7 +577,7 @@ mod tests {
         &execution,
         Some(&required),
         false,
-        false
+        None
       ));
     }
 
@@ -584,7 +588,7 @@ mod tests {
       &execution,
       Some(&required),
       false,
-      false
+      None
     ));
   }
 
@@ -623,6 +627,7 @@ mod tests {
     inventory.factory_executions = vec![FactoryExecutionCapabilityV3 {
       workspace_anchor: false,
       controlled_tools: false,
+      scoped_validation: false,
       execution: execution.clone(),
       enforcement: canonical.required_enforcement.clone(),
     }];
@@ -756,6 +761,15 @@ mod tests {
     ));
     inventory.factory_executions.pop();
     inventory.factory_executions[0].controlled_tools = true;
+
+    controlled.execution.tool_control.as_mut().unwrap().mode = FactoryToolControlModeV3::ScopedValidation;
+    let scoped_template = managed_template(&controlled);
+    assert!(
+      !is_compatible(&inventory, &snapshot, &requirements, &scoped_template),
+      "a read-only tool bridge cannot launch a scoped validation Build"
+    );
+    inventory.factory_executions[0].scoped_validation = true;
+    assert!(is_compatible(&inventory, &snapshot, &requirements, &scoped_template));
 
     inventory.factory_executions[0].enforcement.pop();
     assert!(!is_compatible(&inventory, &snapshot, &requirements, &template));

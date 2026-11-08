@@ -299,11 +299,20 @@ def _build_images(native: NativeInstallation) -> None:
 
 
 def _shutdown_agent(owner: lifecycle.LifecycleState) -> lifecycle.ShutdownDisposition:
-    return owner.shutdown(
-        agent_starter.AGENT_PROCESS_NAME,
-        graceful_timeout_seconds=SHUTDOWN_GRACE_SECONDS,
-        forced_timeout_seconds=SHUTDOWN_FORCE_SECONDS,
-    )
+    names = [agent_starter.AGENT_PROCESS_NAME]
+    if (owner.root / "agent-validation/worker.json").exists():
+        names.insert(0, "validation-agent")
+    result = lifecycle.ShutdownDisposition.ALREADY_STOPPED
+    errors = []
+    for name in names:
+        try:
+            result = owner.shutdown(name, graceful_timeout_seconds=SHUTDOWN_GRACE_SECONDS,
+                                    forced_timeout_seconds=SHUTDOWN_FORCE_SECONDS)
+        except Exception as error:
+            errors.append(f"{name}: {error}")
+    if errors:
+        raise LocalStandError("Agent shutdown failed: " + "; ".join(errors))
+    return result
 
 
 def _compose_down(root: Path, https_port: int, *, remove_volumes: bool) -> None:

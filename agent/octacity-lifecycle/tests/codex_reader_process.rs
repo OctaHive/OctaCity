@@ -113,6 +113,70 @@ fn invoke_hook(configuration: &std::path::Path, event: Value) -> std::process::O
   invoke_reader(configuration, &[], &event.to_string())
 }
 
+#[test]
+fn mcp_exposes_only_the_bounded_scoped_verdict_to_the_tester() {
+  let (_directory, configuration, listener) = fixture();
+  let mut config: Value = serde_json::from_slice(&std::fs::read(&configuration).unwrap()).unwrap();
+  config["scoped_validation"] = json!(true);
+  std::fs::write(&configuration, serde_json::to_vec(&config).unwrap()).unwrap();
+  for (arguments, expected) in [
+    (json!({"action":"start"}), "allow"),
+    (json!({"action":"start","command":"sh"}), "deny"),
+  ] {
+    let output = invoke_hook(
+      &configuration,
+      json!({
+        "hook_event_name":"PreToolUse","tool_name":"mcp__qualified_fs__verify_candidate","tool_use_id":"call-1","tool_input":arguments
+      }),
+    );
+    let decision: Value = serde_json::from_slice(&output.stdout).unwrap();
+    assert_eq!(decision["hookSpecificOutput"]["permissionDecision"], expected);
+  }
+  listener.set_nonblocking(true).unwrap();
+  assert_eq!(listener.accept().unwrap_err().kind(), std::io::ErrorKind::WouldBlock);
+  listener.set_nonblocking(false).unwrap();
+  let verdict = json!({"status":"verified","outcome":"passed","classes":[{"class":"acceptance","outcome":"passed"}]});
+  let response = serde_json::to_vec(&verdict).unwrap();
+  let server = std::thread::spawn(move || {
+    let (mut stream, _) = listener.accept().unwrap();
+    let mut length = [0; 4];
+    stream.read_exact(&mut length).unwrap();
+    let mut body = vec![0; u32::from_be_bytes(length) as usize];
+    stream.read_exact(&mut body).unwrap();
+    assert_eq!(
+      serde_json::from_slice::<Value>(&body).unwrap(),
+      json!({"schema_version":1,"operation":"scoped_validation","action":"status"})
+    );
+    stream.write_all(&[0]).unwrap();
+    stream.write_all(&(response.len() as u32).to_be_bytes()).unwrap();
+    stream.write_all(&response).unwrap();
+  });
+  let requests = [
+    json!({"jsonrpc":"2.0","id":1,"method":"tools/list","params":{}}),
+    json!({"jsonrpc":"2.0","id":2,"method":"tools/call","params":{"name":"verify_candidate","arguments":{"action":"start","command":"sh"}}}),
+    json!({"jsonrpc":"2.0","id":3,"method":"tools/call","params":{"name":"verify_candidate","arguments":{"action":"status"}}}),
+  ];
+  let output = invoke_reader(
+    &configuration,
+    &["mcp"],
+    &requests.map(|value| value.to_string()).join("\n"),
+  );
+  assert!(output.status.success());
+  let responses = output
+    .stdout
+    .as_slice()
+    .lines()
+    .map(|line| serde_json::from_str::<Value>(&line.unwrap()).unwrap())
+    .collect::<Vec<_>>();
+  assert_eq!(responses.len(), 3);
+  assert_eq!(responses[0]["result"]["tools"][1]["name"], "verify_candidate");
+  assert!(responses[1].get("error").is_some());
+  assert_eq!(responses[2]["result"]["isError"], false);
+  let actual = responses[2]["result"]["content"][0]["text"].as_str().unwrap();
+  assert_eq!(serde_json::from_str::<Value>(actual).unwrap(), verdict);
+  server.join().unwrap();
+}
+
 fn invoke_reader(configuration: &std::path::Path, arguments: &[&str], input: &str) -> std::process::Output {
   let mut child = Command::new(env!("CARGO_BIN_EXE_octacity-codex-reader"))
     .args(arguments)

@@ -178,7 +178,19 @@ if [ -e "$integration_bundle" ] || [ -L "$integration_bundle" ]; then
       done
     done
   fi
-  install_integration_file /usr/local/bin/octacity-github "$provider/plugin" 268435456 0700
+  # Retained integrations keep their exact installed provider across image updates.
+  # The declared manifest remains authoritative; changed installed bytes fail closed.
+  executable_digest=$(sed -n 's/^executable_sha256 = "\([a-f0-9]*\)"$/\1/p' "$provider/adapter.toml")
+  case "$executable_digest" in ''|*[!a-f0-9]*) echo "integration executable identity is invalid" >&2; exit 1 ;; esac
+  [ "${#executable_digest}" -eq 64 ] || { echo "integration executable identity is invalid" >&2; exit 1; }
+  executable=$provider/plugin
+  if [ ! -e "$executable" ] && [ ! -L "$executable" ]; then
+    install_integration_file /usr/local/bin/octacity-github "$executable" 268435456 0700
+  fi
+  [ -f "$executable" ] && [ ! -L "$executable" ] &&
+    [ "$(sha256sum "$executable" | cut -d ' ' -f 1)" = "$executable_digest" ] || {
+      echo "installed integration executable differs" >&2; exit 1;
+    }
   install_integration_file "$integration_bundle/server.toml" "$target/integration-server.toml" 65536 0600
   [ ! -L /run/octacity-management ] || { echo "management channel is invalid" >&2; exit 1; }
   mkdir -p /run/octacity-management

@@ -1,5 +1,5 @@
 use octacity_server_domain::{EntityKind, Timestamp};
-use octacity_server_factory::{FactoryError, FactoryKey};
+use octacity_server_factory::{FactoryError, FactoryKey, FactoryRunId};
 use octacity_server_store::{
   ClaimFactoryRuns, ClaimedFactoryRun, FactoryRunSnapshot, FactoryRunStore, MAX_FACTORY_RECONCILIATION_BATCH_SIZE,
   StoreError,
@@ -54,6 +54,9 @@ pub struct FactoryReconciliationBatchOutcome {
   pub actions_replayed: u16,
   /// Runs whose pure decision currently permits no mutation.
   pub waiting: u16,
+  /// Individual Run failures retained for retry under their original claim expiry.
+  /// These do not back off unrelated Runs; claim/selection failures still fail the pass.
+  pub failed: u16,
   /// Claimed Runs intentionally left for claim expiry after shutdown began.
   pub shutdown_skipped: u16,
 }
@@ -178,21 +181,29 @@ where
       self.flow.clone(),
     );
     outcome.shutdown_skipped += queue.fill(shutdown);
-    let mut first_error = None;
-    while let Some(result) = queue.next().await {
+    while let Some((run_id, result)) = queue.next().await {
       match result {
         Ok(ReconcileOne::Committed) => outcome.actions_committed += 1,
         Ok(ReconcileOne::Replayed) => outcome.actions_replayed += 1,
         Ok(ReconcileOne::Waiting) => outcome.waiting += 1,
         Err(error) => {
-          first_error.get_or_insert(error);
+          outcome.failed += 1;
+          let class = match &error {
+            FactoryReconciliationError::Flow(_) => "flow",
+            FactoryReconciliationError::Store(_) => "store",
+            FactoryReconciliationError::Decision(_) => "decision",
+            FactoryReconciliationError::InvalidSnapshot => "invalid_snapshot",
+            FactoryReconciliationError::InvalidBounds => "invalid_bounds",
+          };
+          tracing::warn!(run_id = %run_id, error.class = class,
+            "Factory Run reconciliation failed; retaining its claim until expiry");
         }
       }
-      // Each claimed Run has independent fenced authority. Retain the first
-      // error for retry reporting without stranding unrelated work or stops.
+      // Local errors retain their own lease. Backing off the whole worker can
+      // repeatedly reclaim an old failing batch and starve newer Runs.
       outcome.shutdown_skipped += queue.fill(shutdown);
     }
-    first_error.map_or(Ok(outcome), Err)
+    Ok(outcome)
   }
 }
 
@@ -203,7 +214,8 @@ enum ReconcileOne {
   Waiting,
 }
 
-type ReconciliationFuture = Pin<Box<dyn Future<Output = Result<ReconcileOne, FactoryReconciliationError>> + Send>>;
+type ReconciliationFuture =
+  Pin<Box<dyn Future<Output = (FactoryRunId, Result<ReconcileOne, FactoryReconciliationError>)> + Send>>;
 
 struct ReconciliationQueue<S> {
   store: Arc<S>,
@@ -247,7 +259,10 @@ where
       let clock = Arc::clone(&self.clock);
       let flow = self.flow.clone();
       self.in_flight.push(Box::pin(async move {
-        reconcile_one(store.as_ref(), claim, clock.as_ref(), flow.as_ref()).await
+        (
+          claim.run_id,
+          reconcile_one(store.as_ref(), claim, clock.as_ref(), flow.as_ref()).await,
+        )
       }));
     }
     if shutdown.is_requested() {
@@ -257,7 +272,7 @@ where
     }
   }
 
-  async fn next(&mut self) -> Option<Result<ReconcileOne, FactoryReconciliationError>> {
+  async fn next(&mut self) -> Option<(FactoryRunId, Result<ReconcileOne, FactoryReconciliationError>)> {
     if self.in_flight.is_empty() {
       return None;
     }

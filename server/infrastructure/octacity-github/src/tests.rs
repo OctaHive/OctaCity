@@ -315,6 +315,37 @@ fn captured_candidate(root: &std::path::Path, plugin: &mut GithubPlugin, intent:
     .remote = url::Url::from_file_path(&remote).unwrap().to_string();
 }
 
+#[tokio::test]
+async fn publication_uses_only_its_installed_private_directory_for_git_scratch() {
+  let (root, mut plugin, mut intent) = fixture();
+  captured_candidate(root.path(), &mut plugin, &mut intent);
+  let observation = root.path().join("scratch-location");
+  let git = root.path().join("git-scratch-probe");
+  let quoted = observation.to_str().unwrap().replace('\'', "'\\''");
+  let script = format!("#!/bin/sh\npwd > '{quoted}'\nexit 1\n");
+  fs::write(&git, script.as_bytes()).unwrap();
+  fs::set_permissions(&git, fs::Permissions::from_mode(0o700)).unwrap();
+  plugin.config.git_path = git;
+  plugin.config.git_sha256 = hex::encode(Sha256::digest(script.as_bytes()));
+  let request = Request {
+    protocol_version: 1,
+    request_id: "private-publication-scratch".into(),
+    command: Command::Publish(intent),
+  };
+  let result = plugin.execute(&request, CancellationToken::new()).await;
+  assert!(matches!(result, Outcome::Failure(ref failure) if failure.class == FailureClass::Conflict));
+  let observed = std::path::PathBuf::from(fs::read_to_string(observation).unwrap().trim());
+  assert!(
+    observed.starts_with(plugin.config.input_directory.canonicalize().unwrap()),
+    "publication must work without a writable system temporary directory: {observed:?}"
+  );
+  assert!(
+    !observed.exists(),
+    "a rejected publication must remove its private scratch"
+  );
+  assert_eq!(fs::read_dir(&plugin.config.input_directory).unwrap().count(), 2);
+}
+
 async fn forge_server(
   replies: Vec<(&'static str, &'static str, u16, serde_json::Value)>,
 ) -> (url::Url, tokio::task::JoinHandle<()>) {

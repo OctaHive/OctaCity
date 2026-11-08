@@ -684,6 +684,7 @@ pub(super) struct InstalledFactoryWorker {
   pub(super) outbox: Vec<InstalledFactoryOutbox>,
   pub(super) work_sources: Option<InstalledFactorySource>,
   pub(super) tool_authorizer: Arc<dyn octacity_server_application::LeaseBoundToolActionAuthorizer>,
+  pub(super) scoped_validation: Arc<dyn octacity_server_application::LeaseBoundScopedValidation>,
   pub(super) output_finalizer: Option<Arc<dyn octacity_server_application::AgentOutputFinalizer>>,
 }
 
@@ -768,6 +769,7 @@ pub(super) fn assemble(
   config: &crate::ServerConfig,
   resources: &mut super::assembly::RuntimeResources,
   installed: Option<FactoryRuntimeInstallation>,
+  placement_store: Arc<PostgresAuthoritativeStore>,
 ) -> Result<(Arc<PostgresStore>, Option<InstalledFactoryWorker>), super::ServerRuntimeError> {
   use super::ServerRuntimeError;
   use crate::readiness::WorkerHealth;
@@ -821,6 +823,11 @@ pub(super) fn assemble(
         flow = flow.with_profile_selectors(selectors);
       }
       let flow = Arc::new(flow);
+      let scoped_validation = Arc::new(octacity_server_application::FactoryScopedValidationService::new(
+        flow.clone(),
+        placement_store.clone(),
+        placement_store,
+      ));
       let worker = octacity_server_application::FactoryReconciler::new(
         registration_store.clone(),
         octacity_server_factory::FactoryKey::new(format!("factory-owner.{}", uuid::Uuid::new_v4()))
@@ -842,6 +849,7 @@ pub(super) fn assemble(
         tool_authorizer: installed
           .tool_authorizer
           .unwrap_or_else(|| Arc::new(octacity_server_application::FailClosedToolActionAuthorizer)),
+        scoped_validation,
       })
     }
     (_, None) => None,

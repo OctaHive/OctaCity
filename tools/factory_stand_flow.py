@@ -45,6 +45,7 @@ def flow_draft(client, project: str, selection: dict, namespace, criteria: dict)
         {"project_id": project, "identity": schema["identity"], "version": schema["version"],
          "shape": _shape(schema["shape"], schemas)}) for alias, schema in schemas.items()}
     tasks = json.loads((EXAMPLE / "factory-triage-tasks.json").read_text())
+    policy = json.loads((EXAMPLE / "factory-triage.json").read_text())
     deny = manifest["execution"]["permissions"]
     nodes = [node for part in parts for node in part.get("nodes", [])]
     for node in nodes:
@@ -74,10 +75,13 @@ def flow_draft(client, project: str, selection: dict, namespace, criteria: dict)
                     "capability": selected["capability"], "result_outcome": outcome["key"]})
             if binding["incompatibility"] is not None or binding["build"] is None:
                 raise ValueError("stand selected execution binding is unavailable")
+            build = copy.deepcopy(binding["build"])
+            if stage in policy["mcp_evidence_stages"]:
+                build["result_tool"] = policy["mcp_evidence_verifier"]
             node.pop("build_profile")
             node.update(task=tasks[stage], budget=profile["definition"]["budget"],
                 permissions=profile["definition"]["permissions"], profile_selection={
-                    "role": selected["role"], "candidates": {"selected": {"profile": profile, "build": binding["build"]}},
+                    "role": selected["role"], "candidates": {"selected": {"profile": profile, "build": build}},
                     "policy": {"mode": "manual", "candidate": "selected"}, "failure": {"kind": "manual_selection"},
                     "selection_budget": {"attempts": 0, "elapsed_millis": 0, "tokens": 0, "cost_micro_units": 0, "output_bytes": 0}})
             context = selection["context"][stage]
@@ -88,7 +92,6 @@ def flow_draft(client, project: str, selection: dict, namespace, criteria: dict)
     routes = [route for part in parts for route in part.get("transitions", [])]
     terminals = [{"key": key, "schema": normalized[schema]["reference"]}
                  for part in parts for key, schema in part.get("terminals", {}).items()]
-    policy = json.loads((EXAMPLE / "factory-triage.json").read_text())
     return {"root": {"input_schema": normalized[manifest["input_schema"]]["reference"], "entry": manifest["entry"],
         "nodes": nodes, "transitions": routes, "terminals": terminals,
         "context_projections": [], "data_projections": [], "code_sources": {},

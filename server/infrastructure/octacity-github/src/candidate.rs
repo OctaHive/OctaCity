@@ -52,7 +52,11 @@ impl<'a> Candidate<'a> {
       scratch.permissions(fs::Permissions::from_mode(0o700));
     }
     let candidate = Self {
-      scratch: scratch.tempdir().map_err(|_| FailureClass::Permanent)?,
+      // The installed private input directory is writable even when the host's
+      // system temporary directory is read-only. Scratch remains provider-owned.
+      scratch: scratch
+        .tempdir_in(&config.input_directory)
+        .map_err(|_| FailureClass::Permanent)?,
       config,
       credential,
       cancellation,

@@ -34,6 +34,21 @@ it('identifies mismatched entry input and each insufficient enclosing access cei
     expect.arrayContaining([{ field: '/limits/permissions', code: 'enclosing_permissions' }]),
   );
 });
+it('accepts the same exact plugin access from profile and resource responses regardless of object key order', () => {
+  const value = draft();
+  const plugin = { identity: 'codex', version: '0.8.0', digest: '7'.repeat(64) };
+  value.root.execution.permissions.plugins = [plugin];
+  value.limits.permissions.plugins = [plugin];
+  value.root.nodes[0]!.permissions.plugins = [
+    { digest: plugin.digest, identity: plugin.identity, version: plugin.version },
+  ];
+  expect(validateFlowDraft(value)).toEqual([]);
+  value.root.nodes[0]!.permissions.plugins[0]!.digest = '8'.repeat(64);
+  expect(validateFlowDraft(value)).toContainEqual({
+    field: '/root/execution/permissions',
+    code: 'enclosing_permissions',
+  });
+});
 it('accepts a manually broader mount and fixed-length command pattern that already cover profile requirements', () => {
   const { configuration } = factoryProfileConfigurationFixture();
   const { reference: _reference, ...root } = configuration.flow.closure.definitions[0]!;

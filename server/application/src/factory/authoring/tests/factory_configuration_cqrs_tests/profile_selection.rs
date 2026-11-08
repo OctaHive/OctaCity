@@ -1069,6 +1069,8 @@ fn native_compiler_rejects_missing_task_context_before_publication_and_accepts_e
           model_or_tool: binding.model_or_tool.clone(),
           pipeline_node: octacity_server_domain::PipelineNodeId::new("native").unwrap(),
           compilation: Some(FactoryBuildCompilationContract {
+            capture_write_paths: None,
+            scoped_validation: false,
             evidence: vec![],
             task_digest: binding.task_digest,
             role_profiles: true,

@@ -5,7 +5,7 @@ use std::sync::Arc;
 use async_trait::async_trait;
 use octacity_protocol::{
   AgentCredentialToken, AuthorizeToolActionRequest, FactoryToolActionDecisionSourceV3, FactoryToolActionDecisionV3,
-  FactoryToolActionDispositionV3, FactoryToolActionSummaryV3,
+  FactoryToolActionDispositionV3, FactoryToolActionSummaryV3, ScopedValidationAction, ScopedValidationRequest,
 };
 use octacity_server_domain::{AttemptNumber, JobId, Timestamp};
 use octacity_server_store::{JobExecutionStore, LeaseAccess, StoreError};
@@ -93,6 +93,50 @@ pub trait AgentToolActionUseCases: Send + Sync {
     &self,
     input: AgentToolActionInput,
   ) -> Result<FactoryToolActionDecisionV3, AgentToolActionError>;
+
+  /// Acts on the protected verification runner bound to the current Tester lease.
+  async fn scoped_validation(
+    &self,
+    _input: AgentScopedValidationInput,
+  ) -> Result<crate::FactoryScopedValidationVerdict, AgentToolActionError> {
+    Err(AgentToolActionError::Unavailable)
+  }
+}
+
+/// Authenticated transport input for the lease-scoped runner.
+pub struct AgentScopedValidationInput {
+  /// Lease identity from the route.
+  pub route_lease_id: String,
+  /// Versioned request containing only the lease and the action.
+  pub request: ScopedValidationRequest,
+  /// Current Agent registration bearer.
+  pub credential: AgentCredentialToken,
+  /// Server-observed request arrival time.
+  pub observed_at_unix_ms: i64,
+}
+
+/// A verification action authorized by the current Agent registration and Job lease.
+pub struct LeaseBoundScopedValidationInput {
+  /// Current authority, available for a final fence check before Build acceptance.
+  pub lease: LeaseAccess,
+  /// The Tester Job. The runner's identity is derived from its frozen Flow.
+  pub job_id: JobId,
+  /// Current execution Attempt of the Tester Job.
+  pub attempt: AttemptNumber,
+  /// Server observation time.
+  pub observed_at: Timestamp,
+  /// Requested action on the configured runner.
+  pub action: ScopedValidationAction,
+}
+
+/// Server-owned launcher for the runner installed on a Tester invocation.
+#[async_trait]
+pub trait LeaseBoundScopedValidation: Send + Sync {
+  /// Starts or observes the exact protected runner selected by the caller's Flow.
+  async fn run(
+    &self,
+    input: LeaseBoundScopedValidationInput,
+  ) -> Result<crate::FactoryScopedValidationVerdict, AgentToolActionError>;
 }
 
 /// Registration/fence guard in front of server-owned tool policy and signals.
@@ -100,6 +144,7 @@ pub struct AgentToolActionService {
   registrations: Arc<dyn AgentRegistrationUseCases>,
   leases: Arc<dyn JobExecutionStore>,
   authorizer: Arc<dyn LeaseBoundToolActionAuthorizer>,
+  scoped_validation: Option<Arc<dyn LeaseBoundScopedValidation>>,
 }
 
 impl AgentToolActionService {
@@ -114,7 +159,15 @@ impl AgentToolActionService {
       registrations,
       leases,
       authorizer,
+      scoped_validation: None,
     }
+  }
+
+  /// Installs the scoped verification tool behind the same registration and lease checks.
+  #[must_use]
+  pub fn with_scoped_validation(mut self, runner: Arc<dyn LeaseBoundScopedValidation>) -> Self {
+    self.scoped_validation = Some(runner);
+    self
   }
 }
 
@@ -158,6 +211,43 @@ impl AgentToolActionUseCases for AgentToolActionService {
         observed_at: context.observed_at,
         proposal_sha256: input.request.proposal_sha256,
         proposal_summary: input.request.proposal_summary,
+      })
+      .await
+  }
+
+  async fn scoped_validation(
+    &self,
+    input: AgentScopedValidationInput,
+  ) -> Result<crate::FactoryScopedValidationVerdict, AgentToolActionError> {
+    input
+      .request
+      .validate()
+      .map_err(|_| AgentToolActionError::InvalidRequest)?;
+    let context = agent_lease::authorize_operation(
+      self.registrations.as_ref(),
+      AgentOperation::ToolAction,
+      &input.route_lease_id,
+      &input.request.lease,
+      &input.request.registration_id,
+      input.credential,
+      input.observed_at_unix_ms,
+    )
+    .await?;
+    let lease = context.lease;
+    self
+      .leases
+      .authorize_tool_action_lease(lease.access, lease.job_id, lease.attempt, context.observed_at)
+      .await?;
+    self
+      .scoped_validation
+      .as_ref()
+      .ok_or(AgentToolActionError::Unavailable)?
+      .run(LeaseBoundScopedValidationInput {
+        lease: lease.access,
+        job_id: lease.job_id,
+        attempt: lease.attempt,
+        observed_at: context.observed_at,
+        action: input.request.action,
       })
       .await
   }

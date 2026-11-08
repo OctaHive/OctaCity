@@ -2,7 +2,8 @@
 use octacity_lifecycle::{CodexMcpReadRecipe, CodexPreToolUseInput, codex_denied_output, codex_permitted_output};
 use octacity_protocol::{
   FactoryToolActionProposalV3, MAX_FACTORY_TOOL_RESPONSE_BYTES, ProtectedReadChannelOperationV1,
-  ProtectedReadChannelRequestV1,
+  ProtectedReadChannelRequestV1, ScopedValidationAction, ScopedValidationChannelOperationV1,
+  ScopedValidationChannelRequestV1, ScopedValidationVerdict,
 };
 use serde::Deserialize;
 use serde_json::{Value, json};
@@ -23,6 +24,16 @@ struct Configuration {
   port: Option<u32>,
   hook_tool_name: String,
   recipe: FactoryToolActionProposalV3,
+  #[serde(default)]
+  scoped_validation: bool,
+}
+
+const SCOPED_TOOL: &str = "verify_candidate";
+
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct ScopedArguments {
+  action: ScopedValidationAction,
 }
 trait Stream: std::io::Read + std::io::Write {}
 impl<T: std::io::Read + std::io::Write> Stream for T {}
@@ -75,8 +86,7 @@ impl Configuration {
     }
     None
   }
-  fn exchange(&self, event: Value, operation: ProtectedReadChannelOperationV1) -> Option<Vec<u8>> {
-    let input = CodexPreToolUseInput::parse(&serde_json::to_vec(&event).ok()?).ok()?;
+  fn exchange_read(&self, input: &CodexPreToolUseInput, operation: ProtectedReadChannelOperationV1) -> Option<Vec<u8>> {
     let proposal = input.normalize_read(&self.reader()?).ok()?.into_proposal();
     let bytes = serde_json::to_vec(&ProtectedReadChannelRequestV1 {
       schema_version: 1,
@@ -84,24 +94,49 @@ impl Configuration {
       proposal,
     })
     .ok()?;
+    let result = self.exchange_frame(&bytes)?;
+    (operation != ProtectedReadChannelOperationV1::Authorize || result.is_empty()).then_some(result)
+  }
+  fn exchange_frame(&self, bytes: &[u8]) -> Option<Vec<u8>> {
     let mut socket = self.connect()?;
     socket
       .write_all(&(u32::try_from(bytes.len()).ok()?).to_be_bytes())
       .ok()?;
-    socket.write_all(&bytes).ok()?;
+    socket.write_all(bytes).ok()?;
     socket.flush().ok()?;
     let mut header = [0; 5];
     socket.read_exact(&mut header).ok()?;
     let length = u32::from_be_bytes(header[1..].try_into().ok()?) as usize;
-    if header[0] != 0
-      || length as u64 > MAX_FACTORY_TOOL_RESPONSE_BYTES
-      || (operation == ProtectedReadChannelOperationV1::Authorize && length != 0)
-    {
+    if header[0] != 0 || length as u64 > MAX_FACTORY_TOOL_RESPONSE_BYTES {
       return None;
     }
     let mut bytes = vec![0; length];
     socket.read_exact(&mut bytes).ok()?;
     Some(bytes)
+  }
+  fn scoped_verdict(&self, arguments: &Value) -> Option<String> {
+    let arguments: ScopedArguments = serde_json::from_value(arguments.clone()).ok()?;
+    let request = serde_json::to_vec(&ScopedValidationChannelRequestV1 {
+      schema_version: 1,
+      operation: ScopedValidationChannelOperationV1::ScopedValidation,
+      action: arguments.action,
+    })
+    .ok()?;
+    let verdict: ScopedValidationVerdict = serde_json::from_slice(&self.exchange_frame(&request)?).ok()?;
+    serde_json::to_string(&verdict).ok()
+  }
+  fn allow_hook(&self, input: &CodexPreToolUseInput) -> bool {
+    if self.scoped_validation
+      && let Some(server) = self.hook_tool_name.strip_suffix("__read_file")
+      && let Some(arguments) = input.arguments_for_tool(&format!("{server}__{SCOPED_TOOL}"))
+    {
+      // The hook checks only the shape. The invocation still needs fresh
+      // host authorization and no Build is launched during this check.
+      return serde_json::from_value::<ScopedArguments>(arguments.clone()).is_ok();
+    }
+    self
+      .exchange_read(input, ProtectedReadChannelOperationV1::Authorize)
+      .is_some()
   }
   fn mcp(&self, request: Value) -> Option<Value> {
     let id = request.get("id")?.clone();
@@ -110,22 +145,28 @@ impl Configuration {
       Some("initialize") => Some(
         json!({"protocolVersion":"2024-11-05","capabilities":{"tools":{"listChanged":false}},"serverInfo":{"name":"octacity-controlled-reader","version":env!("CARGO_PKG_VERSION")}}),
       ),
-      Some("tools/list") => Some(
-        json!({"tools":[{"name":"read_file","description":"Read one bounded file through Agent policy.","inputSchema":{"type":"object","properties":{"path":{"type":"string"}},"required":["path"],"additionalProperties":false}}]}),
-      ),
+      Some("tools/list") => {
+        let mut tools = vec![
+          json!({"name":"read_file","description":"Read one bounded file through Agent policy.","inputSchema":{"type":"object","properties":{"path":{"type":"string"}},"required":["path"],"additionalProperties":false}}),
+        ];
+        if self.scoped_validation {
+          tools.push(json!({"name":SCOPED_TOOL,"description":"Start verification of the admitted candidate or read its verdict.","inputSchema":{"type":"object","properties":{"action":{"enum":["start","status"]}},"required":["action"],"additionalProperties":false}}));
+        }
+        Some(json!({"tools":tools}))
+      }
       Some("tools/call") => {
         let params = request.get("params")?;
-        if params.get("name") != Some(&json!("read_file")) {
-          None
-        } else {
-          let body = self.exchange(
-            json!({"hook_event_name":"PreToolUse","tool_name":self.hook_tool_name,"tool_use_id":"mcp-read","tool_input":params.get("arguments")?}),
-            ProtectedReadChannelOperationV1::Read,
-          );
-          body
-            .and_then(|bytes| String::from_utf8(bytes).ok())
-            .map(|text| json!({"content":[{"type":"text","text":text}],"isError":false}))
+        match params.get("name").and_then(Value::as_str) {
+          Some("read_file") => {
+            let event = json!({"hook_event_name":"PreToolUse","tool_name":self.hook_tool_name,"tool_use_id":"mcp-read","tool_input":params.get("arguments")?});
+            let input = CodexPreToolUseInput::parse(&serde_json::to_vec(&event).ok()?).ok();
+            input.and_then(|input| self.exchange_read(&input, ProtectedReadChannelOperationV1::Read))
+              .and_then(|bytes| String::from_utf8(bytes).ok())
+          },
+          Some(SCOPED_TOOL) if self.scoped_validation => self.scoped_verdict(params.get("arguments")?),
+          _ => None,
         }
+        .map(|text| json!({"content":[{"type":"text","text":text}],"isError":false}))
       }
       _ => None,
     };
@@ -146,13 +187,8 @@ fn main() {
       .read_to_end(&mut input)
       .ok()
       .filter(|_| input.len() <= 64 * 1024)
-      .and_then(|_| serde_json::from_slice(&input).ok())
-      .and_then(|event| {
-        config
-          .as_ref()?
-          .exchange(event, ProtectedReadChannelOperationV1::Authorize)
-      })
-      .is_some();
+      .and_then(|_| CodexPreToolUseInput::parse(&input).ok())
+      .is_some_and(|input| config.as_ref().is_some_and(|config| config.allow_hook(&input)));
     println!(
       "{}",
       if allowed {

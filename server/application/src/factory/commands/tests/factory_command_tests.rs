@@ -226,12 +226,22 @@ fn validation_command_documents_include_the_independently_derived_report_contrac
       .await
       .unwrap();
     let published = bytes.0.lock().unwrap();
+    let command: serde_json::Value = published
+      .iter()
+      .filter_map(|body| serde_json::from_slice::<serde_json::Value>(body).ok())
+      .find(|value| value.get("node").is_some())
+      .expect("the ordinary command receives the frozen invocation");
     let value: serde_json::Value = published
       .iter()
       .filter_map(|body| serde_json::from_slice::<serde_json::Value>(body).ok())
       .find(|value| value.get("input_digest").is_some() && value.get("classes").is_some())
       .expect("trusted validation metadata is actually published as a private document");
     assert_eq!(value.as_object().unwrap().len(), 5);
+    assert_eq!(
+      command["node"]["input_digest"],
+      fixture.intent.input().digest().unwrap().to_string()
+    );
+    assert_ne!(command["node"]["input_digest"], value["input_digest"]);
     let report = FactoryProtectedValidationReport {
       changeset_id: serde_json::from_value(value["changeset_id"].clone()).unwrap(),
       candidate: serde_json::from_value(value["candidate"].clone()).unwrap(),

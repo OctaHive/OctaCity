@@ -8,7 +8,7 @@ use std::{
 
 use octacity_protocol::{
   FactoryToolResponseLimitsV3, MAX_FACTORY_TOOL_RESPONSE_BYTES, ProtectedReadChannelOperationV1,
-  ProtectedReadChannelRequestV1,
+  ProtectedReadChannelRequestV1, ScopedValidationChannelOperationV1, ScopedValidationChannelRequestV1,
 };
 use tokio::io::{AsyncRead, AsyncReadExt};
 
@@ -16,11 +16,17 @@ use super::*;
 
 const MAX_TOOL_ACTION_CHANNEL_BYTES: usize = 4 * 1024 * 1024;
 
-// One big-endian u32 length and bounded JSON request, shared by both channel
-// operations. Only the versioned neutral request is accepted.
+#[derive(serde::Deserialize)]
+#[serde(untagged)]
+enum ChannelRequest {
+  Read(Box<ProtectedReadChannelRequestV1>),
+  ScopedValidation(ScopedValidationChannelRequestV1),
+}
+
+// One big-endian u32 length and bounded JSON request for every channel operation.
 async fn read_tool_action_frame(
   mut input: impl AsyncRead + Unpin,
-) -> Result<ProtectedReadChannelRequestV1, AgentToolActionBrokerError> {
+) -> Result<ChannelRequest, AgentToolActionBrokerError> {
   let size = input.read_u32().await.map_err(|_| AgentToolActionBrokerError::Denied)? as usize;
   if size == 0 || size > MAX_TOOL_ACTION_CHANNEL_BYTES {
     return Err(AgentToolActionBrokerError::Denied);
@@ -59,6 +65,7 @@ pub struct ProtectedReadDispatcher {
   backend: Arc<dyn ProtectedReadBackend>,
   max_bytes: u64,
   responses: ResponseQuota,
+  scoped_validation: bool,
 }
 
 impl ProtectedReadDispatcher {
@@ -83,6 +90,7 @@ impl ProtectedReadDispatcher {
       broker,
       backend,
       max_bytes: max_bytes.min(signed_limits.per_call_bytes),
+      scoped_validation: false,
       responses: ResponseQuota {
         total: signed_limits.total_bytes,
         state: Mutex::new(ResponseState {
@@ -91,6 +99,13 @@ impl ProtectedReadDispatcher {
         }),
       },
     })
+  }
+
+  /// Enables the runner on a Job with an independently verified scoped tool binding.
+  #[must_use]
+  pub fn with_scoped_validation(mut self) -> Self {
+    self.scoped_validation = true;
+    self
   }
 
   /// Reads only after exact local and lease-bound server authorization succeeds.
@@ -104,16 +119,26 @@ impl ProtectedReadDispatcher {
   /// deadline and cancellation scope, with at most one coordinator call.
   pub async fn read_channel(&self, input: impl AsyncRead + Unpin) -> Result<Vec<u8>, AgentToolActionBrokerError> {
     let dispatch = async {
-      let request = read_tool_action_frame(input).await?;
-      if request.schema_version != 1 {
-        return Err(AgentToolActionBrokerError::Denied);
-      }
-      match request.operation {
-        ProtectedReadChannelOperationV1::Authorize => {
-          self.broker.authorize(request.proposal).await?;
-          Ok(Vec::new())
+      match read_tool_action_frame(input).await? {
+        ChannelRequest::Read(request) if request.schema_version == 1 => match request.operation {
+          ProtectedReadChannelOperationV1::Authorize => {
+            self.broker.authorize(request.proposal).await?;
+            Ok(Vec::new())
+          }
+          ProtectedReadChannelOperationV1::Read => self.read(request.proposal).await,
+        },
+        ChannelRequest::ScopedValidation(ScopedValidationChannelRequestV1 {
+          schema_version: 1,
+          operation: ScopedValidationChannelOperationV1::ScopedValidation,
+          action,
+        }) if self.scoped_validation => {
+          let allowance = self.responses.reserve(self.max_bytes)?;
+          let verdict = self.broker.scoped_validation(action).await?;
+          let bytes = serde_json::to_vec(&verdict).map_err(|_| AgentToolActionBrokerError::Denied)?;
+          allowance.settle(bytes.len())?;
+          Ok(bytes)
         }
-        ProtectedReadChannelOperationV1::Read => self.read(request.proposal).await,
+        _ => Err(AgentToolActionBrokerError::Denied),
       }
     };
     tokio::select! {

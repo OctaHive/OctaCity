@@ -148,6 +148,11 @@ pub(super) fn insert(schemas: &mut Map<String, Value>) {
           bounded_array(schema_ref("FactoryCommandAuthoringContract"), b.choice_entries),
         ),
         (
+          "scoped_validation_profiles",
+          bounded_array(reference(), b.choice_entries),
+        ),
+        ("verification_runners", bounded_array(reference(), b.choice_entries)),
+        (
           "verification_authors",
           bounded_array(
             object(

@@ -37,6 +37,46 @@ use octacity_server_application::{
 };
 use tower::ServiceExt as _;
 
+#[tokio::test]
+async fn scoped_validation_ingress_authenticates_before_exposing_the_installed_tool() {
+  let application = Arc::new(RecordingApplication {
+    called: AtomicBool::new(false),
+    lease_called: AtomicBool::new(false),
+    heartbeat_called: AtomicBool::new(false),
+  });
+  let router = agent_router(
+    application.clone(),
+    application.clone(),
+    application.clone(),
+    application,
+    AgentApiConfig::new(5_000).unwrap(),
+  );
+  let uri = "/api/v1/leases/lease-42/scoped-validation";
+  let body = serde_json::json!({
+    "protocol_version": COORDINATOR_PROTOCOL_VERSION,
+    "request_id": "validate-42",
+    "registration_id": "registration-42",
+    "lease": {
+      "lease_id": "lease-42",
+      "job_id": "job-42",
+      "attempt": 1,
+      "fencing_token": "fence-42"
+    },
+    "action": "start"
+  });
+  let mut unauthorized = agent_request(uri, "validate-42", &body);
+  unauthorized.headers_mut().remove(header::AUTHORIZATION);
+  assert_eq!(
+    router.clone().oneshot(unauthorized).await.unwrap().status(),
+    StatusCode::UNAUTHORIZED
+  );
+  let response = router.oneshot(agent_request(uri, "validate-42", &body)).await.unwrap();
+  assert_eq!(response.status(), StatusCode::SERVICE_UNAVAILABLE);
+  let error: CoordinatorErrorResponse =
+    serde_json::from_slice(&to_bytes(response.into_body(), 4096).await.unwrap()).unwrap();
+  assert_eq!(error.request_id, "validate-42");
+}
+
 fn agent_router(
   registrations: Arc<dyn AgentRegistrationUseCases>,
   leases: Arc<dyn AgentLeaseUseCases>,

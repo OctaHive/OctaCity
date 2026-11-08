@@ -9,6 +9,7 @@ import unittest
 import sys
 import json
 import os
+import hashlib
 
 REPOSITORY = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(REPOSITORY / "tools"))
@@ -69,7 +70,11 @@ class LocalStandEntrypointTests(unittest.TestCase):
             server.parent.mkdir(parents=True)
             server.write_text('management_bind = "0.0.0.0:8080"\n')
             server.chmod(0o600)
-            bundle = configure_integrations(root, "Example/Tickets", native_repository_id="1234", adapter_digest="ab" * 32)
+            provider_image = root / "provider-image"
+            provider_image.write_text('#!/bin/sh\necho retained-provider\n')
+            provider_image.chmod(0o755)
+            bundle = configure_integrations(root, "Example/Tickets", native_repository_id="1234",
+                                            adapter_digest=hashlib.sha256(provider_image.read_bytes()).hexdigest())
             catalog = json.loads((bundle / "catalog.json").read_text())
             provider = catalog["credential_publishers"][0]["root"]
             selector, = (bundle / "selections").iterdir()
@@ -89,6 +94,7 @@ test "$(stat -c %a /run/octacity-management)" = 711
 test "$(stat -c %a {provider}/credentials)" = 700
 test "$(stat -c %a {provider}/github-work.toml)" = 600
 test -x {provider}/plugin
+test "$({provider}/plugin)" = retained-provider
 test -r {catalog['source_profiles_file']}
 test "$(stat -c %a {catalog['source_profiles_file']})" = 600
 test -r {provider}/selections/{selector.name}
@@ -117,13 +123,23 @@ fi
                 "--mount", f"type=bind,src={storage},dst=/var/lib/octacity-integrations",
                 "--mount", f"type=bind,src={channel},dst=/run/octacity-management",
                 "--mount", f"type=bind,src={observer},dst=/usr/local/bin/octacity-server,readonly",
-                "--mount", f"type=bind,src={observer},dst=/usr/local/bin/octacity-github,readonly",
+                "--mount", f"type=bind,src={provider_image},dst=/usr/local/bin/octacity-github,readonly",
                 "--mount", f"type=bind,src={REPOSITORY / 'deployment/local-stand/server-entrypoint.sh'},dst=/entrypoint,readonly",
                 "--entrypoint", "/bin/sh", "octacity/server:local", "/entrypoint"]
             for expected in ("installed", "retained"):
                 result = subprocess.run(command, capture_output=True, text=True, timeout=30)
                 self.assertEqual(result.returncode, 0, result.stderr)
                 self.assertEqual(result.stdout.strip(), expected)
+            provider_image.write_text('#!/bin/sh\necho replacement-image-provider\n')
+            result = subprocess.run(command, capture_output=True, text=True, timeout=30)
+            self.assertEqual(result.returncode, 0, result.stderr)
+            self.assertEqual(result.stdout.strip(), "retained")
+            installed = storage / Path(provider).relative_to("/var/lib/octacity-integrations") / "plugin"
+            installed.write_text('#!/bin/sh\necho changed-installed-provider\n')
+            result = subprocess.run(command, capture_output=True, text=True, timeout=30)
+            self.assertNotEqual(result.returncode, 0)
+            self.assertIn("installed integration executable differs", result.stderr)
+            self.assertEqual(result.stdout, "")
 
     @unittest.skipUnless(shutil.which("docker"), "Docker is required for the container boundary")
     def test_oversized_profile_is_rejected_before_starting_the_server(self):

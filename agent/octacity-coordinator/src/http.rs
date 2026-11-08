@@ -21,7 +21,7 @@ use octacity_protocol::{
   CompleteOutputUploadRequest, CompleteOutputUploadResponse, CoordinatorErrorResponse, HeartbeatDirective,
   HeartbeatRequest, HeartbeatResponse, HostCapacity, HostSnapshot, IngestAgentTelemetryRequest,
   IngestAgentTelemetryResponse, LeaseAssignment, RegisterAgentRequest, RegisterAgentResponse,
-  RevokeCacheSessionRequest, RevokeCacheSessionResponse,
+  RevokeCacheSessionRequest, RevokeCacheSessionResponse, ScopedValidationRequest, ScopedValidationResponse,
 };
 use reqwest::{StatusCode, Url, header};
 use serde::{Serialize, de::DeserializeOwned};
@@ -195,19 +195,39 @@ impl HttpCoordinatorClient {
             });
           }
           Ok(bytes) => {
-            let error: CoordinatorErrorResponse =
-              serde_json::from_slice(&bytes).map_err(|source| CoordinatorError::Json {
-                operation,
-                source: Box::new(source),
-              })?;
-            error.validate(request_id)?;
-            let retryable = error.retryable && retryable_status(status);
-            server_suggestion = error.retry_after_ms.map(Duration::from_millis).or(header_delay);
+            let (code, message, retryable, suggestion) =
+              match serde_json::from_slice::<CoordinatorErrorResponse>(&bytes) {
+                Ok(error) => {
+                  error.validate(request_id)?;
+                  (
+                    error.code,
+                    error.message,
+                    error.retryable && retryable_status(status),
+                    error.retry_after_ms.map(Duration::from_millis).or(header_delay),
+                  )
+                }
+                // A reverse proxy can answer before the coordinator is available.
+                // Keep its bounded transient HTTP status retryable without trusting
+                // or logging its body as a protocol response.
+                Err(_) if retryable_status(status) => (
+                  "transient_http_response".to_owned(),
+                  "coordinator gateway returned a transient non-protocol response".to_owned(),
+                  true,
+                  header_delay,
+                ),
+                Err(source) => {
+                  return Err(CoordinatorError::Json {
+                    operation,
+                    source: Box::new(source),
+                  });
+                }
+              };
+            server_suggestion = suggestion;
             last = Some(CoordinatorError::Rejected {
               operation,
               status: status.as_u16(),
-              code: error.code,
-              message: error.message,
+              code,
+              message,
               retryable,
             });
             if !retryable {
@@ -572,6 +592,37 @@ impl CoordinatorClient for HttpCoordinatorClient {
 
 #[async_trait]
 impl ToolActionCoordinator for HttpCoordinatorClient {
+  async fn scoped_validation(
+    &self,
+    registration: &Registration,
+    lease: &LeaseAssignment,
+    request: &ScopedValidationRequest,
+    cancellation: CancellationToken,
+  ) -> Result<ScopedValidationResponse, CoordinatorError> {
+    registration.validate()?;
+    request.validate()?;
+    if request.registration_id != registration.registration_id || request.lease != lease.into() {
+      return Err(invalid(
+        "scoped validation request does not match its registration and lease",
+      ));
+    }
+    let response: ScopedValidationResponse = self
+      .post(
+        PostCall {
+          operation: "scoped validation",
+          path: &["api", "v1", "leases", &lease.lease_id, "scoped-validation"],
+          request_id: &request.request_id,
+          operation_timeout: self.request_timeout,
+          server_max_retry: registration.max_retry_delay,
+          cancellation,
+        },
+        request,
+      )
+      .await?;
+    response.validate(&request.request_id)?;
+    Ok(response)
+  }
+
   async fn authorize_tool_action(
     &self,
     registration: &Registration,

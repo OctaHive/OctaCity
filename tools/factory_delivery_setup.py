@@ -23,6 +23,47 @@ TEST_SCRIPT_MAX_BYTES = 16384
 # The assertion protocol changes the installed instructions. Keep the original
 # Tester Runtime and its Profile pins usable by already published Flows.
 TEST_AUTHOR_RUNTIME = "delivery-tester-assertions"
+TEST_VERIFIER_RUNTIME = "delivery-tester-verification"
+# Microsandbox allocates whole vCPUs to each isolated VM.
+READER_CPU_MILLIS = 1000
+SCOPED_TESTER_CPU_MILLIS = 2 * READER_CPU_MILLIS
+
+
+def install_controller(root: Path, agent_policy: dict, *, read=None) -> None:
+    """Pin the packaged guest controller independently of model-selected tools."""
+    if read is None:
+        import subprocess
+        from local_stand_launcher import SERVER_IMAGE
+        def read(name):
+            return subprocess.run(["docker", "run", "--rm", "--network", "none", "--read-only",
+                "--entrypoint", "/bin/cat", SERVER_IMAGE, "/usr/local/lib/octacity/factory-tools/" + name],
+                check=True, capture_output=True, timeout=30).stdout
+    programs = {name: read(name) for name in ("octacity-protected-reader", "octacity-codex-reader")}
+    if any(not contents or len(contents) > 64 * 1024**2 for contents in programs.values()):
+        raise ValueError("packaged Factory controller is outside its byte bounds")
+    digests = {name: hashlib.sha256(contents).hexdigest() for name, contents in programs.items()}
+    identity = hashlib.sha256(_json(digests)).hexdigest()
+    directory = root / "delivery-tools" / identity
+    with state.private_umask():
+        state.ensure_private_directory(root / "delivery-tools")
+        state.ensure_private_directory(directory)
+    for name, contents in programs.items():
+        path = directory / name
+        if state.publish_exclusive_private_file(path, contents):
+            path.chmod(0o500)
+        elif state.read_regular_file(path, "retained Factory controller", max_bytes=64 * 1024**2,
+                                     modes=frozenset({0o500})) != contents:
+            raise ValueError("retained Factory controller differs from its original bytes")
+    agent_policy["protected_reader"] = {
+        "release_root": str(directory), "entrypoint": "octacity-protected-reader", "platform": "linux-aarch64",
+        "tool": {"identity": "factory-scoped-validation", "version": "v1", "sha256": triage._reference("factory-scoped-validation")["digest"]},
+        "executable": {"identity": "octacity-protected-reader", "version": identity[:16], "sha256": digests["octacity-protected-reader"]},
+        "bridge": {"entrypoint": "octacity-codex-reader", "sha256": digests["octacity-codex-reader"],
+                   "hook_tool_name": "mcp__factory__read_file"},
+        "resources": {"cpu_millis": READER_CPU_MILLIS, "memory_bytes": 64 * 1024**2, "disk_bytes": 16 * 1024**2,
+                      "process_count": 8, "elapsed_millis": 300000},
+        "outputs": {"kinds": [], "max_artifact_count": 0, "max_artifact_bytes": 0, "max_report_count": 0, "max_report_bytes": 0},
+    }
 
 
 def _json(value) -> bytes:
@@ -79,8 +120,51 @@ def _add(entries: list, key, value: dict) -> None:
         raise ValueError("Delivery conflicts with an existing installed capability")
 
 
+def with_bootstrap_compiler(catalog: dict, project: dict, root: Path) -> dict:
+    """Reuse the exact bootstrap template only when its active compiler was retired."""
+    ceiling = project["role_profiles"]["triage-runtime"]["ceiling"]
+    def matches(row):
+        return (row["toolchain"] == ceiling["toolchain"] and
+                row["build_configuration"] == ceiling["build_configuration"] and
+                row["credential_purpose"] == "evaluator")
+    if any(matches(row) for row in catalog["codex"]):
+        return catalog
+    seed = state.load_json_object(state.read_regular_file(root / "triage/factory-profiles.json",
+        "Factory bootstrap compiler", max_bytes=triage.server.MAX_FACTORY_PROFILE_BYTES,
+        modes=frozenset({0o600})), "Factory bootstrap compiler")
+    candidates = [row for row in seed["codex"] if matches(row)]
+    if len(candidates) != 1:
+        raise ValueError("the retained bootstrap compiler does not match the installed declaration")
+    catalog = copy.deepcopy(catalog)
+    catalog["codex"].extend(candidates)
+    return catalog
+
+
+def current_runtime_catalog(catalog: dict, plugins: list[dict]) -> dict:
+    """Activate only compilers qualified for this native plugin inventory.
+
+    Published Role/Profile and Flow definitions stay in Server storage. Their
+    installed choices remain visible for inspection, but a historical compiler
+    cannot acquire a current native binding by changing its pinned dependency.
+    The caller retains the full installation input before this projection.
+    """
+    active = copy.deepcopy(catalog)
+    matches = lambda grants: all(plugin in plugins for plugin in grants["plugins"])
+    active["codex"] = [row for row in active.get("codex", []) if row["toolchain"]["plugin"] in plugins]
+    for kind in ("protected_validation", "promotions"):
+        if kind in active:
+            active[kind] = [row for row in active[kind]
+                if all(matches(profile["project_permissions"]) for profile in row["profiles"])]
+    if "commands" in active:
+        active["commands"] = [row for row in active["commands"] if matches(row["project_permissions"])]
+    if "protected_test_authors" in active:
+        active["protected_test_authors"] = [row for row in active["protected_test_authors"]
+            if matches(row["command"]["project_permissions"])]
+    return active
+
+
 def delivery_models(catalog: dict, project_id: str, capture_tool: dict, write_directories: list[str], *,
-                    code_build: dict) -> dict:
+                    code_build: dict, scoped_build: dict | None = None, plugin: dict | None = None) -> dict:
     """Install reusable runtimes and keep any previously approved Coder scope."""
     catalog = copy.deepcopy(catalog)
     project, = (entry for entry in catalog["projects"] if entry["project_id"] == project_id)
@@ -91,10 +175,21 @@ def delivery_models(catalog: dict, project_id: str, capture_tool: dict, write_di
                  and entry["build_configuration"] == ceiling["build_configuration"]
                  and entry["credential_purpose"] == "evaluator")
     permissions = observer["project_permissions"]
+    selected_plugin = plugin or observer["toolchain"]["plugin"]
     model_credential = observer["credentials"]["evaluator"]
     mcp_hosts = {urlsplit(entry["server"]["url"]).hostname
                  for entry in original.get("settings_support", {}).get("authenticated_mcp", {}).values()}
     hosts = [host for host in permissions["network_hosts"] if host not in mcp_hosts]
+    if not write_directories and "delivery-coder" in runtimes:
+        retained = [row["ceiling"] for alias, row in runtimes.items()
+            if alias == "delivery-coder" or re.fullmatch(r"delivery-coder-[0-9a-f]{12}", alias)]
+        scopes = {tuple(row["capture"]["instruction"]["policy"]["allowed_path_prefixes"])
+            for row in catalog["codex"] if row.get("capture") and any(
+                row["toolchain"] == ceiling["toolchain"]
+                and row["build_configuration"] == ceiling["build_configuration"] for ceiling in retained)}
+        if len(scopes) != 1:
+            raise ValueError("retained Delivery Coder write scope is unavailable or ambiguous")
+        write_directories = list(scopes.pop())
     roles = []
     if write_directories:
         roles.append(("delivery-coder", "Coder", "model", "read_write"))
@@ -102,21 +197,39 @@ def delivery_models(catalog: dict, project_id: str, capture_tool: dict, write_di
         roles.append(("delivery-coder-readonly", "Coder", "evaluator", "read_only"))
     roles.extend((("delivery-reviewer", "Reviewer", "evaluator", "read_only"),
                   ("delivery-devops", "DevOps", "evaluator", None),
-                  (TEST_AUTHOR_RUNTIME, "Tester", "evaluator", "read_only")))
+                  (TEST_AUTHOR_RUNTIME, "Tester", "evaluator", "read_only"),
+                  (TEST_VERIFIER_RUNTIME, "Tester", "model", None)))
     for alias, role, purpose, source_mode in roles:
+        runtime_alias = alias
+        selected_build = (scoped_build or observer["build_configuration"]) if alias == TEST_VERIFIER_RUNTIME else code_build
+        plugin_changed = alias in runtimes and runtimes[alias]["ceiling"]["toolchain"]["plugin"] != selected_plugin
+        cpu_changed = alias == TEST_VERIFIER_RUNTIME and alias in runtimes and (
+            runtimes[alias]["ceiling"]["permissions"].get("resources", {}).get("cpu_millis", 0)
+            < SCOPED_TESTER_CPU_MILLIS)
+        if alias in runtimes and (plugin_changed or cpu_changed or
+                (source_mode or alias == TEST_VERIFIER_RUNTIME) and runtimes[alias]["ceiling"]["build_configuration"] != selected_build):
+            # Published profiles retain their exact compiler and guest. Install
+            # a separate capability rather than silently replacing that binding.
+            identity = [selected_build, selected_plugin] if plugin_changed else selected_build
+            if cpu_changed:
+                identity = [identity, {"cpu_millis": SCOPED_TESTER_CPU_MILLIS}]
+            runtime_alias += "-" + hashlib.sha256(_json(identity)).hexdigest()[:12]
         grants = copy.deepcopy(permissions)
+        if plugin is not None:
+            grants["plugins"] = [selected_plugin]
         grants["secret_profiles"] = [MODEL_CREDENTIAL if purpose == "model" else model_credential]
         grants["network_hosts"] = hosts
         if source_mode:
             grants["mounts"].append({"root": "/workspace/source", "mode": source_mode})
         # The reference version distinguishes compilers for the same provider model.
-        toolchain = {**observer["toolchain"], "model": {**observer["toolchain"]["model"], "version": alias + "-v1"}}
+        toolchain = {**observer["toolchain"], "plugin": selected_plugin, "model": {**observer["toolchain"]["model"], "version": runtime_alias + "-v1"}}
         entry = {**copy.deepcopy(observer), "toolchain": toolchain, "credential_purpose": purpose,
             "credentials": {**observer["credentials"], "model": MODEL_CREDENTIAL},
             "project_permissions": grants, "local_permissions": {**observer["local_permissions"], "grants": grants}}
         entry.pop("mcp_configurations", None)
         if source_mode:
             entry.update(build_configuration=code_build, candidate_capture_tool=capture_tool)
+            _choice(project, "delivery-capture-" + capture_tool["digest"][:12], capture_tool)
         if alias == TEST_AUTHOR_RUNTIME:
             entry["instructions"] = (
                 "Author a POSIX shell check for the accepted behavior. The candidate source directory is the first "
@@ -137,7 +250,20 @@ def delivery_models(catalog: dict, project_id: str, capture_tool: dict, write_di
             grants["outputs"]["kinds"].extend(["tester-checks", "protected_inventory", "protected_handoff"])
             grants["outputs"]["max_artifact_count"] = max(4, grants["outputs"]["max_artifact_count"])
             grants["outputs"]["max_report_count"] = max(2, grants["outputs"]["max_report_count"])
-        if purpose == "model":
+        if alias == TEST_VERIFIER_RUNTIME:
+            resources = grants.setdefault("resources", {})
+            resources["cpu_millis"] = max(resources.get("cpu_millis", 0), SCOPED_TESTER_CPU_MILLIS)
+            entry["build_configuration"] = selected_build
+            entry["execution_mode"] = "scoped_validation"
+            entry["tool_response_limits"] = {"per_call_bytes": 16384, "total_bytes": 262144}
+            entry["instructions"] = (
+                "Invoke the installed verify_candidate tool with action start, then poll action status until it "
+                "reports verified or stopped. Summarize the runner verdict. Do not infer a pass from prose. "
+                "The server selects the retained checks and reviewed candidate; do not replace either."
+            )
+            grants["tools"] = [triage._reference("factory-scoped-validation")]
+            _choice(project, "factory-scoped-validation", grants["tools"][0])
+        elif purpose == "model":
             schema = _schema("candidate_capture_facts")
             grants["outputs"]["kinds"].extend(["change-set.bundle", "change-set-manifest.json", CAPTURE_OUTPUT])
             entry["capture"] = {"tool": capture_tool, "instruction": {
@@ -157,11 +283,11 @@ def delivery_models(catalog: dict, project_id: str, capture_tool: dict, write_di
         runtime["ceiling"].update(name=f"Delivery {role.title()}", toolchain=toolchain, credential_purpose=purpose,
             build_configuration=entry["build_configuration"], permissions=grants, context_requirements=["task"],
             execution={**ceiling["execution"], "environment": {}, "integrations": {}, "mcp_servers": {}})
-        if alias in runtimes and runtimes[alias] != runtime:
+        if runtime_alias in runtimes and runtimes[runtime_alias] != runtime:
             raise ValueError("Delivery conflicts with an existing installed Runtime")
-        runtimes[alias] = runtime
-        _choice(project, alias, toolchain["executable"])
-        _choice(project, alias + "-model", toolchain["model"])
+        runtimes[runtime_alias] = runtime
+        _choice(project, runtime_alias, toolchain["executable"])
+        _choice(project, runtime_alias + "-model", toolchain["model"])
     _add(project["references"], lambda item: (item["kind"], item["alias"]),
         {"kind": "secret_profile", "alias": MODEL_CREDENTIAL, "reference": triage._reference(MODEL_CREDENTIAL)})
     return catalog
@@ -375,7 +501,10 @@ def install_test_commands(catalog: dict, project: dict, worker: dict, plugins: l
         _choice(project, alias + "-policy", identity)
     for plugin in plugins:
         if not any(item["kind"] == "node_capability" and item["reference"] == plugin for item in project["references"]):
-            _choice(project, "delivery-plugin-" + plugin["identity"], plugin)
+            alias = "delivery-plugin-" + plugin["identity"]
+            if any(item["alias"] == alias for item in project["references"]):
+                alias += "-" + plugin["digest"][:12]
+            _choice(project, alias, plugin)
     if pack is not None:
         author_profile = commands["author"]["identity"]
         _add(catalog.setdefault("protected_test_authors", []), lambda item: item["command"]["identity"],
@@ -390,19 +519,27 @@ def install_test_commands(catalog: dict, project: dict, worker: dict, plugins: l
         _add(catalog.setdefault("protected_validation", []), lambda item: item["profiles"][0]["identity"], entry)
 
 
-def install_worker(client, project: dict, worker: dict, image: str, namespace, *, repository_id: str | None = None) -> dict:
+def install_worker(client, project: dict, worker: dict, image: str, namespace, *, repository_id: str | None = None,
+                   pool_id: str | None = None, cpu_millis: int | None = None) -> dict:
     """Create an ordinary Build bound to either no code or the selected Repository."""
     source = worker["build_configuration"]
     current = client.get(f"/api/v1/build-configurations/{source['id']}/versions/{source['version']}")
     definition = copy.deepcopy(current["definition"])
     definition["runtime"]["immutable_image"] = image
+    if cpu_millis is not None:
+        definition["runtime"]["cpu_millis"] = cpu_millis
+    if pool_id is not None:
+        definition["allowed_pools"] = [pool_id]
     name = "Factory Delivery checks"
     if repository_id is not None:
         repository = client.get(f"/api/v1/repositories/{repository_id}/versions/1")
         definition.update(source=None, repository_id=repository_id, repository_version=repository["version"])
         name = "Factory Delivery source"
     identity = hashlib.sha256(json.dumps(definition, sort_keys=True, separators=(",", ":"), ensure_ascii=False).encode()).hexdigest()
-    created = client.post("/api/v1/build-configurations", f"{namespace}-delivery-worker-{identity}",
+    if pool_id is not None:
+        name = "Factory Delivery validation"
+    name += " · " + identity[:12]
+    created = client.post("/api/v1/build-configurations", f"{namespace}-delivery-worker-v2-{identity}",
         {"project_id": project["project_id"], "name": name, "definition": definition})["resource"]
     build = {name: created[name] for name in ("id", "project_id", "version")}
     build["definition_digest"] = hashlib.sha256(json.dumps(created["definition"], sort_keys=True,
@@ -447,7 +584,7 @@ def _extend_agent(agent_policy: dict, catalog: dict, project: dict, plugins: lis
     login = next(row["credentials"]["evaluator"] for row in catalog["codex"]
                  if row["toolchain"] == runtimes["triage-runtime"]["ceiling"]["toolchain"])
     writable = "delivery-coder" in runtimes
-    if writable:
+    if writable or TEST_VERIFIER_RUNTIME in runtimes:
         agent_policy["factory_credential_profiles"].setdefault(MODEL_CREDENTIAL, agent_policy["factory_credential_profiles"][login])
         grants["secret_profiles"] = sorted(set(grants["secret_profiles"]) | {MODEL_CREDENTIAL})
     source = next((item for item in grants["mounts"] if item["root"] == "/workspace/source"), None)
@@ -457,18 +594,78 @@ def _extend_agent(agent_policy: dict, catalog: dict, project: dict, plugins: lis
     elif writable:
         source["mode"] = "read_write"
     for plugin in plugins:
-        if not any(item["identity"] == plugin["identity"] for item in grants["plugins"]):
-            grants["plugins"].append({"identity": plugin["identity"], "version": plugin["version"], "sha256": plugin["digest"]})
+        grants["plugins"] = [item for item in grants["plugins"] if item["identity"] != plugin["identity"]]
+        grants["plugins"].append({"identity": plugin["identity"], "version": plugin["version"], "sha256": plugin["digest"]})
     grants["plugins"].sort(key=lambda item: item["identity"])
-    required = [runtimes[alias]["ceiling"]["permissions"] for alias in
-                ("delivery-coder", "delivery-coder-readonly", "delivery-reviewer", "delivery-devops",
-                 TEST_AUTHOR_RUNTIME) if alias in runtimes]
+    required = [runtime["ceiling"]["permissions"] for alias, runtime in runtimes.items()
+                if alias in ("delivery-coder", "delivery-coder-readonly", "delivery-reviewer", "delivery-devops",
+                             TEST_AUTHOR_RUNTIME, TEST_VERIFIER_RUNTIME)
+                or alias.startswith(TEST_VERIFIER_RUNTIME + "-")]
+    for permissions in required:
+        if "resources" in permissions:
+            resources = grants.setdefault("resources", {})
+            resources["cpu_millis"] = max(resources.get("cpu_millis", 0),
+                                         permissions["resources"].get("cpu_millis", 0))
+        for tool in permissions.get("tools", []):
+            item = {"identity": tool["identity"], "version": tool["version"], "sha256": tool["digest"]}
+            _add(grants.setdefault("tools", []), lambda entry: entry["identity"], item)
+    grants["tools"].sort(key=lambda item: item["identity"])
     required += [item["command"]["project_permissions"] for item in catalog.get("protected_test_authors", [])
                  if item["command"]["build_configuration"]["project_id"] == project["project_id"]]
     required += [profile["project_permissions"] for item in catalog.get("protected_validation", [])
                  for profile in item["profiles"] if profile["build_configuration"]["project_id"] == project["project_id"]]
     grants["outputs"]["kinds"] = sorted(set(grants["outputs"]["kinds"]).union(
         *(item["outputs"]["kinds"] for item in required)))
+
+
+def install_access_ceiling(catalog: dict, project: dict) -> None:
+    """Declare the complete installed Delivery authority without changing Project policies.
+
+    One content-pinned declaration covers the selected runtimes, ordinary verifiers
+    and trusted publisher. Project owners still choose and publish their own
+    narrower access profile; an existing Standard profile is never replaced.
+    """
+    required = [row["ceiling"]["permissions"] for alias, row in project["role_profiles"].items()
+                if alias.startswith("delivery-")]
+    required += [row["project_permissions"] for row in catalog.get("commands", [])
+                 if row["build_configuration"]["project_id"] == project["project_id"]]
+    required += [row["command"]["project_permissions"] for row in catalog.get("protected_test_authors", [])
+                 if row["command"]["build_configuration"]["project_id"] == project["project_id"]]
+    required += [row["project_permissions"] for entry in catalog.get("protected_validation", [])
+                 for row in entry["profiles"] if row["build_configuration"]["project_id"] == project["project_id"]]
+    if not required:
+        return
+
+    def combine(left, right):
+        if isinstance(left, dict):
+            return {key: combine(left[key], right[key]) if key in left and key in right
+                    else copy.deepcopy(left.get(key, right.get(key))) for key in sorted(left.keys() | right.keys())}
+        if isinstance(left, list):
+            if left + right and all(isinstance(row, dict) and "root" in row for row in left + right):
+                mounts = {}
+                for row in left + right:
+                    if row["root"] not in mounts or row["mode"] == "read_write":
+                        mounts[row["root"]] = copy.deepcopy(row)
+                return [mounts[key] for key in sorted(mounts)]
+            return [json.loads(value) for value in sorted({json.dumps(row, sort_keys=True) for row in left + right})]
+        return max(left, right)
+
+    permissions = copy.deepcopy(required[0])
+    for grants in required[1:]:
+        permissions = combine(permissions, grants)
+    for entry in catalog.get("delivery", []):
+        for policy in entry["policies"]:
+            draft = policy["draft"]
+            if draft["project_id"] != project["project_id"]:
+                continue
+            permissions = combine(permissions, {"plugins": [entry["identity"], draft["plugin"]],
+                "secret_profiles": [draft["credential_profile"]], "network_hosts": draft["network_hosts"]})
+    digest = hashlib.sha256(_json(permissions)).hexdigest()
+    alias = "delivery-ceiling-" + digest[:16]
+    _add(project["references"], lambda row: (row["kind"], row["alias"]), {
+        "kind": "permission_ceiling", "alias": alias, "reference": triage._reference(alias, digest=digest),
+        "metadata": {"node_kinds": [], "signal_purposes": [], "enforcement": [],
+                     "compatible_choices": [], "permission_declarations": permissions}})
 
 
 def stage(root: Path, directory: Path, installed: dict, project_id: str, repository_id: str, namespace, native: Path, client,
@@ -485,30 +682,64 @@ def stage(root: Path, directory: Path, installed: dict, project_id: str, reposit
         max_bytes=server.MAX_FACTORY_PROFILE_BYTES, modes=frozenset({0o600})), "Factory profile catalog")
     project, = (row for row in catalog["projects"] if row["project_id"] == project_id)
     runtimes = project["role_profiles"]
+    image = triage.prepare_guest_image(root, native, delivery=True)
+    octa = json.loads((native / "job-spec-policy.json").read_text())["octa"]
+    installed_plugin = triage._reference("codex", octa["version"], octa["plugin_digests"]["codex"])
+    current_authors = [row for row in catalog["codex"] if row.get("protected_tests")
+        and row["toolchain"].get("plugin") == installed_plugin
+        and row["build_configuration"]["project_id"] == project_id
+        and client.get(f"/api/v1/build-configurations/{row['build_configuration']['id']}/versions/"
+                       f"{row['build_configuration']['version']}")["definition"]["runtime"]["immutable_image"] == image]
     if not (packs or write_directories or publication) and (
-            {"delivery-reviewer", "delivery-devops", TEST_AUTHOR_RUNTIME} <= runtimes.keys()
+            {"delivery-reviewer", "delivery-devops", TEST_AUTHOR_RUNTIME, TEST_VERIFIER_RUNTIME} <= runtimes.keys()
             and {"delivery-coder", "delivery-coder-readonly"} & runtimes.keys()
-            and _standard_verifiers_current(
-                catalog, project_id, runtimes[TEST_AUTHOR_RUNTIME]["ceiling"]["toolchain"]["model"])):
+            and any(row["kind"] == "permission_ceiling" and row["alias"].startswith("delivery-ceiling-")
+                    for row in project["references"])
+            and (root / "agent-validation/worker.json").is_file()
+            and any(row.get("execution_mode") == "scoped_validation"
+                    and row["toolchain"].get("plugin") == installed_plugin
+                    and row["build_configuration"]["project_id"] == project_id
+                    and row["project_permissions"].get("resources", {}).get("cpu_millis", 0)
+                        >= SCOPED_TESTER_CPU_MILLIS
+                    and client.get(f"/api/v1/build-configurations/{row['build_configuration']['id']}/versions/"
+                                   f"{row['build_configuration']['version']}")["definition"]["runtime"].get("cpu_millis", 0)
+                        >= SCOPED_TESTER_CPU_MILLIS for row in catalog["codex"])
+            and all(any(choice["kind"] == "node_capability" and choice.get("reference") == row["capture"]["tool"]
+                        for choice in project["references"])
+                    for row in catalog["codex"] if row.get("capture")
+                    and row["build_configuration"]["project_id"] == project_id)
+            and any(_standard_verifiers_current(catalog, project_id, row["toolchain"]["model"])
+                    for row in current_authors)):
         return {}
     agent_policy = agent.read_factory_agent_profile(installed["factory_agent_profile"])
+    install_controller(root, agent_policy)
     capture = _capture_policy(root, agent_policy)
+    catalog = with_bootstrap_compiler(catalog, project, root)
+    project, = (row for row in catalog["projects"] if row["project_id"] == project_id)
+    runtimes = project["role_profiles"]
     ceiling = runtimes["triage-runtime"]["ceiling"]
     template, = (row for row in catalog["codex"] if row["toolchain"] == ceiling["toolchain"]
                  and row["build_configuration"] == ceiling["build_configuration"] and row["credential_purpose"] == "evaluator")
-    octa = json.loads((native / "job-spec-policy.json").read_text())["octa"]
+    import factory_delivery_worker
+    original = template["build_configuration"]
+    original_definition = client.get(f"/api/v1/build-configurations/{original['id']}/versions/{original['version']}")["definition"]
+    verification_pool = factory_delivery_worker.prepare(root, client, project_id, repository_id, original_definition, namespace)
     plugins = [triage._reference(name, octa["version"], digest) for name, digest in sorted(octa["plugin_digests"].items())]
-    image = triage.prepare_guest_image(root, native, delivery=True)
     worker = install_worker(client, project, template, image, namespace, repository_id=repository_id)
+    verification_worker = install_worker(client, project, template, image, namespace,
+                                        repository_id=repository_id, pool_id=verification_pool)
     if packs:
         author = install_worker(client, project, template, image, namespace)
-    catalog = delivery_models(catalog, project_id, capture, write_directories, code_build=worker["build_configuration"])
+    scoped_worker = install_worker(client, project, template, image, namespace, cpu_millis=SCOPED_TESTER_CPU_MILLIS)
+    catalog = delivery_models(catalog, project_id, capture, write_directories, code_build=worker["build_configuration"],
+                              scoped_build=scoped_worker["build_configuration"], plugin=installed_plugin)
     project, = (row for row in catalog["projects"] if row["project_id"] == project_id)
-    tester_toolchain = project["role_profiles"][TEST_AUTHOR_RUNTIME]["ceiling"]["toolchain"]
-    tester, = (row for row in catalog["codex"] if row["toolchain"] == tester_toolchain)
-    install_test_commands(catalog, project, worker, plugins, capture, None, author=tester)
+    tester, = (row for row in catalog["codex"] if row.get("protected_tests")
+               and row["build_configuration"] == worker["build_configuration"]
+               and row["toolchain"]["plugin"] == installed_plugin)
+    install_test_commands(catalog, project, verification_worker, plugins, capture, None, author=tester)
     for pack in packs:
-        install_test_commands(catalog, project, worker, plugins, capture, pack, author=author)
+        install_test_commands(catalog, project, verification_worker, plugins, capture, pack, author=author)
     _extend_agent(agent_policy, catalog, project, plugins)
     result = {}
     if publication is not None:
@@ -517,6 +748,12 @@ def stage(root: Path, directory: Path, installed: dict, project_id: str, reposit
         plugin, git = _packaged_github()
         result["factory_delivery_bundle"] = stage_publication(directory, catalog, project, repository,
             branch, token, plugin, git, installed["factory_delivery_bundle"])
+    install_access_ceiling(catalog, project)
+    # Keep the complete prior installation input as bounded audit evidence.
+    # Historical Server profiles/Flows are never rewritten to a different plugin.
+    retained = _json(catalog)
+    triage._publish(root / "evidence" / ("factory-runtime-catalog-" + hashlib.sha256(retained).hexdigest() + ".json"), catalog)
+    catalog = current_runtime_catalog(catalog, plugins)
     profiles = directory / "delivery-profiles.json"
     policy = directory / "delivery-agent.toml"
     state.publish_exclusive_private_file(profiles, _json(catalog))
@@ -546,18 +783,24 @@ def publish_roles(client, project: str, namespace, catalog_path: Path) -> None:
     entry, = (row for row in catalog["projects"] if row["project_id"] == project)
     runtimes = entry["role_profiles"]
     base = f"/api/v1/projects/{project}"
-    for name, runtime, description in (
+    declarations = (
         ("Coder", "delivery-coder", "Implement the explicitly assigned change within the approved source directories."),
         ("Coder", "delivery-coder-readonly", "Implement the explicitly assigned change within the approved source directories."),
         ("Tester", TEST_AUTHOR_RUNTIME, "Explain selected test evidence and distinguish setup errors from confirmed failures."),
+        ("Tester", TEST_VERIFIER_RUNTIME, "Explain selected test evidence and distinguish setup errors from confirmed failures."),
         ("Reviewer", "delivery-reviewer", "Review the selected candidate against the accepted requirements and record findings."),
         ("DevOps", "delivery-devops", "Prepare a short review title and summary from the selected accepted evidence."),
+    )
+    for name, kind, runtime, description in (
+        (name, kind, alias, description) for name, kind, description in declarations
+        for alias in sorted(runtimes) if alias == kind or
+        alias.startswith(kind + "-") and re.fullmatch(r"[0-9a-f]{12}", alias[len(kind) + 1:])
     ):
-        if runtime not in runtimes:
-            continue
         key = f"stand-delivery-v1-{name.lower()}"
         role_id = str(uuid.uuid5(namespace, key + "-role"))
-        profile_key = key + {"delivery-coder-readonly": "-readonly", TEST_AUTHOR_RUNTIME: "-author-v2"}.get(runtime, "")
+        profile_key = key + {"delivery-coder-readonly": "-readonly", TEST_AUTHOR_RUNTIME: "-author-v2", TEST_VERIFIER_RUNTIME: "-verification"}.get(kind, "")
+        if runtime != kind:
+            profile_key += "-" + runtime[len(kind) + 1:]
         profile_id = str(uuid.uuid5(namespace, profile_key + "-profile"))
         ceiling = client.get(f"{base}/factory-profile-capabilities/{runtime}")["definition"]
         settings = {field: ceiling[field] for field in ("toolchain", "permissions")}
@@ -568,7 +811,9 @@ def publish_roles(client, project: str, namespace, catalog_path: Path) -> None:
                 "name": name, "icon": "bot", "description": description,
                 "instructions": ["Follow the reviewed step assignment. Use only the selected inputs and granted access."]}},
             "profiles": []})["role"]["reference"]
-        suffix = {"delivery-coder-readonly": " (read-only)", TEST_AUTHOR_RUNTIME: " (test author v2)"}.get(runtime, "")
+        suffix = {"delivery-coder-readonly": " (read-only)", TEST_AUTHOR_RUNTIME: " (test author v2)", TEST_VERIFIER_RUNTIME: " (verification)"}.get(kind, "")
+        if runtime != kind:
+            suffix += " · " + runtime[len(kind) + 1:]
         definition = {**ceiling, "name": f"{name} · Delivery{suffix}"}
         reviewed = client.post(f"{base}/factory-role-profiles/validate", f"{namespace}-{profile_key}-validate",
             {"id": profile_id, "role": role, "capability": runtime, "definition": definition})
@@ -591,14 +836,36 @@ def stage_publication(directory: Path, catalog: dict, project: dict, repository:
     owner, name = match.groups()
     remote = f"https://github.com/{owner}/{name}.git"
     root = directory / "delivery-adapters"
+    state.ensure_private_directory(root)
     if inherited is not None:
-        state.ensure_private_directory(root)
         _snapshot(inherited, copy_to=root)
-    adapter = root / "github"
-    credentials, inputs = adapter / "credentials", adapter / "inputs"
-    for path in (root, adapter, credentials, inputs):
-        state.ensure_private_directory(path)
     plugin = triage._reference("github", digest=hashlib.sha256(plugin_bytes).hexdigest())
+    legacy = root / "github/octacity-github"
+    legacy_digest = None
+    if legacy.exists():
+        legacy_digest = hashlib.sha256(state.read_regular_file(legacy, "installed Delivery provider",
+            max_bytes=256 * 1024**2, modes=frozenset({0o700}))).hexdigest()
+    if legacy_digest is not None and legacy_digest != plugin["digest"]:
+        # Move only the staged copy. Historical policy identities and provider
+        # bytes remain intact under their own registry, without duplicate IDs.
+        retained = root / legacy_digest
+        state.ensure_private_directory(retained)
+        for item in list(root.iterdir()):
+            if item != retained:
+                item.rename(retained / item.name)
+        previous = "/run/octacity-delivery"
+        for entry in catalog.get("delivery", []):
+            if entry["adapter_root"] == previous:
+                entry["adapter_root"] = previous + "/" + retained.name
+                for policy in entry["policies"]:
+                    policy["input_directory"] = entry["adapter_root"] + policy["input_directory"][len(previous):]
+    registry = root if (root / "github").exists() or not any(root.iterdir()) else root / plugin["digest"]
+    runtime_root = "/run/octacity-delivery" + ("/" + registry.name if registry != root else "")
+    suffix = "-" + plugin["digest"][:16] if registry != root else ""
+    adapter = registry / "github"
+    credentials, inputs = adapter / "credentials", adapter / "inputs"
+    for path in (root, registry, adapter, credentials, inputs):
+        state.ensure_private_directory(path)
     configuration = (f'config_version = 1\napi_base = "https://api.github.com/"\napi_version = "{API_VERSION}"\n'
         f'git_path = "/usr/bin/git"\ngit_sha256 = "{git_digest}"\n'
         f'credential_directory = "credentials"\ninput_directory = "inputs"\n'
@@ -632,12 +899,12 @@ def stage_publication(directory: Path, catalog: dict, project: dict, repository:
     receipt = _schema("pull_request_receipt", REPOSITORY / "config/factory/presets/ticket-delivery/pull-request-v1.json",
                       include_shape=True)
     profile = {"identity": action, "outcome": {"key": "published", "kind": "success", "schema": receipt["reference"]},
-        "receipt_schema": receipt, "adapter_root": "/run/octacity-delivery",
-        "policies": [{"reference": target, "draft": draft, "input_directory": "/run/octacity-delivery/github/inputs",
+        "receipt_schema": receipt, "adapter_root": runtime_root,
+        "policies": [{"reference": target, "draft": draft, "input_directory": runtime_root + "/github/inputs",
                       "review_links": "github"}], "timeout_milliseconds": 60000, "termination_grace_milliseconds": 1000}
     _add(catalog.setdefault("delivery", []), lambda item: item["identity"], profile)
-    _choice(project, action["identity"], action, node_kind="trusted_action")
-    _choice(project, "delivery-github-provider", plugin)
+    _choice(project, action["identity"] + suffix, action, node_kind="trusted_action")
+    _choice(project, "delivery-github-provider" + suffix, plugin)
     _add(project["references"], lambda item: (item["kind"], item["alias"]),
          {"kind": "secret_profile", "alias": credential, "reference": triage._reference(credential)})
     return root

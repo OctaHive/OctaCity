@@ -1060,6 +1060,7 @@ fn another_action_plugin_receives_the_common_projected_input_without_a_runtime_c
 
 struct AmbiguousAction {
   operation: Mutex<Option<FactoryDigest>>,
+  stop_requested_at: octacity_server_domain::Timestamp,
 }
 #[async_trait]
 impl FactoryFlowActionPlugin for AmbiguousAction {
@@ -1085,7 +1086,7 @@ impl FactoryFlowActionPlugin for AmbiguousAction {
     requested_at: octacity_server_domain::Timestamp,
   ) -> Result<Option<BudgetUsage>, ApplicationError> {
     assert_eq!(Some(request.operation_id), *self.operation.lock().unwrap());
-    assert_eq!(requested_at, at(13));
+    assert_eq!(requested_at, self.stop_requested_at);
     assert_eq!(request.deadline, at(511));
     Ok(Some(BudgetUsage {
       tokens: 3,
@@ -1102,6 +1103,7 @@ fn an_action_with_an_unknown_response_is_stopped_through_its_original_identity_a
   crate::factory::admission::tests::factory_admission_tests::run_ready(async {
     let plugin = Arc::new(AmbiguousAction {
       operation: Mutex::new(None),
+      stop_requested_at: at(13),
     });
     let adapter = Arc::new(FactoryFlowActionAdapter::new(plugin.clone()));
     let runner = FactoryNodeRunner::new(
@@ -1162,6 +1164,69 @@ fn an_action_with_an_unknown_response_is_stopped_through_its_original_identity_a
       snapshot,
       "the adapter itself cannot select a graph transition"
     );
+  });
+}
+
+#[test]
+fn an_expired_trusted_action_settles_its_original_operation_and_leaves_running_without_a_user_cancel() {
+  let h = harness(
+    binding("notification", "notify", serde_json::json!({"channel":"audit"})),
+    permissions("notification"),
+  );
+  crate::factory::admission::tests::factory_admission_tests::run_ready(async {
+    let runner = FactoryNodeRunner::new(
+      h.store.clone(),
+      Arc::new(FactoryFlowActionAdapter::new(Arc::new(AmbiguousAction {
+        operation: Mutex::new(None),
+        stop_requested_at: at(511),
+      }))),
+      crate::factory_node_test_support::clock(),
+    );
+    runner
+      .run_once(h.run, h.claim, h.target.clone(), Some(h.input), at(11))
+      .await
+      .unwrap();
+    assert!(
+      runner
+        .run_once(h.run, h.claim, h.target.clone(), None, at(12))
+        .await
+        .is_err()
+    );
+    let claim = h
+      .store
+      .claim_factory_runs(ClaimFactoryRuns::new(key("successor"), at(512), at(612), 1).unwrap())
+      .await
+      .unwrap()
+      .remove(0)
+      .record;
+    assert_eq!(
+      runner
+        .run_once(h.run, claim.id, h.target.clone(), None, at(513))
+        .await
+        .expect("an expired trusted action must reconcile its stop instead of rejecting every observation"),
+      FactoryNodeStep::ExecutionStopped,
+    );
+    let snapshot = h.store.factory_run_snapshot(h.run).await.unwrap();
+    assert_eq!(snapshot.run.state(), FactoryRunState::Waiting);
+    assert!(
+      snapshot.controls.is_empty(),
+      "deadline handling needs no user cancellation"
+    );
+    assert!(
+      snapshot.flow.data.records.is_empty(),
+      "an unknown remote response is not a successful result"
+    );
+    assert_eq!(snapshot.flow.data.stops.len(), 1);
+    assert_eq!(snapshot.flow.data.stops[0].usage().tokens, 3);
+    assert_eq!(
+      snapshot.flow.data.stops[0].reason(),
+      FlowNodeStopReason::ExecutionFailed
+    );
+    assert_eq!(
+      runner.run_once(h.run, claim.id, h.target, None, at(514)).await.unwrap(),
+      FactoryNodeStep::ExecutionStopped
+    );
+    assert_eq!(h.store.factory_run_snapshot(h.run).await.unwrap(), snapshot);
   });
 }
 

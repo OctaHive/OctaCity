@@ -42,6 +42,45 @@ async fn retained_assignment(
 
 #[tokio::test]
 #[ignore = "requires an explicitly configured disposable PostgreSQL service"]
+async fn scoped_build_acceptance_revalidates_the_caller_even_on_replay() {
+  let (database, _, build) = prepared_factory_build(true).await;
+  let (authority, lease, job_id) = retained_assignment(&database, &build).await;
+  let caller = octacity_server_store::FactoryScopedBuildCaller {
+    lease,
+    job_id,
+    attempt: AttemptNumber::FIRST,
+  };
+  authority
+    .authorize_tool_action_lease(lease, job_id, caller.attempt, at(12))
+    .await
+    .unwrap();
+  assert!(
+    matches!(
+      authority.accept_scoped_factory_build(build.clone(), caller).await,
+      Err(StoreError::Conflict { .. })
+    ),
+    "an ordinary Factory Job with a current lease cannot invoke itself without a scoped binding"
+  );
+  authority
+    .complete_job(JobCompletion {
+      completion_id: IdempotencyKey::new("lease-ended-before-scoped-build").unwrap(),
+      lease,
+      final_sequence: None,
+      kind: JobCompletionKind::Cancelled,
+      execution: None,
+      completed_at: at(13),
+    })
+    .await
+    .unwrap();
+  assert!(matches!(
+    authority.accept_scoped_factory_build(build, caller).await,
+    Err(StoreError::Fenced { lease: denied }) if denied == lease.lease_id
+  ));
+  database.cleanup().await;
+}
+
+#[tokio::test]
+#[ignore = "requires an explicitly configured disposable PostgreSQL service"]
 async fn signal_reservation_rejects_a_lease_that_ended_after_the_earlier_application_check() {
   let (database, store, build) = prepared_factory_build(true).await;
   let (authority, access, job_id) = retained_assignment(&database, &build).await;

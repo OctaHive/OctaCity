@@ -9,7 +9,7 @@ use octacity_server_domain::{AttemptId, BuildId, JobId, Timestamp};
 use octacity_server_factory::{FactoryClaimOwnership, FactoryDigest, FlowBuildIntent};
 use octacity_server_store::{
   AcceptFactoryBuild, AcceptedFactoryBuild, AttemptRecord, BuildQueryStore, BuildRecord, FactoryBuildAcceptanceStore,
-  FactoryRunStore, JobRecord, StoreError,
+  FactoryRunStore, FactoryScopedBuildCaller, JobRecord, StoreError,
 };
 use std::sync::Arc;
 
@@ -86,6 +86,29 @@ where
     &self,
     request: CreateFactoryBuild,
   ) -> Result<FactoryBuildAcceptance, OrdinaryBuildApplicationError> {
+    self.create(request, None).await
+  }
+
+  async fn create_scoped_factory_build(
+    &self,
+    request: CreateFactoryBuild,
+    caller: FactoryScopedBuildCaller,
+  ) -> Result<FactoryBuildAcceptance, OrdinaryBuildApplicationError> {
+    self.create(request, Some(caller)).await
+  }
+}
+
+impl<S, R, C> FactoryOrdinaryBuildService<S, R, C>
+where
+  S: FactoryBuildAcceptanceStore,
+  R: FactoryRunStore,
+  C: FactoryBuildMaterializer + ?Sized,
+{
+  async fn create(
+    &self,
+    request: CreateFactoryBuild,
+    caller: Option<FactoryScopedBuildCaller>,
+  ) -> Result<FactoryBuildAcceptance, OrdinaryBuildApplicationError> {
     let snapshot = self
       .runs
       .factory_run_snapshot(request.causality.run_id)
@@ -145,12 +168,12 @@ where
       .clock
       .now()
       .map_err(|_| OrdinaryBuildApplicationError::Unavailable)?;
-    self
-      .store
-      .accept_factory_build(prepared)
-      .await
-      .map(acceptance)
-      .map_err(classify)
+    match caller {
+      Some(caller) => self.store.accept_scoped_factory_build(prepared, caller).await,
+      None => self.store.accept_factory_build(prepared).await,
+    }
+    .map(acceptance)
+    .map_err(classify)
   }
 }
 

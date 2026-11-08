@@ -297,7 +297,7 @@ impl<'a> FlowInterpreter<'a> {
     Ok(directives)
   }
 
-  fn definition(&self, flow_run: &FlowRun) -> Result<&FlowDefinition, FactoryError> {
+  pub(super) fn definition(&self, flow_run: &FlowRun) -> Result<&FlowDefinition, FactoryError> {
     self
       .validated
       .closure()

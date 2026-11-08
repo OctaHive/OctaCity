@@ -219,8 +219,9 @@ try {
       ? [{ testClass: pack.class, program: installed }]
       : retainedPrograms(input, inventory.files, pack.entrypoints);
     const classes = [...new Set(checks.map(({ testClass }) => testClass))].sort();
-    if (validation && (validation.input_digest !== frozen.node.input_digest ||
-        !Array.isArray(validation.classes) || validation.classes.length !== classes.length ||
+    // The validation descriptor binds the candidate and all test bytes. The
+    // command descriptor binds the Flow invocation recorded in the facts.
+    if (validation && (!Array.isArray(validation.classes) || validation.classes.length !== classes.length ||
         !classes.every((testClass, index) => testClass === validation.classes[index]))) throw new Error();
     const supplements = inventory?.supplement ? supplementPrograms(inventory.supplement, classes[0]) : [];
     const deadline = performance.now() + (pack.timeout ?? 60000);

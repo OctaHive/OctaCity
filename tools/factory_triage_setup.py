@@ -30,11 +30,13 @@ _INSTALLED_ADMISSION = "triage-admission"
 _INSTALLED_ACCESS_DEFAULT = "triage-ceiling"
 
 
-def prepare_guest_image(root: Path, native: Path, *, delivery: bool = False, execute=subprocess.run) -> str:
+def prepare_guest_image(root: Path, native: Path, *, delivery: bool = False,
+                        microsandbox_home: Path | None = None, execute=subprocess.run) -> str:
     """Qualify an immutable guest with the public stand CA in its normal trust store.
 
-    Only a public certificate enters the build context. Model credentials,
-    gateway keys and workstation configuration never enter image layers.
+    Only a public certificate and reviewed runtime executables enter the build
+    context. Model credentials, gateway keys and workstation configuration never
+    enter image layers.
     """
     inputs = build_inputs.load_build_inputs(POLICY.parent / "inputs.json", POLICY.parents[2])
     base = inputs["native"]["microsandbox"]["guest_image"]
@@ -43,20 +45,35 @@ def prepare_guest_image(root: Path, native: Path, *, delivery: bool = False, exe
     recipe = (f"FROM {base}\nCOPY local-ca.pem /etc/pki/ca-trust/source/anchors/octacity-local-ca.pem\n"
               "RUN update-ca-trust\n")
     name = "triage"
+    sandbox = None
     if delivery:
         name = "delivery"
+        sandbox = json.loads((POLICY.parent / "factory-runtime-sandbox.json").read_text())
+        if sandbox["version"] != json.loads(runtime.POLICY.read_text())["archive"]["version"]:
+            raise ValueError("guest sandbox differs from the installed Codex runtime")
         node = inputs["images"]["node"]["reference"]
-        recipe = (f"FROM {node} AS node\n" + recipe
+        build_tools = inputs["images"]["rust"]["reference"]
+        recipe = (f"FROM {node} AS node\nFROM {build_tools} AS build-tools\n" + recipe
             + "COPY --from=node /usr/local/bin/node /usr/local/bin/node\n"
             + "COPY --from=node /usr/lib/aarch64-linux-gnu/libstdc++.so.6 /usr/local/lib/libstdc++.so.6\n"
             + "COPY --from=node /lib/aarch64-linux-gnu/libgcc_s.so.1 /usr/local/lib/libgcc_s.so.1\n"
-            + "RUN /usr/local/bin/node --version\n")
+            + "COPY --from=node /usr/bin/cmp /usr/bin/cmp\n"
+            + "COPY --from=build-tools /usr/bin/git /usr/bin/git\n"
+            + "COPY --from=build-tools /usr/lib/aarch64-linux-gnu/libpcre2-8.so.0 /usr/local/lib/libpcre2-8.so.0\n"
+            + "COPY --chmod=0555 bwrap /usr/bin/bwrap\n"
+            + "RUN ldconfig && /usr/local/bin/node --version && /usr/bin/bwrap --version && /usr/bin/cmp --version"
+            + " && /usr/bin/git --version && /usr/bin/git diff --no-index /dev/null /dev/null\n")
     repository = f"local.octacity/factory-{name}"
     identity = {"base": base, "ca_sha256": hashlib.sha256(certificate).hexdigest(),
                 "recipe_sha256": hashlib.sha256(recipe.encode()).hexdigest()}
     work = root / f"{name}-guest"
+    if sandbox is not None:
+        identity["sandbox_sha256"] = sandbox["sha256"]
+        # Preserve archives already pinned by published Build configurations.
+        # New dependency recipes get a separate immutable installation.
+        work = work / hashlib.sha256(json.dumps(identity, sort_keys=True).encode()).hexdigest()
     _publish(work / "inputs.json", identity)
-    home = agent.microsandbox_state_root(root) / "microsandbox"
+    home = microsandbox_home or agent.microsandbox_state_root(root) / "microsandbox"
     state.ensure_private_directory(home.parent)
     state.ensure_private_directory(home)
     environment = {"PATH": os.environ.get("PATH", os.defpath), "HOME": str(Path.home()), "MSB_HOME": str(home),
@@ -95,6 +112,14 @@ def prepare_guest_image(root: Path, native: Path, *, delivery: bool = False, exe
     state.ensure_private_directory(context)
     (context / "Dockerfile").write_text(recipe)
     (context / "local-ca.pem").write_bytes(certificate)
+    if sandbox is not None:
+        with tempfile.TemporaryDirectory(prefix=".sandbox-", dir=work) as temporary:
+            staging = Path(temporary)
+            runtime.download(sandbox, staging / "sandbox.tar.gz")
+            runtime.extract_tar_archive(staging / "sandbox.tar.gz", staging / "release",
+                max_expanded_bytes=sandbox["expanded_max_bytes"],
+                max_file_bytes=sandbox["file_max_bytes"], max_members=sandbox["member_max_count"])
+            (context / "bwrap").write_bytes((staging / "release" / sandbox["executable"]).read_bytes())
     tag = repository + ":" + hashlib.sha256(json.dumps(identity, sort_keys=True).encode()).hexdigest()
     if archive.is_symlink() or archive.exists() and not archive.is_file():
         raise ValueError("triage guest archive path is invalid")
