@@ -422,7 +422,10 @@ impl FactoryValidationDiagnostics {
             .flat_map(|selection| selection.candidates.values())
             .map(|candidate| FactoryEffectiveProfilePermissions {
               profile: candidate.profile.reference().clone(),
-              permissions: candidate.profile.definition().execution_permissions(),
+              permissions: candidate
+                .profile
+                .definition()
+                .execution_permissions_for_step(&ceiling.intersection(node.permissions())),
               sources: vec![
                 "role_profile",
                 "profile_budget",

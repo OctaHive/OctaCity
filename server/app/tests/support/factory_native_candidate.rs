@@ -533,6 +533,7 @@ pub(super) fn candidate_plan(work: &WorkEnvelope, profile: &FactoryCodexBuildPro
     FactoryDigest::from_bytes([68; 32]),
   );
   let binding = FlowBuildBinding {
+    execution_permissions: None,
     tool: profile.toolchain.executable.clone(),
     result_tool: None,
     capture_write_paths: None,

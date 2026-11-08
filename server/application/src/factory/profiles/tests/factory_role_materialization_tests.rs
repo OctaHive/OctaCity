@@ -2117,6 +2117,82 @@ fn selected_role_invocation_rejects_another_profile_with_the_same_technical_sett
 }
 
 #[test]
+fn reusable_profile_diagnostics_report_step_access_instead_of_the_common_ceiling() {
+  let (_, admitted, _, _, _) = fixture_for_work_mode(
+    fixtures::work(),
+    |profile| {
+      profile.execution_binding = FactoryRoleExecutionBinding::Step;
+      let mut ceiling = serde_json::to_value(&profile.permissions).unwrap();
+      ceiling["tools"] = json!([reference("other-step-tool", 99)]);
+      profile.permissions = serde_json::from_value(ceiling).unwrap();
+    },
+    BTreeMap::new(),
+    factory_role_task_digest,
+    true,
+  );
+  let flow = FactoryFlowConfiguration::new(
+    admitted.closure().clone(),
+    admitted.limits().clone(),
+    admitted.data_schemas().to_vec(),
+    BTreeMap::new(),
+  )
+  .unwrap();
+  let diagnostics = FactoryValidationDiagnostics::for_flow(&flow);
+  let profile = diagnostics
+    .effective_permissions
+    .iter()
+    .flat_map(|node| &node.profiles)
+    .next()
+    .unwrap();
+  assert!(
+    profile.permissions.tools().next().is_none(),
+    "effective access must not display another step's tools"
+  );
+}
+
+#[test]
+fn reusable_role_dispatch_does_not_inherit_other_step_tools() {
+  crate::factory::admission::tests::factory_admission_tests::run_ready(async {
+    let (intent, admitted, installed, package, bytes) = fixture_for_work_mode(
+      fixtures::work(),
+      |profile| {
+        profile.execution_binding = FactoryRoleExecutionBinding::Step;
+        profile.credential_purpose = FactoryCredentialPurpose::Model;
+        profile.build_configuration = BuildConfigurationRef::new(
+          octacity_server_domain::BuildConfigurationId::generate(),
+          octacity_server_domain::BuildConfigurationVersion::INITIAL,
+          profile.build_configuration.project_id(),
+          FactoryDigest::from_bytes([98; 32]),
+        );
+        let mut ceiling = serde_json::to_value(&profile.permissions).unwrap();
+        ceiling["tools"] = json!([reference("other-step-tool", 99)]);
+        profile.permissions = serde_json::from_value(ceiling).unwrap();
+      },
+      BTreeMap::new(),
+      factory_role_task_digest,
+      true,
+    );
+    assert!(
+      intent.permissions().tools().next().is_none(),
+      "profile ceilings must not grant another step's tool"
+    );
+    let (materializer, _) = materializer_fixture(&intent, &installed, bytes);
+    materializer
+      .with_role_invocation_source(Arc::new(RoleSource(
+        FactoryRoleInvocation::new(package, None, BTreeMap::new()).unwrap(),
+      )))
+      .materialize(
+        &intent,
+        &admitted,
+        FactoryClaimOwnership::new(intent.node().owner().clone(), intent.node().claim()),
+        Timestamp::from_unix_millis(41).unwrap(),
+      )
+      .await
+      .expect("the qualified readonly step ignores unrelated profile ceiling authority");
+  });
+}
+
+#[test]
 fn selected_role_dispatch_narrows_execution_to_the_pinned_profile_ceilings() {
   crate::factory::admission::tests::factory_admission_tests::run_ready(async {
     let (intent, admitted, installed, package, bytes) = fixture_for_work_mode(

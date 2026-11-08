@@ -23,6 +23,7 @@ fn stage_with(project: ProjectId, change: impl Fn(&str, &mut FactoryRoleProfileD
       let profile = FactoryRoleProfile::publish(FactoryRoleProfileId::generate(), project, &role, definition).unwrap();
       let definition = profile.definition();
       let build = FlowBuildBinding {
+        execution_permissions: None,
         tool: definition.toolchain.executable.clone(),
         result_tool: Some(exact("result.verifier")),
         plugin: definition.toolchain.plugin.clone(),
@@ -62,6 +63,100 @@ fn stage_with(project: ProjectId, change: impl Fn(&str, &mut FactoryRoleProfileD
 }
 fn schema() -> FlowDataSchema {
   FlowDataSchema::new(key("stage.data"), key("v1"), FlowValueSchema::Boolean).unwrap()
+}
+
+#[test]
+fn switching_a_reusable_profile_mode_rejects_access_left_from_the_other_mode() {
+  let project = ProjectId::generate();
+  let prepare = FactoryPermissionSet::try_new(FactoryPermissionDraft {
+    secret_profiles: vec![key("test-author")],
+    ..Default::default()
+  })
+  .unwrap();
+  let analyze = FactoryPermissionSet::try_new(FactoryPermissionDraft {
+    tools: vec![exact("read.verdict")],
+    secret_profiles: vec![key("test-analyzer")],
+    ..Default::default()
+  })
+  .unwrap();
+  let combined = FactoryPermissionSet::try_new(FactoryPermissionDraft {
+    tools: vec![exact("read.verdict")],
+    secret_profiles: vec![key("test-author"), key("test-analyzer")],
+    ..Default::default()
+  })
+  .unwrap();
+  for mode in [&prepare, &analyze] {
+    let mut wire = stage_with(project, |_, profile| {
+      profile.execution_binding = FactoryRoleExecutionBinding::Step;
+      profile.context_requirements.clear();
+      profile.permissions = combined.clone();
+    });
+    let mut candidate = wire["profile_selection"]["candidates"]["default"].clone();
+    candidate["build"]["execution_permissions"] = json!(mode);
+    wire["profile_selection"]["candidates"] = json!({"default": candidate});
+    wire["permissions"] = json!(combined);
+    assert!(
+      serde_json::from_value::<FlowNodeDefinition>(wire.clone()).is_err(),
+      "publication must reject access left over from another execution mode"
+    );
+    wire["permissions"] = json!(mode);
+    assert!(serde_json::from_value::<FlowNodeDefinition>(wire).is_ok());
+  }
+}
+
+#[test]
+fn a_reusable_profile_keeps_step_permissions_and_execution_builds_independent() {
+  let project = ProjectId::generate();
+  let mut definition = serde_json::to_value(profile(project, "medium")).unwrap();
+  definition["execution_binding"] = json!("step");
+  definition["context_requirements"] = json!([]);
+  definition["permissions"] = serde_json::to_value(
+    FactoryPermissionSet::try_new(FactoryPermissionDraft {
+      tools: vec![exact("prepare.tests"), exact("read.verdict")],
+      ..Default::default()
+    })
+    .unwrap(),
+  )
+  .unwrap();
+  let reusable = FactoryRoleProfile::publish(
+    FactoryRoleProfileId::generate(),
+    project,
+    &role(project, "Follow the step assignment."),
+    serde_json::from_value(definition).expect("a profile can delegate execution selection to its step"),
+  )
+  .unwrap();
+  let mut retained = Vec::new();
+  for tool in ["prepare.tests", "read.verdict"] {
+    let mut wire = stage(project);
+    let candidate = wire["profile_selection"]["candidates"]["default"].clone();
+    wire["profile_selection"]["role"] = json!(reusable.role());
+    wire["profile_selection"]["candidates"] = json!({"default": candidate});
+    wire["profile_selection"]["candidates"]["default"]["profile"] = json!(reusable);
+    let build = &mut wire["profile_selection"]["candidates"]["default"]["build"];
+    build["tool"] = json!(reusable.definition().toolchain.executable);
+    build["plugin"] = json!(reusable.definition().toolchain.plugin);
+    build["model_or_tool"] = json!(reusable.definition().toolchain.model);
+    build["build_configuration"] = json!(profile(project, tool).build_configuration);
+    wire["permissions"] = serde_json::to_value(
+      FactoryPermissionSet::try_new(FactoryPermissionDraft {
+        tools: vec![exact(tool)],
+        ..Default::default()
+      })
+      .unwrap(),
+    )
+    .unwrap();
+    let node: FlowNodeDefinition = serde_json::from_value(wire).expect("the step selects its own execution and access");
+    assert_eq!(
+      node.profile_selection().unwrap().candidates[&key("default")].profile,
+      reusable
+    );
+    assert_eq!(
+      node.permissions().tools().cloned().collect::<Vec<_>>(),
+      vec![exact(tool)]
+    );
+    retained.push(node);
+  }
+  assert_ne!(retained[0].permissions(), retained[1].permissions());
 }
 
 #[test]

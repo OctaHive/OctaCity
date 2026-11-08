@@ -112,10 +112,14 @@ export function ExecutorSummary({
   );
 }
 export function StepTools({
-  references,
+  candidates,
+  permissions,
   services,
 }: {
-  references: S['FactoryRoleProfileReference'][];
+  candidates: NonNullable<
+    S['FactoryFlowNodeDefinition']['profile_selection']
+  >['candidates'][string][];
+  permissions: S['FactoryPermissions'];
   services: RoleServices;
 }) {
   const { t } = usePresentation();
@@ -123,22 +127,28 @@ export function StepTools({
     <fieldset>
       <legend>{t('factory.toolsAndAccess')}</legend>
       <p>{t('factory.configuredAccessOnly')}</p>
-      {references.map((reference) => (
+      {candidates.map(({ profile, build }) => (
         <ProfileTools
-          key={`${reference.id}:${reference.version}:${reference.digest}`}
-          reference={reference}
+          key={`${profile.reference.id}:${profile.reference.digest}:${build.build_configuration.definition_digest}`}
+          reference={profile.reference}
+          build={build}
+          permissions={permissions}
           services={services}
         />
       ))}
-      {!references.length ? <p>{t('factory.noProfileTools')}</p> : null}
+      {!candidates.length ? <p>{t('factory.noProfileTools')}</p> : null}
     </fieldset>
   );
 }
 function ProfileTools({
   reference,
+  build,
+  permissions,
   services,
 }: {
   reference: S['FactoryRoleProfileReference'];
+  build: S['FactoryFlowBuildBinding'];
+  permissions: S['FactoryPermissions'];
   services: RoleServices;
 }) {
   const { t } = usePresentation();
@@ -154,11 +164,15 @@ function ProfileTools({
     .flatMap((page) => page.items)
     .find((item) => {
       const definition = profile.exact?.definition;
+      const configuration =
+        definition?.execution_binding === 'step'
+          ? build.build_configuration
+          : definition?.build_configuration;
       return (
         definition &&
         sameExecutorToolchain(item.toolchain, definition.toolchain) &&
         (['project_id', 'id', 'version', 'definition_digest'] as const).every(
-          (key) => item.build_configuration[key] === definition.build_configuration[key],
+          (key) => item.build_configuration[key] === configuration?.[key],
         ) &&
         Object.entries(definition.execution?.mcp_servers ?? {}).every(([alias, binding]) =>
           (['identity', 'version', 'digest'] as const).every(
@@ -180,16 +194,22 @@ function ProfileTools({
       <p role="alert">{t('factory.profileMetadataUnavailable')}</p>
     );
   const definition = profile.exact.definition;
+  const requested = definition.execution_binding === 'step' ? permissions : definition.permissions;
   return (
     <section>
       <h5>
         {definition.name} · v{reference.version}
       </h5>
+      {definition.execution_binding === 'step' && choice?.name ? (
+        <p>
+          {t('factory.stepExecutionMode')}: <strong>{choice.name}</strong>
+        </p>
+      ) : null}
       <p>
         {t('factory.permissionCounts', {
-          plugins: definition.permissions.plugins.length,
-          tools: definition.permissions.tools.length,
-          hosts: definition.permissions.network_hosts.length,
+          plugins: requested.plugins.length,
+          tools: requested.tools.length,
+          hosts: requested.network_hosts.length,
         })}
       </p>
       <PagedExplorerBranch
@@ -246,7 +266,7 @@ function ProfileTools({
       <details>
         <summary>{t('factory.routeDetails')}</summary>
         <ul>
-          {definition.permissions.secret_profiles.map((name) => (
+          {requested.secret_profiles.map((name) => (
             <li key={name}>{name}</li>
           ))}
           {Object.entries(definition.execution?.integrations ?? {}).map(([name, binding]) => (

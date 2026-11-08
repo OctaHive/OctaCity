@@ -290,6 +290,7 @@ pub(super) async fn admit(
   })
   .unwrap()
   .with_build(FlowBuildBinding {
+    execution_permissions: None,
     tool: profile.toolchain.executable.clone(),
     result_tool: None,
     capture_write_paths: None,

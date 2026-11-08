@@ -148,6 +148,7 @@ impl Ticket {
     }});
     assess["context_binding"] = json!({"work_task":"task","entries":{}});
     assess["build"] = json!(FlowBuildBinding {
+      execution_permissions: None,
       tool: p.toolchain.executable.clone(),
       plugin: p.toolchain.plugin.clone(),
       result_tool: None,

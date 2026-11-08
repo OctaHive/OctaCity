@@ -87,10 +87,13 @@ impl FactoryRoleProfileCapability {
     if definition.thinking_parameter.is_some() && definition.thinking_parameter != ceiling.thinking_parameter {
       return Err(Failure::ModelParameters);
     }
-    if definition.toolchain != ceiling.toolchain || definition.build_configuration != ceiling.build_configuration {
+    if definition.toolchain != ceiling.toolchain
+      || definition.execution_binding != ceiling.execution_binding
+      || (definition.execution_binding.is_profile() && definition.build_configuration != ceiling.build_configuration)
+    {
       return Err(Failure::Toolchain);
     }
-    if definition.credential_purpose != ceiling.credential_purpose {
+    if definition.execution_binding.is_profile() && definition.credential_purpose != ceiling.credential_purpose {
       return Err(Failure::CredentialPurpose);
     }
     if definition.execution.cli_arguments != ceiling.execution.cli_arguments {

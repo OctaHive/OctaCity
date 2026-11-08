@@ -266,8 +266,8 @@ pub use review_plan::{
   ReviewEvaluatorCapability, ReviewPlanEscalation, ReviewPlanPreparation, ReviewPurpose, prepare_evaluation_plan,
 };
 pub use role_profile::{
-  FactoryRole, FactoryRoleDefinition, FactoryRoleProfile, FactoryRoleProfileDefinition, FactoryRoleProfileRef,
-  FactoryRoleRef, MAX_FACTORY_ROLE_DEFINITION_BYTES, MAX_FACTORY_ROLE_INSTRUCTION_BYTES,
+  FactoryRole, FactoryRoleDefinition, FactoryRoleExecutionBinding, FactoryRoleProfile, FactoryRoleProfileDefinition,
+  FactoryRoleProfileRef, FactoryRoleRef, MAX_FACTORY_ROLE_DEFINITION_BYTES, MAX_FACTORY_ROLE_INSTRUCTION_BYTES,
   MAX_FACTORY_ROLE_PROFILE_ENTRIES,
 };
 pub use subject::{CandidateSubject, ExactSubject, ProjectInputSubject, WorkSubject};

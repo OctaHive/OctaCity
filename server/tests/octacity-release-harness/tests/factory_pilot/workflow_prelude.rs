@@ -360,6 +360,7 @@ impl Prelude {
     );
     node["input_binding"] = binding;
     node["build"] = json!(FlowBuildBinding {
+      execution_permissions: None,
       tool: p.toolchain.executable.clone(),
       plugin: p.toolchain.plugin.clone(),
       result_tool: None,

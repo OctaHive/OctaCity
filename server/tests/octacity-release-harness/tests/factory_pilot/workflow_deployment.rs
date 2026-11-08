@@ -240,6 +240,7 @@ impl InstalledDeployment {
       "candidate_manifest":{"source_kind":"evidence","source":{"value":{"mapping":"object","fields":{"kind":{"mapping":"constant","value":"artifact"},"value":{"mapping":"pointer","path":"/manifest"}}}}}
     }});
     deploy["build"] = json!(FlowBuildBinding {
+      execution_permissions: None,
       tool: command.executor.clone(),
       plugin: command.plugin.clone(),
       result_tool: None,

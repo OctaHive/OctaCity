@@ -101,12 +101,12 @@ class FactoryDeliverySetupTests(unittest.TestCase):
                                 "project", "repository", uuid.uuid4(), native, Client(), [], [])
 
     @unittest.skipUnless(os.name == "posix", "private profile catalogs require POSIX")
-    def test_test_author_and_verification_profiles_share_one_replayable_tester_role(self):
+    def test_test_author_and_verification_modes_publish_one_replayable_tester_profile(self):
         import tempfile
         import uuid
-        from factory_delivery_setup import publish_roles, TEST_AUTHOR_RUNTIME, TEST_VERIFIER_RUNTIME
+        from factory_delivery_setup import publish_roles, TEST_AUTHOR_RUNTIME, TEST_VERIFIER_RUNTIME, TESTER_PREPARE_MODE, TESTER_ANALYZE_MODE
         requests, profiles = {}, []
-        ceiling = {"execution": {}, "model": {}, "toolchain": {}, "permissions": {}}
+        ceiling = {"execution_binding": "step", "execution": {}, "model": {}, "toolchain": {}, "permissions": {}}
         class Client:
             def get(self, path):
                 return {"definition": ceiling}
@@ -124,12 +124,16 @@ class FactoryDeliverySetupTests(unittest.TestCase):
             catalog = Path(directory) / "catalog.json"
             catalog.write_text(json.dumps({"projects": [{"project_id": "project", "role_profiles": {
                 TEST_AUTHOR_RUNTIME: {}, TEST_VERIFIER_RUNTIME: {}, TEST_AUTHOR_RUNTIME + "-aaaaaaaaaaaa": {},
+                TESTER_PREPARE_MODE: {}, TESTER_ANALYZE_MODE: {},
             }}]}))
             catalog.chmod(0o600)
-            publish_roles(Client(), "project", uuid.uuid4(), catalog)
-            self.assertEqual(len(profiles), 3)
-            self.assertEqual(profiles[0]["role"], profiles[1]["role"])
-            self.assertNotEqual(profiles[0]["id"], profiles[1]["id"])
+            namespace = uuid.uuid4()
+            publish_roles(Client(), "project", namespace, catalog)
+            self.assertEqual(len(profiles), 1)
+            self.assertEqual(profiles[0]["definition"]["name"], "Tester · Delivery")
+            self.assertEqual(profiles[0]["definition"]["execution_binding"], "step")
+            publish_roles(Client(), "project", namespace, catalog)
+            self.assertEqual(profiles[0], profiles[1])
 
     @unittest.skipUnless(os.name == "posix", "guest tool installation requires POSIX")
     def test_controller_installation_pins_both_guest_programs_outside_model_tools(self):
@@ -242,6 +246,19 @@ class FactoryDeliverySetupTests(unittest.TestCase):
 
         code_build = {**build, "id": "4b525743-53a3-4f58-a85a-6fd8381f4aec"}
         defaults = delivery_models(catalog, project, capture, [], code_build=code_build)
+        modes = [row["ceiling"] for row in defaults["projects"][0]["role_profiles"].values()
+                 if row["ceiling"].get("execution_binding") == "step"]
+        self.assertEqual(len(modes), 2, "both step execution modes must accept one reusable profile")
+        self.assertEqual(modes[0]["toolchain"], modes[1]["toolchain"])
+        self.assertNotEqual(modes[0]["build_configuration"], modes[1]["build_configuration"])
+        self.assertEqual(modes[0]["permissions"], modes[1]["permissions"], "profile permissions are a common ceiling")
+        compilers = [row for row in defaults["codex"] if row["toolchain"] == modes[0]["toolchain"]]
+        self.assertEqual(len(compilers), 2)
+        author, = (row for row in compilers if row.get("protected_tests"))
+        analyzer, = (row for row in compilers if row.get("execution_mode") == "scoped_validation")
+        self.assertNotIn("tools", author["project_permissions"])
+        self.assertTrue(analyzer["project_permissions"]["tools"])
+        self.assertNotIn({"root": "/workspace/source", "mode": "read_only"}, analyzer["project_permissions"]["mounts"])
         default_coder = defaults["codex"][1]
         self.assertNotIn("capture", default_coder)
         self.assertIn({"root": "/workspace/source", "mode": "read_only"}, default_coder["project_permissions"]["mounts"])
@@ -251,8 +268,8 @@ class FactoryDeliverySetupTests(unittest.TestCase):
         self.assertEqual(delivery_models(extended, project, capture, [], code_build=code_build), extended)
         additions = delivery_models(catalog, project, capture, ["tools", "tests"], code_build=code_build)
         legacy = copy.deepcopy(additions)
-        legacy["codex"][-1]["project_permissions"]["resources"]["cpu_millis"] = 1000
-        legacy["codex"][-1]["local_permissions"]["grants"]["resources"]["cpu_millis"] = 1000
+        legacy["codex"][5]["project_permissions"]["resources"]["cpu_millis"] = 1000
+        legacy["codex"][5]["local_permissions"]["grants"]["resources"]["cpu_millis"] = 1000
         legacy["projects"][0]["role_profiles"]["delivery-tester-verification"]["ceiling"]["permissions"]["resources"]["cpu_millis"] = 1000
         repaired = delivery_models(legacy, project, capture, ["tools", "tests"], code_build=code_build)
         self.assertEqual(repaired["codex"][:len(legacy["codex"])], legacy["codex"],
@@ -267,14 +284,14 @@ class FactoryDeliverySetupTests(unittest.TestCase):
         self.assertEqual(catalog, original)
         self.assertEqual(additions["codex"][0], triage)
         self.assertEqual(additions["projects"][0]["role_profiles"]["triage-runtime"], runtime)
-        coder, reviewer, devops, tester, verification = additions["codex"][1:]
+        coder, reviewer, devops, tester, verification = additions["codex"][1:6]
         scoped = additions["projects"][0]["role_profiles"].get("delivery-tester-verification")
         self.assertIsNotNone(scoped, "Delivery installs a separate Tester profile for invoking the retained checks")
         self.assertEqual(verification["execution_mode"], "scoped_validation")
         self.assertIn("Factory starts the mandatory verification Build before this step", verification["instructions"])
         self.assertNotIn("action start, then poll", verification["instructions"])
         previous = copy.deepcopy(additions)
-        previous["codex"][-1]["instructions"] = "Invoke the runner before reading its result."
+        previous["codex"][5]["instructions"] = "Invoke the runner before reading its result."
         upgraded = delivery_models(previous, project, capture, ["tools", "tests"], code_build=code_build)
         self.assertEqual(upgraded["codex"][:len(previous["codex"])], previous["codex"],
                          "published callers retain their original compiler instructions")
@@ -320,7 +337,7 @@ class FactoryDeliverySetupTests(unittest.TestCase):
                                    plugin=replacement_plugin)
         self.assertEqual(migrated["codex"][:len(additions["codex"])], additions["codex"])
         new_models = migrated["codex"][len(additions["codex"]):]
-        self.assertEqual(len(new_models), 5)
+        self.assertEqual(len(new_models), 7)
         for row in new_models:
             self.assertEqual(row["toolchain"]["plugin"], replacement_plugin)
             self.assertEqual(row["project_permissions"]["plugins"], [replacement_plugin])
@@ -358,7 +375,7 @@ class FactoryDeliverySetupTests(unittest.TestCase):
             delivery_models(additions, project, capture, ["tools"], code_build=code_build)
 
         legacy = copy.deepcopy(defaults)
-        old = legacy["codex"][-2]
+        old = legacy["codex"][4]
         old["instructions"] = "Return exit 1 for a completed failing assertion."
         old["toolchain"]["model"]["version"] = "delivery-tester-v1"
         old["protected_tests"]["inventory"]["schema"] = _reference("delivery-test-inventory")

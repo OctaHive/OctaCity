@@ -41,6 +41,7 @@ export type FactoryPublicationProps = {
 const ISSUE_LABELS = {
   missing_input: 'factory.missingInputHelp',
   profile_permissions: 'factory.profilePermissionsHelp',
+  execution_mode_permissions: 'factory.executionModePermissionsHelp',
   action_permissions: 'factory.classificationAccessHelp',
   publication_permissions: 'factory.publicationAccessHelp',
   profile_budget: 'factory.profileBudgetHelp',

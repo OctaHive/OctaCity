@@ -274,13 +274,17 @@ export function ExecutorPicker({
           {() => (
             <>
               <SelectMenu
-                ariaLabel={t('factory.executorRuntime')}
+                ariaLabel={t(
+                  installed.some((item) => item.name)
+                    ? 'factory.stepExecutionMode'
+                    : 'factory.executorRuntime',
+                )}
                 value={capability?.alias ?? ''}
                 options={[
                   { value: '', label: t('factory.chooseExecutorRuntime') },
                   ...installed.map((item) => ({
                     value: item.alias,
-                    label: `${item.toolchain.executable.identity} · ${item.alias}`,
+                    label: item.name ?? `${item.toolchain.executable.identity} · ${item.alias}`,
                   })),
                 ]}
                 onValueChange={(value) => {

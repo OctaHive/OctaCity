@@ -149,7 +149,12 @@ impl FlowBuildIntent {
     .ok_or_else(invalid)?;
     let mut permissions = candidate.map_or_else(
       || declared.permissions().clone(),
-      |candidate| candidate.profile.definition().execution_permissions(),
+      |candidate| {
+        candidate
+          .profile
+          .definition()
+          .execution_permissions_for_step(declared.permissions())
+      },
     );
     if let Some(profile) = admitted.access_profile() {
       if profile.reference().project_id != input.subject().project_id() {

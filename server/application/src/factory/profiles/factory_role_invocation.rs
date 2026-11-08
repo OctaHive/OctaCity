@@ -92,7 +92,8 @@ impl FactoryRoleInvocation {
     &self.0.secret_variables
   }
   /// Qualifies complete review authority through the existing purpose-bound credentials.
-  /// A narrower task cannot disguise a writable or credential-incompatible profile.
+  /// Legacy profiles retain their complete request. Step-bound profiles qualify
+  /// the actual narrowed task; unused capabilities of another step grant nothing.
   pub(crate) fn verify_consumer(
     &self,
     consumer: octacity_server_factory::FactoryCredentialConsumer,
@@ -103,7 +104,11 @@ impl FactoryRoleInvocation {
       return Ok(());
     }
     let inputs = self.0.package.inputs();
-    let permissions = &inputs.profile.definition().permissions;
+    let permissions = if inputs.profile.definition().execution_binding.is_profile() {
+      &inputs.profile.definition().permissions
+    } else {
+      inputs.task.permissions()
+    };
     for profile in permissions.secret_profiles() {
       if mcp_credentials.values().any(|selected| selected == profile.as_str()) {
         continue;

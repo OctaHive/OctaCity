@@ -1305,6 +1305,7 @@ fn configuration_validation_rejects_an_unavailable_typed_data_handling_policy() 
     nodes[0] = nodes[0]
       .clone()
       .with_build(FlowBuildBinding {
+        execution_permissions: None,
         tool: plugin.clone(),
         result_tool: None,
         capture_write_paths: None,

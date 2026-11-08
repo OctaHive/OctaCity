@@ -98,7 +98,18 @@ impl FlowProfileCandidate {
       && choices.role_profile_capabilities().iter().any(|(alias, capability)| {
         choices
           .available_role_profile_capability(alias, capability)
-          .is_some_and(|capability| capability.validate(&self.profile).is_ok())
+          .is_some_and(|capability| {
+            capability.ceiling.build_configuration == self.build.build_configuration
+              && capability.validate(&self.profile).is_ok()
+              && (self.profile.definition().execution_binding.is_profile()
+                || choices
+                  .build_pipeline_contract(&self.build)
+                  .and_then(|contract| contract.compilation.as_ref())
+                  .is_some_and(|compiler| {
+                    compiler.permissions.is_some()
+                      && compiler.permissions.as_ref() == self.build.execution_permissions.as_deref()
+                  }))
+          })
       })
     {
       Ok(())
@@ -205,7 +216,7 @@ impl FlowProfileSelectionBinding {
         || build.tool != profile.toolchain.executable
         || build.plugin != profile.toolchain.plugin
         || build.model_or_tool != profile.toolchain.model
-        || build.build_configuration != profile.build_configuration
+        || (profile.execution_binding.is_profile() && build.build_configuration != profile.build_configuration)
         || build.result_output != first.build.result_output
         || build.result_output_kind != first.build.result_output_kind
         || build.result_outcome != first.build.result_outcome
@@ -214,7 +225,15 @@ impl FlowProfileSelectionBinding {
         || build.capture_deliverables != first.build.capture_deliverables
         || build.evidence != first.build.evidence
         || profile.credential_purpose != first.profile.definition().credential_purpose
-        || !profile.permissions.is_no_broader_than(node.permissions())
+        || if profile.execution_binding.is_profile() {
+          !profile.permissions.is_no_broader_than(node.permissions())
+        } else {
+          !node.permissions().is_no_broader_than(&profile.permissions)
+        }
+        || build.execution_permissions.as_ref().is_some_and(|required| {
+          !required.is_no_broader_than(node.permissions())
+            || (!profile.execution_binding.is_profile() && !node.permissions().is_no_broader_than(required))
+        })
         || profile
           .context_requirements
           .iter()

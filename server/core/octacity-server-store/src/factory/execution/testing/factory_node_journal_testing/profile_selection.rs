@@ -221,6 +221,7 @@ fn configured_selection_fixture(
     .into_iter()
     .map(|name| {
       let mut definition = FactoryRoleProfileDefinition {
+        execution_binding: Default::default(),
         model_identifier: None,
         thinking_parameter: None,
         name: FactoryText::new(name).unwrap(),

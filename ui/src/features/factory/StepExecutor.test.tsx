@@ -15,6 +15,48 @@ import { factoryApi } from './api';
 
 afterEach(cleanup);
 
+it('summarizes the selected step mode and its access without presenting the reusable ceiling as granted', async () => {
+  const { draft } = setup({ selected: true, stepMode: true });
+  const before = structuredClone(draft());
+  const tools = within(await screen.findByRole('group', { name: 'Tools and access' }));
+  await tools.findByText('Analyze CI results');
+  expect(tools.getByText('Plugins: 0; tools: 0; network hosts: 0')).toBeTruthy();
+  expect(tools.queryByText('author-only-secret')).toBeNull();
+  expect(draft()).toEqual(before);
+});
+
+it('selects a named execution mode separately from the reusable profile', async () => {
+  const { api, profile, build, draft } = setup();
+  Object.assign(profile.definition, { execution_binding: 'step' });
+  const { choice } = factoryRoleFixture();
+  api.listCapabilities.mockResolvedValueOnce({
+    total: 2,
+    next_cursor: null,
+    items: [
+      { ...choice, alias: 'prepare-tests', ...{ name: 'Prepare protected tests' } },
+      { ...choice, alias: 'analyze-ci', ...{ name: 'Analyze CI results' } },
+    ],
+  });
+  const executor = within(await screen.findByRole('group', { name: 'Executor' }));
+  await userEvent.click(await executor.findByRole('combobox', { name: 'Role' }));
+  await userEvent.click(await screen.findByRole('option', { name: 'Project · v1' }));
+  await userEvent.click(await executor.findByRole('combobox', { name: 'Profile' }));
+  await userEvent.click(await screen.findByRole('option', { name: 'default · v1' }));
+  await userEvent.click(await executor.findByRole('combobox', { name: 'Step execution mode' }));
+  await userEvent.click(screen.getByRole('option', { name: 'Analyze CI results' }));
+  expect(api.resolveExecutionBinding).not.toHaveBeenCalled();
+  await userEvent.click(executor.getByRole('button', { name: 'Use this profile' }));
+  await executor.findByText('Selected profile: default · v1');
+  expect(api.resolveExecutionBinding).toHaveBeenCalledWith(
+    profile.reference.project_id,
+    { profile: profile.reference, capability: 'analyze-ci', result_outcome: 'completed' },
+    expect.any(AbortSignal),
+  );
+  const selected = Object.values(draft().root.nodes[0]!.profile_selection!.candidates)[0]!;
+  expect(selected.profile).toEqual(profile);
+  expect(selected.build).toEqual(build);
+});
+
 it('reviews and explicitly applies missing profile access at step, Flow and admission levels without modifying bindings', async () => {
   const { draft } = setup({ selected: true, requiredAccess: true });
   const before = structuredClone(draft());
@@ -140,6 +182,7 @@ it('presents a first reasoning executor without an empty copy-from-Flow selector
 function setup(
   options: {
     selected?: boolean;
+    stepMode?: boolean;
     freshInput?: boolean;
     requiredAccess?: boolean;
     legacy?: boolean;
@@ -215,6 +258,14 @@ function setup(
     result_output_kind: 'report',
     result_outcome: 'completed',
   };
+  if (options.stepMode) {
+    profile.definition.execution_binding = 'step';
+    profile.definition.permissions.network_hosts = ['author-only.example'];
+    profile.definition.permissions.secret_profiles = ['author-only-secret'];
+    build.build_configuration = { ...build.build_configuration, id: 'analyze-ci' };
+    choice.build_configuration = build.build_configuration;
+    Object.assign(choice, { name: 'Analyze CI results' });
+  }
   const api = {
     ...factoryRolesApi,
     listRoles: vi.fn(async () => ({

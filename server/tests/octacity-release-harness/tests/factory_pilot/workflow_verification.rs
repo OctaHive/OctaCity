@@ -250,6 +250,7 @@ impl Verifier {
     leaf["input_binding"] = json!({"sources":{"caller":{"source":"caller_input","path":""}},"mapping":{"value":{"mapping":"pointer","path":"/caller"}}});
     leaf["context_binding"] = context();
     leaf["build"] = json!(FlowBuildBinding {
+      execution_permissions: None,
       tool: p.toolchain.executable.clone(),
       plugin: p.toolchain.plugin.clone(),
       result_tool: None,

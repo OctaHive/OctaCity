@@ -179,7 +179,8 @@ impl RetainedFactoryRoleInvocation {
     if intent
       .selected_profile()
       .is_some_and(|profile| profile != inputs.profile.reference())
-      || inputs.profile.definition().build_configuration != intent.profile().build_configuration
+      || (inputs.profile.definition().execution_binding.is_profile()
+        && inputs.profile.definition().build_configuration != intent.profile().build_configuration)
       || inputs.task.permissions() != intent.permissions()
       || inputs.task.budget() != intent.budget()
     {

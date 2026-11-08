@@ -18,6 +18,7 @@ fn selected_fixture_with_profiles(
   let root = prior.closure.definition(prior.closure.root()).unwrap();
   let original = root.node(root.entry()).unwrap();
   let base_build = FlowBuildBinding {
+    execution_permissions: None,
     tool: original.action().unwrap().plugin().clone(),
     result_tool: None,
     plugin: original.action().unwrap().plugin().clone(),
@@ -60,6 +61,7 @@ fn selected_fixture_with_profiles(
     build.result_tool = Some(verifier.clone());
     build.model_or_tool = exact(name, "v1", byte);
     let mut definition = FactoryRoleProfileDefinition {
+      execution_binding: Default::default(),
       model_identifier: None,
       thinking_parameter: None,
       name: FactoryText::new(name).unwrap(),
@@ -1069,6 +1071,7 @@ fn native_compiler_rejects_missing_task_context_before_publication_and_accepts_e
           model_or_tool: binding.model_or_tool.clone(),
           pipeline_node: octacity_server_domain::PipelineNodeId::new("native").unwrap(),
           compilation: Some(FactoryBuildCompilationContract {
+            permissions: None,
             capture_write_paths: None,
             scoped_validation: false,
             evidence: vec![],

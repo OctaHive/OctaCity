@@ -24,18 +24,36 @@ export function InstalledVerificationLaunch({
     <VerificationLaunch
       {...props}
       profiles={data?.scoped_validation_profiles}
+      executions={data?.scoped_validation_executions}
       runners={data?.verification_runners}
     />
   );
 }
 
-function models(node: Node) {
+function builds(node: Node) {
   return [
     node.build,
     ...Object.values(node.profile_selection?.candidates ?? {}).map((entry) => entry.build),
-  ]
-    .filter((build) => build != null)
-    .map((build) => sourceReferenceKey(build.model_or_tool));
+  ].filter((build) => build != null);
+}
+function models(node: Node) {
+  return builds(node).map((build) => sourceReferenceKey(build.model_or_tool));
+}
+function sameExecution(
+  build: S['FactoryFlowBuildBinding'],
+  execution: S['FactoryCommandExecutionContract'],
+) {
+  const config = build.build_configuration,
+    installed = execution.build_configuration;
+  return (
+    config.project_id === installed.project_id &&
+    config.id === installed.id &&
+    config.version === installed.version &&
+    config.definition_digest === installed.definition_digest &&
+    (['tool', 'plugin', 'model_or_tool'] as const).every(
+      (key) => sourceReferenceKey(build[key]) === sourceReferenceKey(execution[key]),
+    )
+  );
 }
 
 /** Selects optional AI analysis; Factory always dispatches the retained verifier first. */
@@ -43,12 +61,14 @@ export function VerificationLaunch({
   root,
   node,
   profiles = [],
+  executions,
   runners = [],
   onChange,
 }: {
   root: Root;
   node: Node;
   profiles?: Reference[] | undefined;
+  executions?: S['FactoryCommandExecutionContract'][] | undefined;
   runners?: Reference[] | undefined;
   onChange: (root: Root) => void;
 }) {
@@ -66,7 +86,11 @@ export function VerificationLaunch({
     return (
       caller.kind === 'reasoning' &&
       selected.length > 0 &&
-      selected.every((model) => supported.has(model)) &&
+      (executions
+        ? builds(caller).every((build) =>
+            executions.some((execution) => sameExecution(build, execution)),
+          )
+        : selected.every((model) => supported.has(model))) &&
       (!caller.scoped_validation_runner || caller.scoped_validation_runner === node.key)
     );
   });

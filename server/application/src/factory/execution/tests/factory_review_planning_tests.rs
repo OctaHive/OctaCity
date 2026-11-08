@@ -614,6 +614,7 @@ fn fixture_with_execution(
     );
     let review = if let Some(reviewer) = &reviewer {
       let binding = FlowBuildBinding {
+        execution_permissions: None,
         tool: reviewer.toolchain.executable.clone(),
         plugin: reviewer.toolchain.plugin.clone(),
         model_or_tool: reviewer.toolchain.model.clone(),

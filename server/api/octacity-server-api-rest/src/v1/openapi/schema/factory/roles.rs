@@ -151,6 +151,10 @@ pub(super) fn insert(schemas: &mut Map<String, Value>) {
           "scoped_validation_profiles",
           bounded_array(reference(), b.choice_entries),
         ),
+        (
+          "scoped_validation_executions",
+          bounded_array(schema_ref("FactoryCommandExecutionContract"), b.role_entries),
+        ),
         ("verification_runners", bounded_array(reference(), b.choice_entries)),
         (
           "verification_authors",
@@ -414,6 +418,7 @@ pub(super) fn insert(schemas: &mut Map<String, Value>) {
   ], &[]));
   let mut profile = object(
     [
+      ("execution_binding", json!({"type":"string","enum":["profile","step"]})),
       ("template", nullable(reference())),
       ("name", text()),
       ("instructions", schema_ref("FactoryInstructions")),
@@ -678,6 +683,7 @@ pub(super) fn insert(schemas: &mut Map<String, Value>) {
     object(
       [
         ("alias", key()),
+        ("name", text()),
         ("toolchain", schema_ref("FactoryRoleToolchain")),
         (
           "build_configuration",

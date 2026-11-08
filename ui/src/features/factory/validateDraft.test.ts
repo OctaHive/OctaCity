@@ -34,6 +34,42 @@ it('identifies mismatched entry input and each insufficient enclosing access cei
     expect.arrayContaining([{ field: '/limits/permissions', code: 'enclosing_permissions' }]),
   );
 });
+it.each(['prepare-tests', 'analyze-ci'])(
+  'rejects leftover access after switching to the %s execution mode without changing the draft',
+  (mode) => {
+    const { configuration } = factoryProfileConfigurationFixture();
+    const { reference: _reference, ...root } = configuration.flow.closure.definitions[0]!;
+    void _reference;
+    const value = {
+      root,
+      limits: configuration.flow.limits,
+      data_schemas: configuration.flow.data_schemas,
+    };
+    const index = root.nodes.findIndex((node) => node.profile_selection);
+    const node = root.nodes[index]!;
+    const candidate = Object.values(node.profile_selection!.candidates)[0]!;
+    candidate.profile.definition.execution_binding = 'step';
+    candidate.profile.definition.permissions = {
+      ...emptyFactoryPermissions(),
+      secret_profiles: ['prepare-tests', 'analyze-ci'],
+    };
+    candidate.build.execution_permissions = {
+      ...emptyFactoryPermissions(),
+      secret_profiles: [mode],
+    };
+    node.permissions = structuredClone(candidate.profile.definition.permissions);
+    const before = structuredClone(value);
+    expect(validateFlowDraft(value)).toContainEqual({
+      field: `/root/nodes/${index}/permissions`,
+      code: 'execution_mode_permissions',
+    });
+    expect(value).toEqual(before);
+    node.permissions = structuredClone(candidate.build.execution_permissions);
+    expect(
+      validateFlowDraft(value).filter((issue) => issue.code === 'execution_mode_permissions'),
+    ).toEqual([]);
+  },
+);
 it('accepts the same exact plugin access from profile and resource responses regardless of object key order', () => {
   const value = draft();
   const plugin = { identity: 'codex', version: '0.8.0', digest: '7'.repeat(64) };

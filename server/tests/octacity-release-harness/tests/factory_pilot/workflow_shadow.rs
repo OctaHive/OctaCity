@@ -305,6 +305,7 @@ impl Shadow {
     tool["input_binding"] = json!({"sources":{"author":{"source":"predecessor","view":"metadata","path":""}},
       "mapping":{"value":{"mapping":"constant","value":true}}});
     tool["build"] = json!(FlowBuildBinding {
+      execution_permissions: None,
       tool: p.toolchain.executable.clone(),
       plugin: p.toolchain.plugin.clone(),
       result_tool: None,

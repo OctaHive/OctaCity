@@ -24,6 +24,8 @@ TEST_SCRIPT_MAX_BYTES = 16384
 # Tester Runtime and its Profile pins usable by already published Flows.
 TEST_AUTHOR_RUNTIME = "delivery-tester-assertions"
 TEST_VERIFIER_RUNTIME = "delivery-tester-verification"
+TESTER_PREPARE_MODE = "delivery-tester-prepare"
+TESTER_ANALYZE_MODE = "delivery-tester-analyze"
 TEST_VERIFIER_INSTRUCTIONS = (
     "Factory starts the mandatory verification Build before this step. Read its retained result "
     "using the installed verify_candidate tool with action status. Summarize the runner verdict; "
@@ -205,6 +207,7 @@ def delivery_models(catalog: dict, project_id: str, capture_tool: dict, write_di
                   ("delivery-devops", "DevOps", "evaluator", None),
                   (TEST_AUTHOR_RUNTIME, "Tester", "evaluator", "read_only"),
                   (TEST_VERIFIER_RUNTIME, "Tester", "model", None)))
+    tester_modes = []
     for alias, role, purpose, source_mode in roles:
         runtime_alias = alias
         selected_build = (scoped_build or observer["build_configuration"]) if alias == TEST_VERIFIER_RUNTIME else code_build
@@ -295,9 +298,33 @@ def delivery_models(catalog: dict, project_id: str, capture_tool: dict, write_di
         runtimes[runtime_alias] = runtime
         _choice(project, runtime_alias, toolchain["executable"])
         _choice(project, runtime_alias + "-model", toolchain["model"])
+        if alias in (TEST_AUTHOR_RUNTIME, TEST_VERIFIER_RUNTIME):
+            tester_modes.append((entry, runtime))
     _add(project["references"], lambda item: (item["kind"], item["alias"]),
         {"kind": "secret_profile", "alias": MODEL_CREDENTIAL, "reference": triage._reference(MODEL_CREDENTIAL)})
+    _install_tester_modes(catalog, project, tester_modes)
     return catalog
+
+
+def _install_tester_modes(catalog: dict, project: dict, modes: list) -> None:
+    """Share AI settings while retaining independent, content-pinned step compilers."""
+    identity = hashlib.sha256(_json(modes)).hexdigest()
+    permissions = _merge_permissions(*(runtime["ceiling"]["permissions"] for _, runtime in modes))
+    model = {**modes[0][0]["toolchain"]["model"], "version": "delivery-tester-shared-" + identity[:16]}
+    for alias, (compiler, runtime) in zip((TESTER_PREPARE_MODE, TESTER_ANALYZE_MODE), modes, strict=True):
+        compiler, runtime = copy.deepcopy((compiler, runtime))
+        compiler["toolchain"]["model"] = model
+        runtime["ceiling"].update(toolchain=compiler["toolchain"], execution_binding="step", permissions=permissions)
+        runtime["ceiling"]["name"] = ("Prepare protected tests" if alias == TESTER_PREPARE_MODE else "Analyze CI results")
+        _add(catalog["codex"], lambda row: (row["toolchain"], row["build_configuration"]), compiler)
+        previous = project["role_profiles"].get(alias)
+        if previous is not None and previous != runtime:
+            retained = alias + "-" + hashlib.sha256(_json(previous)).hexdigest()[:12]
+            project["role_profiles"].setdefault(retained, previous)
+            _choice(project, retained, previous["ceiling"]["toolchain"]["executable"])
+        project["role_profiles"][alias] = runtime
+        _choice(project, alias, compiler["toolchain"]["executable"])
+        _choice(project, alias + "-" + identity[:12], model)
 
 
 @dataclass(frozen=True)
@@ -625,6 +652,21 @@ def _extend_agent(agent_policy: dict, catalog: dict, project: dict, plugins: lis
         *(item["outputs"]["kinds"] for item in required)))
 
 
+def _merge_permissions(left, right):
+    if isinstance(left, dict):
+        return {key: _merge_permissions(left[key], right[key]) if key in left and key in right
+                else copy.deepcopy(left.get(key, right.get(key))) for key in sorted(left.keys() | right.keys())}
+    if isinstance(left, list):
+        if left + right and all(isinstance(row, dict) and "root" in row for row in left + right):
+            mounts = {}
+            for row in left + right:
+                if row["root"] not in mounts or row["mode"] == "read_write":
+                    mounts[row["root"]] = copy.deepcopy(row)
+            return [mounts[key] for key in sorted(mounts)]
+        return [json.loads(value) for value in sorted({json.dumps(row, sort_keys=True) for row in left + right})]
+    return max(left, right)
+
+
 def install_access_ceiling(catalog: dict, project: dict) -> None:
     """Declare the complete installed Delivery authority without changing Project policies.
 
@@ -643,29 +685,15 @@ def install_access_ceiling(catalog: dict, project: dict) -> None:
     if not required:
         return
 
-    def combine(left, right):
-        if isinstance(left, dict):
-            return {key: combine(left[key], right[key]) if key in left and key in right
-                    else copy.deepcopy(left.get(key, right.get(key))) for key in sorted(left.keys() | right.keys())}
-        if isinstance(left, list):
-            if left + right and all(isinstance(row, dict) and "root" in row for row in left + right):
-                mounts = {}
-                for row in left + right:
-                    if row["root"] not in mounts or row["mode"] == "read_write":
-                        mounts[row["root"]] = copy.deepcopy(row)
-                return [mounts[key] for key in sorted(mounts)]
-            return [json.loads(value) for value in sorted({json.dumps(row, sort_keys=True) for row in left + right})]
-        return max(left, right)
-
     permissions = copy.deepcopy(required[0])
     for grants in required[1:]:
-        permissions = combine(permissions, grants)
+        permissions = _merge_permissions(permissions, grants)
     for entry in catalog.get("delivery", []):
         for policy in entry["policies"]:
             draft = policy["draft"]
             if draft["project_id"] != project["project_id"]:
                 continue
-            permissions = combine(permissions, {"plugins": [entry["identity"], draft["plugin"]],
+            permissions = _merge_permissions(permissions, {"plugins": [entry["identity"], draft["plugin"]],
                 "secret_profiles": [draft["credential_profile"]], "network_hosts": draft["network_hosts"]})
     digest = hashlib.sha256(_json(permissions)).hexdigest()
     alias = "delivery-ceiling-" + digest[:16]
@@ -698,7 +726,8 @@ def stage(root: Path, directory: Path, installed: dict, project_id: str, reposit
         and client.get(f"/api/v1/build-configurations/{row['build_configuration']['id']}/versions/"
                        f"{row['build_configuration']['version']}")["definition"]["runtime"]["immutable_image"] == image]
     if not (packs or write_directories or publication) and (
-            {"delivery-reviewer", "delivery-devops", TEST_AUTHOR_RUNTIME, TEST_VERIFIER_RUNTIME} <= runtimes.keys()
+            {"delivery-reviewer", "delivery-devops", TEST_AUTHOR_RUNTIME, TEST_VERIFIER_RUNTIME,
+             TESTER_PREPARE_MODE, TESTER_ANALYZE_MODE} <= runtimes.keys()
             and {"delivery-coder", "delivery-coder-readonly"} & runtimes.keys()
             and any(row["kind"] == "permission_ceiling" and row["alias"].startswith("delivery-ceiling-")
                     for row in project["references"])
@@ -744,7 +773,7 @@ def stage(root: Path, directory: Path, installed: dict, project_id: str, reposit
     project, = (row for row in catalog["projects"] if row["project_id"] == project_id)
     tester, = (row for row in catalog["codex"] if row.get("protected_tests")
                and row["build_configuration"] == worker["build_configuration"]
-               and row["toolchain"]["plugin"] == installed_plugin)
+               and row["toolchain"] == project["role_profiles"][TESTER_PREPARE_MODE]["ceiling"]["toolchain"])
     install_test_commands(catalog, project, verification_worker, plugins, capture, None, author=tester)
     for pack in packs:
         install_test_commands(catalog, project, verification_worker, plugins, capture, pack, author=author)
@@ -794,15 +823,14 @@ def publish_roles(client, project: str, namespace, catalog_path: Path) -> None:
     declarations = (
         ("Coder", "delivery-coder", "Implement the explicitly assigned change within the approved source directories."),
         ("Coder", "delivery-coder-readonly", "Implement the explicitly assigned change within the approved source directories."),
-        ("Tester", TEST_AUTHOR_RUNTIME, "Explain selected test evidence and distinguish setup errors from confirmed failures."),
-        ("Tester", TEST_VERIFIER_RUNTIME, "Explain selected test evidence and distinguish setup errors from confirmed failures."),
+        ("Tester", TESTER_PREPARE_MODE, "Explain selected test evidence and distinguish setup errors from confirmed failures."),
         ("Reviewer", "delivery-reviewer", "Review the selected candidate against the accepted requirements and record findings."),
         ("DevOps", "delivery-devops", "Prepare a short review title and summary from the selected accepted evidence."),
     )
     for name, kind, runtime, description in (
         (name, kind, alias, description) for name, kind, description in declarations
         for alias in sorted(runtimes) if alias == kind or
-        alias.startswith(kind + "-") and re.fullmatch(r"[0-9a-f]{12}", alias[len(kind) + 1:])
+        name != "Tester" and alias.startswith(kind + "-") and re.fullmatch(r"[0-9a-f]{12}", alias[len(kind) + 1:])
     ):
         key = f"stand-delivery-v1-{name.lower()}"
         role_id = str(uuid.uuid5(namespace, key + "-role"))
@@ -811,9 +839,14 @@ def publish_roles(client, project: str, namespace, catalog_path: Path) -> None:
             profile_key += "-" + runtime[len(kind) + 1:]
         profile_id = str(uuid.uuid5(namespace, profile_key + "-profile"))
         ceiling = client.get(f"{base}/factory-profile-capabilities/{runtime}")["definition"]
-        settings = {field: ceiling[field] for field in ("toolchain", "permissions")}
-        client.post(f"{base}/factory-runtimes/{runtime}", f"{namespace}-{runtime}",
-            {"expected_version": None, "definition": {**settings, "integrations": {}, "mcp_servers": {}}})
+        if name == "Tester":
+            # One shared AI profile, with immutable earlier versions left available to retained Flows.
+            profile_key = key + "-shared-" + hashlib.sha256(_json(ceiling)).hexdigest()[:12]
+            profile_id = str(uuid.uuid5(namespace, profile_key + "-profile"))
+        else:
+            settings = {field: ceiling[field] for field in ("toolchain", "permissions")}
+            client.post(f"{base}/factory-runtimes/{runtime}", f"{namespace}-{runtime}",
+                {"expected_version": None, "definition": {**settings, "integrations": {}, "mcp_servers": {}}})
         role = client.post(f"{base}/factory-role-publications", f"{namespace}-{key}-role", {
             "role": {"id": role_id, "expected_current_version": None, "definition": {
                 "name": name, "icon": "bot", "description": description,

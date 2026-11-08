@@ -195,7 +195,13 @@ export function requiredPermissions(
         )
       : node.permissions;
   return Object.values(node.profile_selection?.candidates ?? {}).reduce(
-    (permissions, { profile }) => mergePermissions(permissions, profile.definition.permissions),
+    (permissions, { profile, build }) =>
+      mergePermissions(
+        permissions,
+        profile.definition.execution_binding === 'step'
+          ? (build.execution_permissions ?? node.permissions)
+          : profile.definition.permissions,
+      ),
     base,
   );
 }

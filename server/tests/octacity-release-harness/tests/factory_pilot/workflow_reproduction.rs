@@ -133,6 +133,7 @@ impl Reproduction {
       "mapping":{"value":{"mapping":"pointer","path":"/triage"}}});
     check["context_binding"] = json!({"work_task":"task","entries":{}});
     check["build"] = json!(FlowBuildBinding {
+      execution_permissions: None,
       tool: command.executor.clone(),
       plugin: command.plugin.clone(),
       result_tool: None,

@@ -9,6 +9,9 @@ use serde::{Deserialize, Serialize};
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
 #[serde(deny_unknown_fields)]
 pub struct FlowBuildBinding {
+  /// Installed mode's reviewed request for reusable profiles; actual access stays on the step.
+  #[serde(default, skip_serializing_if = "Option::is_none")]
+  pub execution_permissions: Option<Box<crate::FactoryPermissionSet>>,
   /// Exact selected harness or deterministic tool.
   pub tool: ImmutableReference,
   /// Optional independent verifier for the primary retained output.

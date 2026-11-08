@@ -60,6 +60,7 @@ pub fn installed_role_execution_choices(
       model_or_tool: definition.toolchain.model.clone(),
       pipeline_node: octacity_server_domain::PipelineNodeId::new("worker").unwrap(),
       compilation: Some(FactoryBuildCompilationContract {
+        permissions: None,
         capture_write_paths: None,
         scoped_validation: false,
         evidence: vec![],
@@ -616,6 +617,7 @@ async fn qualify_pipeline_fixture(
   use octacity_server_store::FactoryConfigurationStore;
   let binding: FlowBuildBinding = serde_json::from_value(binding).unwrap();
   let compilation = include_compilation.then(|| FactoryBuildCompilationContract {
+    permissions: None,
     capture_write_paths: None,
     scoped_validation: false,
     evidence: vec![],

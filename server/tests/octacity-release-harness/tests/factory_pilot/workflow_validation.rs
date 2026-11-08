@@ -133,6 +133,7 @@ impl Validator {
     node["input_schema"] = json!(self.schemas[&key("protected_validation_input")].reference());
     node["context_binding"] = source["nodes"][0]["context_binding"].clone();
     node["build"] = json!(FlowBuildBinding {
+      execution_permissions: None,
       tool: self.profile.executor.clone(),
       plugin: self.profile.plugin.clone(),
       result_tool: None,

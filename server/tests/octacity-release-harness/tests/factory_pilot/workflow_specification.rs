@@ -114,6 +114,7 @@ impl Specification {
       "mapping":{"value":{"mapping":"pointer","path":"/triage"}}});
     author["context_binding"] = json!({"work_task":"task","entries":{}});
     author["build"] = json!(FlowBuildBinding {
+      execution_permissions: None,
       tool: profile.toolchain.executable.clone(),
       plugin: profile.toolchain.plugin.clone(),
       result_tool: None,

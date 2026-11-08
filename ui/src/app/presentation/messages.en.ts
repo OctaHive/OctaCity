@@ -103,6 +103,8 @@ export const enMessages = {
     'The executor has no data input contract. Apply its profile to prepare the default input, or configure an advanced input mapping.',
   'factory.profilePermissionsHelp':
     'The step does not request all access declared by its profiles. Use “Review required access” or edit the step access request.',
+  'factory.executionModePermissionsHelp':
+    'The step requests access unavailable in the selected execution mode. Review “Manual step access” and remove incompatible permissions, including those retained from the previous mode. Changing modes does not remove access automatically.',
   'factory.graphBoundsCalculation': 'Graph limits · Calculation',
   'factory.admissionBudgetSource':
     'Uses the Run budget unless you set a separate admission ceiling manually.',
@@ -2005,6 +2007,7 @@ export const enMessages = {
   'factory.executorRole': 'Role',
   'factory.executorProfile': 'Profile',
   'factory.executorRuntime': 'Execution runtime',
+  'factory.stepExecutionMode': 'Step execution mode',
   'factory.chooseExecutorRole': 'Choose a role',
   'factory.chooseExecutorProfile': 'Choose a profile',
   'factory.chooseExecutorRuntime': 'Choose an installed runtime',

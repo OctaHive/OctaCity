@@ -167,3 +167,26 @@ retains the upstream plugin, manifest, lock and compatibility data unchanged.
 Server builds use the same pinned upstream source without a local patch. Previous installations and published profile bindings are retained;
 new compatible Delivery profiles use separate identities rather than replacing
 the installed declarations behind an existing profile.
+
+### Reusable Tester settings and step-owned execution
+
+The stand publishes one Tester AI profile for both test authoring and optional
+CI-result analysis. Model, thinking parameters, skills and reusable instructions
+belong to that profile. Each step pins a qualified installed Build mode and
+reviews its own permission request. The profile's common permission ceiling
+does not grant another step's source, tools, credentials or retained inputs.
+
+Profiles opting into `execution_binding: step` preserve the same model/harness
+identity across modes while allowing different installed Build configurations
+and credential consumers. Installed mode permissions accompany the immutable
+Build binding and are checked against the installation at publication. Actual
+invocation authority intersects the step request and profile ceiling. Profiles
+without the setting retain their original fixed binding and canonical digest.
+Recovery checks the exact retained invocation and step Build, rather than
+reimposing the reusable profile's default Build on another qualified mode.
+
+Console identifies analysis by the complete installed execution selection,
+not by model identity alone. The author cannot become the verifier's analysis
+step merely because it uses the same AI model. Factory's mandatory ordinary CI
+Build, protected inventory and failed-verdict gate remain independent of the
+selected AI profile and its prose.

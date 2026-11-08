@@ -403,6 +403,7 @@ fn flow_definition(
     .unwrap()
   );
   author["build"] = json!(FlowBuildBinding {
+    execution_permissions: None,
     tool: command.executor.clone(),
     plugin: command.plugin.clone(),
     result_tool: None,
@@ -1713,6 +1714,7 @@ fn extend_coder_flow(
     profile.toolchain.plugin.clone(),
   ));
   node["build"] = json!(FlowBuildBinding {
+    execution_permissions: None,
     tool: profile.toolchain.executable.clone(),
     plugin: profile.toolchain.plugin.clone(),
     result_tool: None,

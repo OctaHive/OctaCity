@@ -265,6 +265,7 @@ pub(super) async fn run_model(
   let hold = format!("approval-{identity}");
   let permissions = &profile.project_permissions;
   let binding = FlowBuildBinding {
+    execution_permissions: None,
     tool: profile.toolchain.executable.clone(),
     plugin: profile.toolchain.plugin.clone(),
     result_tool: None,

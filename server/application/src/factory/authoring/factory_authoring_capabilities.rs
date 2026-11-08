@@ -156,6 +156,8 @@ pub struct FactoryAuthoringCapabilities {
   /// Exact installed model identities supporting the lease-bound validation tool.
   #[serde(skip_serializing_if = "Vec::is_empty")]
   pub scoped_validation_profiles: Vec<ImmutableReference>,
+  /// Exact qualified executions. A shared AI model alone does not identify its step mode.
+  pub scoped_validation_executions: Vec<FactoryCommandExecutionContract>,
   /// Exact installed commands that verify a frozen protected test inventory.
   #[serde(skip_serializing_if = "Vec::is_empty")]
   pub verification_runners: Vec<ImmutableReference>,
@@ -264,6 +266,7 @@ impl<S: FactoryConfigurationStore> ManagementQueryUseCase<GetFactoryAuthoringCap
       commands,
       verification_authors,
       scoped_validation_profiles,
+      scoped_validation_executions,
       verification_runners,
       candidate_publications,
       issue_classification,
@@ -313,6 +316,24 @@ impl<S: FactoryConfigurationStore> ManagementQueryUseCase<GetFactoryAuthoringCap
             .collect(),
           choices
             .unambiguous_build_pipeline_contracts()
+            .filter_map(|contract| {
+              let compiler = contract
+                .compilation
+                .as_ref()
+                .filter(|compiler| compiler.scoped_validation)?;
+              Some(FactoryCommandExecutionContract {
+                build_configuration: contract.build_configuration.clone(),
+                tool: contract.tool.clone(),
+                plugin: contract.plugin.clone(),
+                model_or_tool: contract.model_or_tool.clone(),
+                task_digest: compiler.task_digest,
+                result_output: compiler.result_output.clone(),
+                result_output_kind: compiler.result_output_kind,
+              })
+            })
+            .collect(),
+          choices
+            .unambiguous_build_pipeline_contracts()
             .filter(|contract| {
               matches!(
                 contract.protected_tests,
@@ -325,13 +346,14 @@ impl<S: FactoryConfigurationStore> ManagementQueryUseCase<GetFactoryAuthoringCap
           classification,
         )
       }
-      Err(ApplicationError::CapabilityUnavailable) => (vec![], vec![], vec![], vec![], vec![], None),
+      Err(ApplicationError::CapabilityUnavailable) => (vec![], vec![], vec![], vec![], vec![], vec![], None),
       Err(error) => return Err(error),
     };
     Ok(FactoryAuthoringCapabilities {
       commands,
       verification_authors,
       scoped_validation_profiles,
+      scoped_validation_executions,
       verification_runners,
       candidate_publications,
       issue_classification,

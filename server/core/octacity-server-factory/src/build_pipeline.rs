@@ -144,6 +144,8 @@ impl FactoryBuildPipelineContract {
 /// Safe compiler-owned selections; a preset supplies its own logical result outcome.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct FactoryBuildCompilationContract {
+  /// Installed request of this execution mode; never a grant to an unrelated step.
+  pub permissions: Option<crate::FactoryPermissionSet>,
   /// This installed compiler can expose the lease-bound validation tool to its caller.
   pub scoped_validation: bool,
   /// Existing native task identity before an optional exact Role/Profile binding.

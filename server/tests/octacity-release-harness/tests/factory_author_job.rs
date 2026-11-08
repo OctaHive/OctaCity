@@ -977,6 +977,7 @@ fn compile_author(
   };
   let schema = FlowDataSchema::new(key("boolean-observation"), key("v1"), FlowValueSchema::Boolean).unwrap();
   let binding = FlowBuildBinding {
+    execution_permissions: None,
     tool: executable.clone(),
     result_tool: None,
     capture_write_paths: Some(vec![FactoryRepositoryPath::new("public/approved").unwrap()]),

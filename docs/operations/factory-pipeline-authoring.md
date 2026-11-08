@@ -314,6 +314,17 @@ Build the routes in this order:
    accepted requirements and public test scope. Connect the captured candidate to
    an independent review and the original tests to trusted validation. Configure
    the rework limit and its exhaustion route.
+   On a freshly provisioned stand, select **Tester · Delivery** for both AI steps.
+   Choose **Prepare protected tests** as the author step's execution mode, and
+   **Analyze CI results** for the optional analysis step. Review the required
+   access for each step separately; the shared profile is a ceiling, not a grant
+   of another step's tools or inputs. Connect the analysis to the mandatory
+   verification Build. Factory starts that Build even if Tester makes no tool
+   call; its failure cannot be replaced by an AI conclusion. Earlier published
+   profiles and Flow bindings remain available for historical executions.
+   After changing a mode, reconcile any incompatible permissions under **Manual
+   step access**. Publication checks the selected mode's access limit; changing
+   the mode does not silently remove an existing request.
 4. Connect the passing review and validation of the same candidate to DevOps PR
    metadata preparation and trusted publication. Route the confirmed receipt to
    `delivered_for_review` and configure a separate blocked outcome for publication

@@ -28,6 +28,9 @@ impl ManagementAuthorizationTarget for ListFactoryRoleProfileCapabilitiesQuery {
 pub struct FactoryRoleProfileChoice {
   /// Authorized runtime/profile alias from the existing Factory choice catalog.
   pub alias: FactoryKey,
+  /// Installed human-readable execution mode; absent on older servers.
+  #[serde(skip_serializing_if = "Option::is_none")]
+  pub name: Option<FactoryText>,
   /// Exact runtime/plugin/model pins; no provider-specific settings enum.
   pub toolchain: FactoryTaskToolchain,
   /// Ordinary compatible Project-owned Build configuration.
@@ -97,6 +100,7 @@ fn projection(alias: FactoryKey, cap: &FactoryRoleProfileCapability) -> FactoryR
   let definition = &cap.ceiling;
   FactoryRoleProfileChoice {
     alias,
+    name: Some(definition.name.clone()),
     toolchain: definition.toolchain.clone(),
     build_configuration: definition.build_configuration.clone(),
     parameters: cap.parameters.clone(),

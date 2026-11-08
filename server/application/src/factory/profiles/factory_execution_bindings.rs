@@ -12,9 +12,25 @@ pub(crate) fn for_profile(
   result_outcome: &FactoryKey,
   verify_mcp_evidence: bool,
 ) -> Option<FlowBuildBinding> {
+  for_profile_build(
+    choices,
+    profile,
+    result_outcome,
+    verify_mcp_evidence,
+    &profile.definition().build_configuration,
+  )
+}
+
+fn for_profile_build(
+  choices: &FactoryConfigurationChoices,
+  profile: &FactoryRoleProfile,
+  result_outcome: &FactoryKey,
+  verify_mcp_evidence: bool,
+  configuration: &BuildConfigurationRef,
+) -> Option<FlowBuildBinding> {
   let definition = profile.definition();
   let mut candidates = choices.build_pipeline_contracts().iter().filter_map(|installed| {
-    if installed.build_configuration != definition.build_configuration
+    if &installed.build_configuration != configuration
       || installed.tool != definition.toolchain.executable
       || installed.plugin != definition.toolchain.plugin
       || installed.model_or_tool != definition.toolchain.model
@@ -28,6 +44,10 @@ pub(crate) fn for_profile(
       None
     };
     let build = FlowBuildBinding {
+      execution_permissions: (!definition.execution_binding.is_profile())
+        .then(|| compilation.permissions.clone())
+        .flatten()
+        .map(Box::new),
       tool: installed.tool.clone(),
       plugin: installed.plugin.clone(),
       model_or_tool: installed.model_or_tool.clone(),
@@ -128,7 +148,12 @@ impl<
     }
     // A manually authored outcome keeps its declared schema even when the
     // executor uses MCP. Evidence verification is a separate result contract.
-    let build = for_profile(&choices, &profile, &query.result_outcome, false).filter(|build| {
+    let configuration = if profile.definition().execution_binding.is_profile() {
+      &profile.definition().build_configuration
+    } else {
+      &capability.ceiling.build_configuration
+    };
+    let build = for_profile_build(&choices, &profile, &query.result_outcome, false, configuration).filter(|build| {
       // Manual agent selection requires a compiler that actually retains the
       // exact Role/Profile, rather than the static legacy task contract.
       choices.build_pipeline_contract(build).is_some_and(|installed| {

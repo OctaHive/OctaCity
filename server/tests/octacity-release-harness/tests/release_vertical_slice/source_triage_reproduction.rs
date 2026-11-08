@@ -192,6 +192,7 @@ pub(super) fn bind(draft: Value, command: &FactoryCommandBuildProfile, flow: Flo
   analyst["input_binding"]["mapping"]["value"]["fields"]["command_policy"]["value"] = json!([choice]);
   template = serde_json::from_value(wire).unwrap();
   let binding = FlowBuildBinding {
+    execution_permissions: None,
     tool: command.executor.clone(),
     result_tool: None,
     capture_write_paths: None,

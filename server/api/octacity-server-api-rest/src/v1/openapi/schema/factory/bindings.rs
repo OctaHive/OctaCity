@@ -84,6 +84,7 @@ pub(super) fn insert(schemas: &mut Map<String, Value>) {
     "FactoryFlowBuildBinding".to_owned(),
     object(
       [
+        ("execution_permissions", nullable(schema_ref("FactoryPermissions"))),
         ("tool", schema_ref("FactoryImmutableReferenceResource")),
         ("result_tool", nullable(schema_ref("FactoryImmutableReferenceResource"))),
         (

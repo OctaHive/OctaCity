@@ -27,9 +27,7 @@ export function StepExecutor(props: Props) {
     selection?.policy.mode === 'manual' && selection.policy.candidate
       ? selection.candidates[selection.policy.candidate]?.profile
       : undefined;
-  const profiles = Object.values(selection?.candidates ?? {}).map(
-    (candidate) => candidate.profile.reference,
-  );
+  const candidates = Object.values(selection?.candidates ?? {});
   return (
     <>
       <fieldset>
@@ -104,7 +102,13 @@ export function StepExecutor(props: Props) {
           </details>
         ) : null}
       </fieldset>
-      {props.services ? <StepTools references={profiles} services={props.services} /> : null}
+      {props.services ? (
+        <StepTools
+          candidates={candidates}
+          permissions={props.node.permissions}
+          services={props.services}
+        />
+      ) : null}
     </>
   );
 }

@@ -18,6 +18,7 @@ fn exact(name: &str) -> ImmutableReference {
 
 fn profile(project: ProjectId, effort: &str) -> FactoryRoleProfileDefinition {
   FactoryRoleProfileDefinition {
+    execution_binding: Default::default(),
     model_identifier: None,
     thinking_parameter: None,
     template: None,

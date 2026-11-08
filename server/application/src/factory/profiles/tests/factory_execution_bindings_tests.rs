@@ -9,6 +9,61 @@ use octacity_server_store::{
 use std::sync::Arc;
 
 #[test]
+fn one_reusable_profile_resolves_two_explicit_step_modes_without_changing_the_profile() {
+  crate::factory::admission::tests::factory_admission_tests::run_ready(async {
+    let fixture = fixture_for_modes(true, false, false, None, true).await;
+    let queries = AuthorizedQueryHandler::new(Arc::new(TrustedNetworkManagementPolicy), fixture.handlers);
+    let before = fixture.store.mutation_evidence_counts().await;
+    let author = queries
+      .handle_query(&context(), fixture.query.clone())
+      .await
+      .unwrap()
+      .build
+      .unwrap();
+    let mut query = fixture.query;
+    query.capability = "analyze-checks".parse().unwrap();
+    let analysis = queries
+      .handle_query(&context(), query)
+      .await
+      .unwrap()
+      .build
+      .expect("the same profile selects the other installed execution mode");
+    assert_ne!(author.build_configuration, analysis.build_configuration);
+    assert_ne!(author.task_digest, analysis.task_digest);
+    assert_eq!(author.tool, analysis.tool);
+    assert_eq!(author.model_or_tool, analysis.model_or_tool);
+    assert_eq!(
+      author
+        .execution_permissions
+        .as_ref()
+        .unwrap()
+        .tools()
+        .cloned()
+        .collect::<Vec<_>>(),
+      vec![mode_tool("prepare-checks")]
+    );
+    assert_eq!(
+      analysis
+        .execution_permissions
+        .as_ref()
+        .unwrap()
+        .tools()
+        .cloned()
+        .collect::<Vec<_>>(),
+      vec![mode_tool("analyze-checks")]
+    );
+    assert_eq!(fixture.store.mutation_evidence_counts().await, before);
+  });
+}
+fn mode_tool(name: &str) -> ImmutableReference {
+  ImmutableReference::new(
+    name.parse().unwrap(),
+    "v1".parse().unwrap(),
+    FactoryDigest::from_bytes([54; 32]),
+  )
+}
+
+#[test]
 fn a_static_build_compiler_is_not_a_role_profile_execution_choice() {
   crate::factory::admission::tests::factory_admission_tests::run_ready(async {
     let BindingFixture {
@@ -104,6 +159,15 @@ async fn fixture_with_outputs(
   with_evidence: bool,
   capture_write_paths: Option<Vec<FactoryRepositoryPath>>,
 ) -> BindingFixture {
+  fixture_for_modes(role_compiler, with_mcp, with_evidence, capture_write_paths, false).await
+}
+async fn fixture_for_modes(
+  role_compiler: bool,
+  with_mcp: bool,
+  with_evidence: bool,
+  capture_write_paths: Option<Vec<FactoryRepositoryPath>>,
+  reusable: bool,
+) -> BindingFixture {
   let project = ProjectId::generate();
   let store = Arc::new(InMemoryFactoryConfigurationStore::new());
   store.seed_project(project).unwrap();
@@ -128,6 +192,28 @@ async fn fixture_with_outputs(
   }
   let alias = FactoryKey::new("dependency-1").unwrap();
   let mut entries = installed.entries();
+  if reusable {
+    definition.execution_binding = FactoryRoleExecutionBinding::Step;
+    for name in ["prepare-checks", "analyze-checks"] {
+      entries.references.push(FactoryReferenceChoice {
+        kind: FactoryChoiceKind::NodeCapability,
+        alias: format!("{name}-tool").parse().unwrap(),
+        reference: mode_tool(name),
+      });
+    }
+    definition.permissions = FactoryPermissionSet::try_new(FactoryPermissionDraft {
+      tools: vec![mode_tool("prepare-checks"), mode_tool("analyze-checks")],
+      ..Default::default()
+    })
+    .unwrap();
+    compiler.compilation.as_mut().unwrap().permissions = Some(
+      FactoryPermissionSet::try_new(FactoryPermissionDraft {
+        tools: vec![mode_tool("prepare-checks")],
+        ..Default::default()
+      })
+      .unwrap(),
+    );
+  }
   if with_mcp {
     definition.execution.mcp_servers.insert(
       "issues".parse().unwrap(),
@@ -146,12 +232,51 @@ async fn fixture_with_outputs(
   }
   let mut capability = installed.role_profile_capabilities()[&alias].clone();
   capability.ceiling = definition.clone();
+  if reusable {
+    capability.local_permissions = LocalPermissionCeiling::fully_enforced(definition.permissions.clone());
+  }
+  let alternate = reusable.then(|| {
+    let mut alternate = compiler.clone();
+    alternate.build_configuration = BuildConfigurationRef::new(
+      octacity_server_domain::BuildConfigurationId::generate(),
+      octacity_server_domain::BuildConfigurationVersion::INITIAL,
+      project,
+      FactoryDigest::from_bytes([52; 32]),
+    );
+    alternate.compilation.as_mut().unwrap().task_digest = FactoryDigest::from_bytes([53; 32]);
+    alternate.compilation.as_mut().unwrap().permissions = Some(
+      FactoryPermissionSet::try_new(FactoryPermissionDraft {
+        tools: vec![mode_tool("analyze-checks")],
+        ..Default::default()
+      })
+      .unwrap(),
+    );
+    let alias: FactoryKey = "analyze-checks".parse().unwrap();
+    entries
+      .build_configurations
+      .push((alias.clone(), alternate.build_configuration.clone()));
+    entries.references.push(FactoryReferenceChoice {
+      kind: FactoryChoiceKind::NodeCapability,
+      alias: alias.clone(),
+      reference: alternate.tool.clone(),
+    });
+    (alias, alternate)
+  });
   let mut choices = FactoryConfigurationChoices::try_new(entries)
     .unwrap()
-    .with_role_profile_capability(alias.clone(), capability)
+    .with_role_profile_capability(alias.clone(), capability.clone())
     .unwrap()
     .with_build_pipeline_contract(compiler)
     .unwrap();
+  if let Some((alias, alternate)) = alternate {
+    capability.ceiling.build_configuration = alternate.build_configuration.clone();
+    capability.ceiling.credential_purpose = FactoryCredentialPurpose::Evaluator;
+    choices = choices
+      .with_role_profile_capability(alias, capability)
+      .unwrap()
+      .with_build_pipeline_contract(alternate)
+      .unwrap();
+  }
   if !role_compiler {
     choices = choices
       .with_choice_metadata(

@@ -19,6 +19,7 @@ export type DraftIssue = Partial<
     | 'budget_exceeded'
     | 'missing_input'
     | 'profile_permissions'
+    | 'execution_mode_permissions'
     | 'action_permissions'
     | 'publication_permissions'
     | 'profile_budget'
@@ -110,6 +111,16 @@ export function validateFlowDraft(
       add('/root/execution/permissions', 'enclosing_permissions');
     if ((node.build || node.profile_selection) && !node.input_schema)
       add(`${field}/input_schema`, 'missing_input');
+    if (
+      Object.values(node.profile_selection?.candidates ?? {}).some(
+        ({ profile, build }) =>
+          profile.definition.execution_binding === 'step' &&
+          build.execution_permissions &&
+          JSON.stringify(mergePermissions(build.execution_permissions, node.permissions)) !==
+            JSON.stringify(build.execution_permissions),
+      )
+    )
+      add(`${field}/permissions`, 'execution_mode_permissions');
     if (
       JSON.stringify(requiredPermissions(node, publications)) !== JSON.stringify(node.permissions)
     )

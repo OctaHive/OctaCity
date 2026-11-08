@@ -107,6 +107,8 @@ export const ruMessages = {
     'Не подготовлен контракт входа исполнителя. Примените профиль для создания стандартного входа либо настройте расширенную привязку данных.',
   'factory.profilePermissionsHelp':
     'Запрос доступа шага не покрывает требования его профилей. Откройте «Проверить необходимые доступы» либо измените запрос вручную.',
+  'factory.executionModePermissionsHelp':
+    'Шаг запрашивает доступы, недоступные выбранному режиму выполнения. Откройте «Ручная настройка доступов шага» и уберите несовместимые разрешения, в том числе оставшиеся от прежнего режима. Смена режима не удаляет доступы автоматически.',
   'factory.graphBoundsCalculation': 'Ограничения графа · Расчёт',
   'factory.admissionBudgetSource':
     'Используется бюджет исполнения Flow. Отдельный предел допуска можно задать вручную.',
@@ -2022,6 +2024,7 @@ export const ruMessages = {
   'factory.executorRole': 'Роль',
   'factory.executorProfile': 'Профиль',
   'factory.executorRuntime': 'Среда выполнения',
+  'factory.stepExecutionMode': 'Режим выполнения шага',
   'factory.chooseExecutorRole': 'Выберите роль',
   'factory.chooseExecutorProfile': 'Выберите профиль',
   'factory.chooseExecutorRuntime': 'Выберите установленную среду',

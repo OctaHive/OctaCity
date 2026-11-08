@@ -157,6 +157,10 @@ impl FactoryRole {
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
 #[serde(deny_unknown_fields)]
 pub struct FactoryRoleProfileDefinition {
+  /// Legacy profiles pin one Build and request their complete permissions.
+  /// Reusable profiles keep model settings here and select execution/access on each step.
+  #[serde(default, skip_serializing_if = "FactoryRoleExecutionBinding::is_profile")]
+  pub execution_binding: FactoryRoleExecutionBinding,
   /// Exact release template used for this copy; provenance only, never a live parent.
   /// Absent on custom and retained legacy definitions.
   #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -185,13 +189,32 @@ pub struct FactoryRoleProfileDefinition {
   /// Named requirements satisfied only by authorized stage Context projections.
   pub context_requirements: BTreeSet<FactoryKey>,
   /// Exact compatible ordinary Build configuration in the same Project.
+  /// Reusable profiles retain this default; each step pins its own qualified installed Build.
   pub build_configuration: BuildConfigurationRef,
   /// Logical purpose only; no credential bytes are part of this definition.
+  /// For step-bound execution, the selected installed compiler owns the credential purpose.
   pub credential_purpose: FactoryCredentialPurpose,
   /// Existing deny-by-default tool and resource ceiling, intersected with enclosing authority before execution.
   pub permissions: FactoryPermissionSet,
   /// Existing finite execution and usage ceiling.
   pub budget: BudgetLimit,
+}
+
+/// Location of the execution and access selection; omitted legacy content stays byte-compatible.
+#[derive(Clone, Copy, Debug, Default, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum FactoryRoleExecutionBinding {
+  /// Original exact runtime and permission request.
+  #[default]
+  Profile,
+  /// A qualified installed mode and permission request on the containing Flow step.
+  Step,
+}
+impl FactoryRoleExecutionBinding {
+  /// Whether serialization must retain the original absence of this setting.
+  pub fn is_profile(&self) -> bool {
+    *self == Self::Profile
+  }
 }
 
 /// Exact immutable profile identity used by later selection and dispatch.
@@ -306,6 +329,17 @@ impl FactoryRoleProfileDefinition {
       .permissions
       .clone()
       .with_elapsed_limit(self.budget.max_elapsed_millis())
+  }
+  /// Resolves this profile's contribution to one step without inheriting unused
+  /// capabilities of a reusable profile. Legacy fixed requests remain unchanged.
+  #[must_use]
+  pub fn execution_permissions_for_step(&self, requested: &FactoryPermissionSet) -> FactoryPermissionSet {
+    let ceiling = self.execution_permissions();
+    if self.execution_binding.is_profile() {
+      ceiling
+    } else {
+      ceiling.intersection(requested)
+    }
   }
   /// Exact plugin identifier frozen in this profile; legacy definitions retain their installed selection.
   #[must_use]

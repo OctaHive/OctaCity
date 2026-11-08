@@ -1370,6 +1370,7 @@ fn pin_delivery_profile(node: &mut FlowTemplateNode, build: &FlowBuildBinding) {
     project,
     &role,
     FactoryRoleProfileDefinition {
+      execution_binding: Default::default(),
       template: None,
       name: FactoryText::new("PR preparation").unwrap(),
       instructions: "Use only the accepted evidence.".into(),

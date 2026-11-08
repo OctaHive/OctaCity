@@ -726,3 +726,75 @@ analysis or successful verification. This is fail-closed evidence, not a claim
 that an optimistic AI response completed that diagnostic, nor qualification of
 resource-accounting recovery. The completed failure-path Run above uses the
 current installed instructions and the actual retained runner failure.
+
+### One Tester profile, independent step execution
+
+The stand publishes one current **Tester · Delivery** profile with the same
+model, harness and AI settings for test preparation and optional CI analysis.
+Each step selects its installed execution mode and reviews its own access.
+Legacy profiles omit `execution_binding` in canonical serialization; their
+content identities and existing Flow pins remain unchanged. Earlier stand data
+is retained rather than rewritten.
+
+Observed Red/Green boundaries for this correction:
+
+- The core role-profile regression first rejected a reusable profile. It now
+  accepts one exact profile in two steps with different qualified Builds and
+  independent permissions.
+- Application binding resolution initially rejected the second mode. Invocation
+  and recovery tests then exposed inherited tools, credential-purpose coupling
+  and the default Build pin. The same public boundaries now resolve and recover
+  the actual selected Build while retaining the exact shared profile.
+- The stand publication test initially observed three Tester publications rather
+  than one; installation lacked the two shared modes. Repeated publication now
+  keeps one current default, with independent source and private-reader compilers.
+- Console tests initially displayed the common profile ceiling as required access,
+  offered the author Build for CI analysis, and omitted the selected mode summary.
+  They now require explicit per-mode access review, select the exact analysis
+  Build and display the actual step request without implicit draft changes.
+
+Commands used (Rust runs use a dedicated temporary target, debug info disabled,
+incremental compilation disabled and two build jobs):
+
+```sh
+cargo test --locked -p octacity-server-factory
+cargo test --locked -p octacity-server-application --lib
+cargo test --locked -p octacity-server-application --lib factory::profiles
+cargo test --locked -p octacity-server-api-rest --test v1_handlers factory_roles
+python3 -m unittest discover -s tools/tests -p test_factory_delivery_setup.py
+cd ui
+pnpm exec vitest run src/features/factory
+pnpm build
+```
+
+The full application run passed 1,065 tests; after the final diagnostics
+correction, the 116-test profile suite and 17 REST role tests passed. The Factory
+Console suite passed 453 tests, and the stand script suite passed 200 tests with
+34 platform/environment skips. These are automated contract and fixture tests;
+this correction did not rebuild or modify the operator's running stand or repeat
+the native AI/PR journeys recorded above. The existing mandatory-CI and protected
+inventory regressions remain in the passing application suite. Production bundle
+budgets, all-target/all-feature Clippy, architecture and strict OpenSpec checks
+are also required before completion. Documentation has no executable behavior;
+its validation uses OpenSpec and whitespace checks.
+
+The mode-switch regression first accepted a preparation/analysis request with
+the other mode's credentials and tools still attached. The core publication
+boundary now rejects it and accepts the selected mode's own request. Console's
+draft-validation regression first omitted that blocker; it now reports
+`execution_mode_permissions` at the step permissions without changing the draft.
+The focused Red/Green commands were:
+
+```sh
+cargo test --locked -p octacity-server-factory --test role_profiles switching_a_reusable_profile_mode_rejects_access_left_from_the_other_mode
+cd ui
+pnpm exec vitest run src/features/factory/validateDraft.test.ts -t 'rejects leftover access'
+```
+
+After Green, the complete Factory core suite passed 407 tests, the application
+profile suite passed 116 tests, the application validation suite passed 37 tests,
+and the Factory Console suite passed 455 tests. Coverage includes mandatory CI
+before analysis, independent protected evidence and rejection of AI attempts to
+override failed checks. Core all-target/all-feature Clippy, Console lint and
+production bundle budgets, architecture, formatting and strict change validation
+passed. No native stand rerun was performed for this publication-boundary fix.

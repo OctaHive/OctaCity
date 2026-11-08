@@ -7,6 +7,43 @@ import { emptyFactoryPermissions } from './emptyFlowDraft';
 import { AccessRequirements } from './AccessRequirements';
 afterEach(cleanup);
 
+it.each(['prepare-tests', 'analyze-ci'])(
+  'reviews only the %s mode request of a shared profile',
+  async (mode) => {
+    const { configuration } = factoryProfileConfigurationFixture();
+    const { reference: _reference, ...root } = configuration.flow.closure.definitions[0]!;
+    void _reference;
+    const node = root.nodes.find((node) => node.profile_selection)!;
+    const candidate = Object.values(node.profile_selection!.candidates)[0]!;
+    const required = { ...emptyFactoryPermissions(), secret_profiles: [mode] };
+    candidate.profile.definition.permissions = {
+      ...emptyFactoryPermissions(),
+      secret_profiles: ['prepare-tests', 'analyze-ci', 'unselected-capability'],
+    };
+    Object.assign(candidate.profile.definition, { execution_binding: 'step' });
+    Object.assign(candidate.build, { execution_permissions: required });
+    node.permissions = emptyFactoryPermissions();
+    const onChange = vi.fn();
+    render(
+      <AccessRequirements
+        value={{
+          root: { ...root, nodes: [node] },
+          limits: configuration.flow.limits,
+          data_schemas: configuration.flow.data_schemas,
+        }}
+        onChange={onChange}
+      />,
+    );
+    await userEvent.click(screen.getByRole('button', { name: 'Review required access' }));
+    const dialog = within(screen.getByRole('dialog'));
+    expect(dialog.queryAllByText(/unselected-capability/)).toEqual([]);
+    expect(onChange).not.toHaveBeenCalled();
+    await userEvent.click(dialog.getByRole('button', { name: 'Apply to draft' }));
+    expect(onChange.mock.lastCall?.[0].root.nodes[0].permissions).toEqual(required);
+    expect(candidate.profile.definition.permissions.secret_profiles).toHaveLength(3);
+  },
+);
+
 it('requires manual reconciliation for overlapping mount scopes instead of widening a read-only parent', async () => {
   const { configuration } = factoryProfileConfigurationFixture();
   const { reference: _reference, ...root } = configuration.flow.closure.definitions[0]!;

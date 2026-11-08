@@ -4,6 +4,35 @@ Defines the supported post-triage ticket pipeline from conditional reproduction 
 
 ## ADDED Requirements
 
+### Requirement: Tester settings are reusable across isolated steps
+
+Test authoring and optional verification analysis SHALL support the same exact
+Tester AI profile. Each step SHALL select its installed execution mode and
+access request independently. A shared profile ceiling SHALL NOT implicitly
+grant another step's tools, credentials, source or Context. Installed mode
+qualification and immutable Build bindings SHALL remain authoritative. Existing
+published fixed-profile bindings SHALL retain their original identities.
+
+#### Scenario: One profile prepares tests and analyzes CI
+
+- **WHEN** the author and analysis steps select one reusable Tester profile and different installed modes
+- **THEN** each isolated invocation retains that profile and only its own reviewed inputs and access, while Factory dispatches mandatory CI independently
+
+#### Scenario: A shared model does not confer verification capability
+
+- **WHEN** authoring and analysis use the same model but different qualified Build configurations
+- **THEN** Console offers only the installed analysis execution for reading CI results and the author cannot bypass the protected-check verdict
+
+#### Scenario: A previous fixed profile is recovered
+
+- **WHEN** an earlier published Flow references a fixed-profile Tester invocation
+- **THEN** recovery preserves its exact profile, Build, digest and permission contract without rewriting it to the new reusable profile
+
+#### Scenario: Switching modes retains incompatible access
+
+- **WHEN** a reusable Tester step changes its execution mode and retains tools, credentials or other access outside the selected installed mode
+- **THEN** publication rejects the incompatible request, Console points to manual step access, and changing the mode does not silently remove permissions
+
 ### Requirement: Development consumes an accepted triage handoff
 
 An explicit Issue execution request or separately enabled downstream intake SHALL bind an eligible accepted triage outcome to a distinct Work and Run for the same Project and Issue. Admission SHALL verify visibility, applicability to the Issue requirements revision, compatibility with the declared result contract and repository subject, then retain the exact source Flow/Run and outcome identity and digest. The downstream Work SHALL retain the original ticket and its own implementation acceptance inputs. Only explicitly selected triage fields and authorized evidence references SHALL be projected. Repeated observations of the same handoff SHALL reuse the logical execution under existing admission rules. Free-text conclusions, Issue cards, external labels and Reporter receipts SHALL NOT confer admission authority. Missing, stale, incompatible, rejected, review-pending or non-development results SHALL block admission with a reason.

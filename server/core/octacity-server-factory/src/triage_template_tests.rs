@@ -157,6 +157,7 @@ fn stage_selection(
     project,
     &role,
     FactoryRoleProfileDefinition {
+      execution_binding: Default::default(),
       name: FactoryText::new("Reviewed profile").unwrap(),
       instructions: "Reviewed stage instructions".into(),
       template: None,

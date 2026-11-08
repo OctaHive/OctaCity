@@ -257,6 +257,7 @@ impl FactoryCodexBuildProfile {
       model_or_tool: self.toolchain.model.clone(),
       pipeline_node: self.pipeline_node.clone(),
       compilation: Some(octacity_server_factory::FactoryBuildCompilationContract {
+        permissions: Some(self.project_permissions.clone()),
         scoped_validation: self.consumer == FactoryCredentialConsumer::ToolReasoning && self.tool_risk.is_none(),
         capture_write_paths: self.capture.as_ref().map(|capture| {
           capture

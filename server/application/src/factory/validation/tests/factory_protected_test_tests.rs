@@ -108,6 +108,7 @@ fn publication_requires_an_installed_scoped_tester_and_protected_verifier() {
           pipeline_node: octacity_server_domain::PipelineNodeId::new("worker").unwrap(),
           command: None,
           compilation: Some(FactoryBuildCompilationContract {
+            permissions: None,
             capture_write_paths: None,
             scoped_validation: is_caller && scoped,
             role_profiles: false,

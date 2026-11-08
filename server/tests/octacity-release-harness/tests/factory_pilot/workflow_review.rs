@@ -548,6 +548,7 @@ impl Reviewer {
       "criterion":{"source_kind":"policy","source":{"value":{"mapping":"object","fields":{"kind":{"mapping":"constant","value":"artifact"},"value":{"mapping":"pointer","path":"/criterion"}}}}}
     }});
     evaluate["build"] = json!(FlowBuildBinding {
+      execution_permissions: None,
       tool: p.toolchain.executable.clone(),
       plugin: p.toolchain.plugin.clone(),
       result_tool: None,

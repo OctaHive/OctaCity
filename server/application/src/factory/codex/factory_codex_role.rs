@@ -27,7 +27,7 @@ pub(super) fn apply<'a>(
   };
   // Only additive flags can cross this adapter; execution authority stays installed.
   if !mode_matches
-    || profile.credential_purpose != consumer.purpose()
+    || (profile.execution_binding.is_profile() && profile.credential_purpose != consumer.purpose())
     || profile.execution.cli_arguments.iter().any(|argument| {
       !matches!(
         argument.as_str(),
