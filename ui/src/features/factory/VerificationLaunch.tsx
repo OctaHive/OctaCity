@@ -38,7 +38,7 @@ function models(node: Node) {
     .map((build) => sourceReferenceKey(build.model_or_tool));
 }
 
-/** Changes only who starts the existing verifier; its inputs and result stay pinned. */
+/** Selects optional AI analysis; Factory always dispatches the retained verifier first. */
 export function VerificationLaunch({
   root,
   node,
@@ -96,12 +96,6 @@ export function VerificationLaunch({
                     ? { ...caller, scoped_validation_runner: null }
                     : caller,
               ),
-              execution: callerKey
-                ? {
-                    ...root.execution,
-                    max_active_nodes: Math.max(2, root.execution.max_active_nodes),
-                  }
-                : root.execution,
             })
           }
         />

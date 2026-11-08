@@ -545,15 +545,19 @@ to the inventory from the same Tester step. The baseline must observe a
 completed assertion failure before implementation. A passing baseline stops
 with no change, and a setup failure stops preparation.
 
-The post-review verifier's **Verification launch** selects **CI/CD Build** or a
-separate **Tester · Delivery (verification)** step. The latter asks the same
-ordinary Build to run and receives only its bounded verdict and safe summary.
-It cannot replace the candidate, inspect private test bodies, or publish a
-runner verdict itself. Use a parallel-start node after the accepted review to
-connect both steps to the same predecessor outcome, and allow at least two
-active node slots. The stand provisions a separate one-slot validation Agent
-and pool so the waiting Tester cannot occupy the verifier's worker. Each Agent
-retains its own Microsandbox image installation.
+The post-review verifier's **Verification analysis** selects **Without AI
+analysis** or a separate **Tester · Delivery (verification)** step. Factory
+always starts the ordinary verification Build, including when Tester never
+calls a tool. An attached Tester runs after its retained result and receives
+only the bounded verdict and safe summary through `verify_candidate` with
+`action: status`. It cannot replace the candidate, inspect private test bodies,
+or turn a failed, missing or indeterminate check into a pass. The downstream
+validation gate must consume the runner's verified result, not the AI summary.
+Connect both steps to the same predecessor outcome using a parallel-start node;
+Factory orders the verifier before its bound Tester. One active Flow node slot
+is sufficient. The stand retains a separate one-slot validation Agent and pool;
+each Agent has its own Microsandbox image installation. Additional AI analysis
+does not replace the mandatory frozen checks or their verdict.
 
 The Delivery guest includes the checksum-pinned Bubblewrap companion from the
 selected Codex release. Shell execution keeps Codex sandboxing enabled. A new

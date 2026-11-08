@@ -589,7 +589,7 @@ impl FlowDefinition {
   pub fn new(mut input: FlowDefinitionInput) -> Result<Self, FactoryError> {
     validate_size(input.nodes.len(), input.transitions.len())?;
     validate_bindings(&input.nodes)?;
-    validate_scoped_validation_runners(&input.nodes, &input.transitions, &input.entry, &input.execution)?;
+    validate_scoped_validation_runners(&input.nodes, &input.transitions, &input.entry)?;
     input.nodes.sort_by(|left, right| left.key.cmp(&right.key));
     input.transitions.sort();
     input.terminals.sort_by(|left, right| left.key().cmp(right.key()));
@@ -788,7 +788,7 @@ impl FlowDefinition {
 
   pub(crate) fn validate_canonical_form(&self) -> Result<(), FactoryError> {
     validate_bindings(&self.nodes)?;
-    validate_scoped_validation_runners(&self.nodes, &self.transitions, &self.entry, &self.execution)?;
+    validate_scoped_validation_runners(&self.nodes, &self.transitions, &self.entry)?;
     super::code::validate(self.code_sources.as_ref(), &self.nodes)?;
 
     if let Some(policy) = self.execution.verification() {
@@ -865,15 +865,13 @@ fn validate_scoped_validation_runners(
   nodes: &[FlowNodeDefinition],
   transitions: &[FlowTransition],
   entry: &FactoryKey,
-  execution: &FlowExecutionPolicy,
 ) -> Result<(), FactoryError> {
   let mut selected_runners = BTreeSet::new();
   for caller in nodes {
     let Some(runner) = caller.scoped_validation_runner() else {
       continue;
     };
-    if execution.max_active_nodes() < 2
-      || !selected_runners.insert(runner)
+    if !selected_runners.insert(runner)
       || caller.key() == entry
       || runner == entry
       || !nodes

@@ -9,8 +9,7 @@ use crate::{
 use async_trait::async_trait;
 use octacity_server_domain::Timestamp;
 use octacity_server_factory::{
-  BudgetUsage, DeterministicGateOutcome, EvidenceOutputKind, EvidenceRequirement, FactoryDigest, FlowBuildIntent,
-  FlowNodeKind,
+  DeterministicGateOutcome, EvidenceOutputKind, EvidenceRequirement, FactoryDigest, FlowBuildIntent, FlowNodeKind,
 };
 use octacity_server_store::{BuildQueryStore, FactoryScopedBuildCaller};
 use serde::Deserialize;
@@ -198,7 +197,7 @@ where
     Ok(())
   }
 
-  /// Observes an externally launched runner without dispatching it. The caller
+  /// Observes the Factory-owned runner without dispatching it. The caller
   /// must resolve the request from an authorized Tester lease and frozen Flow.
   pub async fn scoped_verdict(
     &self,
@@ -208,6 +207,27 @@ where
       return Err(ApplicationError::invalid());
     }
     use FactoryScopedValidationVerdict::*;
+    let intent = self.validation_intent(&request)?;
+    intent
+      .verify_admission(request.admitted)
+      .map_err(|_| ApplicationError::invalid())?;
+    intent
+      .node()
+      .verify_observer(&request.ownership, request.observed_at)
+      .map_err(|_| ApplicationError::invalid())?;
+    if self
+      .builds
+      .factory_build_for_operation(intent.operation_id().map_err(|_| ApplicationError::invalid())?)
+      .await
+      .map_err(build_error)?
+      .is_none()
+    {
+      return Ok(if request.observed_at < intent.node().deadline() {
+        Waiting
+      } else {
+        Stopped
+      });
+    }
     Ok(match self.observe(request).await? {
       FactoryNodeExecutionStep::Waiting { .. } | FactoryNodeExecutionStep::AwaitingTerminalUsage { .. } => Waiting,
       FactoryNodeExecutionStep::ExecutionStopped { .. } => Stopped,
@@ -261,33 +281,22 @@ where
     request: FactoryNodeExecutionRequest<'_>,
   ) -> Result<FactoryNodeExecutionStep, ApplicationError> {
     let intent = self.validation_intent(&request)?;
-    let accepted = if self.requires_scoped_launch(&request) {
-      intent
-        .verify_admission(request.admitted)
-        .map_err(|_| ApplicationError::invalid())?;
-      intent
-        .node()
-        .verify_observer(&request.ownership, request.observed_at)
-        .map_err(|_| ApplicationError::invalid())?;
-      let Some(accepted) = self
+    // No private input can extend an expired dispatch window. Let the common
+    // adapter verify ownership and settle an operation that was never accepted.
+    if request.observed_at >= intent.node().deadline()
+      && self
         .builds
         .factory_build_for_operation(intent.operation_id().map_err(|_| ApplicationError::invalid())?)
         .await
         .map_err(build_error)?
-      else {
-        return Ok(if request.observed_at < intent.node().deadline() {
-          FactoryNodeExecutionStep::Waiting { execution: None }
-        } else {
-          FactoryNodeExecutionStep::ExecutionStopped {
-            execution: None,
-            usage: BudgetUsage::default(),
-          }
-        });
-      };
-      Some(accepted)
-    } else {
-      None
-    };
+        .is_none()
+    {
+      return FactoryNodeExecutor::observe(
+        &FactoryNodeBuildAdapter::new(self.builds.clone(), self.outputs.clone()),
+        request,
+      )
+      .await;
+    }
     let materialized = self.inputs.materialization(intent).await?;
     if materialized.input() != intent.input() {
       return Err(ApplicationError::invalid());
@@ -326,7 +335,15 @@ where
       },
     );
     let adapter = FactoryNodeBuildAdapter::new(self.builds.clone(), outputs);
-    let adapter = if let Some(accepted) = accepted {
+    // Recover the same Factory-owned operation when the Tester observes it.
+    // If absent, the ordinary adapter dispatches it without waiting for the AI.
+    let adapter = if self.requires_scoped_launch(&request)
+      && let Some(accepted) = self
+        .builds
+        .factory_build_for_operation(intent.operation_id().map_err(|_| ApplicationError::invalid())?)
+        .await
+        .map_err(build_error)?
+    {
       adapter.with_accepted_build(accepted)
     } else {
       adapter

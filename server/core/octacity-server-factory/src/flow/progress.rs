@@ -124,17 +124,37 @@ impl FlowInterpreter<'_> {
         ready,
       ));
     }
-    let position = if let Some(pending) = pending.first() {
+    // The verifier is mandatory control work. A model may inspect its result
+    // only after the owner has retained completion of the latest runner attempt.
+    let definition = self.definition(flow)?;
+    ready.retain(|key| {
+      definition
+        .node(key)
+        .and_then(|node| node.scoped_validation_runner())
+        .is_none_or(|runner| {
+          attempts
+            .iter()
+            .rev()
+            .find(|attempt| attempt.node_key() == runner)
+            .is_some_and(|attempt| {
+              history
+                .completions
+                .iter()
+                .any(|done| done.node_attempt_id() == attempt.id())
+            })
+        })
+    });
+    let analysis = ready.iter().find(|key| {
+      definition
+        .node(key)
+        .is_some_and(|node| node.scoped_validation_runner().is_some())
+    });
+    let position = if let Some(analysis) = analysis {
+      FlowProgress::Node(analysis.clone())
+    } else if let Some(pending) = pending.iter().find(|pending| ready.contains(pending.node_key())) {
       FlowProgress::Node(pending.node_key().clone())
     } else if let Some(node) = ready.iter().next() {
-      // A scoped runner stays eligible for the tool. Its caller needs the first
-      // reconciliation turn when both branches become ready.
-      let definition = self.definition(flow)?;
-      let selected = definition
-        .scoped_validation_caller(node)
-        .filter(|caller| ready.contains(*caller))
-        .unwrap_or(node);
-      FlowProgress::Node(selected.clone())
+      FlowProgress::Node(node.clone())
     } else if let Some((_, key, source)) = terminal {
       FlowProgress::Terminal { key, source }
     } else {

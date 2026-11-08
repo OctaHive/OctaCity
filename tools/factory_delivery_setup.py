@@ -24,6 +24,12 @@ TEST_SCRIPT_MAX_BYTES = 16384
 # Tester Runtime and its Profile pins usable by already published Flows.
 TEST_AUTHOR_RUNTIME = "delivery-tester-assertions"
 TEST_VERIFIER_RUNTIME = "delivery-tester-verification"
+TEST_VERIFIER_INSTRUCTIONS = (
+    "Factory starts the mandatory verification Build before this step. Read its retained result "
+    "using the installed verify_candidate tool with action status. Summarize the runner verdict; "
+    "a missing, failed or indeterminate check is not a pass. Your response cannot replace that verdict. "
+    "The server selects the retained checks and reviewed candidate; do not replace either."
+)
 # Microsandbox allocates whole vCPUs to each isolated VM.
 READER_CPU_MILLIS = 1000
 SCOPED_TESTER_CPU_MILLIS = 2 * READER_CPU_MILLIS
@@ -206,13 +212,18 @@ def delivery_models(catalog: dict, project_id: str, capture_tool: dict, write_di
         cpu_changed = alias == TEST_VERIFIER_RUNTIME and alias in runtimes and (
             runtimes[alias]["ceiling"]["permissions"].get("resources", {}).get("cpu_millis", 0)
             < SCOPED_TESTER_CPU_MILLIS)
-        if alias in runtimes and (plugin_changed or cpu_changed or
+        instructions_changed = alias == TEST_VERIFIER_RUNTIME and alias in runtimes and any(
+            row["toolchain"] == runtimes[alias]["ceiling"]["toolchain"]
+            and row.get("instructions") != TEST_VERIFIER_INSTRUCTIONS for row in catalog["codex"])
+        if alias in runtimes and (plugin_changed or cpu_changed or instructions_changed or
                 (source_mode or alias == TEST_VERIFIER_RUNTIME) and runtimes[alias]["ceiling"]["build_configuration"] != selected_build):
             # Published profiles retain their exact compiler and guest. Install
             # a separate capability rather than silently replacing that binding.
             identity = [selected_build, selected_plugin] if plugin_changed else selected_build
             if cpu_changed:
                 identity = [identity, {"cpu_millis": SCOPED_TESTER_CPU_MILLIS}]
+            if instructions_changed:
+                identity = [identity, {"instructions": TEST_VERIFIER_INSTRUCTIONS}]
             runtime_alias += "-" + hashlib.sha256(_json(identity)).hexdigest()[:12]
         grants = copy.deepcopy(permissions)
         if plugin is not None:
@@ -256,11 +267,7 @@ def delivery_models(catalog: dict, project_id: str, capture_tool: dict, write_di
             entry["build_configuration"] = selected_build
             entry["execution_mode"] = "scoped_validation"
             entry["tool_response_limits"] = {"per_call_bytes": 16384, "total_bytes": 262144}
-            entry["instructions"] = (
-                "Invoke the installed verify_candidate tool with action start, then poll action status until it "
-                "reports verified or stopped. Summarize the runner verdict. Do not infer a pass from prose. "
-                "The server selects the retained checks and reviewed candidate; do not replace either."
-            )
+            entry["instructions"] = TEST_VERIFIER_INSTRUCTIONS
             grants["tools"] = [triage._reference("factory-scoped-validation")]
             _choice(project, "factory-scoped-validation", grants["tools"][0])
         elif purpose == "model":
@@ -697,6 +704,7 @@ def stage(root: Path, directory: Path, installed: dict, project_id: str, reposit
                     for row in project["references"])
             and (root / "agent-validation/worker.json").is_file()
             and any(row.get("execution_mode") == "scoped_validation"
+                    and row.get("instructions") == TEST_VERIFIER_INSTRUCTIONS
                     and row["toolchain"].get("plugin") == installed_plugin
                     and row["build_configuration"]["project_id"] == project_id
                     and row["project_permissions"].get("resources", {}).get("cpu_millis", 0)

@@ -1224,12 +1224,18 @@ pub(crate) fn validation_fixture_with_flow(
       scoped.clone(),
     )])
     .unwrap();
-    assert_eq!(
-      scoped.observe(request()).await.unwrap(),
-      FactoryNodeExecutionStep::Waiting { execution: None },
-      "a scoped runner must not create a Build before its tool request"
-    );
-    assert!(validator.requests.lock().unwrap().is_empty());
+    *validator.state.lock().unwrap() = octacity_server_orchestrator::BuildState::Queued;
+    for _ in 0..2 {
+      assert!(
+        matches!(
+          scoped.observe(request()).await.unwrap(),
+          FactoryNodeExecutionStep::Waiting { execution: Some(_) }
+        ),
+        "Factory must dispatch the mandatory verifier even when Tester never calls its tool"
+      );
+    }
+    assert_eq!(validator.requests.lock().unwrap().len(), 1);
+    assert!(validator.scoped_callers.lock().unwrap().is_empty());
     assert_eq!(
       serde_json::to_value(
         registry
@@ -1240,7 +1246,7 @@ pub(crate) fn validation_fixture_with_flow(
       .unwrap(),
       serde_json::json!({"status":"waiting"}),
     );
-    assert_eq!(reads.load(std::sync::atomic::Ordering::Relaxed), 0);
+    assert!(reads.load(std::sync::atomic::Ordering::Relaxed) > 0);
     let deadline = intent.node().deadline();
     let expired_request = || FactoryNodeExecutionRequest {
       observed_at: deadline,
@@ -1255,12 +1261,46 @@ pub(crate) fn validation_fixture_with_flow(
       ),
       ..request()
     };
+    let absent = std::sync::Arc::new(Builds::new());
+    let expired = FactoryProtectedValidationAdapter::new(
+      absent.clone(),
+      std::sync::Arc::new(crate::factory_node_test_support::Outputs(None)),
+      std::sync::Arc::new(Selected(materialized.clone(), None)),
+      requirement.clone(),
+      facts_requirement.clone(),
+    )
+    .with_scoped_launch();
     assert_eq!(
-      serde_json::to_value(scoped.scoped_verdict(expired_request()).await.unwrap()).unwrap(),
+      serde_json::to_value(expired.scoped_verdict(expired_request()).await.unwrap()).unwrap(),
       serde_json::json!({"status":"stopped"}),
     );
-    assert!(scoped.launch_scoped(expired_request(), caller).await.is_err());
-    assert!(validator.requests.lock().unwrap().is_empty());
+    assert!(expired.launch_scoped(expired_request(), caller).await.is_err());
+    assert!(absent.requests.lock().unwrap().is_empty());
+    struct ExpiredInputs;
+    #[async_trait::async_trait]
+    impl FactoryProtectedValidationInputSource for ExpiredInputs {
+      async fn materialization(
+        &self,
+        _: &FlowBuildIntent,
+      ) -> Result<FactoryProtectedValidationMaterialization, ApplicationError> {
+        Err(ApplicationError::invalid())
+      }
+    }
+    let expired = FactoryProtectedValidationAdapter::new(
+      absent.clone(),
+      std::sync::Arc::new(crate::factory_node_test_support::Outputs(None)),
+      std::sync::Arc::new(ExpiredInputs),
+      requirement.clone(),
+      facts_requirement.clone(),
+    );
+    assert!(
+      matches!(
+        expired.observe(expired_request()).await.unwrap(),
+        FactoryNodeExecutionStep::ExecutionStopped { execution: None, usage } if usage == BudgetUsage::default()
+      ),
+      "an undispatched expired verifier must settle without reading expired private inputs"
+    );
+    assert!(absent.requests.lock().unwrap().is_empty());
     let installed = FactoryProtectedValidationAdapter::new(
       validator.clone(),
       std::sync::Arc::new(crate::factory_node_test_support::Outputs(Some(outputs.clone()))),
@@ -1275,16 +1315,11 @@ pub(crate) fn validation_fixture_with_flow(
         .await
         .unwrap();
     }
-    assert_eq!(
-      validator.scoped_callers.lock().unwrap().len(),
-      1,
-      "new dispatch must carry caller authority into ordinary Build acceptance"
+    assert!(
+      validator.scoped_callers.lock().unwrap().is_empty(),
+      "the optional Tester call must not replace Factory's mandatory dispatch"
     );
-    let retained_caller = validator.scoped_callers.lock().unwrap()[0];
-    assert_eq!(
-      (retained_caller.lease, retained_caller.job_id, retained_caller.attempt),
-      (caller.lease, caller.job_id, caller.attempt)
-    );
+    *validator.state.lock().unwrap() = octacity_server_orchestrator::BuildState::Succeeded;
     assert!(matches!(
       installed.observe(request()).await.unwrap(),
       FactoryNodeExecutionStep::Completed { .. }

@@ -466,10 +466,15 @@ This check qualifies assembly and publication, without a new model execution or
 PR. The execution qualification for both verification modes is recorded below.
 
 The standard stand installs the test author and the scoped validation Tester
-with a separate single-slot validation Agent. In Console, select either
-**CI/CD Build** or **Tester** for the verification step. Both execute the
-retained protected inventory against the reviewed candidate; changing the
-launch mode does not publish a new test suite. Upload supplementary checks
+with a separate single-slot validation Agent. The current Console offers
+**Verification analysis → Without AI analysis** or a bound **Tester** step.
+Factory dispatches the mandatory verification Build in both cases. A bound
+Tester starts after its result is retained and reads `verify_candidate` with
+`action: status`; its prose cannot override the runner verdict. One active
+Flow slot is sufficient. Changing analysis selection does not publish a new
+test suite. The execution records below describe the earlier tool-triggered
+launch behavior; the mandatory-dispatch regression is recorded separately.
+Upload supplementary checks
 in the test-author step and freeze their explicit shell entrypoints or
 Octafile tasks before publishing the Flow.
 
@@ -490,7 +495,9 @@ the Issue outcome cards:
   retains an expected behavioral failure, rather than a setup error.
 - Coder captures a candidate and a separate Reviewer inspects that revision.
   Reviewer reports the exact frozen node input identity, candidate revision
-  and candidate digest. Its `findings` contain actionable defects only;
+  and candidate digest. The input identity is the top-level `input_digest` in
+  the task envelope, not the Context or role-package digest. Its `findings`
+  contain actionable defects only;
   uncertainty remains an indeterminate quality judgment.
 - In the verification step, choose **Accepted candidate from another step**,
   its implementation step and the accepted outcome as the step code revision.
@@ -650,3 +657,72 @@ the separate 5.1–5.4 journeys above; this matrix does not imply another host o
 backend qualification or live-provider authentication. Common-authoring cutover,
 the optional stand example and retained-client compatibility are documented in
 [authoring migration](../reference/factory-pipeline-authoring-migration.md).
+
+### Mandatory verification dispatch regression (2026-11-08)
+
+The dispatch, ordering, one-slot admission, Console selection and installed
+Tester instructions were changed through separate Red/Green cycles. Before
+implementation, the tests observed missing mandatory dispatch, premature Tester
+eligibility, the two-slot restriction and the old tool-triggered instructions.
+The focused regression commands are:
+
+```sh
+cargo test --locked -p octacity-server-factory --lib
+cargo test --locked -p octacity-server-application --all-features --lib factory::validation::tests::factory_protected_test_tests
+cargo test --locked -p octacity-server-application --all-features --lib scoped
+python3 -m unittest discover -s tools/tests -p test_factory_delivery_setup.py
+cd ui
+pnpm exec vitest run src/features/factory/VerificationLaunch.test.tsx src/features/factory/FactoryAuthoring.test.tsx src/features/factory/FlowGraphEditor.test.tsx
+pnpm build
+```
+
+Green results: 348 Factory tests, eight protected-test adapter tests, 16 scoped
+execution tests, 20 stand tests (one platform-specific skip), and 39 Console
+tests. Clippy with `--all-features --lib --tests -- -D warnings`, Rust formatting,
+Console lint/formatting, architecture checks and strict change validation pass.
+The documentation changes have no executable behavior; strict OpenSpec
+validation and whitespace checks cover them.
+
+For a small implementation qualification, assign only the requested source
+change to Coder. Candidate bundles, manifests and their identities belong to
+trusted Agent capture. The model must not manufacture these publications; an
+absent accepted specification remains absent.
+
+The native run also exposed an expired-dispatch regression: when no Build had
+been accepted, reconstructing private inputs after the node deadline prevented
+settlement. The adapter regression first failed with `InvalidInput` for both
+source-only and captured-deliverable cases, then passed after expired missing
+operations delegated directly to the common fenced settlement path. Existing
+Builds still require independently verified evidence; this is not a successful
+validation result or a renewed execution window.
+
+Native qualification used disposable PostgreSQL/S3, the standard Delivery image,
+Octa 0.9.0 and Microsandbox 0.7.6 on macOS ARM64. Factory used the standard stand's
+30-second ownership window. Both Flows admitted one active node and completed
+all 14 nodes without stops:
+
+| Scenario | Factory Run | Retained runner verdict | Resolved terminal |
+| --- | --- | --- | --- |
+| Accepted candidate | `8cc8e463-48ed-4c59-a3d2-8c02f4dfc168` | `acceptance: passed` | `verified_candidate` |
+| Frozen operator check fails | `6c5b0fd8-3cf9-489b-a8c2-41b3eb544c5e` | `acceptance: failed` | `protected_validation_gate_failed` |
+
+Each Run retained exactly one mandatory candidate-check Build. Its verified
+completion preceded the first Tester attempt. The baseline check input, candidate
+check input and final report named the same exact protected inventory within each
+Run. Tester reported the actual verdict; its successful analysis completion did
+not turn the second runner's failure into a pass. Both resolved terminals were
+also confirmed in the persisted lifecycle checkpoint. No PR or GitHub update was
+published, and the user's running stand, volumes and pipelines were unchanged.
+
+The failure-path Run used the additively installed current Tester compiler and
+Profile through the ordinary Runtime, Profile and Flow publication APIs. The
+successful Run also confirms compatibility with an older pinned Tester Profile:
+its redundant `start` call reused the single already accepted Build.
+
+An earlier diagnostic deliberately gave the old compiler contradictory
+instructions to omit tools and claim success. It timed out without final resource
+accounting and entered an explicit wait for settlement; it produced no accepted
+analysis or successful verification. This is fail-closed evidence, not a claim
+that an optimistic AI response completed that diagnostic, nor qualification of
+resource-accounting recovery. The completed failure-path Run above uses the
+current installed instructions and the actual retained runner failure.

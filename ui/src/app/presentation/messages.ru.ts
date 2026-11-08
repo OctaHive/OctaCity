@@ -337,11 +337,14 @@ export const ruMessages = {
   'factory.verificationInvalidTaskName':
     'Введите точное имя задачи Octa, например Checks:_Verify. До 128 байт, без шаблонов поиска.',
   'factory.verificationRemoveTask': 'Убрать задачу',
-  'factory.verificationLaunch': 'Запуск проверок',
-  'factory.verificationDirect': 'CI/CD Build',
-  'factory.verificationLaunchHelp': 'Запускайте сохранённые проверки напрямую или через Tester, который запросит тот же проверочный Build. Набор тестов и проверяемая версия остаются прежними.',
-  'factory.verificationNeedsTester': 'Для режима Tester добавьте AI-шаг с установленным профилем проверки Delivery.',
-  'factory.verificationSiblingHelp': 'Подключите Tester и этот шаг проверки после одного результата предыдущего шага. Им нужны два активных слота и независимые worker. Соедините их результаты со следующей проверкой условий.',
+  'factory.verificationLaunch': 'Разбор проверки',
+  'factory.verificationDirect': 'Без разбора AI',
+  'factory.verificationLaunchHelp':
+    'Factory всегда запускает защищённый проверочный Build. Tester может разобрать сохранённый результат; текст AI не заменяет вердикт runner.',
+  'factory.verificationNeedsTester':
+    'Для режима Tester добавьте AI-шаг с установленным профилем проверки Delivery.',
+  'factory.verificationSiblingHelp':
+    'Подключите Tester и шаг проверки после одного результата предыдущего шага. Factory сначала выполнит проверку, затем Tester, и только потом продолжит. Следующая проверка условий должна использовать результат runner.',
   'factory.verificationAddTask': 'Добавить задачу Octafile',
   'factory.verificationLimit': 'Выберите до 64 файлов общим объёмом до 256 КиБ.',
   'factory.verificationFailed':

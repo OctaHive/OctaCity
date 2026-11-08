@@ -78,12 +78,10 @@ fn scoped_validation_selects_only_a_distinct_runner_on_the_same_fanout() {
       })
     ));
   }
-  assert!(matches!(
-    define("build_command", "checks", false, 1),
-    Err(FactoryError::InvalidConfiguration {
-      field: "Flow scoped validation runner"
-    })
-  ));
+  assert!(
+    define("build_command", "checks", false, 1).is_ok(),
+    "mandatory verification finishes before Tester, so one active slot is sufficient"
+  );
 }
 
 #[test]

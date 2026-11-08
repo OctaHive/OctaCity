@@ -71,7 +71,7 @@ class FactoryDeliverySetupTests(unittest.TestCase):
             catalog.chmod(0o600)
             class Client:
                 def get(self, path):
-                    return {"definition": {"runtime": {"immutable_image": "qualified-guest"}}}
+                    return {"definition": {"runtime": {"immutable_image": "qualified-guest", "cpu_millis": 2000}}}
             with mock.patch.object(setup.triage, "prepare_guest_image", return_value="qualified-guest"), \
                  mock.patch.object(setup, "_standard_verifiers_current", return_value=True), \
                  mock.patch("configure_local_stand_agent.read_factory_agent_profile", return_value={}), \
@@ -271,6 +271,14 @@ class FactoryDeliverySetupTests(unittest.TestCase):
         scoped = additions["projects"][0]["role_profiles"].get("delivery-tester-verification")
         self.assertIsNotNone(scoped, "Delivery installs a separate Tester profile for invoking the retained checks")
         self.assertEqual(verification["execution_mode"], "scoped_validation")
+        self.assertIn("Factory starts the mandatory verification Build before this step", verification["instructions"])
+        self.assertNotIn("action start, then poll", verification["instructions"])
+        previous = copy.deepcopy(additions)
+        previous["codex"][-1]["instructions"] = "Invoke the runner before reading its result."
+        upgraded = delivery_models(previous, project, capture, ["tools", "tests"], code_build=code_build)
+        self.assertEqual(upgraded["codex"][:len(previous["codex"])], previous["codex"],
+                         "published callers retain their original compiler instructions")
+        self.assertIn("Factory starts the mandatory verification Build before this step", upgraded["codex"][-1]["instructions"])
         self.assertEqual(verification["project_permissions"]["resources"]["cpu_millis"], 2000,
                          "caller and private reader each need one whole vCPU")
         self.assertEqual(coder["project_permissions"]["resources"]["cpu_millis"], 1000)

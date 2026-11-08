@@ -1317,7 +1317,7 @@ fn every_ready_fanout_sibling_remains_visible_without_reserving_existing_work_ag
 }
 
 #[test]
-fn scoped_runner_cannot_take_the_first_reconciliation_turn_from_its_caller() {
+fn mandatory_verification_precedes_tester_analysis_and_waits_for_its_completion() {
   let output = schema("fanout.output");
   let project = crate::flow_test_support::work().subject().project_id();
   let mut build = crate::flow_test_support::binding(project);
@@ -1341,11 +1341,24 @@ fn scoped_runner_cannot_take_the_first_reconciliation_turn_from_its_caller() {
       node("split", FlowNodeKind::FanOut, None, output.clone(), None, 100),
       checks,
       tester,
+      node(
+        "after_checks",
+        FlowNodeKind::DeterministicGate,
+        None,
+        output.clone(),
+        None,
+        100,
+      ),
     ],
     vec![
       FlowTransition::new(key("split"), key("accepted"), FlowTransitionTarget::Node(key("checks"))),
       FlowTransition::new(key("split"), key("accepted"), FlowTransitionTarget::Node(key("tester"))),
-      terminal_route("checks", "done"),
+      FlowTransition::new(
+        key("checks"),
+        key("accepted"),
+        FlowTransitionTarget::Node(key("after_checks")),
+      ),
+      terminal_route("after_checks", "done"),
       terminal_route("tester", "done"),
     ],
     vec![FlowTerminalDefinition::new(key("done"), output.clone())],
@@ -1382,11 +1395,54 @@ fn scoped_runner_cannot_take_the_first_reconciliation_turn_from_its_caller() {
   let interpreter = FlowInterpreter::new(&validated);
   assert_eq!(
     interpreter.ready_nodes(&flow, &cycle, history).unwrap(),
-    std::collections::BTreeSet::from([key("checks"), key("tester")])
+    std::collections::BTreeSet::from([key("checks")])
   );
   assert_eq!(
     interpreter.progress(&flow, &cycle, history).unwrap(),
+    crate::FlowProgress::Node(key("checks"))
+  );
+  let checks = attempt(9906, 2, &flow, &cycle, &root, "checks", 100);
+  let attempts = [split.clone(), checks.clone()];
+  let pending = FlowRuntimeHistory {
+    attempts: &attempts,
+    ..history
+  };
+  assert_eq!(
+    interpreter.ready_nodes(&flow, &cycle, pending).unwrap(),
+    std::collections::BTreeSet::from([key("checks")])
+  );
+  let completions = [
+    completed.clone(),
+    completion(&checks, &root, &output, BudgetUsage::default()),
+  ];
+  let verified = FlowRuntimeHistory {
+    completions: &completions,
+    ..pending
+  };
+  assert_eq!(
+    interpreter.ready_nodes(&flow, &cycle, verified).unwrap(),
+    std::collections::BTreeSet::from([key("after_checks"), key("tester")])
+  );
+  assert_eq!(
+    interpreter.progress(&flow, &cycle, verified).unwrap(),
     crate::FlowProgress::Node(key("tester"))
+  );
+  let tester = attempt(9907, 3, &flow, &cycle, &root, "tester", 100);
+  let analyzed_attempts = [split.clone(), checks.clone(), tester.clone()];
+  let analyzed_completions = [
+    completions[0].clone(),
+    completions[1].clone(),
+    completion(&tester, &root, &output, BudgetUsage::default()),
+  ];
+  let analyzed = FlowRuntimeHistory {
+    attempts: &analyzed_attempts,
+    completions: &analyzed_completions,
+    ..history
+  };
+  // An AI completion cannot finish the Flow before the runner's downstream gate.
+  assert_eq!(
+    interpreter.progress(&flow, &cycle, analyzed).unwrap(),
+    crate::FlowProgress::Node(key("after_checks"))
   );
 }
 

@@ -332,11 +332,14 @@ export const enMessages = {
   'factory.verificationInvalidTaskName':
     'Enter the exact Octa task name, for example Checks:_Verify. Use up to 128 bytes and no wildcards.',
   'factory.verificationRemoveTask': 'Remove task',
-  'factory.verificationLaunch': 'Verification launch',
-  'factory.verificationDirect': 'CI/CD Build',
-  'factory.verificationLaunchHelp': 'Run the retained checks directly, or let a Tester request the same verification Build. Both use the same frozen tests and candidate.',
-  'factory.verificationNeedsTester': 'To use Tester, add an AI step with the installed Delivery verification profile.',
-  'factory.verificationSiblingHelp': 'Connect Tester and this verification step after the same predecessor outcome. They need two active slots and independent workers. Connect their results to the following gate.',
+  'factory.verificationLaunch': 'Verification analysis',
+  'factory.verificationDirect': 'Without AI analysis',
+  'factory.verificationLaunchHelp':
+    'Factory always starts the protected verification Build. Tester can analyze its retained result; AI text cannot replace the runner verdict.',
+  'factory.verificationNeedsTester':
+    'To use Tester, add an AI step with the installed Delivery verification profile.',
+  'factory.verificationSiblingHelp':
+    'Connect Tester and the verification step after the same predecessor outcome. Factory runs verification first, then Tester, before continuing. Keep the following gate bound to the verifier result.',
   'factory.verificationAddTask': 'Add Octafile task',
   'factory.verificationLimit': 'Select up to 64 files and 256 KiB in total.',
   'factory.verificationFailed':

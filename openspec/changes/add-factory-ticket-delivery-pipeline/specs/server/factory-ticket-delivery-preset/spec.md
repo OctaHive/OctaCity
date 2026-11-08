@@ -96,9 +96,11 @@ The pipeline SHALL execute implementation or defect correction, capture its exac
 - **WHEN** the captured candidate receives a successful independent review and passes the prepared tests and required repository checks
 - **THEN** that exact candidate becomes eligible for PR delivery
 
-#### Scenario: The Flow selects how to launch the protected checks
-- **WHEN** the operator selects either a scoped Tester invocation or a direct CI/CD Build step to launch verification
-- **THEN** the same protected runner executes the frozen plan and supplies the verified verdict for the exact candidate
+#### Scenario: Optional Tester analysis cannot skip mandatory checks
+- **WHEN** the operator attaches a scoped Tester invocation to the post-review verification Build
+- **THEN** Factory starts and retains the mandatory runner result before dispatching Tester, even if Tester never requests execution
+- **AND** the downstream validation gate uses the runner's verified verdict for the exact candidate, regardless of a positive AI conclusion
+- **AND** failed, missing, timed-out or skipped required checks cannot authorize delivery
 
 #### Scenario: Review requests a fix or a prepared test fails
 - **WHEN** review or validation identifies a change within the remaining rework budget
@@ -160,7 +162,7 @@ An operator SHALL be able to enable concise cards on accepted specification, rev
 
 ### Requirement: Every AI stage has its declared role and isolated invocation
 
-The example graph SHALL assign the Tester responsibility to deeper defect reproduction and test authoring, Coder to implementation and independent review, DevOps to Delivery and Analytic to requirements/specification authoring. Test execution SHALL allow either a Tester invocation with scoped execution and observation tools or a direct CI/CD Build step. Both modes SHALL rely on the trusted runner's deterministic reports for pass/fail. Each agent stage SHALL pin a compatible Project Role/Profile and its own isolated invocation, even when stages share a role or profile. The assignment and expected result SHALL be set on the step independently of reusable Profile instructions and skills. Compatible existing roles SHALL be selectable regardless of their display names. Role names SHALL NOT dispatch runtime code or grant input access. The Coder review invocation SHALL remain independent of implementation and SHALL NOT inherit its private transcript.
+The example graph SHALL assign the Tester responsibility to deeper defect reproduction and test authoring, Coder to implementation and independent review, DevOps to Delivery and Analytic to requirements/specification authoring. Factory SHALL dispatch the mandatory protected verification Build independently of AI tool calls. Operators MAY attach a separate Tester invocation for analysis and authorized diagnostics after the runner result is retained. Pass/fail SHALL rely on the trusted runner's deterministic reports in both configurations. Each agent stage SHALL pin a compatible Project Role/Profile and its own isolated invocation, even when stages share a role or profile. The assignment and expected result SHALL be set on the step independently of reusable Profile instructions and skills. Compatible existing roles SHALL be selectable regardless of their display names. Role names SHALL NOT dispatch runtime code or grant input access. The Coder review invocation SHALL remain independent of implementation and SHALL NOT inherit its private transcript.
 
 #### Scenario: Stages select the configured AI agents
 - **WHEN** reproduction, specification, test authoring, implementation, review, test execution and Delivery are dispatched

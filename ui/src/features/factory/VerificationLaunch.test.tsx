@@ -9,7 +9,7 @@ import { VerificationLaunch } from './VerificationLaunch';
 
 afterEach(cleanup);
 
-it('selects a scoped Tester without replacing the retained verifier or its inputs, and can return to direct Build', async () => {
+it('adds Tester analysis after mandatory verification without requiring parallel slots or replacing the verifier', async () => {
   const draft = emptyFlowDraft();
   const sample =
     factoryProfileConfigurationFixture().configuration.flow.closure.definitions[0]!.nodes[0]!;
@@ -41,14 +41,15 @@ it('selects a scoped Tester without replacing the retained verifier or its input
     );
   }
   render(<Harness />);
-  await userEvent.click(screen.getByRole('combobox', { name: 'Verification launch' }));
+  expect(screen.getByText(/Factory always starts the protected verification Build/)).toBeTruthy();
+  await userEvent.click(screen.getByRole('combobox', { name: 'Verification analysis' }));
   await userEvent.click(screen.getByRole('option', { name: 'Tester · tester' }));
   const selected = calls.mock.lastCall![0];
   expect(selected.nodes[0].scoped_validation_runner).toBe('checks');
   expect(selected.nodes[1]).toEqual(draft.root.nodes[1]);
-  expect(selected.execution.max_active_nodes).toBeGreaterThanOrEqual(2);
-  await userEvent.click(screen.getByRole('combobox', { name: 'Verification launch' }));
-  await userEvent.click(screen.getByRole('option', { name: 'CI/CD Build' }));
+  expect(selected.execution.max_active_nodes).toBe(draft.root.execution.max_active_nodes);
+  await userEvent.click(screen.getByRole('combobox', { name: 'Verification analysis' }));
+  await userEvent.click(screen.getByRole('option', { name: 'Without AI analysis' }));
   expect(calls.mock.lastCall![0].nodes[0].scoped_validation_runner).toBeNull();
   expect(calls.mock.lastCall![0].nodes[1]).toEqual(draft.root.nodes[1]);
 });
