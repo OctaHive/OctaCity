@@ -2021,6 +2021,8 @@ export const enMessages = {
     'No editable examples are available. You can still build a pipeline from scratch.',
   'factory.exampleHelp':
     'Choose the resources for this example. In the draft, review step access and connect code where needed before publishing.',
+  'factory.optionalExampleCommand':
+    'Optional. Without a command, tickets that need this check are sent for review.',
   'factory.exampleNeedsPredecessor':
     'Publish a Flow with a typed result to use as the predecessor.',
   'factory.exampleUnavailable': 'The selected resource is unavailable or incompatible',

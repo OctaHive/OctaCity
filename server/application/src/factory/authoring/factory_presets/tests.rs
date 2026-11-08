@@ -316,7 +316,7 @@ fn resolved_delivery_is_an_editable_ordinary_flow_with_no_implicit_activation() 
             configuration_id: None,
             configuration: None,
             repository: None,
-            ..selection
+            ..selection.clone()
           },
         },
       )
@@ -334,6 +334,78 @@ fn resolved_delivery_is_an_editable_ordinary_flow_with_no_implicit_activation() 
         .all(|node| node.code() == Some(&FlowCodeBinding::None))
     );
     assert!(flow_only.configuration.is_none() && flow_only.input.is_none());
+    assert_eq!(store.mutation_evidence_counts().await, before);
+    // Feature delivery needs only the Tester-authored baseline/candidate commands.
+    // Missing reproduction must retain a stop route for unresolved defects.
+    let mut without_reproduction = selection.clone();
+    without_reproduction.commands.remove(&key("reproduction"));
+    let feature_delivery = resolver
+      .handle_query(
+        &context,
+        ResolveFactoryPresetQuery {
+          project_id: project,
+          selection: without_reproduction,
+        },
+      )
+      .await
+      .unwrap();
+    assert!(
+      feature_delivery.diagnostics.is_empty(),
+      "{:?}",
+      feature_delivery.diagnostics
+    );
+    let feature_delivery = feature_delivery.flow.unwrap();
+    let entry = feature_delivery
+      .root
+      .nodes
+      .iter()
+      .find(|node| node.key() == &key("reproduction-needed"))
+      .unwrap();
+    let schema = feature_delivery
+      .data_schemas
+      .iter()
+      .find(|schema| Some(schema.reference()) == entry.input_schema())
+      .unwrap();
+    let gate = FlowGateProgram::from_node(entry).unwrap();
+    for (kind, reproducibility, expected) in [
+      ("feature_request", "not_applicable", "bypass"),
+      ("defect", "unknown", "check"),
+      ("defect", "needs_input", "needs_input"),
+    ] {
+      let payload = FlowPayload::new(
+        schema,
+        serde_json::json!({
+          "work_kind": kind, "reproducibility": reproducibility, "triage_accepted": true,
+        }),
+      )
+      .unwrap();
+      assert_eq!(gate.select(&payload).unwrap(), key(expected));
+    }
+    assert!(
+      !feature_delivery
+        .root
+        .nodes
+        .iter()
+        .any(|node| node.key() == &key("reproduction"))
+    );
+    assert!(
+      feature_delivery
+        .root
+        .transitions
+        .iter()
+        .any(|route| route.predecessor() == &key("reproduction-needed")
+          && route.outcome() == &key("check")
+          && route.target() == &FlowTransitionTarget::Node(key("review-reproduction")))
+    );
+    assert!(
+      feature_delivery
+        .root
+        .transitions
+        .iter()
+        .any(|route| route.predecessor() == &key("reproduction-needed")
+          && route.outcome() == &key("bypass")
+          && route.target() == &FlowTransitionTarget::Node(key("requirements_needed")))
+    );
     assert_eq!(store.mutation_evidence_counts().await, before);
     assert!(
       draft

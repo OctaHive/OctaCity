@@ -193,6 +193,13 @@ async fn ticket_delivery_example_is_discoverable_and_reports_missing_bindings_be
     .expect("optional ticket delivery example");
   assert_eq!(preset["reference"]["version"], "v1");
   assert_eq!(preset["editor"]["name"], "Ticket delivery");
+  assert!(
+    preset["parameters"]
+      .as_array()
+      .unwrap()
+      .iter()
+      .any(|item| item["path"] == "/commands/reproduction" && item["required"] == false)
+  );
   let response = router
     .oneshot(json_request(
       "POST",
@@ -215,7 +222,6 @@ async fn ticket_delivery_example_is_discoverable_and_reports_missing_bindings_be
   )));
   for path in [
     "/profiles/implementation",
-    "/commands/reproduction",
     "/commands/tests_on_base",
     "/commands/protected.validation",
     "/publication",
@@ -228,6 +234,7 @@ async fn ticket_delivery_example_is_discoverable_and_reports_missing_bindings_be
       "{path}"
     );
   }
+  assert!(!diagnostics.iter().any(|item| item["path"] == "/commands/reproduction"));
   assert_eq!(store.mutation_evidence_counts().await, before);
 }
 

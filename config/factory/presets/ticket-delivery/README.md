@@ -12,6 +12,19 @@ initial assignments, step data, code selections, access requests and limits
 there. Configure and publish the Flow and the launch Configuration separately.
 The example never selects a credential, activates intake or grants access.
 
+The reproduction command is optional. Leave it unselected for feature tickets:
+the ordinary entry gate routes features and already reproduced defects onward.
+Without this command, a defect that still needs reproduction goes to the existing
+operator review step; it cannot proceed directly to test authoring. Selecting an
+installed reproduction command keeps the full observation branch below.
+
+For specification authoring, allow Coder to write the selected specification
+directories as well as the implementation directory. On the local stand, pass
+each explicit scope using `--delivery-write-directory` (for example,
+`openspec/changes`, `openspec/specs` and the intended implementation directory).
+Attach those sources to the appropriate steps in the editor. A source added to
+the Flow does not grant a step access to it.
+
 API clients discover the immutable release in
 `GET /api/v1/projects/{project_id}/factory-presets` and review it via the
 catalog's `/resolve` operation. Set `flow_only: true` to get only the editable

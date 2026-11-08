@@ -80,6 +80,10 @@ export function flowBudget(root: S['FactoryFlowRootDraft']): Budget | null {
 /** Both per-outcome route counts and structural successors constrain fan-out. */
 export function flatGraphLimits(root: S['FactoryFlowRootDraft']) {
   if (root.nodes.some((node) => node.kind === 'subflow_call')) return null;
+  const expandedNodes =
+    root.nodes.reduce((sum, node) => sum + 1 + (node.max_execution_retries ?? 0), 0) *
+    root.transitions.reduce((cycles, edge) => cycles * (1 + edge.max_repeats), 1);
+  if (!Number.isSafeInteger(expandedNodes)) return null;
   const routes = new Map<string, number>(),
     successors = new Map<string, Set<string>>();
   for (const edge of root.transitions) {
@@ -94,7 +98,7 @@ export function flatGraphLimits(root: S['FactoryFlowRootDraft']) {
   const minimum = FACTORY_AUTHORING_SCHEMAS.FactoryFlowAdmissionLimits.properties;
   return {
     max_depth: minimum.max_depth.minimum,
-    max_expanded_nodes: Math.max(minimum.max_expanded_nodes.minimum, root.nodes.length),
+    max_expanded_nodes: Math.max(minimum.max_expanded_nodes.minimum, expandedNodes),
     max_fan_out: Math.max(
       minimum.max_fan_out.minimum,
       ...routes.values(),

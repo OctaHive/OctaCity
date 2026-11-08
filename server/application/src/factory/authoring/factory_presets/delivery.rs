@@ -2,6 +2,26 @@
 use super::*;
 use std::collections::BTreeMap;
 
+/// Features and already reproduced defects keep their ordinary bypass. Without an
+/// installed observation command, unresolved defects require operator attention.
+pub(super) fn without_reproduction(template: &mut FlowDefinitionTemplate) {
+  let removed = |key: &FactoryKey| matches!(key.as_str(), "reproduction" | "reproduction-result");
+  template.nodes.retain(|node| !removed(&node.key));
+  template.transitions.retain(|route| !removed(route.predecessor()));
+  for route in &mut template.transitions {
+    if route.predecessor().as_str() == "reproduction-needed" && route.outcome().as_str() == "check" {
+      *route = FlowTransition::new(
+        route.predecessor().clone(),
+        route.outcome().clone(),
+        FlowTransitionTarget::Node("review-reproduction".parse().expect("release key")),
+      );
+    }
+  }
+  template
+    .terminals
+    .remove(&"cannot_reproduce".parse().expect("release key"));
+}
+
 /// Projects only the explicit triage fields needed by the two delivery entry gates.
 pub(super) fn bind_predecessor(
   template: &mut FlowDefinitionTemplate,

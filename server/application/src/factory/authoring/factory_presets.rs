@@ -152,10 +152,11 @@ fn summary(
     }
     if let Some(alias) = &node.build_profile {
       if delivery && node.kind == FlowNodeKind::BuildCommand {
-        parameters.push(parameter(
-          &format!("/commands/{alias}"),
-          FactoryPresetParameterKind::Command,
-        ));
+        parameters.push(FactoryPresetParameter {
+          path: format!("/commands/{alias}"),
+          kind: FactoryPresetParameterKind::Command,
+          required: alias.as_str() != "reproduction",
+        });
         continue;
       }
       profile_aliases.push(alias.clone());
@@ -247,6 +248,13 @@ impl<S: FactoryConfigurationStore + octacity_server_store::FactoryRoleProfileSto
     let delivery = release.is_delivery();
     if p.flow_only && (!delivery || p.input.is_some() || p.configuration.is_some() || p.configuration_id.is_some()) {
       return Err(FactoryValidationDiagnostics::invalid("/flow_only"));
+    }
+    if delivery
+      && !p
+        .commands
+        .contains_key(&FactoryKey::new("reproduction").expect("release key"))
+    {
+      delivery::without_reproduction(&mut template);
     }
     let commands: std::collections::BTreeSet<_> = template
       .nodes

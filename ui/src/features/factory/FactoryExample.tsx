@@ -123,10 +123,14 @@ function ExampleBindings({
         ]
       : [];
   });
+  const commandRequired = (step: Editor['steps'][number]) =>
+    preset.parameters.some((item) => item.path === `/commands/${step.alias}` && item.required);
   const ready =
     (!needs('accepted_predecessor') || !!inputs.accepted_predecessor?.outcomes.length) &&
     (!needs('publication') || !!publisher) &&
-    commandSteps.length === commandSelections.length &&
+    commandSteps.every(
+      (step) => !commandRequired(step) || commandSelections.some(([alias]) => alias === step.alias),
+    ) &&
     reasoningSteps.every((step) => !!profiles[step.alias]);
 
   async function open() {
@@ -223,6 +227,7 @@ function ExampleBindings({
         return (
           <fieldset key={step.alias}>
             <legend>{stepLabel(step.alias)}</legend>
+            {!commandRequired(step) ? <p>{t('factory.optionalExampleCommand')}</p> : null}
             {options.length ? (
               <SelectMenu
                 ariaLabel={stepLabel(step.alias)}
@@ -235,9 +240,9 @@ function ExampleBindings({
                   setCommands((current) => ({ ...current, [step.alias]: value }))
                 }
               />
-            ) : (
+            ) : commandRequired(step) ? (
               <p>{t('factory.noInstalledCommand')}</p>
-            )}
+            ) : null}
           </fieldset>
         );
       })}

@@ -450,6 +450,21 @@ references. Both locales passed again in the full browser suite.
 
 ### Native Tester and verification launch modes
 
+On 8 November 2026, the full **Ticket delivery · v1** example was also assembled
+and published through Console against the current native macOS Server and real
+PostgreSQL/S3, using an isolated copy of the qualification installation. No
+reproduction command was installed or selected, and no test pack, manual manifest
+or check script was supplied to the editor. The selected Tester author and
+baseline/candidate commands provide the protected-test path. Specification and
+implementation source scopes and reviewed-candidate consumers were selected
+explicitly in the UI.
+
+Flow `5b5cc244-13d8-4421-aeca-a980bbe39fad` v1 passed authoritative validation and
+publication. Its launch Configuration `c8f7c203-c97f-440d-9cf3-3b4f156f0286` v1
+also passed validation and publication through Console and remained disabled.
+This check qualifies assembly and publication, without a new model execution or
+PR. The execution qualification for both verification modes is recorded below.
+
 The standard stand installs the test author and the scoped validation Tester
 with a separate single-slot validation Agent. In Console, select either
 **CI/CD Build** or **Tester** for the verification step. Both execute the

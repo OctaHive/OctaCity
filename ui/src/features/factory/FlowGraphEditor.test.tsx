@@ -328,7 +328,7 @@ it('edits and clears the pipeline name without renaming its steps or changing th
   expect(observed.root).toMatchObject({ name: null });
 });
 
-it('calculates branch bounds immediately across different outcomes of the same step', async () => {
+it.each([false, true])('calculates graph bounds with rework=%s', async (rework) => {
   const flow = configurationFixture().configuration.flow;
   const schema = flow.data_schemas[0]!.reference;
   const sample = flow.closure.definitions[0]!.nodes[0]!;
@@ -339,6 +339,7 @@ it('calculates branch bounds immediately across different outcomes of the same s
   observed.root.nodes = ['first', 'second', 'third'].map((key) => ({
     ...structuredClone(sample),
     key,
+    max_execution_retries: rework && key === 'first' ? 2 : 0,
     outcomes: [
       { key: 'accepted', kind: 'success', schema },
       ...(key === 'first' ? [{ key: 'review', kind: 'failure' as const, schema }] : []),
@@ -360,6 +361,14 @@ it('calculates branch bounds immediately across different outcomes of the same s
       exhausted_terminal: null,
     },
   ];
+  if (rework)
+    observed.root.transitions.push({
+      predecessor: 'second',
+      outcome: 'accepted',
+      target: { kind: 'node', key: 'first' },
+      max_repeats: 1,
+      exhausted_terminal: 'finished',
+    });
   function Harness() {
     const [value, setValue] = useState(observed);
     return (
@@ -380,7 +389,8 @@ it('calculates branch bounds immediately across different outcomes of the same s
   await userEvent.click(screen.getByRole('combobox', { name: 'Graph limits · Calculation' }));
   await userEvent.click(screen.getByRole('option', { name: 'Calculate automatically' }));
   expect(observed.limits.max_fan_out).toBe(2);
-  expect(observed.limits.max_expanded_nodes).toBe(3);
+  // Three steps plus two technical retries, each reachable in two workflow cycles.
+  expect(observed.limits.max_expanded_nodes).toBe(rework ? 10 : 3);
 });
 
 it('keeps manual step and access settings available inside collapsed advanced sections', async () => {

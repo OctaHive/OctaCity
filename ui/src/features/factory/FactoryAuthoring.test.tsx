@@ -227,7 +227,7 @@ it('retains concurrent graph edits after schema normalization', async () => {
   );
 });
 
-it('opens an exact reviewed example as an ordinary editable draft and publishes only after confirmation', async () => {
+it.each([true, false])('publishes an example (reproduction required=%s)', async (required) => {
   const { configuration } = configurationFixture();
   const projectId = configuration.reference.project_id;
   const original = configuration.flow;
@@ -272,7 +272,7 @@ it('opens an exact reviewed example as an ordinary editable draft and publishes 
         reference: preset,
         profile_aliases: [],
         required_node_kinds: ['build_command' as const],
-        parameters: [{ path: '/commands/reproduction', kind: 'command' as const, required: true }],
+        parameters: [{ path: '/commands/reproduction', kind: 'command' as const, required }],
         editor: {
           name: 'Ticket delivery',
           budget: original.limits.budget,
@@ -326,7 +326,7 @@ it('opens an exact reviewed example as an ordinary editable draft and publishes 
     listChoices: vi.fn(async () => ({ items: [], total: 0, next_cursor: null })),
     listFlows: vi.fn(async () => ({ items: [], total: 0, next_cursor: null })),
     getAuthoringCapabilities: vi.fn<FactoryApi['getAuthoringCapabilities']>(async () => ({
-      commands: [command, alternateCommand],
+      commands: required ? [command, alternateCommand] : [],
       candidate_publications: [],
       human_gates: [],
       build_resource_modes: [],
@@ -358,16 +358,23 @@ it('opens an exact reviewed example as an ordinary editable draft and publishes 
   await userEvent.click(await screen.findByRole('button', { name: 'Ticket delivery · v1' }));
   expect(screen.getByRole('button', { name: 'Open example draft' })).toHaveProperty(
     'disabled',
-    true,
+    required,
   );
-  await userEvent.click(await screen.findByRole('combobox', { name: 'Reproduction' }));
-  const options = screen.getAllByRole('option', { name: /Reviewed reproduction/ });
-  expect(new Set(options.map((option) => option.textContent)).size).toBe(2);
-  for (const option of options) {
-    expect(option.textContent).toContain('Reviewed reproduction');
-    expect(option.textContent).not.toMatch(/[0-9a-f]{20}/);
+  if (!required) {
+    expect(screen.getByRole('group', { name: 'Reproduction' }).textContent).toContain(
+      'Optional. Without a command, tickets that need this check are sent for review.',
+    );
   }
-  await userEvent.click(options[1]!);
+  if (required) {
+    await userEvent.click(await screen.findByRole('combobox', { name: 'Reproduction' }));
+    const options = screen.getAllByRole('option', { name: /Reviewed reproduction/ });
+    expect(new Set(options.map((option) => option.textContent)).size).toBe(2);
+    for (const option of options) {
+      expect(option.textContent).toContain('Reviewed reproduction');
+      expect(option.textContent).not.toMatch(/[0-9a-f]{20}/);
+    }
+    await userEvent.click(options[1]!);
+  }
   await userEvent.click(screen.getByRole('button', { name: 'Open example draft' }));
   const name = await screen.findByDisplayValue('Ticket delivery');
   await userEvent.clear(name);
@@ -378,13 +385,15 @@ it('opens an exact reviewed example as an ordinary editable draft and publishes 
       preset,
       flow_only: true,
       flow_id: expect.any(String),
-      commands: {
-        reproduction: {
-          build: { ...alternateCommand.execution, result_outcome: 'observed' },
-          result: report,
-          permissions: expect.any(Object),
-        },
-      },
+      commands: required
+        ? {
+            reproduction: {
+              build: { ...alternateCommand.execution, result_outcome: 'observed' },
+              result: report,
+              permissions: expect.any(Object),
+            },
+          }
+        : {},
     }),
     expect.any(AbortSignal),
   );
