@@ -184,7 +184,8 @@ def _publish(path: Path, value: dict) -> None:
     state.ensure_private_directory(path.parent)
     contents = (json.dumps(value, sort_keys=True, separators=(",", ":"), ensure_ascii=False) + "\n").encode()
     if not state.publish_exclusive_private_file(path, contents):
-        if state.read_regular_file(path, "triage installation", max_bytes=131072,
+        # An immutable replay may only match the bytes just generated.
+        if state.read_regular_file(path, "triage installation", max_bytes=len(contents),
                 modes=frozenset({0o600})) != contents:
             raise ValueError("triage installation differs; use the explicit installation updater")
 

@@ -949,6 +949,23 @@ test ! -e /tmp/shared.env
             client.get.assert_called_once_with(f"/api/v1/projects/{project}/issues/{issue}")
 
 class RuntimeCatalogUpgradeTests(unittest.TestCase):
+    @unittest.skipUnless(os.name == "posix", "private runtime evidence requires POSIX modes")
+    def test_republishing_a_large_runtime_catalog_reuses_its_original_bytes(self):
+        import tempfile
+        from factory_triage_setup import _publish
+
+        with tempfile.TemporaryDirectory() as temporary:
+            path = Path(temporary) / "evidence" / "factory-runtime-catalog-test.json"
+            catalog = {"projects": [], "codex": [{"instructions": "a" * (150 * 1024)}]}
+            _publish(path, catalog)
+            before = path.stat()
+            _publish(path, catalog)
+            after = path.stat()
+            self.assertEqual((after.st_ino, after.st_mtime_ns), (before.st_ino, before.st_mtime_ns))
+            with self.assertRaisesRegex(ValueError, "triage installation differs"):
+                _publish(path, {"projects": [], "codex": [{"instructions": "b" * (150 * 1024)}]})
+            self.assertEqual(json.loads(path.read_bytes()), catalog)
+
     def test_current_native_inventory_does_not_activate_retained_older_compilers(self):
         import factory_delivery_setup as setup
         plugin = {"identity":"codex", "version":"v1", "digest":"a"*64}
