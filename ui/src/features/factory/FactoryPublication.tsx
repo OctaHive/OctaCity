@@ -37,6 +37,7 @@ export type FactoryPublicationProps = {
   subject: Subject;
   version?: number;
   ready?: boolean;
+  onFlowPublished?: (version: number) => void;
 };
 const ISSUE_LABELS = {
   missing_input: 'factory.missingInputHelp',
@@ -87,6 +88,7 @@ export function FactoryPublication({
   subject,
   version,
   ready = true,
+  onFlowPublished,
 }: FactoryPublicationProps) {
   const { t } = usePresentation();
   const queryClient = useQueryClient();
@@ -359,6 +361,10 @@ export function FactoryPublication({
           ]}
           {...(currentVersion === undefined ? {} : { version: currentVersion, onRefresh: refresh })}
           onClose={() => setReview(null)}
+          onSucceeded={(result) => {
+            if ('flow' in result.resource)
+              onFlowPublished?.(result.resource.flow.closure.root.version);
+          }}
           returnFocus={review.returnFocus}
           renderSuccess={(result) => {
             const reference =

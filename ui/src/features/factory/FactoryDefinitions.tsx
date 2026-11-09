@@ -97,12 +97,12 @@ export function FactoryDefinitions({
     currentFlow.data?.project_id === projectId
       ? { ...currentFlow.data, id: currentFlow.data.flow.closure.root.id }
       : null;
-  const select = (kind: 'configuration' | 'flow', id: string, version: number) => {
+  const select = (kind: 'configuration' | 'flow', id: string, version: number, replace = false) => {
     setAuthoring(null);
     const next = new URLSearchParams(params);
     next.set(kind === 'configuration' ? 'configuration_id' : 'flow_definition_id', id);
     next.set(`${kind}_version`, String(version));
-    setParams(next);
+    setParams(next, { replace });
   };
   return (
     <section className={styles.definitions}>
@@ -275,7 +275,9 @@ export function FactoryDefinitions({
                       params.get('flow_version'),
                       item.flow.closure.root.version,
                     )}
-                    changeVersion={(selected) => select('flow', item.id, selected)}
+                    changeVersion={(selected, replace) =>
+                      select('flow', item.id, selected, replace)
+                    }
                   />
                 ) : null}
               </li>
@@ -467,7 +469,7 @@ function FlowDetails({
   workflows?: IssueWorkflowsApi | undefined;
   summary: FactoryFlowDetails;
   version: number;
-  changeVersion: (version: number) => void;
+  changeVersion: (version: number, replace?: boolean) => void;
   editing: boolean;
   onEdit: () => void;
   onDiscard: () => void;
@@ -507,6 +509,7 @@ function FlowDetails({
           baseline={query.data}
           currentVersion={summary.flow.closure.root.version}
           onDiscard={onDiscard}
+          onFlowPublished={(published) => changeVersion(published, true)}
         />
       ) : (
         <button type="button" disabled={!canAuthor} onClick={onEdit}>

@@ -30,6 +30,7 @@ export function FactoryAuthoring({
   projectId: newProjectId,
   kind,
   currentVersion,
+  onFlowPublished,
 }: {
   api: FactoryApi;
   repositories?: SourceRepositories | undefined;
@@ -38,6 +39,7 @@ export function FactoryAuthoring({
   projectId?: string;
   kind?: 'flow' | 'configuration';
   currentVersion?: number;
+  onFlowPublished?: (version: number) => void;
   onDiscard: () => void;
 }) {
   const { t } = usePresentation();
@@ -155,6 +157,7 @@ export function FactoryAuthoring({
             />
             <FactoryPublication
               api={api}
+              {...(onFlowPublished ? { onFlowPublished } : {})}
               ready={!processEditing && !stepEditing}
               subject={{
                 kind: 'flow',

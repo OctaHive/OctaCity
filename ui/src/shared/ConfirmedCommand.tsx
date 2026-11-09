@@ -33,6 +33,7 @@ interface ConfirmedCommandProps<Request, Result> {
   fallbackFocusRef?: RefObject<HTMLElement | null>;
   invalidations: readonly QueryInvalidation[];
   onClose: () => void;
+  onSucceeded?: (result: Result) => void;
   onRefresh?: () => unknown | Promise<unknown>;
   queryClient: Pick<QueryClient, 'invalidateQueries'>;
   renderSuccess: (result: Result) => React.ReactNode;
@@ -60,6 +61,7 @@ export function ConfirmedCommand<Request, Result>({
   fallbackFocusRef,
   invalidations,
   onClose,
+  onSucceeded,
   onRefresh,
   queryClient,
   renderSuccess,
@@ -129,6 +131,7 @@ export function ConfirmedCommand<Request, Result>({
       } else {
         reportCommandOutcome(notificationIntentRef.current, title, 'success');
         setPhase({ kind: 'succeeded', result });
+        if (dialogRef.current?.isConnected) onSucceeded?.(result);
       }
     } catch (caught) {
       if (isIndeterminateOutcome(caught)) {

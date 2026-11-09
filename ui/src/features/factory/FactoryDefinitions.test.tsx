@@ -496,7 +496,7 @@ it('links a field error to its existing control without copying draft values int
   expect(router.state.location.search).not.toContain('Bad');
 });
 
-it('replaces from a historical draft using the discovered current version rather than the historical version as the precondition', async () => {
+it('publishes a historical Flow draft against the current version and reopens the saved criteria', async () => {
   const configuration = configurationFixture();
   const projectId = configuration.configuration.reference.project_id;
   const historical = {
@@ -518,15 +518,23 @@ it('replaces from a historical draft using the discovered current version rather
       },
     },
   };
-  const replaceFlow = vi.fn<FactoryApi['replaceFlow']>(async () => ({
-    disposition: 'applied' as const,
-    resource: current,
-  }));
+  let latest = current;
+  const replaceFlow = vi.fn<FactoryApi['replaceFlow']>(async (_id, { definition }) => {
+    const reference = { ...current.flow.closure.root, version: 8 };
+    latest = {
+      ...current,
+      flow: {
+        ...current.flow,
+        closure: { root: reference, definitions: [{ ...definition.root, reference }] },
+      },
+    };
+    return { disposition: 'applied', resource: latest };
+  });
   const api = {
     ...factoryApi,
     listConfigurations: vi.fn(async () => ({ items: [], total: 0, next_cursor: null })),
-    listFlows: vi.fn(async () => ({ items: [current], total: 1, next_cursor: null })),
-    getFlow: vi.fn(async () => historical),
+    listFlows: vi.fn(async () => ({ items: [latest], total: 1, next_cursor: null })),
+    getFlow: vi.fn(async (_id: string, version: number) => (version === 1 ? historical : latest)),
     listChoices: vi.fn(async () => ({ items: [], total: 0, next_cursor: null })),
     validateFlow: vi.fn(async () => historical.flow),
     replaceFlow,
@@ -543,11 +551,20 @@ it('replaces from a historical draft using the discovered current version rather
   await userEvent.click(await screen.findByRole('combobox', { name: 'Version' }));
   await userEvent.click(screen.getByRole('option', { name: 'Version 1' }));
   await userEvent.click(await screen.findByRole('button', { name: 'Edit Flow draft' }));
+  const task = await screen.findByRole('checkbox', { name: 'Task from admitted Work' });
+  if (!(task as HTMLInputElement).checked) await userEvent.click(task);
+  const criteriaLabel = { name: 'Acceptance criteria from admitted Work' };
+  await userEvent.click(screen.getByRole('checkbox', criteriaLabel));
   await userEvent.click(await screen.findByRole('button', { name: 'Validate draft' }));
   await userEvent.click(screen.getByRole('button', { name: 'Review publication' }));
   await userEvent.click(screen.getByRole('button', { name: 'Confirm publish' }));
-  expect(await screen.findByText('Immutable version published.')).toBeTruthy();
+  await waitFor(() => expect(router.state.location.search).toContain('flow_version=8'));
   expect(replaceFlow.mock.calls[0]?.[2]).toEqual(expect.objectContaining({ 'If-Match': '"7"' }));
+  expect((await screen.findByRole('combobox', { name: 'Version' })).textContent).toContain(
+    'Version 8',
+  );
+  await userEvent.click(await screen.findByRole('button', { name: 'Edit Flow draft' }));
+  expect(await screen.findByRole('checkbox', criteriaLabel)).toHaveProperty('checked', true);
 });
 
 it('opens a copied immutable Flow version outside the loaded current-definition page', async () => {
