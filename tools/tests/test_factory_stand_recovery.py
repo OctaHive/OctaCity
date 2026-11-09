@@ -4,6 +4,7 @@ Native package/image producers, HTTP enrollment and process startup are finite
 test adapters. File validation, atomic updates and argument selection stay real.
 """
 from contextlib import redirect_stderr, redirect_stdout
+import copy
 import io
 import json
 import os
@@ -22,6 +23,7 @@ import factory_local_stand as stand
 import factory_integrations as integrations
 import local_stand_installation_update as updates
 import local_stand_lifecycle as lifecycle
+from test_factory_stand_policies import PolicyManagement
 
 
 @unittest.skipUnless(os.name == "posix", "private installation recovery requires POSIX ownership")
@@ -38,6 +40,7 @@ class FactoryStandRecoveryTests(unittest.TestCase):
         self.publish_delivery_roles = mock.Mock()
         self.source_records, self.source_diagnostics, self.source_publications = [], {}, []
         self.policy_requests = []
+        self.policy_service = None
         self.fail_policy_request = False
         self.retained_configuration = {
             "reference": {"project_id": self.project, "id": str(uuid.uuid4()), "version": 1, "digest": "03" * 32},
@@ -65,6 +68,8 @@ class FactoryStandRecoveryTests(unittest.TestCase):
                 self.end_headers()
                 self.wfile.write(contents)
             def do_GET(self):
+                if "/factory-policies" in self.path and fixture.policy_service is not None:
+                    return self.reply(fixture.policy_service.get(self.path))
                 if self.path.endswith("/factory-policies/defaults"):
                     return self.reply({"defaults": fixture.policy_defaults})
                 if self.path.startswith("/api/v1/factory-configurations/"):
@@ -77,6 +82,8 @@ class FactoryStandRecoveryTests(unittest.TestCase):
                     self.reply({"items": fixture.source_records, "next_cursor": None})
             def do_POST(self):
                 body = json.loads(self.rfile.read(int(self.headers["Content-Length"])))
+                if "/factory-policies" in self.path and fixture.policy_service is not None:
+                    return self.reply(fixture.policy_service.post(self.path, self.headers.get("Idempotency-Key"), body))
                 if self.path.endswith("/factory-policies/legacy/resolve"):
                     return self.reply({"mapping": {"legacy": body} if body in fixture.resolved_policy_references else None})
                 if self.path.endswith("/factory-policies/provision"):
@@ -210,6 +217,36 @@ class FactoryStandRecoveryTests(unittest.TestCase):
         self.stage_delivery.assert_called_once()
         self.publish_delivery_roles.assert_called_once()
         self.assertEqual((self.root / "evidence/factory-triage.json").read_bytes(), before)
+
+    def test_default_start_provisions_triage_and_delivery_access_with_one_standard_launch(self):
+        triage_permissions = {"secret_profiles": ["triage-model", "triage-mcp"]}
+        delivery_permissions = {"mounts": [{"root": "/workspace/source", "mode": "read_write"}],
+            "plugins": [{"identity": "shell", "version": "v1", "digest": "07" * 32}],
+            "secret_profiles": ["delivery-model", "stand-delivery-github"]}
+        self.policy_service = PolicyManagement(self.project, triage_permissions)
+        launch = self.policy_service.launch
+        catalog = json.loads(self.profiles.read_text())
+        catalog["projects"][0]["references"].append({"kind": "permission_ceiling", "alias": "delivery-ceiling-installed",
+            "reference": {"identity": "delivery-ceiling-installed", "version": "v1", "digest": "08" * 32},
+            "metadata": {"permission_declarations": delivery_permissions}})
+        self.profiles.write_text(json.dumps(catalog))
+        self._update(self.readers)
+        retained = copy.deepcopy(self.retained_configuration)
+        self._resume()
+        base = f"/api/v1/projects/{self.project}/factory-policies"
+        policies = self.management_client.get(base)
+        self.assertEqual({(x['reference']['kind'], x['name']) for x in policies['items']},
+            {('launch', 'Standard'), ('access', 'Triage'), ('access', 'Delivery')})
+        delivery = next(x['reference']['reference'] for x in policies['items'] if x['name'] == 'Delivery')
+        record = self.management_client.get(f"{base}/access/{delivery['id']}/versions/{delivery['version']}")['policy']
+        self.assertEqual(record['policy']['definition']['permissions'], delivery_permissions)
+        defaults = self.management_client.get(base + '/defaults')['defaults']
+        self.assertEqual(defaults['launch_policy'], launch['policy']['reference'])
+        self.assertNotEqual(defaults['access_profile'], delivery)
+        self._resume()
+        self.assertEqual(self.management_client.get(base), policies)
+        self.assertEqual(self.management_client.get(base + '/defaults')['defaults'], defaults)
+        self.assertEqual(self.retained_configuration, retained)
 
     def test_resume_reports_unresolved_policy_and_rechecks_after_catalog_repair(self):
         self.legacy_access_available = False

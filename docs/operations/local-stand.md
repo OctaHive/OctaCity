@@ -569,9 +569,19 @@ Flow version to use the updated guest.
 
 The installation adds a content-pinned Delivery access ceiling covering the
 installed runtimes, verification commands and explicitly installed publisher.
-Create or select a Project access profile within that ceiling for the Delivery
-Configuration. Existing Project policies, including **Standard**, remain pinned
-and unchanged. The bundled triage example independently selects MCP evidence
+The default `tools/factory-stand` setup publishes **Triage** and **Delivery**
+access profiles and keeps the shared **Standard** launch policy. On an older
+stand, the original unmodified Standard access profile is renamed through a
+new Triage version with the same permissions. Its default selection advances
+only if it still selects the original version. Operator-selected defaults and
+existing Configuration and Run pins are retained.
+
+Select **Delivery** with **Standard** when publishing a Delivery Configuration.
+Repeated startup reuses matching profiles, including an equivalent manually
+created Delivery profile. Installed Delivery changes can publish a new version
+of the installer-owned profile; a conflicting operator-owned profile requires
+explicit review. Each step still selects its own inputs and access within that
+ceiling. The bundled triage example independently selects MCP evidence
 verification for its eligibility result; classification consumes that accepted
 handoff using its ordinary classification result contract.
 

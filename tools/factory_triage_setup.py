@@ -227,7 +227,57 @@ def provision_project_policies(client, project: str, namespace: uuid.UUID, catal
         pending = ", ".join(f"{item['legacy']['reference']['identity']} "
             f"({item['reason']})" for item in unresolved)
         raise ValueError(f"unresolved Factory policies: {pending}. Restore the exact installed declarations and retry.")
+    original = receipt.get("provisioning", {}).get("standard_access")
+    if original is not None:
+        _name_triage_access(client, base, namespace, original)
+        receipt["defaults"] = client.get(f"{base}/defaults")["defaults"]
     return receipt
+
+
+def project_policies(client, base: str) -> list[dict]:
+    """Read current policy heads without assuming a single catalog page."""
+    records, cursor = [], None
+    for _ in range(100):
+        page = client.get(base + ("?" + urlencode({"after": json.dumps(cursor)}) if cursor else ""))
+        records.extend(page["items"])
+        following = page.get("next_cursor")
+        if following is None:
+            return records
+        if following == cursor:
+            raise ValueError("Factory policy catalog repeated its cursor")
+        cursor = following
+    raise ValueError("Factory policy catalog exceeded its page limit")
+
+
+def publish_access_profile(client, base: str, namespace: uuid.UUID, draft: dict) -> dict:
+    """Validate and publish through the ordinary versioned policy owner."""
+    key = str(uuid.uuid5(namespace, "access-profile/" + json.dumps(draft, sort_keys=True)))
+    client.post(f"{base}/validate", key, draft)
+    return client.post(base, key, draft)["policy"]["policy"]["reference"]
+
+
+def _name_triage_access(client, base: str, namespace: uuid.UUID, original: dict) -> None:
+    current = next((row["reference"]["reference"] for row in project_policies(client, base)
+        if row["reference"]["kind"] == "access" and row["reference"]["reference"]["id"] == original["id"]), None)
+    if current is None:
+        raise ValueError("provisioned triage access profile is unavailable")
+    path = f"{base}/access/{current['id']}/versions/"
+    record = client.get(path + str(current["version"]) + "?" + urlencode({"digest": current["digest"]}))["policy"]["policy"]
+    if current == original and record["definition"]["name"] == "Standard":
+        current = publish_access_profile(client, base, namespace, {"kind": "access", "id": current["id"],
+            "expected_current": current, "definition": {**record["definition"], "name": "Triage"}})
+    elif record["definition"]["name"] != "Triage":
+        return
+    else:
+        previous = client.get(path + str(original["version"]) + "?" + urlencode({"digest": original["digest"]}))["policy"]["policy"]
+        if record["definition"]["permissions"] != previous["definition"]["permissions"]:
+            return
+    defaults = client.get(f"{base}/defaults")["defaults"]
+    if defaults is not None and defaults["access_profile"] == original and current != original:
+        request = {"expected_version": defaults["version"], "launch_policy": defaults["launch_policy"],
+            "access_profile": current}
+        key = str(uuid.uuid5(namespace, "triage-access-default/" + json.dumps(request, sort_keys=True)))
+        client.post(f"{base}/defaults", key, request)
 
 
 def _issue_reader(root: Path, project: str, lifetime: int) -> tuple[Path, Path]:

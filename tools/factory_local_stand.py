@@ -172,7 +172,9 @@ def run_triage_stand(root: Path, source: str | None, revision: str | None, *,
                 for name, path in selected.items():
                     arguments.extend(("--" + name.replace("_", "-"), str(path)))
                 launcher.up(launcher.parse_arguments(arguments), expected_configuration=expected)
-            delivery.publish_roles(client, project, namespace, selected.get("factory_profiles", installed["factory_profiles"]))
+            catalog = selected.get("factory_profiles", installed["factory_profiles"])
+            delivery.publish_roles(client, project, namespace, catalog)
+            delivery.provision_access_profile(client, project, namespace, catalog)
 
     if receipt_file.exists():
         # Bootstrap receipts are immutable seeds, not the current installation.

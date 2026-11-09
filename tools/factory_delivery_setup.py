@@ -9,6 +9,7 @@ import json
 from pathlib import Path
 import re
 import shlex
+import uuid
 from urllib.parse import urlsplit
 
 import local_stand_state as state
@@ -665,6 +666,46 @@ def _merge_permissions(left, right):
             return [mounts[key] for key in sorted(mounts)]
         return [json.loads(value) for value in sorted({json.dumps(row, sort_keys=True) for row in left + right})]
     return max(left, right)
+
+
+def provision_access_profile(client, project: str, namespace, catalog_path: Path) -> None:
+    """Publish the installed Delivery ceiling without selecting it for triage."""
+    catalog = state.load_json_object(state.read_regular_file(catalog_path, "Factory profile catalog",
+        max_bytes=triage.server.MAX_FACTORY_PROFILE_BYTES, modes=frozenset({0o600})), "Factory profile catalog")
+    ceilings = [row for owner in catalog["projects"] if owner["project_id"] == project
+        for row in owner["references"]
+        if row["kind"] == "permission_ceiling" and row["alias"].startswith("delivery-ceiling-")]
+    if not ceilings:
+        return
+    # Additive installations append their current declaration after retained ceilings.
+    permissions = ceilings[-1]["metadata"]["permission_declarations"]
+    base = f"/api/v1/projects/{project}/factory-policies"
+    identity = str(uuid.uuid5(namespace, "stand-delivery-access"))
+    candidates = [row for row in triage.project_policies(client, base)
+        if row["reference"]["kind"] == "access" and
+        (row["name"] == "Delivery" or row["reference"]["reference"]["id"] == identity)]
+    if len(candidates) > 1:
+        raise ValueError("Delivery access profile is ambiguous; select one reviewed profile")
+    current = None
+    if candidates:
+        current = candidates[0]["reference"]["reference"]
+        record = client.get(f"{base}/access/{current['id']}/versions/{current['version']}?digest={current['digest']}")["policy"]["policy"]
+        if record["definition"]["name"] == "Delivery" and _same_permissions(record["definition"]["permissions"], permissions):
+            return
+        if current["id"] != identity or record["definition"]["name"] != "Delivery":
+            raise ValueError("Delivery access profile has operator changes; review the installed Delivery ceiling before retrying")
+    triage.publish_access_profile(client, base, namespace, {"kind": "access", "id": identity,
+        "expected_current": current, "definition": {"name": "Delivery", "permissions": permissions}})
+
+
+def _same_permissions(left: dict, right: dict) -> bool:
+    def canonical(grants):
+        result = {key: sorted(json.dumps(entry, sort_keys=True) for entry in value) if isinstance(value, list) else value
+            for key, value in grants.items()}
+        if "outputs" in result:
+            result["outputs"] = {**result["outputs"], "kinds": sorted(result["outputs"]["kinds"])}
+        return result
+    return canonical(left) == canonical(right)
 
 
 def install_access_ceiling(catalog: dict, project: dict) -> None:
