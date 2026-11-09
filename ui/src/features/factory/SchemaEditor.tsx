@@ -45,11 +45,17 @@ export function SchemaEditor({
   const { identity, version, shape } = draft;
   const [pending, setPending] = useState(false);
   const [error, setError] = useState<Error | null>(null);
+  const [added, setAdded] = useState<
+    components['schemas']['FactoryFlowDataSchema']['reference'] | null
+  >(null);
   const add = async () => {
     setPending(true);
     setError(null);
+    setAdded(null);
     try {
-      onAdd(await api.normalizeSchema({ project_id: projectId, ...draft }));
+      const schema = await api.normalizeSchema({ project_id: projectId, ...draft });
+      onAdd(schema);
+      setAdded(schema.reference);
       // Edits during normalization form a new draft, including unchanged companion fields.
       setDraft((current) =>
         current === draft ? { ...current, identity: '', version: '' } : current,
@@ -96,6 +102,9 @@ export function SchemaEditor({
       <button type="button" disabled={pending || !identity || !version} onClick={() => void add()}>
         {t('factory.addSchema')}
       </button>
+      <p role="status">
+        {added ? t('factory.schemaAdded', { name: added.identity, version: added.version }) : null}
+      </p>
     </fieldset>
   );
 }

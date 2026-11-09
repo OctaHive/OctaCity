@@ -57,7 +57,7 @@ it('offers step results for completion while retaining every custom format under
   expect(advanced.closest('details')).toHaveProperty('open', false);
   await userEvent.click(advanced);
   await userEvent.click(screen.getByRole('combobox', { name: 'Any completion data contract' }));
-  await userEvent.click(screen.getByRole('option', { name: 'Additional format 1' }));
+  await userEvent.click(screen.getByRole('option', { name: 'input.generated · 1' }));
   expect(observed.root.terminals[0]?.schema).toEqual(input.reference);
   await userEvent.click(advanced);
   expect(basic.textContent).toContain('Custom format — see technical details');

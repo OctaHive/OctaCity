@@ -12,6 +12,7 @@ pub(super) fn insert(schemas: &mut Map<String, Value>) {
     object(
       [
         ("work_task", key()),
+        ("work_acceptance", key()),
         ("candidate_revision", nullable(schema_ref("FactoryFlowDataMapping"))),
         ("candidate_when_present", nullable(json!({"type":"string"}))),
         (

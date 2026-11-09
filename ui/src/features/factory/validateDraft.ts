@@ -146,6 +146,7 @@ export function validateFlowDraft(
       for (const name of profile.definition.context_requirements)
         if (
           node.context_binding?.work_task !== name &&
+          node.context_binding?.work_acceptance !== name &&
           (!node.context_binding?.entries[name] ||
             node.context_binding.entries[name].when_present != null)
         )

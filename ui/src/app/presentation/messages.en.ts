@@ -2158,6 +2158,12 @@ export const enMessages = {
   'factory.workTaskOccupied':
     'This Context name is already in use. Choose another name under Details.',
   'factory.workTask': 'Task from admitted Work',
+  'factory.workAcceptance': 'Acceptance criteria from admitted Work',
+  'factory.workAcceptanceHelp':
+    'Enable the task above, then attach its acceptance criteria to this step.',
+  'factory.workAcceptanceName': 'Work acceptance criteria Context name',
+  'factory.workAcceptanceOccupied': 'This acceptance criteria input name is already in use.',
+  'factory.workAcceptanceContextFull': 'Remove an unused context input before adding criteria.',
   'factory.workTaskHelp':
     'Connects the original task to this step. Other Work documents and results are connected separately.',
   'factory.inputSchema': 'Input schema',
@@ -2250,6 +2256,7 @@ export const enMessages = {
   'factory.schemaVersion': 'Schema version',
   'factory.schemaType': 'Schema type',
   'factory.addSchema': 'Add schema',
+  'factory.schemaAdded': '{name} · {version} added to the draft.',
   'factory.boolean': 'Boolean',
   'factory.integer': 'Integer',
   'factory.string': 'String',

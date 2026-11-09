@@ -40,9 +40,7 @@ impl FactoryFlowInputPreparer for Inputs {
       .unwrap()
       .context_binding();
     if let Some(binding) = binding {
-      let selected = binding
-        .selected_sources_with_work_task(input.payload(), input.work_task())
-        .unwrap();
+      let selected = binding.selected_sources_for_input(&input).unwrap();
       let subject = match binding.candidate_revision(input.payload()).unwrap() {
         None => FactoryTaskSubject::Exact(snapshot.work.subject().repository().unwrap().clone()),
         Some(revision) => {

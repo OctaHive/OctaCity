@@ -623,10 +623,7 @@ test('submits the reviewed Flow, Project policies, and manual Issue start to the
   const reviewResult = page.getByRole('group', { name: 'candidate', exact: true });
   await reviewResult.getByText('Reuse result format', { exact: true }).click();
   await reviewResult.getByRole('combobox', { name: 'Outcome schema', exact: true }).click();
-  await page
-    .getByRole('option', { name: /^Additional format / })
-    .last()
-    .click();
+  await page.getByRole('option', { name: 'factory.base.code_review · v1', exact: true }).click();
   await choose('Role', 'Implementation · v1');
   await choose('Profile', 'default · v1');
   await page.getByRole('button', { name: 'Use this profile', exact: true }).click();
@@ -709,10 +706,7 @@ test('submits the reviewed Flow, Project policies, and manual Issue start to the
   const inputSchema = advanced.getByRole('combobox', { name: 'Input schema', exact: true });
   if (!(await inputSchema.isVisible())) await summary.click();
   await inputSchema.click();
-  await page
-    .getByRole('option', { name: /^Additional format / })
-    .last()
-    .click();
+  await page.getByRole('option', { name: 'publication-input · v1', exact: true }).click();
   async function mapField(container: Locator, name: string) {
     await container.getByRole('button', { name: 'Add mapped field', exact: true }).first().click();
     const field = container.getByRole('textbox', { name: 'Mapped field name' }).last();
@@ -828,9 +822,14 @@ test('submits the reviewed Flow, Project policies, and manual Issue start to the
   const incomingSchema = advanced.getByRole('combobox', { name: 'Input schema', exact: true });
   if (!(await incomingSchema.isVisible())) await summary.click();
   await incomingSchema.click();
+  const triageResult = predecessor.flow.closure.definitions[0]!.terminals.find(
+    ({ key }) => key === 'succeeded',
+  )!.schema;
   await page
-    .getByRole('option', { name: /^Additional format / })
-    .last()
+    .getByRole('option', {
+      name: `${triageResult.identity} · ${triageResult.version}`,
+      exact: true,
+    })
     .click();
   await choose('Mapping kind', 'Field selection', advanced);
   await advanced.getByRole('textbox', { name: 'Selection path', exact: true }).fill('/triage');

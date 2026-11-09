@@ -1586,13 +1586,24 @@ fn explicit_work_task_context_does_not_require_a_model_payload_field_or_implicit
 
 #[test]
 fn selected_work_task_is_frozen_without_other_work_artifacts_and_rejects_substitution_on_restore() {
+  check_work_documents(false);
+}
+
+#[test]
+fn explicit_work_acceptance_reaches_the_step_without_changing_its_payload() {
+  check_work_documents(true);
+}
+
+fn check_work_documents(include_acceptance: bool) {
   let (work, original, schema, _, _) = execution_fixture(FlowNodeKind::Reasoning);
   let old = &original.closure().definitions()[0];
+  let mut binding = serde_json::json!({"entries":{},"work_task":"original_request"});
+  if include_acceptance {
+    binding["work_acceptance"] = serde_json::json!("work_acceptance");
+  }
   let selected = old.nodes()[0]
     .clone()
-    .with_context_binding(
-      serde_json::from_value(serde_json::json!({"entries":{},"work_task":"original_request"})).unwrap(),
-    )
+    .with_context_binding(serde_json::from_value(binding).unwrap())
     .unwrap();
   let definition = FlowDefinition::new(FlowDefinitionInput {
     id: old.reference().id(),
@@ -1642,13 +1653,31 @@ fn selected_work_task_is_frozen_without_other_work_artifacts_and_rejects_substit
     FactoryDigest::from_bytes([91; 32]),
   )
   .unwrap();
+  let mut entries = vec![entry];
+  if include_acceptance {
+    let acceptance = work.artifacts().acceptance();
+    assert_eq!(input.work_acceptance(), Some(acceptance));
+    entries.push(
+      ContextManifestEntry::new(
+        ContextSourceKind::Specification,
+        key("work_acceptance"),
+        subject.clone(),
+        FactoryContextReference::Artifact(acceptance.clone()),
+        acceptance.content_digest(),
+        acceptance.encoded_size(),
+        FactorySafeText::new("Explicit admitted acceptance criteria").unwrap(),
+        FactoryDigest::from_bytes([93; 32]),
+      )
+      .unwrap(),
+    );
+  }
   let input = input
     .with_context(
       ContextManifest::new(
         ContextManifestId::generate(),
         subject,
         FactoryDigest::from_bytes([92; 32]),
-        vec![entry],
+        entries,
       )
       .unwrap(),
       vec![],
@@ -1660,10 +1689,11 @@ fn selected_work_task_is_frozen_without_other_work_artifacts_and_rejects_substit
     serde_json::to_value(work.artifacts().task()).unwrap()
   );
   assert_eq!(wire["payload"]["value"], serde_json::json!({"count":3}));
-  assert!(
-    !wire
+  assert_eq!(
+    wire
       .to_string()
-      .contains(&work.artifacts().acceptance().artifact_id().to_string())
+      .contains(&work.artifacts().acceptance().artifact_id().to_string()),
+    include_acceptance
   );
   let bytes = serde_json::to_vec(&input).unwrap();
   let restored = FlowNodeInput::restore(
@@ -1678,7 +1708,11 @@ fn selected_work_task_is_frozen_without_other_work_artifacts_and_rejects_substit
   .unwrap();
   assert_eq!(restored, input);
   let mut forged = wire;
-  forged["work_task"] = serde_json::to_value(work.artifacts().acceptance()).unwrap();
+  if include_acceptance {
+    forged["work_acceptance"] = serde_json::to_value(work.artifacts().task()).unwrap();
+  } else {
+    forged["work_task"] = serde_json::to_value(work.artifacts().acceptance()).unwrap();
+  }
   let bytes = serde_json::to_vec(&forged).unwrap();
   let digest = FactoryDigest::sha256("octacity.factory.flow-node-input.v1", &[&bytes]);
   assert!(

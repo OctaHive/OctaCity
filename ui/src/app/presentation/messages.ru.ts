@@ -2174,6 +2174,12 @@ export const ruMessages = {
   'factory.workTaskOccupied':
     'Это имя входа уже занято. Выберите другое имя в разделе «Подробности».',
   'factory.workTask': 'Задача из принятого Work',
+  'factory.workAcceptance': 'Критерии приёмки из принятого Work',
+  'factory.workAcceptanceHelp':
+    'Подключите задачу выше, затем добавьте её критерии приёмки к этому шагу.',
+  'factory.workAcceptanceName': 'Имя входа критериев приёмки Work',
+  'factory.workAcceptanceOccupied': 'Это имя входа критериев приёмки уже используется.',
+  'factory.workAcceptanceContextFull': 'Чтобы добавить критерии, уберите ненужный вход контекста.',
   'factory.workTaskHelp':
     'Подключает исходную задачу к этому шагу. Остальные документы и результаты Work подключаются отдельно.',
   'factory.inputSchema': 'Входная схема',
@@ -2266,6 +2272,7 @@ export const ruMessages = {
   'factory.schemaVersion': 'Версия схемы',
   'factory.schemaType': 'Тип схемы',
   'factory.addSchema': 'Добавить схему',
+  'factory.schemaAdded': '{name} · {version}: схема добавлена в черновик.',
   'factory.boolean': 'Логический',
   'factory.integer': 'Целое число',
   'factory.string': 'Строка',

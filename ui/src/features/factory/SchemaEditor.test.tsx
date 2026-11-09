@@ -5,6 +5,28 @@ import { afterEach, it, expect, vi } from 'vitest';
 import { SchemaEditor } from './SchemaEditor';
 import { configurationFixture } from '../../../tests/fixtures/factory';
 afterEach(cleanup);
+it('confirms which schema was added to the Flow draft', async () => {
+  const schema = {
+    reference: { identity: 'operator.criteria', version: 'v1', digest: '6'.repeat(64) },
+    shape: { type: 'boolean' as const },
+  };
+  const onAdd = vi.fn();
+  render(
+    <SchemaEditor
+      api={{ normalizeSchema: async () => schema }}
+      projectId="project"
+      onAdd={onAdd}
+    />,
+  );
+  await userEvent.type(screen.getByRole('textbox', { name: 'Schema name' }), 'operator.criteria');
+  await userEvent.type(screen.getByRole('textbox', { name: 'Schema version' }), 'v1');
+  await userEvent.click(screen.getByRole('button', { name: 'Add schema' }));
+  expect(onAdd).toHaveBeenCalledWith(schema);
+  expect(screen.getByRole('status').textContent).toMatch(
+    /operator\.criteria.*v1.*added to the draft/i,
+  );
+});
+
 it.each(['name and version', 'version', 'shape'] as const)(
   'retains the next schema draft when %s changes before an earlier normalization completes',
   async (edited) => {

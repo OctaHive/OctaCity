@@ -6,6 +6,30 @@ import { afterEach, it, expect } from 'vitest';
 import { configurationFixture } from '../../../tests/fixtures/factory';
 import { FlowBindings } from './FlowBindings';
 afterEach(cleanup);
+it('finds a manually named schema by name and version when connecting it to a step', async () => {
+  const root = configurationFixture().configuration.flow.closure.definitions[0]!;
+  const node = root.nodes[0]!;
+  const schema = {
+    reference: { identity: 'systems_analysis_input', version: '1', digest: 'a'.repeat(64) },
+    shape: { type: 'boolean' as const },
+  };
+  let observed = node;
+  render(
+    <FlowBindings
+      root={root}
+      node={node}
+      schemas={[schema]}
+      onChange={(next) => {
+        observed = next;
+      }}
+    />,
+  );
+  await userEvent.click(screen.getByText('Advanced input and Context mappings'));
+  await userEvent.click(screen.getByRole('combobox', { name: 'Input schema' }));
+  await userEvent.click(screen.getByRole('option', { name: 'systems_analysis_input · 1' }));
+  expect(observed.input_schema).toEqual(schema.reference);
+});
+
 it('shows step names for input formats and preserves exact references when selecting an incoming result format', async () => {
   const root = configurationFixture().configuration.flow.closure.definitions[0]!;
   const input = {

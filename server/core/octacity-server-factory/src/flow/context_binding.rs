@@ -36,6 +36,8 @@ pub struct FlowContextSourceObservation {
 pub struct FlowContextBinding {
   #[serde(skip_serializing_if = "Option::is_none")]
   work_task: Option<FactoryKey>,
+  #[serde(skip_serializing_if = "Option::is_none")]
+  work_acceptance: Option<FactoryKey>,
   candidate_revision: Option<FlowDataMapping>,
   #[serde(default, skip_serializing_if = "Option::is_none")]
   candidate_when_present: Option<String>,
@@ -49,6 +51,8 @@ struct BindingWire {
   #[serde(default)]
   work_task: Option<FactoryKey>,
   #[serde(default)]
+  work_acceptance: Option<FactoryKey>,
+  #[serde(default)]
   candidate_revision: Option<FlowDataMapping>,
   #[serde(default)]
   candidate_when_present: Option<String>,
@@ -61,6 +65,7 @@ impl TryFrom<BindingWire> for FlowContextBinding {
   fn try_from(wire: BindingWire) -> Result<Self, Self::Error> {
     let binding = Self {
       work_task: wire.work_task,
+      work_acceptance: wire.work_acceptance,
       candidate_revision: wire.candidate_revision,
       candidate_when_present: wire.candidate_when_present,
       entries: wire.entries,
@@ -78,6 +83,7 @@ impl FlowContextBinding {
   ) -> Result<Option<Self>, FactoryError> {
     let mut binding = original.cloned().unwrap_or(Self {
       work_task: None,
+      work_acceptance: None,
       candidate_revision: None,
       candidate_when_present: None,
       entries: BTreeMap::new(),
@@ -104,6 +110,7 @@ impl FlowContextBinding {
   ) -> Result<Self, FactoryError> {
     let binding = Self {
       work_task: None,
+      work_acceptance: None,
       candidate_revision,
       candidate_when_present: None,
       entries,
@@ -116,8 +123,15 @@ impl FlowContextBinding {
   pub fn work_task(&self) -> Option<&FactoryKey> {
     self.work_task.as_ref()
   }
+  /// Explicit logical key for the acceptance document from the same admitted Work.
+  pub fn work_acceptance(&self) -> Option<&FactoryKey> {
+    self.work_acceptance.as_ref()
+  }
+  fn work_document_keys(&self) -> impl Iterator<Item = &FactoryKey> {
+    self.work_task.iter().chain(self.work_acceptance.iter())
+  }
   pub(super) fn guarantees(&self, name: &FactoryKey) -> bool {
-    self.work_task.as_ref() == Some(name)
+    self.work_document_keys().any(|key| key == name)
       || self
         .entries
         .get(name)
@@ -159,10 +173,10 @@ impl FlowContextBinding {
     self.candidate_revision.is_some() && self.candidate_when_present.as_ref().is_none_or(String::is_empty)
   }
   fn validate(&self) -> Result<(), FactoryError> {
-    if self
-      .work_task
-      .as_ref()
-      .is_some_and(|key| self.entries.contains_key(key) || self.artifact_collections.contains_key(key))
+    if self.work_acceptance.is_some() && (self.work_task.is_none() || self.work_task == self.work_acceptance)
+      || self
+        .work_document_keys()
+        .any(|key| self.entries.contains_key(key) || self.artifact_collections.contains_key(key))
     {
       return Err(invalid());
     }
@@ -179,7 +193,7 @@ impl FlowContextBinding {
       super::predicate::validate_pointer(path).map_err(|_| invalid())?;
     }
     if (self.entries.is_empty() && self.artifact_collections.is_empty() && self.work_task.is_none())
-      || self.entries.len() + self.artifact_collections.len() + usize::from(self.work_task.is_some())
+      || self.entries.len() + self.artifact_collections.len() + self.work_document_keys().count()
         > MAX_CONTEXT_MANIFEST_ENTRIES
       || serde_json::to_vec(self).map_err(|_| invalid())?.len() > MAX_FLOW_INPUT_BINDING_BYTES
     {
@@ -236,7 +250,7 @@ impl FlowContextBinding {
         };
         (name.clone(), FlowContextSourceObservation { required, source })
       })
-      .chain(self.work_task.iter().map(|key| {
+      .chain(self.work_document_keys().map(|key| {
         (
           key.clone(),
           FlowContextSourceObservation {
@@ -262,7 +276,24 @@ impl FlowContextBinding {
     input: &FlowPayload,
     task: Option<&crate::FactoryArtifactReference>,
   ) -> Result<BTreeMap<FactoryKey, (ContextSourceKind, FactoryContextReference)>, FactoryError> {
-    if self.work_task.is_some() != task.is_some() {
+    self.select(input, task, None)
+  }
+  /// Resolves the declared Context with the exact Work documents frozen by input preparation.
+  pub fn selected_sources_for_input(
+    &self,
+    input: &FlowNodeInput,
+  ) -> Result<BTreeMap<FactoryKey, (ContextSourceKind, FactoryContextReference)>, FactoryError> {
+    // A legacy projected acceptance is already selected by its explicit payload mapping.
+    let acceptance = self.work_acceptance.as_ref().and(input.work_acceptance());
+    self.select(input.payload(), input.work_task(), acceptance)
+  }
+  fn select(
+    &self,
+    input: &FlowPayload,
+    task: Option<&crate::FactoryArtifactReference>,
+    acceptance: Option<&crate::FactoryArtifactReference>,
+  ) -> Result<BTreeMap<FactoryKey, (ContextSourceKind, FactoryContextReference)>, FactoryError> {
+    if self.work_task.is_some() != task.is_some() || self.work_acceptance.is_some() != acceptance.is_some() {
       return Err(invalid());
     }
     let mut selected = self
@@ -274,11 +305,14 @@ impl FlowContextBinding {
         Ok((name.clone(), (selection.source_kind, source)))
       })
       .collect::<Result<BTreeMap<_, _>, FactoryError>>()?;
-    if let (Some(key), Some(task)) = (&self.work_task, task) {
-      selected.insert(
-        key.clone(),
-        (ContextSourceKind::Task, FactoryContextReference::Artifact(task.clone())),
-      );
+    for (key, artifact) in self.work_document_keys().zip(task.into_iter().chain(acceptance)) {
+      // Criteria accompany the primary task; they must not compete with it for that role.
+      let kind = if self.work_acceptance.as_ref() == Some(key) {
+        ContextSourceKind::Specification
+      } else {
+        ContextSourceKind::Task
+      };
+      selected.insert(key.clone(), (kind, FactoryContextReference::Artifact(artifact.clone())));
     }
     for (prefix, collection) in &self.artifact_collections {
       if !applies(collection.when_present.as_deref(), input) {
@@ -341,7 +375,7 @@ impl FlowContextBinding {
     if !matches {
       return Err(invalid());
     }
-    let selected = self.selected_sources_with_work_task(input.payload(), input.work_task())?;
+    let selected = self.selected_sources_for_input(input)?;
     if context.entries().len() != selected.len() {
       return Err(invalid());
     }

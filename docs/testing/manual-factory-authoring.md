@@ -182,6 +182,11 @@ metadata to the model's data/result schemas. The existing input owner pins only
 the admitted task reference before creating the Node Attempt. Restore checks it
 against the original Work. Definitions and inputs without the optional selection
 keep their historical wire form. Literal/projected Task Context remains supported.
+For steps that need the same Work's acceptance document, also enable
+**Acceptance criteria from admitted Work**. It binds the frozen acceptance
+reference alongside the original task and does not modify the step's input
+schema or the results received from earlier steps. For a manual Issue launch,
+that document comes from the Issue's acceptance criteria at admission.
 Selecting a document under multiple aliases preserves those aliases in Context;
 the native task inventory contains each immutable document once and excludes the
 primary task from its own specification list.

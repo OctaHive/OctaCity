@@ -12,6 +12,8 @@ const same = (left: Reference | null | undefined, right: Reference) =>
   left.identity === right.identity &&
   left.version === right.version &&
   left.digest === right.digest;
+const generatedIdentity =
+  /^(?:input|result|issue-classification)\.[0-9a-f]{8}(?:-[0-9a-f]{4}){3}-[0-9a-f]{12}$/u;
 
 /** Display aliases follow current graph names; immutable references remain untouched. */
 export function flowSchemaChoices(
@@ -33,7 +35,9 @@ export function flowSchemaChoices(
       kind: results.length ? 'result' : inputs.length ? 'input' : 'unassigned',
       label:
         (results.length ? results : inputs).join(', ') ||
-        t('factory.additionalFormat', { number: index + 1 }),
+        (generatedIdentity.test(schema.reference.identity)
+          ? t('factory.additionalFormat', { number: index + 1 })
+          : `${schema.reference.identity} · ${schema.reference.version}`),
     };
   });
 }

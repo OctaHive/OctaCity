@@ -6,6 +6,26 @@ import { manualFlowEditorFixture } from '../../../tests/fixtures/manualFlowEdito
 import { factoryRoleFixture } from '../../../tests/fixtures/factoryRoles';
 afterEach(cleanup);
 
+it('connects Work acceptance to just the selected step without editing its data contracts', async () => {
+  const { draft } = manualFlowEditorFixture((value) => {
+    value.root.nodes[1]!.context_binding = { entries: {}, work_task: 'task' };
+  });
+  const before = structuredClone(draft());
+  await userEvent.click(screen.getByRole('button', { name: 'Edit step: classify' }));
+  const criteria = screen.getByRole('checkbox', { name: 'Acceptance criteria from admitted Work' });
+  await userEvent.click(criteria);
+  expect(draft().root.nodes[1]!.context_binding).toEqual({
+    entries: {},
+    work_task: 'task',
+    work_acceptance: 'work_acceptance',
+  });
+  expect(draft().root.nodes[1]!.input_binding).toEqual(before.root.nodes[1]!.input_binding);
+  expect(draft().data_schemas).toEqual(before.data_schemas);
+  expect(draft().root.nodes[0]).toEqual(before.root.nodes[0]);
+  await userEvent.click(criteria);
+  expect(draft()).toEqual(before);
+});
+
 it('keeps command tasks installation-owned instead of offering unsupported agent instructions', async () => {
   const { draft } = manualFlowEditorFixture();
   await userEvent.click(screen.getByRole('combobox', { name: 'Step type' }));

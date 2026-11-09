@@ -402,12 +402,16 @@ impl FlowNodeInput {
       .context_binding()
       .zip(work_task.as_ref())
       .filter(|(_, task)| *task != acceptance)
-      .and_then(|(binding, task)| binding.selected_sources_with_work_task(&payload, Some(task)).ok())
-      .filter(|sources| {
-        sources.values().any(|(kind, source)| {
-          *kind == crate::ContextSourceKind::Task
-            && matches!(source, crate::FactoryContextReference::Artifact(reference) if reference == acceptance)
-        })
+      .filter(|(binding, task)| {
+        binding.work_acceptance().is_some()
+          || binding
+            .selected_sources_with_work_task(&payload, Some(task))
+            .is_ok_and(|sources| {
+              sources.values().any(|(kind, source)| {
+                *kind == crate::ContextSourceKind::Task
+                  && matches!(source, crate::FactoryContextReference::Artifact(reference) if reference == acceptance)
+              })
+            })
       })
       .map(|_| acceptance.clone());
     let input = Self {

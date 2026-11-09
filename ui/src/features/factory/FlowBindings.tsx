@@ -82,7 +82,8 @@ export function FlowBindings({
   const contextCount =
     Object.keys(entries).length +
     Object.keys(collections).length +
-    Number(!!node.context_binding?.work_task);
+    Number(!!node.context_binding?.work_task) +
+    Number(!!node.context_binding?.work_acceptance);
   const candidate = node.context_binding?.candidate_revision;
   const updateSources = (sources: Record<string, Source>) =>
     onChange({

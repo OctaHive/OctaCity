@@ -58,7 +58,7 @@ impl<A: ArtifactRecordStore, S: BuildQueryStore, B: ArtifactByteReader> FactoryF
       Some(revision) => FactoryTaskSubject::Candidate(selected_candidate(snapshot, &input, &revision)?),
     };
     let selected = binding
-      .selected_sources_with_work_task(input.payload(), input.work_task())
+      .selected_sources_for_input(&input)
       .map_err(|_| ApplicationError::invalid())?;
     // Qualify the complete selection before reading any protected bytes.
     if selected
