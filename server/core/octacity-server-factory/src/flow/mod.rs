@@ -1,6 +1,8 @@
 mod discovery;
 pub use discovery::{FlowDiscoveryFacts, FlowDiscoveryKind};
+mod rejection;
 mod stop;
+pub use rejection::FlowResultRejection;
 pub use stop::{FlowNodeStop, FlowNodeStopReason};
 mod action;
 mod template;

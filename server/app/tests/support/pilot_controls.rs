@@ -110,6 +110,7 @@ impl FactoryNodeExecutor for Operation {
   ) -> Result<FactoryNodeExecutionStep, ApplicationError> {
     if self.0.swap(false, Ordering::SeqCst) {
       return Ok(FactoryNodeExecutionStep::ExecutionStopped {
+        rejection: None,
         execution: None,
         usage: BudgetUsage::default(),
       });

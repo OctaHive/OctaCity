@@ -72,12 +72,15 @@ factory_enum!(
     Admitted => "admitted",
     Running => "running",
     Waiting => "waiting",
+    Stopped => "stopped",
     Cancelled => "cancelled",
     Completed => "completed",
   }
 );
 
 impl FactoryRunState {
+  // Stopped is an explicit technical failure awaiting operator retry or
+  // cancellation. It retains the Run reservation and grants no result authority.
   /// Returns whether the run can no longer consume Factory WIP or be reconciled.
   #[must_use]
   pub const fn is_terminal(self) -> bool {

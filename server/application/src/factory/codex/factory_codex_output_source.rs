@@ -118,7 +118,7 @@ impl<R: FactoryRunStore, Q: BuildQueryStore, A: ArtifactRecordStore, B: Artifact
         observed.usage = usage;
         match &mut observed.outputs {
           FactoryNodeBuildOutputObservation::Verified(outputs) => outputs.usage = BudgetUsage { attempts: 1, ..usage },
-          FactoryNodeBuildOutputObservation::ExecutionStopped { usage: stored } => *stored = usage,
+          FactoryNodeBuildOutputObservation::ExecutionStopped { usage: stored, .. } => *stored = usage,
         }
         return Ok(observed);
       };
@@ -587,6 +587,7 @@ impl<R: FactoryRunStore, Q: BuildQueryStore, A: ArtifactRecordStore, B: Artifact
       return Ok(Observation {
         outputs: FactoryNodeBuildOutputObservation::ExecutionStopped {
           usage: BudgetUsage { attempts: 0, ..usage },
+          rejection: observed.rejection,
         },
         usage,
       });
@@ -598,6 +599,7 @@ impl<R: FactoryRunStore, Q: BuildQueryStore, A: ArtifactRecordStore, B: Artifact
       return Ok(Observation {
         outputs: FactoryNodeBuildOutputObservation::ExecutionStopped {
           usage: BudgetUsage { attempts: 0, ..usage },
+          rejection: None,
         },
         usage,
       });

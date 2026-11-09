@@ -206,6 +206,7 @@ pub(crate) struct FailedExecution {
   pub(crate) ids: ExecutionIds,
 }
 struct StoppedWithoutUsage(ExecutionIds);
+
 #[async_trait]
 impl FactoryNodeExecutor for StoppedWithoutUsage {
   async fn cancel(
@@ -242,6 +243,12 @@ impl FactoryNodeExecutor for FailedExecution {
     let execution = FlowBuildExecution::new(request.build.unwrap(), self.ids.0, self.ids.1, vec![self.ids.2]).unwrap();
     Ok(FactoryNodeExecutionStep::ExecutionStopped {
       execution: Some(Box::new(execution)),
+      rejection: Some(
+        serde_json::from_value(serde_json::json!({
+          "kind":"string_bytes", "path":"/conclusion", "minimum":1, "maximum":1024, "actual":1240
+        }))
+        .unwrap(),
+      ),
       usage: BudgetUsage {
         tokens: 23,
         elapsed_millis: 2,
@@ -250,7 +257,7 @@ impl FactoryNodeExecutor for FailedExecution {
     })
   }
 }
-struct RecoveredExecution;
+pub(crate) struct RecoveredExecution;
 struct OverBudgetExecution;
 #[async_trait]
 impl FactoryNodeExecutor for OverBudgetExecution {
@@ -266,6 +273,7 @@ impl FactoryNodeExecutor for OverBudgetExecution {
     request: FactoryNodeExecutionRequest<'_>,
   ) -> Result<FactoryNodeExecutionStep, ApplicationError> {
     Ok(FactoryNodeExecutionStep::ExecutionStopped {
+      rejection: None,
       execution: None,
       usage: BudgetUsage {
         tokens: request.admitted.limits().budget().max_tokens() + 1,
@@ -469,7 +477,7 @@ pub(crate) async fn verify_failed_node_owner<S: FactoryRunStore + 'static>(
     FactoryNodeStep::ExecutionStopped
   );
   let stopped = store.factory_run_snapshot(run.id()).await.unwrap();
-  assert_eq!(stopped.run.state(), octacity_server_factory::FactoryRunState::Waiting);
+  assert_eq!(serde_json::to_value(stopped.run.state()).unwrap(), "stopped");
   let projection = serde_json::to_value(FactoryNodeAttemptProjection::from_snapshot(
     &stopped.flow.attempts[0],
     &stopped,
@@ -479,6 +487,17 @@ pub(crate) async fn verify_failed_node_owner<S: FactoryRunStore + 'static>(
   assert!(projection.get("wait_reason").is_none());
   assert_eq!(stopped.flow.data.stops.len(), 1);
   assert_eq!(stopped.flow.data.stops[0].reason(), FlowNodeStopReason::ExecutionFailed);
+  let summary = octacity_server_store::FactoryRunSummaryDiagnostics::from_snapshot(&stopped).unwrap();
+  let failure = serde_json::to_value(summary).unwrap()["execution_failure"].clone();
+  assert_eq!(
+    failure["node_attempt_id"],
+    serde_json::json!(stopped.flow.attempts[0].id())
+  );
+  assert_eq!(failure["rejection"]["actual"], 1240);
+  assert_eq!(
+    serde_json::to_value(stopped.flow.data.stops[0].rejection()).unwrap(),
+    serde_json::json!({"kind":"string_bytes", "path":"/conclusion", "minimum":1, "maximum":1024, "actual":1240})
+  );
   assert_eq!(stopped.flow.data.build_executions[0].build_id(), ids.0);
   assert_eq!(stopped.flow.data.build_executions[0].attempt_id(), ids.1);
   assert!(stopped.flow.completions.is_empty());

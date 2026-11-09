@@ -5,6 +5,7 @@ export const FACTORY_STATES = {
   admitted: 'Admitted',
   running: 'Running',
   waiting: 'Waiting',
+  stopped: 'Execution stopped',
   cancelled: 'Cancelled',
   completed: 'Completed',
 } satisfies Record<components['schemas']['FactoryRunState'], string>;

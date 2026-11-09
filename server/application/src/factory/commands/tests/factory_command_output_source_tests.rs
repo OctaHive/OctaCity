@@ -168,7 +168,7 @@ fn configured_reproduction_stops_on_indeterminate_observation() {
       .published_outputs(fixture.query.build.build.id, fixture.query.attempt.id, 4000)
       .await
       .unwrap();
-    let FactoryNodeBuildOutputObservation::ExecutionStopped { usage } = outcome else {
+    let FactoryNodeBuildOutputObservation::ExecutionStopped { usage, .. } = outcome else {
       panic!("an unavailable environment must stop the stage without an accepted result");
     };
     assert!(usage.output_bytes > 0, "the Build retains the actual report");
@@ -307,7 +307,7 @@ fn failed_reproduction_commands_remain_technical_stops_even_when_a_report_was_pu
         .published_outputs(fixture.query.build.build.id, fixture.query.attempt.id, 4000)
         .await
         .unwrap();
-      let FactoryNodeBuildOutputObservation::ExecutionStopped { usage } = observed else {
+      let FactoryNodeBuildOutputObservation::ExecutionStopped { usage, .. } = observed else {
         panic!("timeout, checkout/dependency or generic execution failure cannot establish a symptom finding");
       };
       assert!(usage.elapsed_millis > 0);

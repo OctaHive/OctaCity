@@ -216,7 +216,7 @@ pub(super) fn insert_factory_schemas(schemas: &mut Map<String, Value>) {
   );
   schemas.insert(
     "FactoryRunState".to_owned(),
-    json!({"type":"string","enum":["admitted","running","waiting","cancelled","completed"]}),
+    json!({"type":"string","enum":["admitted","running","waiting","stopped","cancelled","completed"]}),
   );
   schemas.insert(
     "FactoryAdmissionResponse".to_owned(),
@@ -329,6 +329,18 @@ pub(super) fn insert_factory_schemas(schemas: &mut Map<String, Value>) {
           ),
         ),
         ("active_node_count", non_negative_integer()),
+        (
+          "execution_failure",
+          nullable(object(
+            [
+              ("node_attempt_id", non_empty_string()),
+              ("node", key()),
+              ("build_id", nullable(non_empty_string())),
+              ("rejection", nullable(schema_ref("FactoryFlowResultRejection"))),
+            ],
+            &["node_attempt_id", "node", "build_id", "rejection"],
+          )),
+        ),
         (
           "budget",
           object(

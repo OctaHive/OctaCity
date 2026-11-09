@@ -907,6 +907,32 @@ completions describe verified declared outcomes; stop receipts describe confirme
 execution failure or cancellation. Neither exposes worker ownership, result bytes
 or commands. A HumanGate cancelled without an external process has no stop receipt.
 
+A confirmed execution failure puts the Run in `stopped`, rather than `waiting`.
+`waiting` means an operation or configured choice is still pending. `stopped`
+retains the original Run reservation until an authorized retry or cancellation;
+it neither accepts a failed result nor selects a business outcome. A retry still
+requires the original node policy and remaining budget. Older waiting failures
+are reconciled from their retained stop receipts without another Build or usage
+charge. Console shows the stopped state and the available operator actions.
+The optional `diagnostics.execution_failure` identifies the latest unresolved
+failed attempt and its ordinary Build. When a decoded result is rejected, the
+receipt retains safe `rejection` metadata: schema mismatch, or the field path
+and expected/actual UTF-8 byte counts. Rejected content is never exposed through
+this projection. Older receipts may have no detailed rejection metadata.
+Console shows the explanation in the Run overview with a link to that attempt.
+
+Flow string bounds are UTF-8 byte counts. Native model schemas describe these
+byte bounds explicitly; JSON Schema `minLength`/`maxLength` alone count Unicode
+characters. The unchanged Flow validator rejects oversized decoded values;
+results are never silently truncated to fit.
+The native provider uses a conservative character allowance of one quarter of
+the byte maximum, reserving room for four-byte characters. Tight minimum/maximum
+intervals use an ASCII-only provider shape instead. These generation constraints
+do not alter the pinned Flow schema or acceptance of retained valid results.
+Both character and byte allowances are stated in the model contract. Prose
+must be rewritten to fit as complete words and sentences, preserving requested
+facts rather than clipping a longer conclusion.
+
 Domain records originate in verified owner facts, never inferred from outcome or
 node names. Evidence and review records expose identities, digests and bounded
 classifications rather than protected test material, criterion bodies or findings.

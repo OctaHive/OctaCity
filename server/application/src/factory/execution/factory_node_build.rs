@@ -54,6 +54,8 @@ pub enum FactoryNodeBuildOutputObservation {
   ExecutionStopped {
     /// Measured aggregate resources; Node Attempt creation already charged attempts.
     usage: BudgetUsage,
+    /// Safe validation metadata, without the rejected answer.
+    rejection: Option<FlowResultRejection>,
   },
 }
 
@@ -128,6 +130,8 @@ pub enum FactoryNodeBuildStep {
     state: octacity_server_orchestrator::BuildState,
     /// Already verified aggregate consumption; ordinary failures recover it separately.
     usage: Option<BudgetUsage>,
+    /// Safe metadata retained with a technical result rejection.
+    rejection: Option<FlowResultRejection>,
   },
   /// Verified common result and completion for one fenced owner transaction.
   Completed(Box<FactoryNodeBuildCompletion>),
@@ -244,6 +248,7 @@ where
         state,
         jobs,
       } => Ok(FactoryNodeBuildStep::ExecutionStopped {
+        rejection: None,
         execution: Box::new(FlowBuildExecution::new(intent, build_id, attempt_id, jobs).map_err(invalid)?),
         build_id,
         attempt_id,
@@ -262,7 +267,7 @@ where
           .map_err(build_error)?;
         let outputs = match observation {
           FactoryNodeBuildOutputObservation::Verified(outputs) => *outputs,
-          FactoryNodeBuildOutputObservation::ExecutionStopped { usage } => {
+          FactoryNodeBuildOutputObservation::ExecutionStopped { usage, rejection } => {
             if usage.attempts != 0 || usage.output_bytes > intent.budget().max_output_bytes() {
               return Err(ApplicationError::invalid());
             }
@@ -275,6 +280,7 @@ where
               attempt_id: observed.attempt_id,
               state: octacity_server_orchestrator::BuildState::Succeeded,
               usage: Some(usage),
+              rejection,
             });
           }
         };
@@ -958,13 +964,19 @@ where
       .await?
     {
       FactoryNodeBuildStep::DispatchExpired => Ok(crate::FactoryNodeExecutionStep::ExecutionStopped {
+        rejection: None,
         execution: None,
         usage: BudgetUsage::default(),
       }),
       FactoryNodeBuildStep::Waiting(execution) => Ok(crate::FactoryNodeExecutionStep::Waiting {
         execution: Some(execution),
       }),
-      FactoryNodeBuildStep::ExecutionStopped { execution, usage, .. } => {
+      FactoryNodeBuildStep::ExecutionStopped {
+        execution,
+        usage,
+        rejection,
+        ..
+      } => {
         let accepted = self
           .builds
           .factory_build_for_operation(intent.operation_id().map_err(invalid)?)
@@ -1004,6 +1016,7 @@ where
         Ok(crate::FactoryNodeExecutionStep::ExecutionStopped {
           execution: Some(execution),
           usage,
+          rejection,
         })
       }
       FactoryNodeBuildStep::Completed(done) => Ok(crate::FactoryNodeExecutionStep::Completed {

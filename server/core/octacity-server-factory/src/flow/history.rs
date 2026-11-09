@@ -40,6 +40,18 @@ pub(super) fn traversals_through(
 }
 
 impl<'a> FlowRuntimeHistory<'a> {
+  /// Current failed attempts without a successor retry. Historical failures
+  /// remain in the journal but cannot keep a recovered Run stopped.
+  pub fn failed_node_attempts(self) -> impl Iterator<Item = &'a NodeAttempt> {
+    self.attempts.iter().filter(move |attempt| {
+      self.is_current_cycle(attempt.workflow_cycle_id())
+        && self.stops.iter().any(|stop| {
+          stop.node_attempt_id() == attempt.id() && stop.reason() == crate::FlowNodeStopReason::ExecutionFailed
+        })
+        && !self.attempts.iter().any(|next| next.retry_of() == Some(attempt.id()))
+    })
+  }
+
   /// Validates journal consumption, including verified overruns from stopped
   /// operations. This is retention authority only: all new dispatches must
   /// still reserve against the full, unmodified measured consumption.

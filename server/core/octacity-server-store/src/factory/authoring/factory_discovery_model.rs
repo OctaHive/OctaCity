@@ -242,8 +242,24 @@ pub struct FactoryRunSummaryDiagnostics {
   pub latest_decision: Option<FactoryRunDecisionSummary>,
   /// Latest delivery for this exact current candidate.
   pub delivery: Option<FactoryRunDeliverySummary>,
+  /// Latest unresolved execution failure, without rejected result contents.
+  #[serde(default, skip_serializing_if = "Option::is_none")]
+  pub execution_failure: Option<FactoryRunFailureSummary>,
   /// Latest escalation identity without private reason text.
   pub escalation: Option<octacity_server_factory::EscalationId>,
+}
+/// Safe journal-derived failure facts for the current workflow cycle.
+#[derive(Clone, Debug, Eq, PartialEq, serde::Deserialize, serde::Serialize)]
+#[serde(deny_unknown_fields)]
+pub struct FactoryRunFailureSummary {
+  /// Exact failed attempt for navigation.
+  pub node_attempt_id: octacity_server_factory::NodeAttemptId,
+  /// Caller-configured step name.
+  pub node: FactoryKey,
+  /// Ordinary execution when one was dispatched.
+  pub build_id: Option<octacity_server_domain::BuildId>,
+  /// Trusted schema rejection metadata; older receipts may omit it.
+  pub rejection: Option<octacity_server_factory::FlowResultRejection>,
 }
 /// One active attempt without input, execution commands or context payloads.
 #[derive(Clone, Debug, Eq, PartialEq, serde::Deserialize, serde::Serialize)]
@@ -392,7 +408,34 @@ impl FactoryRunSummaryDiagnostics {
       .find(|row| row.id == snapshot.current.budget_id)
       .ok_or(StoreError::Unavailable)?
       .usage;
+    let execution_failure = snapshot
+      .flow
+      .runtime()
+      .failed_node_attempts()
+      .filter_map(|attempt| {
+        snapshot
+          .flow
+          .data
+          .stops
+          .iter()
+          .find(|stop| stop.node_attempt_id() == attempt.id())
+          .map(|stop| (attempt, stop))
+      })
+      .max_by_key(|(attempt, stop)| (stop.observed_at(), attempt.id()))
+      .map(|(attempt, stop)| FactoryRunFailureSummary {
+        node_attempt_id: attempt.id(),
+        node: attempt.node_key().clone(),
+        build_id: snapshot
+          .flow
+          .data
+          .build_executions
+          .iter()
+          .find(|execution| execution.node_attempt_id() == attempt.id())
+          .map(|execution| execution.build_id()),
+        rejection: stop.rejection().cloned(),
+      });
     Ok(Self {
+      execution_failure,
       base_revision: snapshot
         .work
         .subject()

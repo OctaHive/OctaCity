@@ -222,6 +222,10 @@ fn verifies_a_provider_text_result_as_the_original_flow_value() {
   assert_eq!(stopped.outcome, crate::CodexHarnessOutcome::Failed);
   assert!(stopped.data.is_none());
   assert_eq!(
+    serde_json::to_value(stopped.rejection).unwrap(),
+    json!({"kind":"string_bytes", "path":"/", "minimum":1, "maximum":32, "actual":34})
+  );
+  assert_eq!(
     stopped.usage,
     octacity_server_factory::BudgetUsage {
       output_bytes: fixture

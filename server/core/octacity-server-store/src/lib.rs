@@ -214,10 +214,10 @@ pub use factory::authoring::factory_configuration_model::{
 pub use factory::authoring::factory_configuration_port::{FactoryCapabilitySource, FactoryConfigurationStore};
 pub use factory::authoring::factory_discovery_model::{
   CurrentFactoryConfigurationPage, CurrentFactoryConfigurationSummary, FactoryConfigurationPagePosition,
-  FactoryRunBudgetSummary, FactoryRunDecisionSummary, FactoryRunDeliverySummary, FactoryRunFilter,
-  FactoryRunNodeSummary, FactoryRunPage, FactoryRunPagePosition, FactoryRunSummary, FactoryRunSummaryDiagnostics,
-  ListFactoryRuns, ListProjectFactoryConfigurations, MAX_FACTORY_CONFIGURATION_PAGE_SIZE, MAX_FACTORY_RUN_PAGE_SIZE,
-  MAX_FACTORY_RUN_SUMMARY_NODES,
+  FactoryRunBudgetSummary, FactoryRunDecisionSummary, FactoryRunDeliverySummary, FactoryRunFailureSummary,
+  FactoryRunFilter, FactoryRunNodeSummary, FactoryRunPage, FactoryRunPagePosition, FactoryRunSummary,
+  FactoryRunSummaryDiagnostics, ListFactoryRuns, ListProjectFactoryConfigurations, MAX_FACTORY_CONFIGURATION_PAGE_SIZE,
+  MAX_FACTORY_RUN_PAGE_SIZE, MAX_FACTORY_RUN_SUMMARY_NODES,
 };
 pub use factory::authoring::factory_discovery_port::FactoryDiscoveryStore;
 pub use factory::execution::factory_admission_model::{

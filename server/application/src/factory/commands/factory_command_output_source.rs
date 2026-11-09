@@ -361,7 +361,10 @@ impl<R: FactoryRunStore, Q: BuildQueryStore, A: ArtifactRecordStore, B: Artifact
     )
     .map_err(|_| Invalid)?;
     if !inspected.succeeded {
-      return Ok(FactoryNodeBuildOutputObservation::ExecutionStopped { usage: inspected.usage });
+      return Ok(FactoryNodeBuildOutputObservation::ExecutionStopped {
+        rejection: None,
+        usage: inspected.usage,
+      });
     }
     let InspectedAttempt {
       snapshot,
@@ -589,7 +592,7 @@ impl<R: FactoryRunStore, Q: BuildQueryStore, A: ArtifactRecordStore, B: Artifact
       return Err(Invalid);
     }
     if inconclusive {
-      return Ok(FactoryNodeBuildOutputObservation::ExecutionStopped { usage });
+      return Ok(FactoryNodeBuildOutputObservation::ExecutionStopped { rejection: None, usage });
     }
     Ok(FactoryNodeBuildOutputObservation::Verified(Box::new(
       FactoryNodeBuildOutputs {

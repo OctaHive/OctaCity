@@ -141,7 +141,7 @@ pub fn validate_lifecycle_progress(
     (state, progress),
     (FactoryRunState::Admitted, FactoryLifecycleProgress::Admitted)
       | (
-        FactoryRunState::Running | FactoryRunState::Waiting,
+        FactoryRunState::Running | FactoryRunState::Waiting | FactoryRunState::Stopped,
         FactoryLifecycleProgress::FlowRunning { .. }
       )
       | (

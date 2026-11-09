@@ -1207,7 +1207,7 @@ fn an_expired_trusted_action_settles_its_original_operation_and_leaves_running_w
       FactoryNodeStep::ExecutionStopped,
     );
     let snapshot = h.store.factory_run_snapshot(h.run).await.unwrap();
-    assert_eq!(snapshot.run.state(), FactoryRunState::Waiting);
+    assert_eq!(snapshot.run.state(), FactoryRunState::Stopped);
     assert!(
       snapshot.controls.is_empty(),
       "deadline handling needs no user cancellation"

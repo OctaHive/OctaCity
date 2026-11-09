@@ -30,6 +30,8 @@ pub struct FlowNodeStop {
   observed_at: Timestamp,
   usage: BudgetUsage,
   execution: Option<FactoryDigest>,
+  #[serde(default, skip_serializing_if = "Option::is_none")]
+  rejection: Option<crate::FlowResultRejection>,
 }
 impl FlowNodeStop {
   /// Binds a confirmed stop and its measured consumption to the current fenced observer.
@@ -63,6 +65,7 @@ impl FlowNodeStop {
       observed_at,
       usage,
       execution: execution.map(FlowBuildExecution::digest).transpose()?,
+      rejection: None,
     })
   }
   /// Restores canonical retained bytes against their exact attempt and execution link.
@@ -84,7 +87,8 @@ impl FlowNodeStop {
       wire.observed_at,
       wire.usage,
       execution,
-    )?;
+    )?
+    .with_rejection(wire.rejection)?;
     if value != serde_json::to_value(&restored).map_err(|_| invalid())? || restored.digest()? != expected {
       return Err(invalid());
     }
@@ -106,6 +110,21 @@ impl FlowNodeStop {
   #[must_use]
   pub const fn reason(&self) -> FlowNodeStopReason {
     self.reason
+  }
+  /// Attaches trusted validation metadata without retaining rejected content.
+  pub fn with_rejection(mut self, rejection: Option<crate::FlowResultRejection>) -> Result<Self, FactoryError> {
+    if rejection
+      .as_ref()
+      .is_some_and(|detail| self.reason != FlowNodeStopReason::ExecutionFailed || !detail.is_valid())
+    {
+      return Err(invalid());
+    }
+    self.rejection = rejection;
+    Ok(self)
+  }
+  /// Safe reason for rejecting an otherwise completed execution, when known.
+  pub const fn rejection(&self) -> Option<&crate::FlowResultRejection> {
+    self.rejection.as_ref()
   }
   /// Authoritative time at which stopping was independently confirmed.
   #[must_use]
@@ -189,6 +208,36 @@ mod tests {
         receipt.digest().unwrap()
       )
       .is_err()
+    );
+  }
+  #[test]
+  fn rejected_large_text_retains_counts_without_retaining_the_answer() {
+    let (_, _, _, _, attempt) = execution_fixture(crate::FlowNodeKind::Reasoning);
+    let schema = crate::FlowDataSchema::new(
+      crate::FactoryKey::new("bounded").unwrap(),
+      crate::FactoryKey::new("v1").unwrap(),
+      crate::FlowValueSchema::String {
+        min_bytes: 1,
+        max_bytes: 32,
+      },
+    )
+    .unwrap();
+    let receipt = FlowNodeStop::new(
+      &attempt,
+      FactoryClaimOwnership::new(attempt.owner().clone(), attempt.claim()),
+      FlowNodeStopReason::ExecutionFailed,
+      time(15),
+      BudgetUsage::default(),
+      None,
+    )
+    .unwrap()
+    .with_rejection(schema.rejection(&serde_json::json!("x".repeat(MAX_FLOW_DATA_BYTES + 1))))
+    .unwrap();
+    let encoded = serde_json::to_vec(&receipt).unwrap();
+    assert!(encoded.len() < 2048);
+    assert_eq!(
+      FlowNodeStop::restore(&encoded, &attempt, None, receipt.digest().unwrap()).unwrap(),
+      receipt
     );
   }
   #[test]

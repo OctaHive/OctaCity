@@ -3,9 +3,10 @@ import { usePresentation } from '../app/presentation/PresentationProvider';
 import type { components } from '../../.generated/api/schema';
 type FactoryRun = Pick<
   components['schemas']['FactoryRunSummaryResource'],
-  'diagnostics' | 'state' | 'version'
+  'id' | 'diagnostics' | 'state' | 'version'
 > & { issue_association?: components['schemas']['IssueWorkAssociation'] | null };
 import styles from './FactoryRead.module.css';
+import notice from './QueryStateNotice.module.css';
 
 const metrics = [
   ['attempts', 'max_attempts', 'factory.budgetAttempts'],
@@ -20,6 +21,8 @@ export function FactoryRunSummary({ run }: { run: FactoryRun }) {
   const { t } = usePresentation();
   const { diagnostics } = run;
   const association = run.issue_association;
+  const failure = diagnostics.execution_failure;
+  const rejection = failure?.rejection;
   const selection = association
     ? new URLSearchParams({
         section: 'runs',
@@ -32,6 +35,38 @@ export function FactoryRunSummary({ run }: { run: FactoryRun }) {
     <section className={styles.panel} aria-label={t('factory.runOverview')}>
       <h2>{t('factory.runOverview')}</h2>
       <p className={styles.supportingText}>{t('factory.authoritativeRun')}</p>
+      {run.state === 'stopped' ? (
+        <div
+          role="alert"
+          aria-label={t('factory.failureHeading')}
+          className={`${notice.notice} ${notice.failure}`}
+        >
+          <div className={notice.content}>
+            <strong>{t('factory.failureHeading')}</strong>
+            <p role="status">{t('factory.runStopped')}</p>
+            {failure ? <p>{t('factory.failureStep', { node: failure.node })}</p> : null}
+            <p className={notice.requestIdentity}>
+              {rejection?.kind === 'string_bytes'
+                ? t('factory.failureStringBytes', {
+                    field: rejection.path,
+                    actual: rejection.actual,
+                    minimum: rejection.minimum,
+                    maximum: rejection.maximum,
+                  })
+                : rejection?.kind === 'schema'
+                  ? t('factory.failureSchema')
+                  : t('factory.failureUnknown')}
+            </p>
+            {failure ? (
+              <Link
+                to={`/factory/${encodeURIComponent(run.id)}?diagnostic=node-attempts&diagnostic_id=${encodeURIComponent(failure.node_attempt_id)}&node_attempt_id=${encodeURIComponent(failure.node_attempt_id)}`}
+              >
+                {t('factory.failureOpenStep')}
+              </Link>
+            ) : null}
+          </div>
+        </div>
+      ) : null}
       {association ? (
         <Link
           to={`/projects/${encodeURIComponent(association.project_id)}/issues/${encodeURIComponent(association.issue_id)}?${selection}`}
@@ -45,7 +80,7 @@ export function FactoryRunSummary({ run }: { run: FactoryRun }) {
         <div>
           <dt>{t('factory.state')}</dt>
           <dd>
-            {run.state} · v{run.version}
+            {run.state === 'stopped' ? t('factory.executionFailed') : run.state} · v{run.version}
           </dd>
         </div>
         <div>

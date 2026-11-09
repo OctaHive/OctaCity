@@ -49,6 +49,8 @@ pub struct FactoryCodexNodeRunObservation {
   pub data: Option<FlowVerifiedBuildData>,
   /// Independently reported and cross-checked measured consumption.
   pub usage: BudgetUsage,
+  /// Metadata explaining a rejected result; never rejected model content.
+  pub rejection: Option<octacity_server_factory::FlowResultRejection>,
 }
 
 /// Original execution/Job expectations for a stage selecting native MCP evidence verification.
@@ -101,6 +103,7 @@ pub fn verify_codex_mcp_node_run(
     None
   };
   Ok(FactoryCodexNodeRunObservation {
+    rejection: None,
     outcome: records.outcome,
     data,
     usage: records.usage,
@@ -115,22 +118,26 @@ pub fn verify_codex_node_run(
 ) -> Result<FactoryCodexNodeRunObservation, ApplicationError> {
   let records = verified_records(&expected, documents)?;
   let data = if records.outcome == CodexHarnessOutcome::Completed {
-    let data = crate::factory::codex::factory_codex_schema::decode_flow_result(expected.schema.shape(), records.value)
-      .and_then(|value| FlowVerifiedBuildData::new(expected.schema.clone(), value).ok());
+    let value = crate::factory::codex::factory_codex_schema::decode_flow_result(expected.schema.shape(), records.value);
+    let rejection = value.as_ref().and_then(|value| expected.schema.rejection(value));
+    let data = value.and_then(|value| FlowVerifiedBuildData::new(expected.schema.clone(), value).ok());
     // Usage belongs to the independently verified execution even when the
     // model's answer cannot be accepted as Flow data.
     if data.is_none() {
+      let rejection = rejection.unwrap_or(octacity_server_factory::FlowResultRejection::Schema);
       tracing::warn!(
         build_id = %documents[0].identity.build_id,
         attempt_id = %documents[0].identity.attempt_id,
         job_id = %documents[0].identity.job_id,
         schema = %expected.schema.reference().identity(),
+        rejection = ?rejection,
         "Codex result does not satisfy the admitted Flow schema"
       );
       return Ok(FactoryCodexNodeRunObservation {
         outcome: CodexHarnessOutcome::Failed,
         data: None,
         usage: records.usage,
+        rejection: Some(rejection),
       });
     }
     data
@@ -141,6 +148,7 @@ pub fn verify_codex_node_run(
     outcome: records.outcome,
     data,
     usage: records.usage,
+    rejection: None,
   })
 }
 
@@ -183,6 +191,7 @@ pub fn verify_codex_review_node_run(
   let records = verified_records(&expected, documents)?;
   if records.outcome != CodexHarnessOutcome::Completed {
     return Ok(FactoryCodexNodeRunObservation {
+      rejection: None,
       outcome: records.outcome,
       data: None,
       usage: records.usage,
@@ -229,6 +238,7 @@ pub fn verify_codex_review_node_run(
   )
   .map_err(|_| invalid())?;
   Ok(FactoryCodexNodeRunObservation {
+    rejection: None,
     outcome: records.outcome,
     data: Some(data),
     usage: records.usage,

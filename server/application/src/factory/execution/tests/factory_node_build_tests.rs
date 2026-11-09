@@ -49,6 +49,7 @@ fn verified_harness_failure_stops_a_node_even_when_the_ordinary_build_succeeded(
       _: u64,
     ) -> Result<FactoryNodeBuildOutputObservation, OrdinaryBuildApplicationError> {
       Ok(FactoryNodeBuildOutputObservation::ExecutionStopped {
+        rejection: None,
         usage: BudgetUsage {
           tokens: self.0,
           elapsed_millis: 2,
@@ -78,7 +79,7 @@ fn verified_harness_failure_stops_a_node_even_when_the_ordinary_build_succeeded(
         })
         .await
         .unwrap();
-      let FactoryNodeExecutionStep::ExecutionStopped { execution, usage } = step else {
+      let FactoryNodeExecutionStep::ExecutionStopped { execution, usage, .. } = step else {
         panic!("a technical harness failure cannot create a configured semantic result");
       };
       assert!(execution.is_some());
@@ -989,6 +990,7 @@ fn ownership_and_frozen_deadlines_are_checked_before_any_ordinary_dispatch() {
     assert_eq!(
       step,
       FactoryNodeExecutionStep::ExecutionStopped {
+        rejection: None,
         execution: None,
         usage: BudgetUsage::default()
       },

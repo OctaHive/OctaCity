@@ -57,10 +57,23 @@ pub(crate) fn json_schema(shape: &FlowValueSchema) -> Result<Value, CodexCompila
       let required = fields.keys().map(|name| name.as_str()).collect::<Vec<_>>();
       json!({"type":"object", "properties":properties, "required":required, "additionalProperties":false})
     }
-    // JSON Schema counts Unicode code points; the authoritative Flow payload
-    // validator still enforces UTF-8 byte bounds after verified result decoding.
+    // JSON Schema counts code points, whereas Flow counts UTF-8 bytes. Generate
+    // a safe subset: reserve four bytes per character and at least min_bytes
+    // characters. Tight byte intervals remain satisfiable using ASCII. This
+    // narrows model generation only; retained Flow schemas/validation stay exact.
     FlowValueSchema::String { min_bytes, max_bytes } => {
-      json!({"type":"string", "minLength":min_bytes.div_ceil(4), "maxLength":max_bytes})
+      let unicode_maximum = max_bytes / 4;
+      let ascii_only = *min_bytes > unicode_maximum || (*max_bytes > 0 && unicode_maximum == 0);
+      let maximum_characters = if ascii_only { *max_bytes } else { unicode_maximum };
+      let mut schema = json!({
+        "type":"string", "minLength":min_bytes,
+        "maxLength":maximum_characters,
+        "description":format!("The decoded string must contain {min_bytes} to {max_bytes} UTF-8 bytes (not characters). Generation allows at most {maximum_characters} Unicode characters. Rewrite concisely to preserve the requested facts in complete words and sentences; never clip a longer answer.")
+      });
+      if ascii_only {
+        schema["pattern"] = json!(r"^[\u0000-\u007f]*$");
+      }
+      schema
     }
     FlowValueSchema::Integer { minimum, maximum } => json!({"type":"integer", "minimum":minimum, "maximum":maximum}),
     FlowValueSchema::Boolean => json!({"type":"boolean"}),

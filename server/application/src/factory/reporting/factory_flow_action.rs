@@ -186,7 +186,11 @@ impl crate::FactoryNodeExecutor for FactoryFlowActionAdapter {
           Ok(crate::FactoryNodeExecutionStep::Waiting { execution })
         }
         crate::FactoryNodeCancellationStep::Stopped { execution, usage } => {
-          Ok(crate::FactoryNodeExecutionStep::ExecutionStopped { execution, usage })
+          Ok(crate::FactoryNodeExecutionStep::ExecutionStopped {
+            rejection: None,
+            execution,
+            usage,
+          })
         }
       };
     }

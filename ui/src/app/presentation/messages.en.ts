@@ -1789,7 +1789,18 @@ export const enMessages = {
   'factory.nestedFlows': 'Nested Flow Runs',
   'factory.parentCall': 'Parent call',
   'factory.pendingJoin': 'Pending join',
+  'factory.failureHeading': 'Why execution stopped',
+  'factory.failureStep': 'Failed step: {node}',
+  'factory.failureStringBytes':
+    'Field {field}: {actual} UTF-8 bytes; allowed range: {minimum}–{maximum}.',
+  'factory.failureSchema':
+    'The step result does not match its expected format and was not accepted.',
+  'factory.failureUnknown':
+    'The step execution failed. Detailed rejection metadata was not retained; open the step to inspect its execution.',
+  'factory.failureOpenStep': 'Open failed step',
   'factory.executionFailed': 'Execution stopped',
+  'factory.runStopped':
+    'Run stopped because a step failed. Review the failed step; retry it if permitted, or cancel this Run.',
   'factory.executionCancelled': 'Execution cancelled',
   'factory.stopAfterDeadline': 'Stop observed after the deadline',
   'factory.viewStopDetails': 'View stop details',

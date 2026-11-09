@@ -8,6 +8,17 @@ import { FactoryRunSummary } from './FactoryRunSummary';
 
 afterEach(cleanup);
 
+it('explains a stopped execution instead of presenting it as a pending wait', () => {
+  const run = { ...runFixture(), state: 'stopped' as const };
+  render(
+    <RouterProvider
+      router={createMemoryRouter([{ path: '/', element: <FactoryRunSummary run={run} /> }])}
+    />,
+  );
+  expect(screen.getByRole('status').textContent).toContain('a step failed');
+  expect(screen.getByRole('status').textContent).toContain('retry');
+});
+
 it.each([0, 7])(
   'shows unpriced usage without presenting its known subtotal %s as total cost',
   (known) => {

@@ -810,6 +810,15 @@ fn issue_checks_retain_missing_and_active_check_lifecycle_without_acceptance() {
       )
       .unwrap(),
     );
+    stop.next_run = FactoryRun::restore(
+      snapshot.run.id(),
+      snapshot.run.configuration().clone(),
+      &snapshot.work,
+      snapshot.run.subject().clone(),
+      FactoryRunState::Stopped,
+      stop.next_run.version(),
+    )
+    .unwrap();
     factory.commit_factory_run_transition(stop).await.unwrap();
     let failed = queries.handle_query(&context(), query).await.unwrap();
     assert_eq!(

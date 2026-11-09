@@ -1803,7 +1803,17 @@ export const ruMessages = {
   'factory.nestedFlows': 'Вложенные запуски Flow',
   'factory.parentCall': 'Родительский вызов',
   'factory.pendingJoin': 'Ожидание объединения ветвей',
+  'factory.failureHeading': 'Почему выполнение остановилось',
+  'factory.failureStep': 'Шаг с ошибкой: {node}',
+  'factory.failureStringBytes':
+    'Поле {field}: {actual} байт UTF-8; допустимо: {minimum}–{maximum}.',
+  'factory.failureSchema': 'Результат шага не соответствует ожидаемому формату и не был принят.',
+  'factory.failureUnknown':
+    'Выполнение шага завершилось с ошибкой. Подробная причина не сохранена; откройте шаг для просмотра выполнения.',
+  'factory.failureOpenStep': 'Открыть шаг с ошибкой',
   'factory.executionFailed': 'Выполнение остановлено',
+  'factory.runStopped':
+    'Запуск остановлен из-за ошибки шага. Откройте этот шаг: повторите его, если это разрешено, или отмените запуск.',
   'factory.executionCancelled': 'Выполнение отменено',
   'factory.stopAfterDeadline': 'Остановка зафиксирована после истечения срока',
   'factory.viewStopDetails': 'Открыть сведения об остановке',

@@ -14,8 +14,22 @@ import { FactoryRunDiagnostics } from './FactoryRunDiagnostics';
 afterEach(cleanup);
 
 it('shows a stop and a pending usage observation only on their exact attempts', async () => {
-  const run = { ...runFixture(), updated_at_unix_ms: 110 };
+  const run = { ...runFixture(), state: 'stopped' as const, updated_at_unix_ms: 110 };
   const stopped = 'attempt-timeout';
+  Object.assign(run.diagnostics, {
+    execution_failure: {
+      node_attempt_id: stopped,
+      node: 'verify_candidate',
+      build_id: null,
+      rejection: {
+        kind: 'string_bytes',
+        path: '/conclusion',
+        minimum: 1,
+        maximum: 1024,
+        actual: 1240,
+      },
+    },
+  });
   const id = 'b'.repeat(64);
   const active = {
     factory_run_id: run.id,
@@ -80,6 +94,13 @@ it('shows a stop and a pending usage observation only on their exact attempts', 
                     id,
                     node_attempt_id: stopped,
                     reason: { kind: 'execution_failed' },
+                    rejection: {
+                      kind: 'string_bytes',
+                      path: '/conclusion',
+                      minimum: 1,
+                      maximum: 1024,
+                      actual: 1240,
+                    },
                     observed_at: 110,
                     execution: null,
                     usage: {
@@ -104,6 +125,13 @@ it('shows a stop and a pending usage observation only on their exact attempts', 
     </QueryClientProvider>,
   );
   const row = within(await screen.findByRole('row', { name: /verify_candidate/ }));
+  const failure = await screen.findByRole('alert', { name: 'Why execution stopped' });
+  expect(failure.textContent).toContain('conclusion');
+  expect(failure.textContent).toContain('1240 UTF-8 bytes');
+  expect(failure.textContent).toContain('1–1024');
+  expect(
+    within(failure).getByRole('link', { name: 'Open failed step' }).getAttribute('href'),
+  ).toContain(stopped);
   expect(await row.findByText('Stop observed after the deadline')).toBeTruthy();
   expect(row.getByText('Retry eligible')).toBeTruthy();
   expect(row.queryByText('Completed record')).toBeNull();

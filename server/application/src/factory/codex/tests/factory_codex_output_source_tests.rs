@@ -2505,7 +2505,7 @@ fn codex_output_source_retains_measured_consumption_when_the_ordinary_job_failed
       .published_outputs(fixture.query.build.build.id, fixture.query.attempt.id, 10000)
       .await
       .expect("a later ordinary execution failure cannot erase independently measured provider consumption");
-    let FactoryNodeBuildOutputObservation::ExecutionStopped { usage } = observed else {
+    let FactoryNodeBuildOutputObservation::ExecutionStopped { usage, .. } = observed else {
       panic!("a failed ordinary job cannot produce a semantic node result")
     };
     assert_eq!(usage.attempts, 0);

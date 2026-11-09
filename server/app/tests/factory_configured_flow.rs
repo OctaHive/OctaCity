@@ -514,7 +514,49 @@ async fn configured_execution_failure_restores_the_exact_stop_and_usage_in_postg
   )
   .await;
   let restarted = Arc::new(PostgresStore::new(database.pool.clone()));
-  failure_contract::verify_failed_node_owner(store, restarted, &fixture, ids).await;
+  failure_contract::verify_failed_node_owner(store.clone(), restarted, &fixture, ids).await;
+  // A persisted pre-upgrade failure has the same journal, but its old state is waiting.
+  sqlx::query("UPDATE factory_runs SET state = 'waiting' WHERE id = $1")
+    .bind(fixture.admission.run.id().as_uuid())
+    .execute(&database.pool)
+    .await
+    .unwrap();
+  let run = fixture.admission.run.id();
+  let before = store.factory_run_snapshot(run).await.unwrap();
+  assert_eq!(before.run.state(), octacity_server_factory::FactoryRunState::Waiting);
+  let runner = FactoryFlowRunner::new(
+    store.clone(),
+    Arc::new(failure_contract::RecoveredExecution),
+    Arc::new(flow_contract::Inputs),
+    factory_node_test_support::clock(),
+  );
+  let claim = before.current_claim.as_ref().unwrap().id;
+  assert_eq!(
+    runner.reconcile_flow(run, claim, at(15)).await.unwrap(),
+    FactoryFlowStep::Advanced
+  );
+  let after = store.factory_run_snapshot(run).await.unwrap();
+  assert_eq!(serde_json::to_value(after.run.state()).unwrap(), "stopped");
+  assert_eq!(after.flow, before.flow);
+  assert_eq!(
+    after
+      .budgets
+      .iter()
+      .find(|row| row.id == after.current.budget_id)
+      .unwrap()
+      .usage,
+    before
+      .budgets
+      .iter()
+      .find(|row| row.id == before.current.budget_id)
+      .unwrap()
+      .usage,
+  );
+  assert_eq!(
+    runner.reconcile_flow(run, claim, at(16)).await.unwrap(),
+    FactoryFlowStep::Waiting
+  );
+  assert_eq!(store.factory_run_snapshot(run).await.unwrap(), after);
   database.cleanup().await;
 }
 #[tokio::test]

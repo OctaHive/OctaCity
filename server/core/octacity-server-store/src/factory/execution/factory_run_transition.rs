@@ -208,10 +208,12 @@ pub fn validate_factory_transition(
     request.committed_at,
   );
   if let Some(attempt_id) = request.lifecycle_checkpoint.awaiting_terminal_usage {
-    if request.next_run.state() != octacity_server_factory::FactoryRunState::Waiting
-      || !history
-        .active_nodes()
-        .any(|attempt| attempt.id() == attempt_id && history.is_current_cycle(attempt.workflow_cycle_id()))
+    if !matches!(
+      request.next_run.state(),
+      octacity_server_factory::FactoryRunState::Waiting | octacity_server_factory::FactoryRunState::Stopped
+    ) || !history
+      .active_nodes()
+      .any(|attempt| attempt.id() == attempt_id && history.is_current_cycle(attempt.workflow_cycle_id()))
       || !baseline
         .data
         .build_executions
@@ -379,16 +381,18 @@ fn lifecycle_transition_is_valid(
     return !baseline.run.state().is_terminal()
       && *root == baseline.admitted_flow.root_run().id()
       && match request.next_run.state() {
-        FactoryRunState::Running => true,
+        FactoryRunState::Running => history.failed_node_attempts().next().is_none(),
+        FactoryRunState::Stopped => history.failed_node_attempts().next().is_some(),
         // A technical stop can await operator disposition. A stop without
         // verified usage can also wait while retaining its reservation.
         FactoryRunState::Waiting => {
           matches!(
             baseline.run.state(),
-            FactoryRunState::Running | FactoryRunState::Waiting
+            FactoryRunState::Running | FactoryRunState::Waiting | FactoryRunState::Stopped
           ) && request.append.record_count()
             == request.append.flow.data.build_executions.len() + request.append.flow.data.stops.len()
             && request.outbox.is_empty()
+            && history.failed_node_attempts().next().is_none()
         }
         _ => false,
       };

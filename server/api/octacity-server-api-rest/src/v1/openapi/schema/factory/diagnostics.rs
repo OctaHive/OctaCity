@@ -123,6 +123,16 @@ pub(super) fn insert(schemas: &mut Map<String, Value>) {
     ),
   );
   schemas.insert(
+    "FactoryFlowResultRejection".to_owned(),
+    json!({"oneOf": [
+      tagged("kind", "schema", [], &[]),
+      tagged("kind", "string_bytes", [
+        ("path", json!({"type":"string","maxLength":2048})),
+        ("minimum", non_negative_integer()), ("maximum", non_negative_integer()), ("actual", non_negative_integer())
+      ], &["path", "minimum", "maximum", "actual"])
+    ]}),
+  );
+  schemas.insert(
     "FactoryNodeStopDiagnostic".to_owned(),
     object(
       [
@@ -135,6 +145,7 @@ pub(super) fn insert(schemas: &mut Map<String, Value>) {
         ),
         ("usage", schema_ref("FactoryBudgetUsage")),
         ("execution", nullable(schema_ref("FactoryDigest"))),
+        ("rejection", nullable(schema_ref("FactoryFlowResultRejection"))),
         ("observed_at", integer()),
       ],
       &["id", "node_attempt_id", "reason", "usage", "execution", "observed_at"],

@@ -1297,7 +1297,9 @@ pub(crate) fn validation_fixture_with_flow(
     assert!(
       matches!(
         expired.observe(expired_request()).await.unwrap(),
-        FactoryNodeExecutionStep::ExecutionStopped { execution: None, usage } if usage == BudgetUsage::default()
+        FactoryNodeExecutionStep::ExecutionStopped {
+          rejection: None, execution: None, usage
+        } if usage == BudgetUsage::default()
       ),
       "an undispatched expired verifier must settle without reading expired private inputs"
     );

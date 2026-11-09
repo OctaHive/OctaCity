@@ -314,6 +314,17 @@ impl<S: FactoryRunStore + FactoryPhasePoolStore, E: FactoryNodeExecutor, I: Fact
         FactoryFlowStep::Waiting
       });
     }
+    // Older servers retained confirmed failures as waiting. Reconcile their
+    // existing journal without re-running a Build or charging its usage again.
+    if snapshot.run.state() != FactoryRunState::Stopped
+      && snapshot.flow.runtime().failed_node_attempts().next().is_some()
+    {
+      self
+        .nodes
+        .commit(&snapshot, FactoryRunHistoryAppend::default(), at)
+        .await?;
+      return Ok(FactoryFlowStep::Advanced);
+    }
     let target = match next(&snapshot)? {
       Next::Node(target) => target,
       Next::Terminal(terminal) => {

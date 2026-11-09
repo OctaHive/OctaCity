@@ -93,6 +93,8 @@ pub enum FactoryNodeExecutionStep {
     execution: Option<Box<FlowBuildExecution>>,
     /// Measured resources across the failed operation; unavailable usage cannot become zero.
     usage: BudgetUsage,
+    /// Safe validation metadata, without the rejected answer.
+    rejection: Option<FlowResultRejection>,
   },
 }
 /// Technical observation from an exact adapter, with no semantic outcome.
@@ -558,7 +560,11 @@ impl<S: FactoryRunStore, E: FactoryNodeExecutor> FactoryNodeRunner<S, E> {
             }
             return Ok(FactoryNodeStep::Waiting);
           }
-          FactoryNodeExecutionStep::ExecutionStopped { execution, usage } => {
+          FactoryNodeExecutionStep::ExecutionStopped {
+            execution,
+            usage,
+            rejection,
+          } => {
             append.flow.data.stops.push(
               FlowNodeStop::new(
                 attempt,
@@ -568,6 +574,8 @@ impl<S: FactoryRunStore, E: FactoryNodeExecutor> FactoryNodeRunner<S, E> {
                 usage,
                 execution.as_deref(),
               )
+              .map_err(invalid)?
+              .with_rejection(rejection)
               .map_err(invalid)?,
             );
             retain_execution(&snapshot, &mut append, execution);
@@ -871,6 +879,18 @@ impl<S: FactoryRunStore, E: FactoryNodeExecutor> FactoryNodeRunner<S, E> {
     disposition: GraphDisposition,
     outbox: Vec<FactoryOutboxRecord>,
   ) -> Result<(), ApplicationError> {
+    let failed = runtime(snapshot).failed_node_attempts().any(|attempt| {
+      !append
+        .flow
+        .attempts
+        .iter()
+        .any(|next| next.retry_of() == Some(attempt.id()))
+    }) || append
+      .flow
+      .data
+      .stops
+      .iter()
+      .any(|stop| stop.reason() == FlowNodeStopReason::ExecutionFailed);
     let claim = snapshot.current_claim.as_ref().ok_or_else(ApplicationError::invalid)?;
     let publication_time = self.current_time(at)?;
     claim
@@ -1002,6 +1022,11 @@ impl<S: FactoryRunStore, E: FactoryNodeExecutor> FactoryNodeRunner<S, E> {
         snapshot.run.subject().clone(),
         match disposition {
           GraphDisposition::Resolved(_) => FactoryRunState::Completed,
+          GraphDisposition::Running | GraphDisposition::Waiting | GraphDisposition::AwaitingTerminalUsage(_)
+            if failed =>
+          {
+            FactoryRunState::Stopped
+          }
           GraphDisposition::Running => FactoryRunState::Running,
           GraphDisposition::Waiting | GraphDisposition::AwaitingTerminalUsage(_) => FactoryRunState::Waiting,
           GraphDisposition::Cancelled => FactoryRunState::Cancelled,

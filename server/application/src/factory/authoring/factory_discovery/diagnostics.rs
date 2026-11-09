@@ -286,6 +286,9 @@ pub struct FactoryNodeStopProjection {
   pub usage: octacity_server_factory::BudgetUsage,
   /// Exact ordinary execution link when present.
   pub execution: Option<octacity_server_factory::FactoryDigest>,
+  /// Trusted validation metadata, without rejected content.
+  #[serde(default, skip_serializing_if = "Option::is_none")]
+  pub rejection: Option<octacity_server_factory::FlowResultRejection>,
   /// Trusted stopped observation time.
   pub observed_at: octacity_server_domain::Timestamp,
 }
@@ -327,6 +330,7 @@ impl TryFrom<&octacity_server_factory::FlowNodeStop> for FactoryNodeStopProjecti
       id: row.digest().map_err(|_| ApplicationError::invalid())?,
       node_attempt_id: row.node_attempt_id(),
       reason: row.reason(),
+      rejection: row.rejection().cloned(),
       usage: row.usage(),
       execution: row.execution(),
       observed_at: row.observed_at(),
