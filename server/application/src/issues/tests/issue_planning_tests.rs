@@ -111,6 +111,172 @@ fn issue_planning_definitions_are_bounded_versioned_and_replayable() {
   });
 }
 
+#[test]
+fn issue_planning_classification_bindings_follow_stable_ids_and_retain_history() {
+  run_ready(async {
+    let store = Arc::new(InMemoryProjectStore::new());
+    let project_id = project(&store).await;
+    let policy = Arc::new(TrustedNetworkManagementPolicy);
+    let handlers = Arc::new(IssueHandlers::new(store.clone(), policy.clone()));
+    let commands = AuthorizedCommandHandler::new(policy.clone(), handlers.clone());
+    let queries = AuthorizedQueryHandler::new(policy, handlers);
+    let mut original = publication(project_id, "classified-catalog");
+    let mut definition = serde_json::to_value(catalog()).unwrap();
+    // Semantic names and display labels are independent of Project-owned IDs.
+    definition["properties"][0]["id"] = serde_json::json!("effort_band");
+    for id in ["impact", "uncertainty", "next_step", "reproduction"] {
+      let mut property = definition["properties"][1].clone();
+      property["id"] = serde_json::json!(id);
+      definition["properties"].as_array_mut().unwrap().push(property);
+    }
+    definition["classification"] = serde_json::json!({
+      "kind":"type","component":"component","size":"effort_band", "severity":"impact",
+      "risk":"uncertainty","recommended_route":"next_step","reproducibility":"reproduction"
+    });
+    original.intent.definition = serde_json::from_value(definition.clone()).unwrap();
+    let first = commands.handle_command(&context(), original.clone()).await.unwrap();
+    assert_eq!(serde_json::to_value(&first.resource.definition).unwrap(), definition);
+    let issue = commands
+      .handle_command(&context(), create(project_id, "classify-manually"))
+      .await
+      .unwrap()
+      .issue;
+    assert_eq!(issue.planning, IssuePlanning::default());
+    let mut edit = planning_edit(&issue, "set-classification");
+    edit.intent.planning.definition_version = 1;
+    edit.intent.planning.values = serde_json::from_value(serde_json::json!({
+      "effort_band":{"type":"choice","value":"small"},
+      "component":{"type":"choice","value":"ui"},
+      "type":{"type":"choice","value":"bug"}
+    }))
+    .unwrap();
+    let classified = commands.handle_command(&context(), edit).await.unwrap().issue;
+    assert_eq!(classified.planning.values.len(), 3);
+    assert_eq!(
+      classified.planning.values["effort_band"],
+      octacity_server_store::IssuePropertyValue::Choice("small".into())
+    );
+    assert_eq!(classified.content, issue.content);
+    assert_eq!(classified.applicability_version, issue.applicability_version);
+
+    let mut replacement = original.clone();
+    replacement.idempotency_key = key("rename-classification");
+    replacement.intent.expected_version = 1;
+    definition["properties"][0]["name"] = serde_json::json!("Effort");
+    definition["properties"][0]["kind"]["choices"][0]["name"] = serde_json::json!("Tiny");
+    definition["properties"][0]["kind"]["choices"][1]["retired"] = serde_json::json!(true);
+    replacement.intent.definition = serde_json::from_value(definition.clone()).unwrap();
+    let second = commands.handle_command(&context(), replacement).await.unwrap();
+    assert_eq!(second.resource.version, 2);
+    assert_eq!(serde_json::to_value(&second.resource.definition).unwrap(), definition);
+    assert_eq!(
+      queries
+        .handle_query(&context(), GetIssuePropertyChoicesQuery { project_id })
+        .await
+        .unwrap()
+        .definitions,
+      second.resource
+    );
+    let before = store.mutation_evidence_counts().await;
+    assert_eq!(
+      queries
+        .handle_query(
+          &context(),
+          GetIssuePropertiesQuery {
+            project_id,
+            version: Some(1)
+          }
+        )
+        .await
+        .unwrap(),
+      first.resource
+    );
+    assert_eq!(
+      commands.handle_command(&context(), original).await.unwrap().resource,
+      first.resource
+    );
+    assert_eq!(
+      queries
+        .handle_query(
+          &context(),
+          GetIssueQuery {
+            project_id,
+            id: classified.id,
+            version: Some(classified.version)
+          }
+        )
+        .await
+        .unwrap(),
+      classified
+    );
+    assert_eq!(store.mutation_evidence_counts().await, before);
+  });
+}
+
+#[test]
+fn issue_planning_classification_rejects_ambiguous_or_incompatible_bindings() {
+  run_ready(async {
+    let store = Arc::new(InMemoryProjectStore::new());
+    let project_id = project(&store).await;
+    let policy = Arc::new(TrustedNetworkManagementPolicy);
+    let handlers = Arc::new(IssueHandlers::new(store.clone(), policy.clone()));
+    let commands = AuthorizedCommandHandler::new(policy.clone(), handlers.clone());
+    let queries = AuthorizedQueryHandler::new(policy, handlers);
+    let legacy = commands
+      .handle_command(&context(), publication(project_id, "legacy-catalog"))
+      .await
+      .unwrap();
+    let legacy_json = serde_json::to_value(&legacy.resource.definition).unwrap();
+    assert!(legacy_json.get("classification").is_none());
+    let before = store.mutation_evidence_counts().await;
+    let mut bindings = vec![
+      serde_json::json!({"size":"missing"}),
+      serde_json::json!({"size":"Размер"}),
+      serde_json::json!({"size":""}),
+      serde_json::json!({"size":"x".repeat(65)}),
+      serde_json::json!({"size":"size","risk":"size"}),
+    ];
+    for slot in [
+      "kind",
+      "component",
+      "size",
+      "severity",
+      "risk",
+      "recommended_route",
+      "reproducibility",
+    ] {
+      for id in ["notes", "verified", "estimate", "review_date"] {
+        bindings.push(serde_json::json!({slot: id}));
+      }
+    }
+    for (index, binding) in bindings.into_iter().enumerate() {
+      let mut definition = legacy_json.clone();
+      definition["classification"] = binding.clone();
+      let mut rejected = publication(project_id, &format!("invalid-binding-{index}"));
+      rejected.intent.expected_version = 1;
+      rejected.intent.definition = serde_json::from_value(definition).unwrap();
+      assert!(
+        commands.handle_command(&context(), rejected).await.is_err(),
+        "accepted {binding}"
+      );
+    }
+    assert_eq!(
+      queries
+        .handle_query(
+          &context(),
+          GetIssuePropertiesQuery {
+            project_id,
+            version: None
+          }
+        )
+        .await
+        .unwrap(),
+      legacy.resource
+    );
+    assert_eq!(store.mutation_evidence_counts().await, before);
+  });
+}
+
 fn planned() -> IssuePlanning {
   serde_json::from_value(serde_json::json!({"definition_version":1,"assignee":null,"labels":["defect"],"due_date":"2028-02-29","parent_id":null,"values":{
     "size":{"type":"choice","value":"small"},"component":{"type":"choice","value":"ui"},"type":{"type":"choice","value":"bug"},

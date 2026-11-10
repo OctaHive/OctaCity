@@ -470,6 +470,7 @@ fn prepare_issue_creation(
     applicability_version: IssueVersion::INITIAL,
     content: request.intent.content.clone(),
     planning: request.intent.planning.clone(),
+    classification: IssueClassificationMetadata::default(),
     workflow_id: workflow.id,
     workflow_version: workflow.version,
     status_id: workflow.definition.initial_status_id,

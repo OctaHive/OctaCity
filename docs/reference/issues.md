@@ -723,6 +723,68 @@ identity or changing its type. New selections reject retired values; an unchange
 retained value can survive an unrelated edit. Exact old revisions and their
 catalog versions preserve the original display meaning.
 
+A catalog can optionally bind classification semantics to those stable property
+IDs, for example `"classification":{"kind":"type","component":"component",
+"size":"effort_band"}`. Supported slots are `kind`, `component`, `size`,
+`severity`, `risk`, `recommended_route` and `reproducibility`. Each selected
+slot must reference a distinct existing `choice` property; its Project-owned
+choice IDs and the ordinary planning bounds remain the value contract. Other
+property kinds remain available for ordinary planning. Priority continues to
+use the existing bounded Issue content field and is not a custom binding.
+Display labels do not infer semantics. Bindings are optional and retained with
+their exact catalog version; legacy catalogs omit `classification` and ordinary
+Issues need no classification. A binding alone grants no execution or verified
+reproduction authority.
+
+The retained `IssueRevision.classification` model adds attribution without copying
+effective scalar values out of `content` or `planning.values`. Empty metadata is
+omitted, so legacy revisions and ordinary Issues retain their previous encoding.
+Each entry identifies built-in priority, a stable property ID with its exact
+definition publication, or the dedicated dependency collection. It retains the
+actual management actor and manual, accepted-pipeline or trusted-source origin,
+the assessed Issue revision, requirements applicability version and assessment
+time. A later requirements edit preserves that original applicability; an
+unrelated planning edit does not renew or invalidate it by changing the fence.
+
+At most 34 field attributions and 64 evidence/dependency references per collection
+are supported. Evidence references retain Work/Run, observation digest, exact code
+subject, environment/criterion publications and observation/freshness times.
+Per-field citations resolve to those retained references. Dependencies preserve
+the existing Work/Run/Work-digest/terminal vocabulary. Duplicate fields, ambiguous
+references, reserved property IDs, invalid catalog versions, actor shapes and
+freshness intervals are rejected during decoding. Neither collection contains evidence bodies, arbitrary
+planning JSON or editable verification/acceptance flags.
+
+This is the storage-model foundation from snapshot task 1.2. Management create/edit
+intents cannot supply classification provenance. Guarded classification/manual
+writers and public classification projections remain separate tasks; decoding a
+reference does not qualify its source or grant access, verified reproduction or
+execution authority.
+
+Task 1.3 qualifies the existing JSONB persistence without another schema migration
+or historical-document rewrite. PostgreSQL tests round-trip the full 64-item
+evidence/dependency inventories, preserve attribution across planning/requirements
+edits and return original creation/edit receipts after later revisions. A physical
+schema-115 snapshot and its independently restored copy migrate forward with their
+original Issue/history/catalog data and replay identities intact. Publishing new
+semantic bindings leaves legacy classification origin unknown.
+
+Legacy priority/size-label receipt metadata remains separate from the canonical
+`IssueRevision.classification` field. Both committed and rejected receipts retain
+their original replay after upgrade, catalog changes and a later canonical
+revision; an old receipt is never promoted into current field provenance. Run
+Work inputs remain unchanged. With `OCTACITY_POSTGRES_URL` selecting a disposable
+PostgreSQL service, run the focused contracts using:
+
+```sh
+cargo test --locked -p octacity-server-store-postgres --test issues classification_metadata -- --ignored
+cargo test --locked -p octacity-server-store-postgres --test issue_execution classification_metadata -- --ignored
+```
+
+Historical admission fixtures use the frozen pre-upgrade row writer; the current
+admission writer requires current policy tables. Assertions after migration still
+use public Issue/Factory ports.
+
 | Supported property kind | Accepted values |
 | --- | --- |
 | Text | Plain text under the declared UTF-8 byte bound, at most 4,096 bytes; NUL rejected |

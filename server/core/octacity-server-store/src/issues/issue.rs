@@ -71,6 +71,9 @@ pub struct IssueRevision {
   /// Optional organizational snapshot; absent in prior retained revisions.
   #[serde(default, skip_serializing_if = "crate::IssuePlanning::is_empty")]
   pub planning: crate::IssuePlanning,
+  /// Optional field attribution and bounded assessment references, absent in legacy revisions.
+  #[serde(default, skip_serializing_if = "crate::IssueClassificationMetadata::is_empty")]
+  pub classification: crate::IssueClassificationMetadata,
   /// Exact retained business workflow identity.
   pub workflow_id: IssueWorkflowId,
   /// Pinned workflow publication, unaffected by default changes.

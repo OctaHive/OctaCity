@@ -111,6 +111,52 @@ pub struct IssuePropertyDefinition {
   /// Retains a field while preventing new values.
   pub retired: bool,
 }
+/// Optional semantic bindings to Project-owned property IDs, never display labels.
+/// Priority remains the bounded built-in Issue content field. These bindings
+/// describe classification data and grant no execution or evidence authority.
+#[derive(Clone, Debug, Default, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(deny_unknown_fields)]
+pub struct IssueClassificationBindings {
+  /// Work kind, such as a defect or feature.
+  #[serde(default, skip_serializing_if = "Option::is_none")]
+  pub kind: Option<String>,
+  /// Affected Project component.
+  #[serde(default, skip_serializing_if = "Option::is_none")]
+  pub component: Option<String>,
+  /// Estimated work size.
+  #[serde(default, skip_serializing_if = "Option::is_none")]
+  pub size: Option<String>,
+  /// Assessed impact.
+  #[serde(default, skip_serializing_if = "Option::is_none")]
+  pub severity: Option<String>,
+  /// Assessed implementation risk.
+  #[serde(default, skip_serializing_if = "Option::is_none")]
+  pub risk: Option<String>,
+  /// Advisory route; never a dispatch instruction.
+  #[serde(default, skip_serializing_if = "Option::is_none")]
+  pub recommended_route: Option<String>,
+  /// Preliminary assessment; verified claims require independent evidence.
+  #[serde(default, skip_serializing_if = "Option::is_none")]
+  pub reproducibility: Option<String>,
+}
+impl IssueClassificationBindings {
+  fn property_ids(&self) -> impl Iterator<Item = &str> {
+    [
+      self.kind.as_deref(),
+      self.component.as_deref(),
+      self.size.as_deref(),
+      self.severity.as_deref(),
+      self.risk.as_deref(),
+      self.recommended_route.as_deref(),
+      self.reproducibility.as_deref(),
+    ]
+    .into_iter()
+    .flatten()
+  }
+  fn is_empty(&self) -> bool {
+    self.property_ids().next().is_none()
+  }
+}
 /// One immutable Project catalog; an empty catalog needs no administrator setup.
 #[derive(Clone, Debug, Default, Deserialize, Eq, PartialEq, Serialize)]
 #[serde(deny_unknown_fields)]
@@ -119,6 +165,9 @@ pub struct IssuePropertyDefinitionSet {
   pub labels: Vec<IssuePropertyChoice>,
   /// Bounded optional planning definitions.
   pub properties: Vec<IssuePropertyDefinition>,
+  /// Optional classification semantics; absent on legacy catalogs.
+  #[serde(default, skip_serializing_if = "IssueClassificationBindings::is_empty")]
+  pub classification: IssueClassificationBindings,
 }
 /// Retained exact catalog publication used to explain old Issue revisions.
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
@@ -204,12 +253,51 @@ pub(crate) fn planning_conflict() -> StoreError {
     entity: octacity_server_domain::EntityKind::Issue,
   }
 }
-fn valid_key(value: &str) -> bool {
+pub(crate) fn valid_key(value: &str) -> bool {
   !value.is_empty()
     && value.len() <= MAX_ISSUE_PROPERTY_KEY_BYTES
     && value
       .bytes()
       .all(|b| b.is_ascii_lowercase() || b.is_ascii_digit() || b == b'_')
+}
+/// Property IDs share key syntax but cannot shadow built-in state or authority.
+pub(crate) fn valid_property_id(value: &str) -> bool {
+  const RESERVED: &[&str] = &[
+    "id",
+    "project_id",
+    "title",
+    "description",
+    "acceptance",
+    "priority",
+    "status",
+    "status_id",
+    "workflow",
+    "workflow_id",
+    "workflow_version",
+    "run",
+    "run_id",
+    "run_state",
+    "work",
+    "work_id",
+    "execution",
+    "execution_state",
+    "decision",
+    "accepted",
+    "approved",
+    "permissions",
+    "source_owned",
+    "assignee",
+    "parent",
+    "parent_id",
+    "due_date",
+    "labels",
+    "agent",
+    "worker",
+    "profile",
+    "created_at",
+    "updated_at",
+  ];
+  valid_key(value) && !RESERVED.contains(&value)
 }
 fn valid_name(value: &str) -> bool {
   !value.is_empty()
@@ -225,48 +313,13 @@ fn choices_valid(choices: &[IssuePropertyChoice]) -> bool {
 impl IssuePropertyDefinitionSet {
   /// Checks finite supported types and rejects reserved state/authority fields.
   pub fn validate(&self) -> Result<(), StoreError> {
-    const RESERVED: &[&str] = &[
-      "id",
-      "project_id",
-      "title",
-      "description",
-      "acceptance",
-      "priority",
-      "status",
-      "status_id",
-      "workflow",
-      "workflow_id",
-      "workflow_version",
-      "run",
-      "run_id",
-      "run_state",
-      "work",
-      "work_id",
-      "execution",
-      "execution_state",
-      "decision",
-      "accepted",
-      "approved",
-      "permissions",
-      "source_owned",
-      "assignee",
-      "parent",
-      "parent_id",
-      "due_date",
-      "labels",
-      "agent",
-      "worker",
-      "profile",
-      "created_at",
-      "updated_at",
-    ];
+    let mut classification_ids = BTreeSet::new();
     if self.properties.len() > MAX_ISSUE_PROPERTIES
       || !choices_valid(&self.labels)
       || self.properties.iter().map(|p| &p.id).collect::<BTreeSet<_>>().len() != self.properties.len()
       || serde_json::to_vec(self).map_err(|_| invalid())?.len() > MAX_ISSUE_DOCUMENT_BYTES
       || self.properties.iter().any(|p| {
-        !valid_key(&p.id)
-          || RESERVED.contains(&p.id.as_str())
+        !valid_property_id(&p.id)
           || !valid_name(&p.name)
           || match &p.kind {
             IssuePropertyKind::Text { max_bytes } => *max_bytes == 0 || *max_bytes > MAX_ISSUE_PROPERTY_TEXT_BYTES,
@@ -276,6 +329,13 @@ impl IssuePropertyDefinitionSet {
             }
             _ => false,
           }
+      })
+      || self.classification.property_ids().any(|id| {
+        !classification_ids.insert(id)
+          || !self
+            .properties
+            .iter()
+            .any(|p| p.id == id && matches!(p.kind, IssuePropertyKind::Choice { .. }))
       })
     {
       return Err(invalid());

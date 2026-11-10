@@ -797,6 +797,7 @@ async fn run_local_classification(lock_issue: bool) {
             retired: false,
           }],
           properties: vec![],
+          ..Default::default()
         },
       },
       idempotency_key: key("local-classification-label"),
@@ -1000,6 +1001,7 @@ async fn classification_publication_reuses_project_mapping_and_rejects_substitut
           })
           .collect(),
         properties: vec![],
+        ..Default::default()
       },
     },
     idempotency_key: key(&format!("classification-catalog-{expected_version}")),

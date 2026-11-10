@@ -49,6 +49,23 @@ pub(super) fn insert(schemas: &mut Map<String, Value>) {
       &["id", "name", "retired", "kind"],
     ),
   );
+  let mut bindings = object(
+    [
+      "kind",
+      "component",
+      "size",
+      "severity",
+      "risk",
+      "recommended_route",
+      "reproducibility",
+    ]
+    .map(|slot| (slot, nullable(key()))),
+    &[],
+  );
+  bindings["description"] = json!(
+    "Optional semantic slots reference distinct existing choice property IDs. Project choices supply values and bounds. Priority uses the built-in Issue content field. Bindings grant no execution or evidence authority."
+  );
+  schemas.insert("IssueClassificationBindings".into(), bindings);
   let mut definition = object(
     [
       (
@@ -59,6 +76,7 @@ pub(super) fn insert(schemas: &mut Map<String, Value>) {
         "properties",
         json!({"type":"array","maxItems":MAX_ISSUE_PROPERTIES,"items":schema_ref("IssuePropertyDefinition")}),
       ),
+      ("classification", schema_ref("IssueClassificationBindings")),
     ],
     &["labels", "properties"],
   );

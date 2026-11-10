@@ -116,6 +116,90 @@ async fn issue_http_planning_catalog_is_versioned_bounded_and_replays_original_p
   assert_eq!(document(response).await["version"], 2);
 }
 
+#[tokio::test]
+async fn issue_http_classification_bindings_match_the_published_contract() {
+  let doc = openapi_document();
+  let mut definition = catalog();
+  definition["classification"] = serde_json::json!({"size":"size"});
+  let mut request_definition = definition.clone();
+  request_definition["classification"]["risk"] = serde_json::Value::Null;
+  support::assert_json_matches_component(
+    &doc,
+    "PublishIssuePropertiesRequest",
+    &serde_json::json!({"expected_version":0,"definition":request_definition}),
+  );
+  let binding_schema = &doc["components"]["schemas"]["IssueClassificationBindings"];
+  assert_eq!(binding_schema["additionalProperties"], false);
+  let router = issue_router(Arc::new(TrustedNetworkManagementPolicy)).await;
+  let response = publish(&router, "classification", 0, request_definition).await;
+  assert_eq!(response.status(), StatusCode::OK);
+  let publication = document(response).await;
+  assert_eq!(publication["resource"]["definition"], definition);
+  support::assert_json_matches_component(&doc, "IssuePropertiesMutationResponse", &publication);
+  let choices = document(
+    router
+      .clone()
+      .oneshot(empty_request("GET", &choices(), None))
+      .await
+      .unwrap(),
+  )
+  .await;
+  assert_eq!(choices["definitions"]["definition"], definition);
+  support::assert_json_matches_component(&doc, "IssuePropertyChoices", &choices);
+  // These names cannot become metadata setters for priority or execution authority.
+  for slot in ["priority", "accepted", "approved", "ready"] {
+    let mut invalid = definition.clone();
+    invalid["classification"] = serde_json::json!({slot:"size"});
+    assert_eq!(
+      publish(&router, slot, 1, invalid).await.status(),
+      StatusCode::BAD_REQUEST
+    );
+  }
+}
+
+#[test]
+fn issue_classification_every_slot_is_serialized_validated_and_documented() {
+  use octacity_server_application::{IssueClassificationBindings, IssuePropertyDefinitionSet};
+  // No struct update/default: adding a slot must extend this contract fixture.
+  let bindings = IssueClassificationBindings {
+    kind: Some("size".into()),
+    component: Some("size".into()),
+    size: Some("size".into()),
+    severity: Some("size".into()),
+    risk: Some("size".into()),
+    recommended_route: Some("size".into()),
+    reproducibility: Some("size".into()),
+  };
+  let serialized = serde_json::to_value(bindings).unwrap();
+  let slots = serialized.as_object().unwrap();
+  let doc = openapi_document();
+  let schema = &doc["components"]["schemas"]["IssueClassificationBindings"]["properties"];
+  assert_eq!(
+    slots.keys().collect::<Vec<_>>(),
+    schema.as_object().unwrap().keys().collect::<Vec<_>>()
+  );
+  for slot in slots.keys() {
+    assert_eq!(schema[slot]["anyOf"][0]["maxLength"], 64);
+    let mut definition = catalog();
+    definition["classification"] = serde_json::json!({slot:"size"});
+    let typed: IssuePropertyDefinitionSet = serde_json::from_value(definition.clone()).unwrap();
+    assert!(typed.validate().is_ok(), "{slot} must accept a choice property");
+    assert_eq!(
+      serde_json::to_value(typed).unwrap(),
+      definition,
+      "{slot} must survive alone"
+    );
+    support::assert_json_matches_component(&doc, "IssuePropertyDefinitionSet", &definition);
+    definition["properties"] = serde_json::json!([]);
+    let missing: IssuePropertyDefinitionSet = serde_json::from_value(definition).unwrap();
+    assert!(missing.validate().is_err(), "{slot} must resolve to a property");
+    let mut incompatible = catalog();
+    incompatible["classification"] = serde_json::json!({slot:"note"});
+    let incompatible: IssuePropertyDefinitionSet = serde_json::from_value(incompatible).unwrap();
+    assert!(incompatible.validate().is_err(), "{slot} must reject a text property");
+  }
+}
+
 fn planned() -> serde_json::Value {
   serde_json::json!({"definition_version":1,"assignee":null,"labels":["defect"],"due_date":"2028-02-29","parent_id":null,
     "values":{"size":{"type":"choice","value":"small"},"note":{"type":"text","value":"PRIVATE NOTE"},"verified":{"type":"boolean","value":true},"estimate":{"type":"number","value":3},"review_date":{"type":"date","value":"2029-01-01"}}})

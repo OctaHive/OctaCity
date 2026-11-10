@@ -112,7 +112,7 @@ impl<T> ManagementMutation<T> {
   }
 }
 
-fn validate_management_actor(actor: &AuditActor) -> Result<(), StoreInputError> {
+pub(crate) fn validate_management_actor(actor: &AuditActor) -> Result<(), StoreInputError> {
   let valid = match actor.kind {
     AuditActorKind::UnauthenticatedManagement => actor.identity.is_none(),
     AuditActorKind::AuthenticatedManagement => actor

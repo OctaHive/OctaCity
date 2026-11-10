@@ -1,9 +1,9 @@
 //! Authorized optional planning; no provider, Factory or execution dependency.
 use super::*;
 pub use octacity_server_store::{
-  IssuePlanning, IssuePropertyDefinitionSet, IssuePropertyStore, MAX_ISSUE_LABELS, MAX_ISSUE_PROPERTIES,
-  MAX_ISSUE_PROPERTY_CHOICES, MAX_ISSUE_PROPERTY_KEY_BYTES, MAX_ISSUE_PROPERTY_NUMBER, MAX_ISSUE_PROPERTY_TEXT_BYTES,
-  PublishedIssueProperties,
+  IssueClassificationBindings, IssuePlanning, IssuePropertyDefinitionSet, IssuePropertyStore, MAX_ISSUE_LABELS,
+  MAX_ISSUE_PROPERTIES, MAX_ISSUE_PROPERTY_CHOICES, MAX_ISSUE_PROPERTY_KEY_BYTES, MAX_ISSUE_PROPERTY_NUMBER,
+  MAX_ISSUE_PROPERTY_TEXT_BYTES, PublishedIssueProperties,
 };
 
 /// Available organizational person identities; a service principal is not a person.

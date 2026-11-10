@@ -1,6 +1,9 @@
 //! PostgreSQL parity and recovery through the existing Issue transition port.
 use super::*;
 
+#[path = "classification_upgrade.rs"]
+mod classification_upgrade;
+
 fn action(issue: &IssueRevision, work_id: WorkEnvelopeId, run_id: FactoryRunId, operation: u8) -> TransitionIssue {
   let edge = "20000000-0000-4000-8000-000000000001".parse().unwrap();
   let outcome = FactoryKey::new("eligible").unwrap();
@@ -190,32 +193,38 @@ async fn linked_at_schema(
   )
   .unwrap();
   let run = FactoryRun::admitted(fixture.admission.run.id(), &work);
-  let admitted = store
-    .admit_factory_work(management_mutation(AdmitFactoryWork {
-      incoming: None,
-      probe: FactoryAdmissionProbe {
-        source_scope: FactoryWorkSourceScope {
-          source: FactoryKey::new("manual").unwrap(),
-          security_scope: ManagementSecurityScope::trusted_network(),
-        },
-        external_identity: reviewed.external_identity(),
-        intent_digest: FactoryDigest::from_bytes([99; 32]),
-        idempotency_key: reviewed.admission_key(),
+  let admission = AdmitFactoryWork {
+    incoming: None,
+    probe: FactoryAdmissionProbe {
+      source_scope: FactoryWorkSourceScope {
+        source: FactoryKey::new("manual").unwrap(),
+        security_scope: ManagementSecurityScope::trusted_network(),
       },
-      repository_version: Some(RepositoryVersion::INITIAL),
+      external_identity: reviewed.external_identity(),
+      intent_digest: FactoryDigest::from_bytes([99; 32]),
+      idempotency_key: reviewed.admission_key(),
+    },
+    repository_version: Some(RepositoryVersion::INITIAL),
 
-      work,
-      flow: AdmittedFlow::from_configuration(&configuration, &run).unwrap(),
-      run,
-      admitted_at: at(4),
-    }))
-    .await
-    .unwrap();
+    work,
+    flow: AdmittedFlow::from_configuration(&configuration, &run).unwrap(),
+    run,
+    admitted_at: at(4),
+  };
+  let admission = if legacy {
+    support::legacy_factory_admission::seed(pool, admission).await
+  } else {
+    store
+      .admit_factory_work(management_mutation(admission))
+      .await
+      .unwrap()
+      .admission
+  };
   let command = AssociateIssueWork {
     project_id: project,
     issue_id: issue.id,
     request_id: Some(reviewed.id),
-    admission: admitted.admission,
+    admission,
   };
   let association = if legacy {
     // Previous-schema fixture; assertions still use the public transition/read ports after upgrade.
@@ -895,6 +904,7 @@ async fn pipeline_classification_applies_one_local_revision_and_replays_the_orig
             choice("size_reviewed"),
           ],
           properties: vec![],
+          ..Default::default()
         },
       },
       idempotency_key: key("classification-catalog"),

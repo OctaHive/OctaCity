@@ -1061,6 +1061,7 @@ async fn issue_outcomes_http_distinguishes_advice_committed_classification_and_c
             retired: false,
           }],
           properties: vec![],
+          ..Default::default()
         },
       },
       idempotency_key: "outcome-label-catalog".parse().unwrap(),

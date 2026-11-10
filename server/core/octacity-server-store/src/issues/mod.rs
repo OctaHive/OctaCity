@@ -2,6 +2,9 @@ pub(crate) mod issue;
 pub(crate) mod issue_activity;
 pub(crate) mod issue_check;
 pub(crate) mod issue_classification;
+pub(crate) mod issue_classification_metadata;
+#[cfg(test)]
+mod issue_classification_tests;
 pub(crate) mod issue_code_review;
 pub(crate) mod issue_discussion;
 pub(crate) mod issue_execution;

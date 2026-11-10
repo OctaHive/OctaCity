@@ -28,6 +28,7 @@ pub use issues::issue::*;
 pub use issues::issue_activity::*;
 pub use issues::issue_check::*;
 pub use issues::issue_classification::*;
+pub use issues::issue_classification_metadata::*;
 pub use issues::issue_code_review::*;
 pub use issues::issue_discussion::*;
 pub use issues::issue_execution::*;

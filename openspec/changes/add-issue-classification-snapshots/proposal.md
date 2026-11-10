@@ -1,0 +1,39 @@
+## Why
+
+Ticket delivery currently requires an exact triage Flow version, terminal, outcome schema and producing Run even though the operator works with one Issue. Make the Issue's built-in fields, Project-defined properties and explicitly selected text materials usable through a reviewed immutable input snapshot, so independently authored pipelines can cooperate without losing reproducibility or requiring an API-only field setup.
+
+## What Changes
+
+- Add Project settings UI for creating, renaming and retiring bounded property definitions/choices and assigning optional classification semantics. Reuse the existing versioned catalog for ordinary Project-specific properties and classification; each Issue supplies its own optional values. Built-in Issue fields retain their existing contracts.
+- Add Issue-owned text documents created and versioned from the Issue, excluded from Project document catalogs and selectors. Reuse shared immutable content storage/publication without making ticket attachments shared Project documents. Keep explicit linking of an existing same-Project document as a separate operation; it retains its Project ownership.
+- Reuse existing operator comments/replies and add explicit Issue material selections linking exact same-Issue comments, Issue-owned document publications and separately linked same-Project documents. Retain owner/source identities, digests and history without another editable body store. Creation, linking and selection for execution remain distinct.
+- Let a consumer declare the built-in fields, arbitrary supported Project property IDs, classification and selected materials it needs. Manual review and a separately published automatic-selection policy choose bounded materials explicitly. Posting a comment, publishing a document or attaching material never starts execution or silently includes an entire discussion.
+- Extend the existing Issue owner to retain effective kind, component, size, priority, severity, risk, recommended route, preliminary reproducibility and supported dependency/evidence references, with field provenance and applicability to the reviewed requirements and code subject where relevant. Reuse existing content/planning fields and Project definitions rather than introduce another mutable classification source.
+- Apply accepted triage classifications through the existing explicit trusted Issue action. Commit selected fields, provenance and replay receipt together; preserve source ownership and reject stale assessments, contradictory evidence and intervening conflicting operator edits. Classification publication does not start another pipeline.
+- Allow authorized manual preparation of the same Issue fields. Delivery prerequisites inspect the effective Issue data and selected evidence, not whether a particular triage pipeline produced it. A configured evidence or requirements-acceptance rule remains mandatory regardless of the author.
+- Declare an Issue snapshot input contract on a published Flow/Configuration. Both manual Issue execution and separately enabled automatic intake validate and freeze requirements, selected property values/classification, Project definitions, selected comment/document text and provenance, authorized evidence references, code subject and admission-policy decisions through the existing Work/Run publication owner. Later discussion, new document publications and Issue edits leave admitted inputs unchanged.
+- **BREAKING for newly published ticket-delivery examples:** replace the required triage predecessor binding and Run selector with the Issue snapshot contract. Preserve already published predecessor-based Flows, Configurations, requests and Runs under their original contracts; upgrades require explicit new publications.
+- Keep automatic-intake replay scoped to its existing stable input identity. Issue edits, changed classification, labels and restarts do not manufacture another automatic processing cycle. A deliberate new manual execution remains a distinct reviewed request.
+- Preserve explicit pipeline-to-pipeline accepted-result inputs as an authorable mode, including new publications and existing exact-producer executions. Issue snapshots are an additional mode; competing sources for the same classification input require an explicit supported contract rather than inferred precedence.
+- Show current Issue classification, its source and freshness separately from historical Run outcomes and the frozen input used by each execution. Reuse Project property choices and bounds in authoring and editing without asking operators to repeat component/size/priority vocabularies as per-step enums.
+
+## Capabilities
+
+### New Capabilities
+
+None. Extend the existing Issue, Factory admission, authoring and execution owners.
+
+### Modified Capabilities
+
+- `server/factory-work-collaboration`: authoritative Issue classification, Issue-owned documents, explicit comment/document selections, guarded mutation, provenance, freshness and immutable execution snapshots.
+- `server/dark-factory`: declarative Issue field/material snapshot inputs alongside explicit producer-result inputs, with independent admission, scoped Context and replay guarantees.
+- `server/factory-triage-preset`: explicit application of accepted classifications using Project-owned field contracts.
+- `server/rest-control-plane`: Issue-scoped document publication/read contracts, separate Project catalogs, versioned property/material selection and snapshot contracts, review diagnostics and compatibility with existing discussion, document and execution requests.
+- `ui/operator-console`: Project field management, Issue-owned document creation/versioning and separate Project document linking, Issue classification/material editing and history, existing discussion reuse, snapshot review and delivery authoring without selecting a triage producer.
+- `server/factory-ticket-delivery-preset`: replace producer-specific triage handoff with an Issue snapshot while retaining reproduction, requirements, protected tests, review and publication behavior. This capability is introduced by the implemented but unarchived `add-factory-ticket-delivery-pipeline`; its delta is the explicit predecessor of this change's modifications and must reach main specs before these modifications are synchronized.
+
+## Impact
+
+Extend the existing Issue types, PostgreSQL owner/migrations and application handlers; reuse classification action, Project-property publication, operator discussion and shared immutable content storage/intake. Add explicitly Issue-owned document publication metadata and bounded material references with legacy-empty decoding. Keep Project document discovery/publication scoped to shared Project documents; existing Project documents retain their owners and references. Update manual execution preparation/publication, automatic Source admission, generic Flow input/Context contracts, ticket-delivery example resolution, REST/OpenAPI and generated clients, Project settings, Issue properties/discussion/documents/start forms and Factory editor diagnostics. Qualify through the existing application, store, Source-worker, Console and packaged-release test boundaries.
+
+The new delivery example supersedes the exact-producer requirement in `add-factory-ticket-delivery-pipeline` while retaining protected-test isolation and trusted publication guarantees. This proposal does not edit that change or main specs. There is no new scheduler, duplicate content-byte store, general binary-upload subsystem, arbitrary document-to-schema generator, implicit source synchronization, automatic merge or deployment. Implementation follows repository behavioral Red/Green TDD. Tasks 1.1–1.3 are complete; the additional document-ownership, field-management and material-selection work remains unchecked.

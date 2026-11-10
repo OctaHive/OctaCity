@@ -1488,6 +1488,9 @@ async fn manual_planning_is_retained_without_a_directory_or_factory() {
 #[path = "issues/planning.rs"]
 mod planning;
 
+#[path = "issues/classification_metadata.rs"]
+mod classification_metadata;
+
 #[path = "issues/discussion.rs"]
 mod discussion;
 

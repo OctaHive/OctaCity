@@ -103,3 +103,6 @@ pub mod protected_input_job;
 pub mod authoritative_fixture;
 #[allow(dead_code)] // Only historical migration contracts construct these rows.
 pub mod legacy_factory_admission;
+
+#[allow(dead_code)] // Shared by Issue persistence and execution upgrade contracts.
+pub mod issue_revision;
