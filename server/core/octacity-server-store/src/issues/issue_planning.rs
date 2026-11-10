@@ -10,6 +10,15 @@ use std::collections::{BTreeMap, BTreeSet};
 pub struct IssuePlanning {
   /// Exact Project definition publication; zero is the empty declarative catalog.
   pub definition_version: u64,
+  /// Built-in component selected from this Project's exact component catalog.
+  #[serde(default, skip_serializing_if = "Option::is_none")]
+  pub component: Option<String>,
+  /// Built-in optional type selected from this Project's exact type catalog.
+  #[serde(default, rename = "type", skip_serializing_if = "Option::is_none")]
+  pub issue_type: Option<String>,
+  /// Built-in finite work size; missing never implies small.
+  #[serde(default, skip_serializing_if = "Option::is_none")]
+  pub size: Option<IssueSize>,
   /// Server-resolved organizational identity, independent of actor or worker.
   pub assignee: Option<String>,
   /// Stable Project label identities.
@@ -140,27 +149,44 @@ pub struct IssueClassificationBindings {
   pub reproducibility: Option<String>,
 }
 impl IssueClassificationBindings {
-  fn property_ids(&self) -> impl Iterator<Item = &str> {
+  /// Selected semantic slots and stable custom property IDs, in a deterministic order.
+  /// The retained component binding is legacy; new actions use the built-in component field.
+  pub fn fields(&self) -> impl Iterator<Item = (&'static str, &str)> {
     [
-      self.kind.as_deref(),
-      self.component.as_deref(),
-      self.size.as_deref(),
-      self.severity.as_deref(),
-      self.risk.as_deref(),
-      self.recommended_route.as_deref(),
-      self.reproducibility.as_deref(),
+      ("kind", self.kind.as_deref()),
+      ("component", self.component.as_deref()),
+      ("size", self.size.as_deref()),
+      ("severity", self.severity.as_deref()),
+      ("risk", self.risk.as_deref()),
+      ("recommended_route", self.recommended_route.as_deref()),
+      ("reproducibility", self.reproducibility.as_deref()),
     ]
     .into_iter()
-    .flatten()
+    .filter_map(|(slot, id)| id.map(|id| (slot, id)))
+  }
+  fn property_ids(&self) -> impl Iterator<Item = &str> {
+    self.fields().map(|(_, id)| id)
   }
   fn is_empty(&self) -> bool {
     self.property_ids().next().is_none()
   }
 }
 /// One immutable Project catalog; an empty catalog needs no administrator setup.
-#[derive(Clone, Debug, Default, Deserialize, Eq, PartialEq, Serialize)]
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
 #[serde(deny_unknown_fields)]
 pub struct IssuePropertyDefinitionSet {
+  /// Project-specific choices for the built-in Issue component, separate from custom properties.
+  #[serde(default, skip_serializing_if = "Vec::is_empty")]
+  pub components: Vec<IssuePropertyChoice>,
+  /// Project-specific built-in types; absent legacy catalogs retain the standard choices.
+  #[serde(default = "default_issue_types", skip_serializing_if = "standard_issue_types")]
+  pub types: Vec<IssuePropertyChoice>,
+  /// Project-specific Issue priorities; available defaults do not assign a value to new Issues.
+  #[serde(
+    default = "default_issue_priorities",
+    skip_serializing_if = "standard_issue_priorities"
+  )]
+  pub priorities: Vec<IssuePropertyChoice>,
   /// Bounded Project labels.
   pub labels: Vec<IssuePropertyChoice>,
   /// Bounded optional planning definitions.
@@ -168,6 +194,60 @@ pub struct IssuePropertyDefinitionSet {
   /// Optional classification semantics; absent on legacy catalogs.
   #[serde(default, skip_serializing_if = "IssueClassificationBindings::is_empty")]
   pub classification: IssueClassificationBindings,
+}
+impl Default for IssuePropertyDefinitionSet {
+  fn default() -> Self {
+    Self {
+      components: vec![],
+      types: default_issue_types(),
+      priorities: default_issue_priorities(),
+      labels: vec![],
+      properties: vec![],
+      classification: Default::default(),
+    }
+  }
+}
+fn default_issue_types() -> Vec<IssuePropertyChoice> {
+  [("defect", "Defect"), ("feature_request", "Feature request")]
+    .into_iter()
+    .map(|(id, name)| IssuePropertyChoice {
+      id: id.into(),
+      name: name.into(),
+      retired: false,
+    })
+    .collect()
+}
+fn standard_issue_types(types: &[IssuePropertyChoice]) -> bool {
+  types == default_issue_types()
+}
+fn default_issue_priorities() -> Vec<IssuePropertyChoice> {
+  [
+    ("blocker", "Blocker"),
+    ("high", "High"),
+    ("medium", "Medium"),
+    ("low", "Low"),
+  ]
+  .into_iter()
+  .map(|(id, name)| IssuePropertyChoice {
+    id: id.into(),
+    name: name.into(),
+    retired: false,
+  })
+  .collect()
+}
+fn standard_issue_priorities(priorities: &[IssuePropertyChoice]) -> bool {
+  priorities == default_issue_priorities()
+}
+/// Fixed built-in sizes shared by Issue editing and classification, independent of display text.
+#[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum IssueSize {
+  /// Small bounded work.
+  Small,
+  /// Medium bounded work.
+  Medium,
+  /// Large work requiring the consumer's declared requirements route.
+  Large,
 }
 /// Retained exact catalog publication used to explain old Issue revisions.
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
@@ -316,6 +396,9 @@ impl IssuePropertyDefinitionSet {
     let mut classification_ids = BTreeSet::new();
     if self.properties.len() > MAX_ISSUE_PROPERTIES
       || !choices_valid(&self.labels)
+      || !choices_valid(&self.components)
+      || !choices_valid(&self.types)
+      || !choices_valid(&self.priorities)
       || self.properties.iter().map(|p| &p.id).collect::<BTreeSet<_>>().len() != self.properties.len()
       || serde_json::to_vec(self).map_err(|_| invalid())?.len() > MAX_ISSUE_DOCUMENT_BYTES
       || self.properties.iter().any(|p| {
@@ -348,6 +431,9 @@ impl IssuePropertyDefinitionSet {
     let retains =
       |old: &[IssuePropertyChoice], new: &[IssuePropertyChoice]| old.iter().all(|o| new.iter().any(|n| n.id == o.id));
     if !retains(&previous.labels, &self.labels)
+      || !retains(&previous.components, &self.components)
+      || !retains(&previous.types, &self.types)
+      || !retains(&previous.priorities, &self.priorities)
       || previous.properties.iter().any(|old| {
         self.properties.iter().find(|p| p.id == old.id).is_none_or(|new| {
           std::mem::discriminant(&old.kind) != std::mem::discriminant(&new.kind)
@@ -422,6 +508,22 @@ impl IssuePlanning {
     if self.labels.len() > MAX_ISSUE_LABELS
       || self.values.len() > MAX_ISSUE_PROPERTIES
       || self.due_date.as_deref().is_some_and(|s| !valid_date(s))
+    {
+      return Err(invalid());
+    }
+    if let Some(component) = &self.component
+      && !catalog.definition.components.iter().any(|choice| {
+        choice.id == *component
+          && (!choice.retired || previous.is_some_and(|p| p.component.as_ref() == Some(component)))
+      })
+    {
+      return Err(invalid());
+    }
+    if let Some(issue_type) = &self.issue_type
+      && !catalog.definition.types.iter().any(|choice| {
+        choice.id == *issue_type
+          && (!choice.retired || previous.is_some_and(|p| p.issue_type.as_ref() == Some(issue_type)))
+      })
     {
       return Err(invalid());
     }
@@ -526,6 +628,9 @@ impl IssueRevision {
       return Err(invalid());
     }
     let changed = [
+      (IssueField::Component, self.planning.component != i.planning.component),
+      (IssueField::Type, self.planning.issue_type != i.planning.issue_type),
+      (IssueField::Size, self.planning.size != i.planning.size),
       (IssueField::Assignee, self.planning.assignee != i.planning.assignee),
       (IssueField::Labels, self.planning.labels != i.planning.labels),
       (IssueField::DueDate, self.planning.due_date != i.planning.due_date),

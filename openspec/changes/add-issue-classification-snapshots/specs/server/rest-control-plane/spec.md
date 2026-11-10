@@ -94,7 +94,7 @@ The management API SHALL expose authorized current and historical effective Issu
 
 The API SHALL advertise the bounded fields, supported values and semantic input bindings reusable by Issue editors and Flow authoring. It SHALL NOT require arbitrary nested JSON in generic planning properties, duplicate component/priority lists per step, or a write-capable external provider for local classification. Read-only detail and readiness operations SHALL start no tools, executions or provider writes.
 
-Existing Project property publication SHALL remain the shared contract for supported custom property types, choices, bounds and optional classification semantics. Definition administration SHALL retain Project administration rights separately from Issue value editing; clients SHALL be able to discover the authoritative catalog and exact retained definitions without creating another classification schema.
+Existing Project property publication SHALL remain the shared contract for supported custom property types, choices, bounds and optional classification semantics. It SHALL also retain each Project's bounded choices for the built-in priority, component and type attributes separately from custom properties. Definition administration SHALL retain Project administration rights separately from Issue value editing; clients SHALL be able to discover the authoritative catalog and exact retained definitions without creating another classification schema.
 
 #### Scenario: Client edits classification and loses the response
 - **WHEN** an authorized preconditioned edit commits and its exact request is retried after a later Issue change

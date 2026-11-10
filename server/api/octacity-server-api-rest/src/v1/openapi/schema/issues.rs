@@ -72,7 +72,7 @@ pub(super) fn insert(schemas: &mut Map<String, Value>) {
       &["id", "version"],
     ),
   );
-  let fields = || json!({"type":"array","maxItems":10,"uniqueItems":true,"items":string_enum(&["title","description","acceptance","priority","status","assignee","labels","due_date","properties","parent"])});
+  let fields = || json!({"type":"array","maxItems":13,"uniqueItems":true,"items":string_enum(&["title","description","acceptance","priority","component","type","size","status","assignee","labels","due_date","properties","parent"])});
   schemas.insert(
     "IssuePushPolicy".into(),
     object(
@@ -186,7 +186,11 @@ pub(super) fn insert(schemas: &mut Map<String, Value>) {
     ("title",json!({"type":"string","minLength":1,"maxLength":octacity_server_application::MAX_ISSUE_TITLE_BYTES,"x-max-utf8-bytes":octacity_server_application::MAX_ISSUE_TITLE_BYTES})),
     ("description",json!({"type":"string","maxLength":octacity_server_application::MAX_ISSUE_DOCUMENT_BYTES,"x-max-utf8-bytes":octacity_server_application::MAX_ISSUE_DOCUMENT_BYTES})),
     ("acceptance",nullable(json!({"type":"string","maxLength":octacity_server_application::MAX_ISSUE_DOCUMENT_BYTES,"x-max-utf8-bytes":octacity_server_application::MAX_ISSUE_DOCUMENT_BYTES}))),
-    ("priority",nullable(json!({"type":"integer","minimum":0,"maximum":255})))
+    ("priority",nullable(json!({"oneOf":[
+      {"type":"string","minLength":1,"maxLength":octacity_server_application::MAX_ISSUE_PROPERTY_KEY_BYTES,
+        "pattern":"^[a-z0-9_]+$","description":"Stable ID from this Project's priority choices; never a Work scheduling score."},
+      {"type":"integer","minimum":0,"maximum":255,"description":"Legacy numeric priority; no implicit conversion to a choice."}
+    ]})))
   ], &["title","description"]));
   schemas.insert(
     "IssueResource".into(),

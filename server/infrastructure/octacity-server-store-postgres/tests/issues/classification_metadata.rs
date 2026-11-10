@@ -47,7 +47,7 @@ async fn classification_metadata_round_trip_preserves_exact_history_and_original
     idempotency_key: key("catalog"), published_at: at(2),
   })).await.unwrap();
   let mut create = draft(project.id, "create");
-  create.intent.content.priority = Some(20);
+  create.intent.content.priority = Some(20.into());
   create.intent.planning = IssuePlanning {
     definition_version: 1,
     values: [("effort".into(), IssuePropertyValue::Choice("small".into()))].into(),
@@ -62,7 +62,7 @@ async fn classification_metadata_round_trip_preserves_exact_history_and_original
   let mut retained = legacy.clone();
   retained.version = legacy.version.next().unwrap();
   retained.updated_at = at(3);
-  retained.content.priority = Some(80);
+  retained.content.priority = Some(80.into());
   retained.classification = retained_metadata(project.id);
   support::issue_revision::seed(&database.pool, &retained).await;
 
@@ -169,7 +169,7 @@ async fn classification_metadata_upgrade_preserves_legacy_documents_catalogs_and
       .is_none()
   );
   let mut create = draft(project.id, "legacy-create");
-  create.intent.content.priority = Some(20);
+  create.intent.content.priority = Some(20.into());
   create.intent.planning = IssuePlanning {
     definition_version: 1,
     values: [("effort".into(), IssuePropertyValue::Choice("small".into()))].into(),

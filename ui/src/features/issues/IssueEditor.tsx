@@ -62,6 +62,7 @@ export function IssueEditor({
     focus: HTMLElement;
     version?: number;
   } | null>(null);
+  const priorityOptions = issuePriorityOptions(draft.priority, t);
   return (
     <section className={styles.panel}>
       <h2>{t(issue ? 'issues.edit' : 'issues.create')}</h2>
@@ -180,14 +181,14 @@ export function IssueEditor({
           <SelectMenu
             ariaLabel={t('issues.priority')}
             disabled={policy?.source_owned.includes('priority') === true}
-            value={draft.priority == null ? '' : String(draft.priority)}
-            options={issuePriorityOptions(draft.priority, t)}
-            onValueChange={(value) =>
-              setDraft({
-                ...draft,
-                priority: value === '' ? null : Number(value),
-              })
+            value={
+              priorityOptions.find((option) => option.priority === draft.priority)?.value ?? ''
             }
+            options={priorityOptions}
+            onValueChange={(value) => {
+              const option = priorityOptions.find((option) => option.value === value);
+              if (option) setDraft({ ...draft, priority: option.priority });
+            }}
           />
         </label>
         <button type="submit" ref={reviewButtonRef} disabled={!ready}>

@@ -28,6 +28,7 @@ async fn classification_metadata_upgrade_keeps_committed_and_rejected_legacy_rec
     .resource;
   let work = store.factory_run_snapshot(association.run_id).await.unwrap().work;
   let accepted = ApplyIssueClassification {
+    fields: None,
     association: association.clone(),
     policy: "legacy-triage".parse().unwrap(),
     record: FactoryDigest::from_bytes([81; 32]),
@@ -43,7 +44,7 @@ async fn classification_metadata_upgrade_keeps_committed_and_rejected_legacy_rec
     .apply_issue_classification(management_mutation(accepted.clone()))
     .await
     .unwrap();
-  assert_eq!(applied.issue.content.priority, Some(80));
+  assert_eq!(applied.issue.content.priority, Some(80.into()));
   assert_eq!(applied.issue.planning.labels, ["size_small".to_owned()].into());
   assert!(applied.issue.classification.is_empty());
   let rejected = ApplyIssueClassification {

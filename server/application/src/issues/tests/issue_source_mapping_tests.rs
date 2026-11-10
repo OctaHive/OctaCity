@@ -618,7 +618,7 @@ fn issue_source_mapping_publication_installs_reviewed_ownership_without_editing_
         .is_err()
     );
     let mut content = before.content.clone();
-    content.priority = Some(3);
+    content.priority = Some(3.into());
     manual
       .handle_command(
         &context(),

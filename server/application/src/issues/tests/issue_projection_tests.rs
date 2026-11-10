@@ -10,7 +10,7 @@ fn issue_card_retains_planning_pinned_policy_and_status_history_after_workflow_r
     let commands = AuthorizedCommandHandler::new(policy.clone(), handlers.clone());
     let queries = AuthorizedQueryHandler::new(policy.clone(), handlers);
     let mut command = create(project_id, "planned-card");
-    command.intent.content.priority = Some(7);
+    command.intent.content.priority = Some(7.into());
     command.intent.planning.due_date = Some("2026-11-15".into());
     let issue = commands.handle_command(&context(), command).await.unwrap().issue;
     let original = store
@@ -50,7 +50,7 @@ fn issue_card_retains_planning_pinned_policy_and_status_history_after_workflow_r
       .await
       .unwrap();
     assert_eq!(card.issue.status_id, moved.issue.status_id);
-    assert_eq!(card.priority, Some(7));
+    assert_eq!(card.priority, Some(7.into()));
     assert_eq!(card.planning.due_date.as_deref(), Some("2026-11-15"));
     assert_eq!(card.workflow, original);
     let history = queries

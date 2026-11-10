@@ -112,7 +112,7 @@ impl IssueOutcomeStore for PostgresStore {
         IssueOutcomeClassification::Applied {
           priority: applied.priority.map(|value| IssueOutcomeAssignedPriority {
             value,
-            current: issue.content.priority == Some(value),
+            current: issue.content.priority == Some(value.into()),
           }),
           size_label,
         }

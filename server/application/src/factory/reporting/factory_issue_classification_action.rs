@@ -2,8 +2,8 @@
 use crate::*;
 use octacity_server_factory::*;
 use octacity_server_store::{
-  ApplyIssueClassification, FactoryRunStore, IssueClassificationAuthority, IssueClassificationStore,
-  IssueExecutionStore,
+  ApplyIssueClassification, FactoryRunStore, IssueClassificationAuthority, IssueClassificationFieldSelection,
+  IssueClassificationStore, IssueClassificationUpdate, IssueExecutionStore, IssueSize,
 };
 use std::{collections::BTreeMap, sync::Arc};
 
@@ -77,6 +77,8 @@ pub(crate) struct Selection {
   outcome: FactoryKey,
   pub(crate) policy: FactoryKey,
   pub(crate) size_labels: BTreeMap<FactoryKey, FactoryKey>,
+  #[serde(default)]
+  pub(crate) fields: Option<IssueClassificationFieldSelection>,
 }
 
 impl Selection {
@@ -87,7 +89,7 @@ impl Selection {
     let invalid = ApplicationError::invalid;
     let value: Self = serde_json::from_value(binding.parameters().clone()).map_err(|_| invalid())?;
     if binding.action().as_str() != "apply_issue_classification"
-      || value.size_labels.is_empty()
+      || (value.size_labels.is_empty() && value.fields.is_none())
       || value.size_labels.len() > MAX_FACTORY_CLASSIFICATION_SIZE_LABELS
       || !outcomes
         .iter()
@@ -211,11 +213,53 @@ impl<S: IssueClassificationStore, F: FactoryRunStore> FactoryFlowActionPlugin
         return Err(invalid());
       }
     }
-    let priority = projected
+    let mut priority = projected
       .get("priority")
       .and_then(serde_json::Value::as_u64)
       .and_then(|value| u8::try_from(value).ok())
       .filter(|value| *value <= MAX_WORK_PRIORITY);
+    let fields = if let Some(selection) = &selected.fields {
+      let choice = |field: &str| -> Result<Option<String>, ApplicationError> {
+        let Some(value) = projected.get(field).filter(|value| !value.is_null()) else {
+          return Ok(None);
+        };
+        if accepted.get(field) != Some(value) {
+          return Err(invalid());
+        }
+        value.as_str().map(|s| Some(s.to_owned())).ok_or_else(invalid)
+      };
+      priority = None;
+      let selected_priority = if selection.priority { choice("priority")? } else { None };
+      let component = if selection.component {
+        choice("component")?
+      } else {
+        None
+      };
+      let issue_type = if selection.kind { choice("kind")? } else { None };
+      let size = if selection.size {
+        choice("size")?
+          .map(|value| serde_json::from_value::<IssueSize>(serde_json::json!(value)).map_err(|_| invalid()))
+          .transpose()?
+      } else {
+        None
+      };
+      let mut properties = BTreeMap::new();
+      for (slot, id) in selection.properties.fields() {
+        if let Some(value) = choice(slot)? {
+          properties.insert(id.to_owned(), value);
+        }
+      }
+      Some(IssueClassificationUpdate {
+        selection: selection.clone(),
+        priority: selected_priority,
+        component,
+        issue_type,
+        size,
+        properties,
+      })
+    } else {
+      None
+    };
     let size_label = projected
       .get("size")
       .and_then(serde_json::Value::as_str)
@@ -298,6 +342,7 @@ impl<S: IssueClassificationStore, F: FactoryRunStore> FactoryFlowActionPlugin
           operation_id,
           accepted_at: completion.observed_at(),
           priority,
+          fields,
           size_label,
           managed_labels: selected.size_labels.values().map(ToString::to_string).collect(),
           applied_at,

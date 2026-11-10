@@ -61,7 +61,8 @@ async function loadOpenApi() {
 
 async function generateApiTypes() {
   const document = await loadOpenApi();
-  const declarations = astToString(await openapiTS(document));
+  // A server-side default does not make an optional wire property required.
+  const declarations = astToString(await openapiTS(document, { defaultNonNullable: false }));
   const constraints = generateConstraints(document);
   const authoring = factoryAuthoringSchemas(document);
   const setup = Object.fromEntries(

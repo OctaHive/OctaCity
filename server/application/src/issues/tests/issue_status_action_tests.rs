@@ -300,7 +300,7 @@ fn issue_pipeline_action_failed_acceptance_cannot_be_retargeted_to_a_new_head() 
             id: issue.id,
             expected_version: issue.version,
             content: IssueContent {
-              priority: Some(7),
+              priority: Some(7.into()),
               ..issue.content.clone()
             },
           },
@@ -400,7 +400,7 @@ fn issue_pipeline_action_new_execution_and_unrelated_metadata_do_not_invalidate_
             id: issue.id,
             expected_version: issue.version,
             content: IssueContent {
-              priority: Some(8),
+              priority: Some(8.into()),
               ..issue.content.clone()
             },
           },

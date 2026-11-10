@@ -69,6 +69,18 @@ pub(super) fn insert(schemas: &mut Map<String, Value>) {
   let mut definition = object(
     [
       (
+        "components",
+        json!({"type":"array","maxItems":MAX_ISSUE_PROPERTY_CHOICES,"items":schema_ref("IssuePropertyChoice")}),
+      ),
+      (
+        "types",
+        json!({"type":"array","maxItems":MAX_ISSUE_PROPERTY_CHOICES,"items":schema_ref("IssuePropertyChoice")}),
+      ),
+      (
+        "priorities",
+        json!({"type":"array","maxItems":MAX_ISSUE_PROPERTY_CHOICES,"items":schema_ref("IssuePropertyChoice")}),
+      ),
+      (
         "labels",
         json!({"type":"array","maxItems":MAX_ISSUE_PROPERTY_CHOICES,"items":schema_ref("IssuePropertyChoice")}),
       ),
@@ -81,6 +93,11 @@ pub(super) fn insert(schemas: &mut Map<String, Value>) {
     &["labels", "properties"],
   );
   definition["x-max-json-utf8-bytes"] = json!(MAX_ISSUE_DOCUMENT_BYTES);
+  // Omitting default choices preserves legacy publication/replay bytes; discovery
+  // still advertises the effective defaults from the same domain catalog.
+  let defaults = octacity_server_application::IssuePropertyDefinitionSet::default();
+  definition["properties"]["priorities"]["default"] = json!(defaults.priorities);
+  definition["properties"]["types"]["default"] = json!(defaults.types);
   definition["description"] = json!(
     "Unique stable keys and kinds are retained; retire instead of removing. Reserved status/execution/authority setters are forbidden. Bounds and dates are validated by Project policy."
   );
@@ -90,6 +107,7 @@ pub(super) fn insert(schemas: &mut Map<String, Value>) {
     tagged("choice",[("value",key())],&["value"]),tagged("boolean",[("value",boolean())],&["value"]),tagged("number",[("value",number())],&["value"]),tagged("date",[("value",date())],&["value"])
   ]}));
   schemas.insert("IssuePlanning".into(),object([
+    ("component",nullable(key())),("type",nullable(key())),("size",nullable(string_enum(&["small","medium","large"]))),
     ("definition_version",non_negative_integer()),("assignee",nullable(label())),
     ("labels",json!({"type":"array","maxItems":MAX_ISSUE_LABELS,"uniqueItems":true,"items":key()})),
     ("due_date",nullable(date())),("parent_id",nullable(json!({"type":"string","format":"uuid"}))),

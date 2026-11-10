@@ -130,7 +130,8 @@ and separate ownership/status mapping review, as described below.
 ## Identity and revisions
 
 `CreateIssueCommand` accepts a Project and `IssueContent`: title, description,
-optional acceptance text and optional byte-sized planning priority. A title is
+optional acceptance text and an optional Project priority choice. Numeric priorities
+remain supported by the legacy contract without inferred conversion. A title is
 canonical nonblank single-line text, bounded to 128 UTF-8 bytes. Description and
 acceptance are each bounded to 65,536 UTF-8 bytes and reject NUL. Empty description
 and incomplete or absent acceptance are valid drafts. These are requirements,
@@ -624,13 +625,16 @@ store dependency direction. Production builds do not expose the test fixture.
 ## Console manual task workspace
 
 Open a Project, choose **Tasks**, then **Create task**. Only a title is required.
-The Console's planning-priority list starts with Blocker (3), High (2), Medium (1)
+The legacy Console planning-priority list starts with Blocker (3), High (2), Medium (1)
 and Low (0), plus Not set (`null`). One shared presentation mapping supplies the
 create/edit selector, confirmation and card labels. The numeric REST range stays
 0–255; an existing non-preset value appears as `Existing priority (N)` and is
 preserved through unrelated edits until explicitly replaced or cleared. The four
 presets are not a closed server enum, so the shared list can be extended without
-migrating existing Issue values. Execution scheduling priority is separate.
+migrating existing Issue values. New backend priorities use Project choice IDs;
+existing choice IDs remain intact through unrelated Console edits. Full Project-backed
+selectors and dedicated priority/component/type-list settings belong to snapshot
+tasks 6.3 and 6.6. Execution scheduling priority is separate.
 
 Description, acceptance criteria and priority can be completed later; no
 integration, repository, Factory setup or workflow-administration permission is
@@ -717,8 +721,9 @@ publications and referenced versions remain retained.
 
 Stable property and choice keys are bounded lowercase ASCII letters, digits and
 underscores, distinct from their editable display names. Project-defined choice
-fields can represent type, component and size without built-in domain enums or
-provider-specific names. Retire a field, label or choice rather than removing its
+fields retain earlier type/component/size values for compatibility. New classification
+uses separate built-in attributes rather than promoting those custom properties.
+Retire a field, label or choice rather than removing its
 identity or changing its type. New selections reject retired values; an unchanged
 retained value can survive an unrelated edit. Exact old revisions and their
 catalog versions preserve the original display meaning.
@@ -730,7 +735,8 @@ IDs, for example `"classification":{"kind":"type","component":"component",
 slot must reference a distinct existing `choice` property; its Project-owned
 choice IDs and the ordinary planning bounds remain the value contract. Other
 property kinds remain available for ordinary planning. Priority continues to
-use the existing bounded Issue content field and is not a custom binding.
+use the canonical Issue content location and is not a custom binding. New selected
+actions use Project priority choice IDs; numbers remain legacy values only.
 Display labels do not infer semantics. Bindings are optional and retained with
 their exact catalog version; legacy catalogs omit `classification` and ordinary
 Issues need no classification. A binding alone grants no execution or verified
@@ -739,14 +745,14 @@ reproduction authority.
 The retained `IssueRevision.classification` model adds attribution without copying
 effective scalar values out of `content` or `planning.values`. Empty metadata is
 omitted, so legacy revisions and ordinary Issues retain their previous encoding.
-Each entry identifies built-in priority, a stable property ID with its exact
+Each entry identifies built-in priority/component/type/size, a stable property ID with its exact
 definition publication, or the dedicated dependency collection. It retains the
 actual management actor and manual, accepted-pipeline or trusted-source origin,
 the assessed Issue revision, requirements applicability version and assessment
 time. A later requirements edit preserves that original applicability; an
 unrelated planning edit does not renew or invalidate it by changing the fence.
 
-At most 34 field attributions and 64 evidence/dependency references per collection
+At most 37 field attributions (including at most 32 custom properties) and 64 evidence/dependency references per collection
 are supported. Evidence references retain Work/Run, observation digest, exact code
 subject, environment/criterion publications and observation/freshness times.
 Per-field citations resolve to those retained references. Dependencies preserve
@@ -756,8 +762,9 @@ freshness intervals are rejected during decoding. Neither collection contains ev
 planning JSON or editable verification/acceptance flags.
 
 This is the storage-model foundation from snapshot task 1.2. Management create/edit
-intents cannot supply classification provenance. Guarded classification/manual
-writers and public classification projections remain separate tasks; decoding a
+intents cannot supply classification provenance. Manual provenance writers
+and public classification projections remain separate tasks; the
+guarded accepted-pipeline writer is described below. Decoding a
 reference does not qualify its source or grant access, verified reproduction or
 execution authority.
 
@@ -784,6 +791,80 @@ cargo test --locked -p octacity-server-store-postgres --test issue_execution cla
 Historical admission fixtures use the frozen pre-upgrade row writer; the current
 admission writer requires current policy tables. Assertions after migration still
 use public Issue/Factory ports.
+
+### Built-in classification attributes and explicit application
+
+Snapshot task 2.1 adds four optional built-in attributes, separate from arbitrary
+`planning.values`: Project choice IDs in `content.priority`, Project component/type
+IDs in `planning.component` and `planning.type`, and fixed `planning.size` values
+`small`, `medium`, `large`. Each Project's shared definition catalog owns bounded
+`priorities`, `components` and `types` lists. Initial priorities are `blocker`, `high`,
+`medium`, `low`; initial types are `defect`, `feature_request`; components require
+the Project's own choices. Defaults populate available options, never Issue values.
+Omitted default lists preserve legacy publication/replay encoding; their effective
+defaults are advertised in OpenAPI from the same domain definitions.
+
+The installed `apply_issue_classification` action supports an explicit `fields`
+selection pinned to the Project definition version. It independently selects
+`priority`, `component`, `kind` (the assessment's value for built-in Issue type)
+and `size`; remaining semantic property targets use the existing bindings:
+
+```json
+{
+  "definition_version": 1,
+  "priority": true,
+  "component": true,
+  "kind": true,
+  "size": true,
+  "properties": { "reproducibility": "reproduction" }
+}
+```
+
+Only explicitly projected fields from the exact accepted producer can reach the
+existing authorized Issue command. The owner checks current definitions, active
+choices, selected-field baselines and source ownership under its Project/Issue
+transaction fences. All supplied effective values, field attribution and the
+original operation receipt commit together. Origins retain actual actor, Work/Run,
+accepted record, policy, action identity and assessed requirements/definition pins.
+An omitted/null value preserves its field and attribution; unrelated custom values,
+labels, requirements applicability and admitted Work remain unchanged. A priority-only
+application does not republish unrelated planning. Typed size has no label effect
+unless a legacy label mapping was also explicitly selected.
+
+For typed actions, an absent assessment is represented by omission/null. Every
+non-null Project choice ID is validated against the catalog, including an ID
+named `unknown` if the Project publishes it. Legacy numeric actions keep their
+existing handling of nonnumeric unknown assessments. The Console preserves the
+distinction between a Project choice such as `"2"` and legacy numeric `2` when
+displaying and editing an existing priority.
+
+Selected-field conflicts inspect intermediate Issue revisions, so changing a field
+manually and restoring its old value still blocks an assessment of the earlier
+revision. A newer applicable assessment may supersede an earlier applied one;
+each supplied field uses its own last applied assessment as the comparison baseline,
+while attribution keeps the originally reviewed Issue revision. A later manual
+change, stale requirements or source-owned selected field rejects the entire
+application. The accepted producer result remains inspectable, with no successful
+action receipt, partial Issue revision or external outbox effect. Unselected
+planning edits remain compatible. An older delayed assessment cannot overwrite a
+newer applicable one, even when both propose identical values.
+
+Priority baseline lookup recognizes both legacy numeric receipts and typed
+Project-choice receipts as assessments of the same canonical field. A newer
+eligible action can supersede either format, while manual-change history and
+Run ordering still apply. When a legacy numeric action changes priority, its
+receipt retains the legacy provenance format and the current revision removes
+any earlier priority field attribution that no longer describes the value.
+Other field attributions and exact historical revisions remain intact; replay
+returns the original typed or legacy outcome without restoring it as current.
+
+Preliminary reproducibility currently accepts `unknown`, `needs_input`,
+`needs_research` and `not_applicable` from the selected Project choice property.
+It records no fabricated reproduction evidence. Independently qualified verified
+claims, broader evidence applicability and new authoring/Console controls
+remain the later tasks in sections 2, 5 and 6. Existing priority/size-label actions
+and their numeric receipts retain their previous contract. Mapping new Issue priority
+choices to numeric Work scheduling requires a separately pinned admission policy.
 
 | Supported property kind | Accepted values |
 | --- | --- |
@@ -896,8 +977,9 @@ and creation fingerprint.
 
 Open a Project task and use **Properties → Edit properties**. The panel shows
 organizational responsibility, Project labels, due date and installed scalar or
-choice definitions. Type/component/size are ordinary Project-defined fields,
-not provider names, agent roles or execution settings. An unconfigured Project
+choice definitions. Legacy type/component/size custom properties remain readable;
+the new separate built-in controls and Project choice-list editors are planned in
+snapshot tasks 6.3 and 6.6. These fields are not provider names, agent roles or execution settings. An unconfigured Project
 shows an empty-definition explanation. Without a person directory, Unassigned
 remains usable; a retained unavailable assignment is identified honestly and can
 be cleared. Source-owned controls explain their ownership and remain disabled.

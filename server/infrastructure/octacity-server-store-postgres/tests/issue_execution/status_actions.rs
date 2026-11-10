@@ -4,6 +4,116 @@ use super::*;
 #[path = "classification_upgrade.rs"]
 mod classification_upgrade;
 
+#[path = "mixed_classification.rs"]
+mod mixed_classification;
+
+#[tokio::test]
+#[ignore = "requires an explicitly configured disposable PostgreSQL service"]
+async fn pipeline_priority_choice_preserves_unselected_planning_and_records_its_catalog() {
+  let database = TestDatabase::migrated().await;
+  let store = PostgresStore::new(database.pool.clone());
+  let (original, association) = linked(&store, &database.pool).await;
+  store
+    .publish_issue_properties(management_mutation(PublishIssueProperties {
+      intent: PublishIssuePropertiesIntent {
+        project_id: original.project_id,
+        expected_version: 0,
+        definition: IssuePropertyDefinitionSet::default(),
+      },
+      idempotency_key: key("default-priority-choices"),
+      published_at: at(10),
+    }))
+    .await
+    .unwrap();
+  let mut request = ApplyIssueClassification {
+    association,
+    policy: FactoryKey::new("priority-only").unwrap(),
+    record: FactoryDigest::from_bytes([71; 32]),
+    accepted_at: at(15),
+    operation_id: FactoryDigest::from_bytes([72; 32]),
+    priority: None,
+    size_label: None,
+    managed_labels: Default::default(),
+    applied_at: at(20),
+    authority: None,
+    fields: Some(IssueClassificationUpdate {
+      selection: IssueClassificationFieldSelection {
+        definition_version: 1,
+        priority: true,
+        component: false,
+        kind: false,
+        size: false,
+        properties: Default::default(),
+      },
+      priority: Some("high".into()),
+      component: None,
+      issue_type: None,
+      size: None,
+      properties: Default::default(),
+    }),
+  };
+  let applied = store
+    .apply_issue_classification(management_mutation(request.clone()))
+    .await
+    .unwrap()
+    .issue;
+  assert_eq!(serde_json::to_value(&applied.content).unwrap()["priority"], "high");
+  assert_eq!(
+    applied.planning, original.planning,
+    "a content priority edit must preserve unselected planning"
+  );
+  assert_eq!(applied.classification.fields.len(), 1);
+  assert!(matches!(
+    applied.classification.fields[0].field,
+    IssueClassificationFieldReference::Priority {
+      definition_version: Some(1)
+    }
+  ));
+  store
+    .publish_issue_properties(management_mutation(PublishIssueProperties {
+      intent: PublishIssuePropertiesIntent {
+        project_id: original.project_id,
+        expected_version: 1,
+        definition: IssuePropertyDefinitionSet::default(),
+      },
+      idempotency_key: key("republish-priority-choices"),
+      published_at: at(21),
+    }))
+    .await
+    .unwrap();
+  request.fields.as_mut().unwrap().selection.definition_version = 2;
+  request.record = FactoryDigest::from_bytes([73; 32]);
+  request.operation_id = FactoryDigest::from_bytes([74; 32]);
+  request.accepted_at = at(25);
+  request.applied_at = at(30);
+  let reapplied = store
+    .apply_issue_classification(management_mutation(request))
+    .await
+    .unwrap()
+    .issue;
+  assert_eq!(
+    reapplied.classification.fields.len(),
+    1,
+    "replace the same field's older attribution"
+  );
+  assert!(matches!(
+    reapplied.classification.fields[0].field,
+    IssueClassificationFieldReference::Priority {
+      definition_version: Some(2)
+    }
+  ));
+  assert_eq!(reapplied.content.priority, applied.content.priority);
+  assert_eq!(reapplied.planning, original.planning);
+  assert_eq!(
+    store
+      .issue(original.project_id, original.id, Some(applied.version))
+      .await
+      .unwrap(),
+    applied
+  );
+  database.cleanup().await;
+}
+
 fn action(issue: &IssueRevision, work_id: WorkEnvelopeId, run_id: FactoryRunId, operation: u8) -> TransitionIssue {
   let edge = "20000000-0000-4000-8000-000000000001".parse().unwrap();
   let outcome = FactoryKey::new("eligible").unwrap();
@@ -81,6 +191,15 @@ async fn linked_at_schema(
   pool: &sqlx::PgPool,
   legacy: bool,
 ) -> (IssueRevision, IssueWorkAssociation) {
+  linked_with_priority(store, pool, legacy, None).await
+}
+
+async fn linked_with_priority(
+  store: &PostgresStore,
+  pool: &sqlx::PgPool,
+  legacy: bool,
+  priority: Option<IssuePriority>,
+) -> (IssueRevision, IssueWorkAssociation) {
   let fixture = factory_node_journal_contract_fixture();
   let template = fixture.admission.work;
   let project = template.subject().project_id();
@@ -105,7 +224,7 @@ async fn linked_at_schema(
           title: "Reviewed task".into(),
           description: "Requirements".into(),
           acceptance: Some("Checks".into()),
-          priority: None,
+          priority,
         },
       },
       idempotency_key: key("issue"),
@@ -319,7 +438,7 @@ async fn pipeline_status_rejected_command_cannot_rebind_after_restart() {
         id: issue.id,
         expected_version: issue.version,
         content: IssueContent {
-          priority: Some(8),
+          priority: Some(8.into()),
           ..issue.content.clone()
         },
       },
@@ -582,6 +701,7 @@ async fn parallel_work(
   let mut command = request(issue);
   command.intent.target = original.intent.target;
   command.idempotency_key = key("parallel-execution");
+  command.requested_at = issue.updated_at.max(at(5));
   let reviewed = store
     .request_issue_execution(management_mutation(command))
     .await
@@ -624,7 +744,7 @@ async fn parallel_work(
       work,
       flow: AdmittedFlow::from_configuration(&configuration, &run).unwrap(),
       run,
-      admitted_at: at(5),
+      admitted_at: reviewed.requested_at,
     }))
     .await
     .unwrap();
@@ -697,7 +817,7 @@ async fn pipeline_status_upgrade_binds_the_original_reviewed_marker_instead_of_t
     if requirements_changed {
       content.description = "Changed requirements".into();
     } else {
-      content.priority = Some(5);
+      content.priority = Some(5.into());
     }
     let current = store
       .edit_issue(management_mutation(EditIssue {
@@ -933,6 +1053,7 @@ async fn pipeline_classification_applies_one_local_revision_and_replays_the_orig
     .issue;
   let work = store.factory_run_snapshot(association.run_id).await.unwrap().work;
   let request = ApplyIssueClassification {
+    fields: None,
     association: association.clone(),
     policy: FactoryKey::new("triage-size").unwrap(),
     record: FactoryDigest::from_bytes([81; 32]),
@@ -951,7 +1072,7 @@ async fn pipeline_classification_applies_one_local_revision_and_replays_the_orig
   assert_eq!(applied.disposition, MutationDisposition::Applied);
   assert_eq!(applied.issue.version, edited.version.next().unwrap());
   assert_eq!(applied.issue.applicability_version, edited.applicability_version);
-  assert_eq!(applied.issue.content.priority, Some(80));
+  assert_eq!(applied.issue.content.priority, Some(80.into()));
   assert_eq!(
     applied.issue.planning.labels,
     ["size_small".to_owned(), "size_reviewed".to_owned(), "team".to_owned()].into()
@@ -984,7 +1105,7 @@ async fn pipeline_classification_applies_one_local_revision_and_replays_the_orig
     .apply_issue_classification(management_mutation(replacement.clone()))
     .await
     .unwrap();
-  assert_eq!(classified.issue.content.priority, Some(80));
+  assert_eq!(classified.issue.content.priority, Some(80.into()));
   assert_eq!(
     classified.issue.planning.labels,
     ["size_large".to_owned(), "size_reviewed".to_owned(), "team".to_owned()].into()
@@ -1069,7 +1190,7 @@ async fn pipeline_classification_applies_one_local_revision_and_replays_the_orig
           id: original.id,
           expected_version: manually_edited.version,
           content: IssueContent {
-            priority: Some(priority),
+            priority: Some(priority.into()),
             ..manually_edited.content
           },
         },
@@ -1101,5 +1222,67 @@ async fn pipeline_classification_applies_one_local_revision_and_replays_the_orig
     restarted.issue(original.project_id, original.id, None).await.unwrap(),
     manually_edited
   );
+  database.cleanup().await;
+}
+
+#[tokio::test]
+#[ignore = "requires an explicitly configured disposable PostgreSQL service"]
+async fn legacy_classification_preserves_unrelated_edits_with_a_project_priority_baseline() {
+  let database = TestDatabase::migrated().await;
+  let store = PostgresStore::new(database.pool.clone());
+  let (original, association) = linked_with_priority(
+    &store,
+    &database.pool,
+    false,
+    Some(IssuePriority::Choice("high".into())),
+  )
+  .await;
+  let work = store.factory_run_snapshot(association.run_id).await.unwrap().work;
+  let mut planning = original.planning.clone();
+  planning.due_date = Some("2026-12-01".into());
+  let edited = store
+    .edit_issue_planning(management_mutation(EditIssuePlanning {
+      intent: EditIssuePlanningIntent {
+        project_id: original.project_id,
+        id: original.id,
+        expected_version: original.version,
+        planning,
+      },
+      assignees: Default::default(),
+      idempotency_key: key("unrelated-date"),
+      edited_at: at(12),
+    }))
+    .await
+    .unwrap()
+    .issue;
+  let applied = store
+    .apply_issue_classification(management_mutation(ApplyIssueClassification {
+      association: association.clone(),
+      policy: FactoryKey::new("legacy-priority").unwrap(),
+      record: FactoryDigest::from_bytes([181; 32]),
+      operation_id: FactoryDigest::from_bytes([182; 32]),
+      accepted_at: at(15),
+      applied_at: at(20),
+      priority: Some(80),
+      fields: None,
+      size_label: None,
+      managed_labels: Default::default(),
+      authority: None,
+    }))
+    .await
+    .expect("an unchanged Project priority is compatible with unrelated planning edits")
+    .issue;
+  assert_eq!(applied.content.priority, Some(IssuePriority::LegacyNumber(80)));
+  assert_eq!(applied.planning, edited.planning);
+  assert_eq!(applied.version, edited.version.next().unwrap());
+  assert_eq!(applied.applicability_version, original.applicability_version);
+  assert_eq!(
+    store
+      .issue(original.project_id, original.id, Some(original.version))
+      .await
+      .unwrap(),
+    original
+  );
+  assert_eq!(store.factory_run_snapshot(association.run_id).await.unwrap().work, work);
   database.cleanup().await;
 }

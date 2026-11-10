@@ -3,6 +3,9 @@ use super::*;
 use octacity_server_store::testing::management_mutation;
 use serde_json::json;
 
+#[path = "issue_classification.rs"]
+mod classification;
+
 fn publication_flow(action: &str, require_review_url: bool) -> FlowDefinitionTemplate {
   let mut template = summary_flow(None);
   template.nodes.truncate(1);
@@ -392,7 +395,7 @@ async fn issue_outcomes_read_exact_current_accepted_records() {
     &store,
     &created,
     IssueContent {
-      priority: Some(25),
+      priority: Some(25.into()),
       ..content.clone()
     },
     230,
@@ -1133,6 +1136,7 @@ async fn issue_outcomes_http_distinguishes_advice_committed_classification_and_c
           accepted_at: record.observed_at(),
           operation_id: FactoryDigest::content_sha256(record_digest.as_bytes().as_slice()),
           priority: Some(25),
+          fields: None,
           size_label: Some("size_small".into()),
           managed_labels: ["size_small".into()].into(),
           applied_at: at(now),
@@ -1146,7 +1150,7 @@ async fn issue_outcomes_http_distinguishes_advice_committed_classification_and_c
   assert_eq!(card["presentation"]["classification"], json!({"status":"recommended"}));
   assert_eq!(card["presentation"]["recommended_priority"], 25);
   let applied = apply(&first, 70).await.unwrap().issue;
-  assert_eq!(applied.content.priority, Some(25));
+  assert_eq!(applied.content.priority, Some(25.into()));
   assert_eq!(
     read().await["presentation"]["classification"],
     json!({"status":"applied","priority":{"value":25,"current":true},
@@ -1158,7 +1162,7 @@ async fn issue_outcomes_http_distinguishes_advice_committed_classification_and_c
     &store,
     &applied,
     IssueContent {
-      priority: Some(77),
+      priority: Some(77.into()),
       ..applied.content.clone()
     },
     90,

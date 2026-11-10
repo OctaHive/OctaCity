@@ -130,6 +130,7 @@ async fn planning_edits_match_memory_keep_retired_values_and_original_history() 
       .collect(),
     due_date: Some("2028-02-29".into()),
     parent_id: None,
+    ..Default::default()
   };
   let first = store
     .create_issue(management_mutation(request.clone()))

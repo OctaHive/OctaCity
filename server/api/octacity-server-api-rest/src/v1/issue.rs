@@ -56,8 +56,8 @@ pub struct CreateIssueRequest {
   pub description: String,
   /// Optional incomplete acceptance text.
   pub acceptance: Option<String>,
-  /// Optional bounded organizational priority.
-  pub priority: Option<u8>,
+  /// Optional Project priority choice; numeric requests retain the legacy contract.
+  pub priority: Option<octacity_server_application::IssuePriority>,
   /// Optional closed planning snapshot; omission retains legacy creation replay.
   #[serde(default)]
   pub planning: octacity_server_application::IssuePlanning,

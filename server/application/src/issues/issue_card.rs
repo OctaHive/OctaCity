@@ -24,7 +24,7 @@ pub struct IssueCardProjection {
   /// Safe current task metadata; dedicated reads own requirement bodies.
   pub issue: octacity_server_store::IssueSummary,
   /// Organizational priority; never a change to admitted Build scheduling.
-  pub priority: Option<u8>,
+  pub priority: Option<IssuePriority>,
   /// Current optional organizational properties; independent of worker/profile selection.
   pub planning: octacity_server_store::IssuePlanning,
   /// Original pinned policy, never the Project's later default.

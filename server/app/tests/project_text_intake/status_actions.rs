@@ -950,7 +950,7 @@ async fn run_local_classification(lock_issue: bool) {
     ));
   }
   let current = store.issue(issue.project_id, issue.id, None).await.unwrap();
-  assert_eq!(current.content.priority, Some(80));
+  assert_eq!(current.content.priority, Some(80.into()));
   assert_eq!(current.planning.labels, ["size_small".to_owned()].into());
   assert_eq!(current.version, issue.version.next().unwrap());
   assert_eq!(current.status_id, issue.status_id);

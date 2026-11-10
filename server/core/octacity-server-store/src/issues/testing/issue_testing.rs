@@ -364,6 +364,10 @@ impl IssueStore for crate::testing::InMemoryProjectStore {
       .ok_or(StoreError::NotFound {
         entity: EntityKind::Issue,
       })?;
+    intent.content.validate_priority(
+      &planning::definitions(&state, intent.project_id, None)?,
+      Some(&current.content),
+    )?;
     let issue = current.edited(
       &request,
       &state.issues.policies.get(&intent.id).cloned().unwrap_or_default(),
@@ -435,6 +439,10 @@ fn prepare_issue_creation(
     request.intent.planning.parent_id,
   )?;
   request.intent.content.validate()?;
+  request
+    .intent
+    .content
+    .validate_priority(&planning::definitions(state, request.intent.project_id, None)?, None)?;
   request.intent.planning.validate(
     &planning::definitions(state, request.intent.project_id, None)?,
     None,

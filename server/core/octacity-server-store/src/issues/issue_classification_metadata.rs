@@ -7,8 +7,8 @@ use octacity_server_factory::{
 use serde::{Deserialize, Serialize};
 use std::collections::BTreeSet;
 
-/// Maximum field attributions: Project fields plus built-in priority and dependencies.
-pub const MAX_ISSUE_CLASSIFICATION_FIELDS: usize = MAX_ISSUE_PROPERTIES + 2;
+/// Maximum field attributions: Project fields plus priority, component, type, size and dependencies.
+pub const MAX_ISSUE_CLASSIFICATION_FIELDS: usize = MAX_ISSUE_PROPERTIES + 5;
 /// Maximum evidence or dependency references, matching the existing triage dependency bound.
 pub const MAX_ISSUE_CLASSIFICATION_REFERENCES: usize = 64;
 
@@ -35,6 +35,7 @@ impl IssueClassificationMetadata {
   pub fn validate(&self) -> Result<(), StoreInputError> {
     let invalid = StoreInputError::InvalidIssue;
     let mut fields = BTreeSet::new();
+    let mut property_count = 0;
     let records: BTreeSet<_> = self.evidence.iter().map(|e| e.record).collect();
     let mut dependencies = BTreeSet::new();
     if self.fields.len() > MAX_ISSUE_CLASSIFICATION_FIELDS
@@ -50,22 +51,27 @@ impl IssueClassificationMetadata {
         .iter()
         .any(|d| !dependencies.insert((&d.work_id, &d.run_id, &d.terminal)))
       || self.fields.iter().any(|field| {
-        let identity = match &field.field {
-          IssueClassificationFieldReference::Priority => (0, ""),
-          IssueClassificationFieldReference::Dependencies => (1, ""),
-          IssueClassificationFieldReference::Property { id, definition_version } => {
-            if *definition_version == 0 || !super::issue_planning::valid_property_id(id) {
-              return true;
-            }
-            (2, id.as_str())
-          }
+        let valid_version = match &field.field {
+          IssueClassificationFieldReference::Priority { definition_version } => *definition_version != Some(0),
+          IssueClassificationFieldReference::Component { definition_version }
+          | IssueClassificationFieldReference::Type { definition_version }
+          | IssueClassificationFieldReference::Property { definition_version, .. } => *definition_version != 0,
+          IssueClassificationFieldReference::Size | IssueClassificationFieldReference::Dependencies => true,
         };
+        let identity = field.field.identity();
+        if let IssueClassificationFieldIdentity::Property { id } = identity {
+          property_count += 1;
+          if property_count > MAX_ISSUE_PROPERTIES || !super::issue_planning::valid_property_id(id) {
+            return true;
+          }
+        }
         let actor = match &field.origin {
           IssueClassificationOrigin::Manual { actor }
           | IssueClassificationOrigin::Pipeline { actor, .. }
           | IssueClassificationOrigin::Source { actor, .. } => actor,
         };
-        !fields.insert(identity)
+        !valid_version
+          || !fields.insert(identity)
           || field.requirements_version > field.assessed_version
           || crate::management_mutation::validate_management_actor(actor).is_err()
           || field.evidence.len() > MAX_ISSUE_CLASSIFICATION_REFERENCES
@@ -103,8 +109,24 @@ impl TryFrom<IssueClassificationMetadataWire> for IssueClassificationMetadata {
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
 #[serde(tag = "kind", rename_all = "snake_case", deny_unknown_fields)]
 pub enum IssueClassificationFieldReference {
-  /// Existing built-in content priority.
-  Priority,
+  /// Built-in content priority; legacy numeric attribution has no choice catalog pin.
+  Priority {
+    /// Exact Project priority-choice publication for new assessments.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    definition_version: Option<u64>,
+  },
+  /// Built-in finite size, independent of legacy size-label effects.
+  Size,
+  /// Built-in type and the exact Project type-list publication.
+  Type {
+    /// Positive immutable Project catalog publication.
+    definition_version: u64,
+  },
+  /// Built-in component and the exact Project component-list publication.
+  Component {
+    /// Positive immutable Project catalog publication.
+    definition_version: u64,
+  },
   /// One Project property and the exact catalog that supplied its classification meaning.
   Property {
     /// Stable Project property identity, independent of its display name.
@@ -114,6 +136,41 @@ pub enum IssueClassificationFieldReference {
   },
   /// Issue-owned typed dependency references, outside generic planning JSON.
   Dependencies,
+}
+
+/// Canonical effective field location, independent of its assessment's catalog pin.
+/// Shared by duplicate validation, attribution replacement and receipt lookup.
+#[derive(Clone, Copy, Debug, Eq, Ord, PartialEq, PartialOrd, Serialize)]
+#[serde(tag = "kind", rename_all = "snake_case")]
+pub enum IssueClassificationFieldIdentity<'a> {
+  /// Built-in content priority, including retained numeric values.
+  Priority,
+  /// Built-in Project component.
+  Component,
+  /// Built-in Project type.
+  Type,
+  /// Built-in finite size.
+  Size,
+  /// One stable custom property within the owning Issue's Project.
+  Property {
+    /// Stable identity, independent of the definition publication.
+    id: &'a str,
+  },
+  /// Issue-owned exact dependency references.
+  Dependencies,
+}
+impl IssueClassificationFieldReference {
+  /// Identifies the same effective field across Project definition publications.
+  pub fn identity(&self) -> IssueClassificationFieldIdentity<'_> {
+    match self {
+      Self::Priority { .. } => IssueClassificationFieldIdentity::Priority,
+      Self::Component { .. } => IssueClassificationFieldIdentity::Component,
+      Self::Type { .. } => IssueClassificationFieldIdentity::Type,
+      Self::Size => IssueClassificationFieldIdentity::Size,
+      Self::Property { id, .. } => IssueClassificationFieldIdentity::Property { id },
+      Self::Dependencies => IssueClassificationFieldIdentity::Dependencies,
+    }
+  }
 }
 
 /// Original trusted author of a field assessment; never client-supplied authority.

@@ -37,7 +37,7 @@ async fn ordinary_issue(store: &testing::InMemoryProjectStore) -> IssueRevision 
           title: "A defect".into(),
           description: "Initial requirements".into(),
           acceptance: None,
-          priority: Some(20),
+          priority: Some(20.into()),
         },
       },
       idempotency_key: key("issue"),
@@ -53,6 +53,224 @@ fn manual_priority() -> Value {
     "origin":{"kind":"manual","actor":{"kind":"unauthenticated_management","identity":null}},
     "assessed_version":1,"requirements_version":1,"assessed_at":at(2)
   }]})
+}
+
+#[test]
+fn retained_classification_rejects_duplicate_locations_across_catalog_versions() {
+  let metadata = |first: Value, second: Value| {
+    let mut one = manual_priority()["fields"][0].clone();
+    let mut two = one.clone();
+    one["field"] = first;
+    two["field"] = second;
+    json!({"fields":[one,two]})
+  };
+  for (first, second) in [
+    (
+      json!({"kind":"priority"}),
+      json!({"kind":"priority","definition_version":2}),
+    ),
+    (
+      json!({"kind":"component","definition_version":1}),
+      json!({"kind":"component","definition_version":2}),
+    ),
+    (
+      json!({"kind":"type","definition_version":1}),
+      json!({"kind":"type","definition_version":2}),
+    ),
+    (json!({"kind":"size"}), json!({"kind":"size"})),
+    (json!({"kind":"dependencies"}), json!({"kind":"dependencies"})),
+    (
+      json!({"kind":"property","id":"effort","definition_version":1}),
+      json!({"kind":"property","id":"effort","definition_version":2}),
+    ),
+  ] {
+    assert!(serde_json::from_value::<IssueClassificationMetadata>(metadata(first, second)).is_err());
+  }
+  let distinct = metadata(
+    json!({"kind":"property","id":"effort","definition_version":1}),
+    json!({"kind":"property","id":"reproduction","definition_version":2}),
+  );
+  assert_eq!(
+    serde_json::from_value::<IssueClassificationMetadata>(distinct)
+      .unwrap()
+      .fields
+      .len(),
+    2
+  );
+}
+
+#[test]
+fn builtin_component_uses_project_choices_independently_of_custom_properties() {
+  run_ready(async {
+    let store = testing::InMemoryProjectStore::new();
+    let original = ordinary_issue(&store).await;
+    let catalog = store
+      .publish_issue_properties(testing::management_mutation(PublishIssueProperties {
+        intent: PublishIssuePropertiesIntent {
+          project_id: original.project_id,
+          expected_version: 0,
+          definition: serde_json::from_value(json!({
+            "labels":[],"components":[{"id":"engine","name":"Engine","retired":false}],
+            "properties":[{"id":"customer_visible","name":"Customer visible","retired":false,
+              "kind":{"type":"boolean"}}]
+          }))
+          .expect("the Project catalog supports built-in component choices"),
+        },
+        idempotency_key: key("component-catalog"),
+        published_at: at(3),
+      }))
+      .await
+      .unwrap()
+      .resource;
+    let intent = EditIssuePlanningIntent {
+      project_id: original.project_id,
+      id: original.id,
+      expected_version: original.version,
+      planning: serde_json::from_value(json!({
+        "definition_version":catalog.version,"component":"engine","type":"feature_request","size":"medium","assignee":null,
+        "labels":[],"due_date":null,"parent_id":null,
+        "values":{"customer_visible":{"type":"boolean","value":true}}
+      }))
+      .expect("component is a built-in planning field, outside custom values"),
+    };
+    let edit = EditIssuePlanning {
+      intent,
+      assignees: Default::default(),
+      idempotency_key: key("component-select"),
+      edited_at: at(4),
+    };
+    let selected = store
+      .edit_issue_planning(testing::management_mutation(edit.clone()))
+      .await
+      .unwrap()
+      .issue;
+    assert_eq!(
+      serde_json::to_value(&selected).unwrap()["planning"]["component"],
+      "engine"
+    );
+    assert_eq!(
+      serde_json::to_value(&selected).unwrap()["planning"]["type"],
+      "feature_request"
+    );
+    assert_eq!(serde_json::to_value(&selected).unwrap()["planning"]["size"], "medium");
+    assert_eq!(selected.planning.values.len(), 1);
+    assert_eq!(
+      selected.planning.values["customer_visible"],
+      IssuePropertyValue::Boolean(true)
+    );
+    assert_eq!(selected.applicability_version, original.applicability_version);
+    assert!(
+      selected.classification.is_empty(),
+      "ordinary planning does not invent a producer"
+    );
+    assert_eq!(
+      store
+        .issue(original.project_id, original.id, Some(original.version))
+        .await
+        .unwrap(),
+      original
+    );
+    assert!(serde_json::to_value(&original).unwrap().get("planning").is_none());
+    let mut invalid = edit.clone();
+    let mut wire = serde_json::to_value(&invalid.intent.planning).unwrap();
+    wire["component"] = json!("another-project-component");
+    invalid.intent.planning = serde_json::from_value(wire).unwrap();
+    invalid.intent.expected_version = selected.version;
+    invalid.idempotency_key = key("foreign-component");
+    invalid.edited_at = at(5);
+    assert!(
+      store
+        .edit_issue_planning(testing::management_mutation(invalid))
+        .await
+        .is_err()
+    );
+    assert_eq!(
+      store.issue(original.project_id, original.id, None).await.unwrap(),
+      selected
+    );
+    let replay = store
+      .edit_issue_planning(testing::management_mutation(edit))
+      .await
+      .unwrap();
+    assert_eq!(replay.disposition, MutationDisposition::Replayed);
+    assert_eq!(replay.issue, selected);
+  });
+}
+
+#[test]
+fn issue_priority_uses_project_choices_and_preserves_legacy_numeric_history() {
+  run_ready(async {
+    let store = testing::InMemoryProjectStore::new();
+    let original = ordinary_issue(&store).await;
+    let mut content = serde_json::to_value(&original.content).unwrap();
+    content["priority"] = json!("high");
+    let content: IssueContent =
+      serde_json::from_value(content).expect("new Issue priorities are Project choice IDs, not scheduling numbers");
+    let request = EditIssue {
+      intent: EditIssueIntent {
+        project_id: original.project_id,
+        id: original.id,
+        expected_version: original.version,
+        content,
+      },
+      idempotency_key: key("priority-choice"),
+      edited_at: at(3),
+    };
+    let selected = store
+      .edit_issue(testing::management_mutation(request.clone()))
+      .await
+      .unwrap()
+      .issue;
+    assert_eq!(serde_json::to_value(&selected.content).unwrap()["priority"], "high");
+    assert_eq!(selected.applicability_version, original.applicability_version);
+    assert_eq!(serde_json::to_value(&original.content).unwrap()["priority"], 20);
+    assert_eq!(
+      store
+        .issue(original.project_id, original.id, Some(original.version))
+        .await
+        .unwrap(),
+      original
+    );
+    let mut invalid = request.clone();
+    let mut wire = serde_json::to_value(&invalid.intent.content).unwrap();
+    wire["priority"] = json!("urgent");
+    invalid.intent.content = serde_json::from_value(wire).unwrap();
+    invalid.intent.expected_version = selected.version;
+    invalid.idempotency_key = key("unconfigured-priority");
+    invalid.edited_at = at(4);
+    assert!(
+      store
+        .edit_issue(testing::management_mutation(invalid.clone()))
+        .await
+        .is_err()
+    );
+    store
+      .publish_issue_properties(testing::management_mutation(PublishIssueProperties {
+        intent: PublishIssuePropertiesIntent {
+          project_id: original.project_id,
+          expected_version: 0,
+          definition: serde_json::from_value(json!({"labels":[],"properties":[],"priorities":[
+            {"id":"blocker","name":"Blocker","retired":false},{"id":"high","name":"High","retired":false},
+            {"id":"medium","name":"Medium","retired":false},{"id":"low","name":"Low","retired":false},
+            {"id":"urgent","name":"Urgent","retired":false}
+          ]}))
+          .unwrap(),
+        },
+        idempotency_key: key("project-priorities"),
+        published_at: at(4),
+      }))
+      .await
+      .unwrap();
+    let custom = store
+      .edit_issue(testing::management_mutation(invalid))
+      .await
+      .unwrap()
+      .issue;
+    assert_eq!(serde_json::to_value(&custom.content).unwrap()["priority"], "urgent");
+    let replay = store.edit_issue(testing::management_mutation(request)).await.unwrap();
+    assert_eq!(replay.disposition, MutationDisposition::Replayed);
+    assert_eq!(replay.issue, selected);
+  });
 }
 
 #[test]
@@ -87,7 +305,7 @@ fn issue_classification_metadata_survives_requirements_edits_without_copying_val
     assert!(retained.get("classification").is_none());
     retained["classification"] = manual_priority();
     let classified: IssueRevision = serde_json::from_value(retained.clone()).unwrap();
-    assert_eq!(classified.content.priority, Some(20));
+    assert_eq!(classified.content.priority, Some(20.into()));
     assert_eq!(serde_json::to_value(&classified).unwrap(), retained);
     let mut content = classified.content.clone();
     content.description = "Changed requirements".into();
@@ -108,7 +326,7 @@ fn issue_classification_metadata_survives_requirements_edits_without_copying_val
       .unwrap();
     assert_eq!(edited.version, IssueVersion::new(2).unwrap());
     assert_eq!(edited.applicability_version, edited.version);
-    assert_eq!(edited.content.priority, Some(20));
+    assert_eq!(edited.content.priority, Some(20.into()));
     assert_eq!(
       serde_json::to_value(&edited).unwrap()["classification"],
       manual_priority()

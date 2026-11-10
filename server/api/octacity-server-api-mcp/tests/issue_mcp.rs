@@ -1269,7 +1269,7 @@ async fn detail_wire_contract_preserves_explicit_optional_planning_fields() {
             title: "Planned ticket".into(),
             description: "Requirements".into(),
             acceptance: Some("Reviewed criteria".into()),
-            priority: Some(2),
+            priority: Some(2.into()),
           },
         },
         idempotency_key: "planned-ticket".parse().unwrap(),

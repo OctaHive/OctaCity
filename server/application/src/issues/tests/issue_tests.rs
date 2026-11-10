@@ -150,7 +150,7 @@ fn issue_edit_retains_revisions_and_original_replay_after_later_edits() {
     let mut content = draft();
     content.description = "Новые требования".into();
     content.acceptance = Some("Черновик критериев".into());
-    content.priority = Some(5);
+    content.priority = Some(5.into());
     let edit = EditIssueCommand {
       intent: EditIssueIntent {
         project_id,
@@ -545,11 +545,11 @@ fn issue_source_owned_fields_reject_local_replacement_but_allow_unrelated_edits(
     assert_eq!(store.mutation_evidence_counts().await, before);
     let mut local = edit;
     local.intent.content = IssueContent {
-      priority: Some(3),
+      priority: Some(3.into()),
       ..draft()
     };
     let edited = commands.handle_command(&context(), local).await.unwrap().issue;
-    assert_eq!(edited.content.priority, Some(3));
+    assert_eq!(edited.content.priority, Some(3.into()));
     assert_eq!(edited.content.description, created.content.description);
     assert_eq!(
       queries
@@ -884,7 +884,7 @@ fn issue_edit_transition_and_execution_rights_are_independent() {
         id: created.id,
         expected_version: created.version,
         content: IssueContent {
-          priority: Some(2),
+          priority: Some(2.into()),
           ..draft()
         },
       },
@@ -1103,7 +1103,7 @@ fn issue_text_bounds_reserved_setters_and_history_limits_fail_without_partial_wr
       title: "я".repeat(64),
       description: "d".repeat(65_536),
       acceptance: Some("a".repeat(65_536)),
-      priority: Some(u8::MAX),
+      priority: Some(u8::MAX.into()),
     };
     let mut invalid = vec![];
     for title in [
@@ -1438,7 +1438,7 @@ fn issue_workflow_adoption_is_reviewed_replayable_and_invalidates_old_applicabil
             id: created.id,
             expected_version: adopted.issue.version,
             content: IssueContent {
-              priority: Some(2),
+              priority: Some(2.into()),
               ..adopted.issue.content.clone()
             },
           },
@@ -1586,6 +1586,7 @@ fn issue_classification_requires_current_project_and_issue_write_grants() {
         .handle_command(
           &context(),
           ApplyIssueClassificationCommand(ApplyIssueClassification {
+            fields: None,
             association: IssueWorkAssociation {
               project_id: ProjectId::generate(),
               issue_id: IssueId::generate(),

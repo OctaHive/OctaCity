@@ -32,10 +32,14 @@ impl IssueClassificationStore for PostgresStore {
       accepted_at: request.accepted_at,
     })
     .map_err(|_| StoreError::Unavailable)?;
-    let intent = json!({
+    let mut intent = json!({
       "provenance": provenance, "association": a, "priority": request.priority,
       "size_label": request.size_label, "managed_labels": request.managed_labels,
     });
+    // Legacy command fingerprints/receipts retain their original bytes.
+    if let Some(fields) = &request.fields {
+      intent["fields"] = serde_json::to_value(fields).map_err(|_| StoreError::Unavailable)?;
+    }
     let mut identity = MutationIdentity::new_management(
       &audit,
       MutationKind::ApplyIssueClassification,
@@ -55,7 +59,7 @@ impl IssueClassificationStore for PostgresStore {
       }
       MutationStart::Fresh(tx) => tx,
     };
-    let evaluated = evaluate(&mut tx, &mut request).await;
+    let evaluated = evaluate(&mut tx, &mut request, audit.actor()).await;
     let a = &request.association;
     if let Some(authority) = &request.authority {
       if std::time::Instant::now() >= authority.deadline {
@@ -100,6 +104,11 @@ impl IssueClassificationStore for PostgresStore {
       version: outcome.issue.version,
       applicability: current.applicability_version,
       policy: request.policy,
+      fields: request
+        .fields
+        .as_ref()
+        .map(|fields| fields.field_references())
+        .unwrap_or_default(),
     })
     .map_err(|_| StoreError::Unavailable)?;
     mutation::commit(
@@ -123,6 +132,7 @@ fn conflict() -> StoreError {
 async fn evaluate(
   connection: &mut PgConnection,
   request: &mut ApplyIssueClassification,
+  actor: &AuditActor,
 ) -> Result<(IssueRevision, IssueRevision, i64, Option<String>), StoreError> {
   let a = &request.association;
   issue_workflow::lock_project(connection, a.project_id).await?;
@@ -154,7 +164,12 @@ async fn evaluate(
   ).bind(a.run_id.as_uuid()).bind(a.project_id.as_uuid()).bind(a.work_id.as_uuid())
     .fetch_optional(&mut *connection).await.map_err(unavailable)?.ok_or_else(conflict)?;
   let order = (admitted_at, a.run_id, request.accepted_at.unix_millis(), request.record);
-  if (request.priority.is_some() || request.size_label.is_some())
+  if (request.priority.is_some()
+    || request.size_label.is_some()
+    || request
+      .fields
+      .as_ref()
+      .is_some_and(|fields| !fields.field_references().is_empty()))
     && latest(connection, &current, Some(current.applicability_version), None, None)
       .await?
       .is_some_and(|prior| prior.order() >= order)
@@ -167,7 +182,7 @@ async fn evaluate(
       connection,
       &current,
       Some(current.applicability_version),
-      Some("priority"),
+      Some(ReceiptField::Canonical(IssueClassificationFieldIdentity::Priority)),
       None,
     )
     .await?;
@@ -178,17 +193,48 @@ async fn evaluate(
       .priority;
     let changed: bool = sqlx::query_scalar(
       "SELECT EXISTS(SELECT 1 FROM issue_revisions WHERE project_id=$1 AND issue_id=$2 AND version>$3
-       AND document #>> '{content,priority}' IS DISTINCT FROM $4)",
+       AND COALESCE(document #> '{content,priority}', 'null'::jsonb) IS DISTINCT FROM $4::jsonb)",
     )
     .bind(a.project_id.as_uuid())
     .bind(a.issue_id.as_uuid())
     .bind(from.get() as i64)
-    .bind(baseline.content.priority.map(|p| p.to_string()))
+    .bind(Json(&baseline.content.priority))
     .fetch_one(&mut *connection)
     .await
     .map_err(unavailable)?;
     if changed {
       return Err(conflict());
+    }
+  }
+
+  if let Some(update) = &request.fields {
+    for field in update.field_references() {
+      let prior = latest(
+        connection,
+        &current,
+        Some(current.applicability_version),
+        Some(ReceiptField::Canonical(field.identity())),
+        None,
+      )
+      .await?;
+      let from = prior.map_or(baseline.version, |receipt| receipt.version.max(baseline.version));
+      let reviewed = issue::read(connection, a.project_id, a.issue_id, Some(from)).await?;
+      let (path, expected) = classification_field_baseline(&mut baseline, &reviewed, &field)?;
+      let changed: bool = sqlx::query_scalar(
+        "SELECT EXISTS(SELECT 1 FROM issue_revisions WHERE project_id=$1 AND issue_id=$2 AND version>$3
+         AND COALESCE(document #> $4::text[], 'null'::jsonb) IS DISTINCT FROM $5::jsonb)",
+      )
+      .bind(a.project_id.as_uuid())
+      .bind(a.issue_id.as_uuid())
+      .bind(from.get() as i64)
+      .bind(&path)
+      .bind(Json(expected))
+      .fetch_one(&mut *connection)
+      .await
+      .map_err(unavailable)?;
+      if changed {
+        return Err(conflict());
+      }
     }
   }
 
@@ -198,7 +244,7 @@ async fn evaluate(
       connection,
       &current,
       None,
-      Some("size_label"),
+      Some(ReceiptField::SizeLabel),
       Some(request.policy.as_str()),
     )
     .await?;
@@ -237,13 +283,53 @@ async fn evaluate(
 
   let catalog = issue_planning::read(connection, a.project_id, None).await?;
   let policy = issue::field_policy(connection, a.project_id, a.issue_id).await?;
-  let next = current.classified(&baseline, request, owned_label.as_deref(), &catalog, &policy)?;
+  let next = current.classified(&baseline, request, owned_label.as_deref(), &catalog, &policy, actor)?;
   let owned = request
     .size_label
     .as_ref()
     .filter(|label| !current.planning.labels.contains(*label) || owned_label.as_ref() == Some(*label))
     .cloned();
   Ok((current, next, admitted_at, owned))
+}
+
+// Rebase only the selected field on its last applicable applied assessment. The
+// original reviewed Issue/applicability versions remain intact for attribution.
+// Property identities are SQL parameters, never interpolated JSON paths.
+fn classification_field_baseline<'a>(
+  baseline: &mut IssueRevision,
+  reviewed: &IssueRevision,
+  field: &'a IssueClassificationFieldReference,
+) -> Result<(Vec<&'a str>, serde_json::Value), StoreError> {
+  Ok(match field {
+    IssueClassificationFieldReference::Priority { .. } => {
+      baseline.content.priority.clone_from(&reviewed.content.priority);
+      (vec!["content", "priority"], json!(reviewed.content.priority))
+    }
+    IssueClassificationFieldReference::Component { .. } => {
+      baseline.planning.component.clone_from(&reviewed.planning.component);
+      (vec!["planning", "component"], json!(reviewed.planning.component))
+    }
+    IssueClassificationFieldReference::Type { .. } => {
+      baseline.planning.issue_type.clone_from(&reviewed.planning.issue_type);
+      (vec!["planning", "type"], json!(reviewed.planning.issue_type))
+    }
+    IssueClassificationFieldReference::Size => {
+      baseline.planning.size = reviewed.planning.size;
+      (vec!["planning", "size"], json!(reviewed.planning.size))
+    }
+    IssueClassificationFieldReference::Property { id, .. } => {
+      match reviewed.planning.values.get(id) {
+        Some(value) => {
+          baseline.planning.values.insert(id.clone(), value.clone());
+        }
+        None => {
+          baseline.planning.values.remove(id);
+        }
+      }
+      (vec!["planning", "values", id], json!(reviewed.planning.values.get(id)))
+    }
+    IssueClassificationFieldReference::Dependencies => return Err(conflict()),
+  })
 }
 
 // One scope for successful and conflicting receipts. Older successful receipts
@@ -273,6 +359,8 @@ pub(crate) struct ClassificationReceipt {
   policy: FactoryKey,
   pub(crate) priority: Option<u8>,
   pub(crate) size_label: Option<String>,
+  #[serde(default, skip_serializing_if = "Vec::is_empty")]
+  fields: Vec<IssueClassificationFieldReference>,
 }
 
 impl ClassificationReceipt {
@@ -281,28 +369,53 @@ impl ClassificationReceipt {
   }
 }
 
-// Read the original durable management receipts using the Issue revision index.
+enum ReceiptField<'a> {
+  SizeLabel,
+  Canonical(IssueClassificationFieldIdentity<'a>),
+}
+
+// Read original durable receipts. Canonical field identity excludes the catalog
+// version: republishing definitions must not hide an earlier applied assessment.
+// Legacy and typed priority effects address the same canonical field.
 async fn latest(
   connection: &mut PgConnection,
   issue: &IssueRevision,
   applicability: Option<IssueVersion>,
-  field: Option<&str>,
+  field: Option<ReceiptField<'_>>,
   policy: Option<&str>,
 ) -> Result<Option<ClassificationReceipt>, StoreError> {
+  let (legacy, selected) = match field {
+    None => (None, None),
+    Some(ReceiptField::SizeLabel) => (Some("size_label"), None),
+    Some(ReceiptField::Canonical(identity)) => {
+      let legacy = (identity == IssueClassificationFieldIdentity::Priority).then_some("priority");
+      (legacy, Some(Json(json!([identity]))))
+    }
+  };
   let row: Option<Json<ClassificationReceipt>> = sqlx::query_scalar(
     "SELECT outcome #> '{classification}' AS receipt FROM idempotency_records
      WHERE scope=$1 AND outcome #>> '{value,issue,project_id}'=$2 AND outcome #>> '{value,issue,id}'=$3
        AND ($4::bigint IS NULL OR (outcome #>> '{classification,applicability}')::bigint=$4)
-       AND ($5::text IS NULL OR (outcome #> '{classification}')->>$5 IS NOT NULL)
+       AND (($5::text IS NULL AND $7::jsonb IS NULL)
+         OR ($5::text IS NOT NULL AND (outcome #> '{classification}')->>$5 IS NOT NULL)
+         OR ($7::jsonb IS NOT NULL AND outcome #> '{classification,fields}' @> $7::jsonb))
        AND ($6::text IS NULL OR outcome #>> '{classification,policy}'=$6)
-       AND (outcome #>> '{classification,priority}' IS NOT NULL OR outcome #>> '{classification,size_label}' IS NOT NULL)
+       AND (outcome #>> '{classification,priority}' IS NOT NULL OR outcome #>> '{classification,size_label}' IS NOT NULL
+         OR COALESCE(jsonb_array_length(outcome #> '{classification,fields}'),0)>0)
      ORDER BY (outcome #>> '{classification,admitted_at}')::bigint DESC,
        outcome #>> '{classification,run_id}' DESC, (outcome #>> '{classification,accepted_at}')::bigint DESC,
        outcome #>> '{classification,record}' DESC LIMIT 1",
-  ).bind(MutationKind::ApplyIssueClassification.scope())
-    .bind(issue.project_id.to_string()).bind(issue.id.to_string())
-    .bind(applicability.map(|v| v.get() as i64)).bind(field).bind(policy)
-    .fetch_optional(connection).await.map_err(unavailable)?;
+  )
+  .bind(MutationKind::ApplyIssueClassification.scope())
+  .bind(issue.project_id.to_string())
+  .bind(issue.id.to_string())
+  .bind(applicability.map(|v| v.get() as i64))
+  .bind(legacy)
+  .bind(policy)
+  .bind(selected)
+  .fetch_optional(connection)
+  .await
+  .map_err(unavailable)?;
   Ok(row.map(|Json(receipt)| receipt))
 }
 

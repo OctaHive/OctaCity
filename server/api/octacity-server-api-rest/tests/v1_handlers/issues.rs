@@ -73,6 +73,53 @@ fn draft() -> serde_json::Value {
 }
 
 #[tokio::test]
+async fn issue_http_priority_uses_project_choices_instead_of_work_scores() {
+  let router = issue_router(Arc::new(TrustedNetworkManagementPolicy)).await;
+  let mut value = draft();
+  value["priority"] = serde_json::json!("high");
+  value["planning"] = serde_json::json!({"definition_version":0,"assignee":null,"labels":[],"due_date":null,
+    "parent_id":null,"values":{},"type":"defect","size":"small"});
+  let response = router
+    .clone()
+    .oneshot(json_request("POST", &root(), "enum-priority", None, &value.to_string()))
+    .await
+    .unwrap();
+  let status = response.status();
+  let receipt = document(response).await;
+  assert_eq!(status, StatusCode::CREATED, "{receipt}");
+  assert_eq!(receipt["resource"]["content"]["priority"], "high");
+  let contract = octacity_server_api_rest::v1::openapi_document();
+  let defaults =
+    &contract["components"]["schemas"]["IssuePropertyDefinitionSet"]["properties"]["priorities"]["default"];
+  assert_eq!(
+    defaults
+      .as_array()
+      .expect("omitted catalogs advertise their effective priority choices")
+      .iter()
+      .map(|choice| choice["id"].as_str().unwrap())
+      .collect::<Vec<_>>(),
+    vec!["blocker", "high", "medium", "low"]
+  );
+  assert_json_matches_component(
+    &octacity_server_api_rest::v1::openapi_document(),
+    "IssueResource",
+    &receipt["resource"],
+  );
+  value["priority"] = serde_json::json!("not_configured");
+  let response = router
+    .oneshot(json_request(
+      "POST",
+      &root(),
+      "invalid-priority",
+      None,
+      &value.to_string(),
+    ))
+    .await
+    .unwrap();
+  assert_eq!(response.status(), StatusCode::BAD_REQUEST);
+}
+
+#[tokio::test]
 async fn issue_http_manual_create_read_and_replay_need_no_factory_or_provider() {
   let router = issue_router(Arc::new(TrustedNetworkManagementPolicy)).await;
   let response = router

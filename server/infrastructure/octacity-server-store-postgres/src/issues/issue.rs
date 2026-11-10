@@ -220,8 +220,13 @@ impl IssueStore for PostgresStore {
       }
       MutationStart::Fresh(tx) => tx,
     };
+    issue_workflow::lock_project(&mut tx, intent.project_id).await?;
     let current = lock(&mut tx, intent.project_id, intent.id).await?;
     let policy = field_policy(&mut tx, intent.project_id, intent.id).await?;
+    intent.content.validate_priority(
+      &crate::issues::issue_planning::read(&mut tx, intent.project_id, None).await?,
+      Some(&current.content),
+    )?;
     let issue = current.edited(&request, &policy)?;
     let outcome = IssueMutationOutcome {
       disposition: MutationDisposition::Applied,
@@ -568,6 +573,7 @@ pub(crate) async fn create_initial_issue(
   crate::issues::issue_planning::validate_parent(connection, intent.project_id, request.id, intent.planning.parent_id)
     .await?;
   let catalog = crate::issues::issue_planning::read(connection, intent.project_id, None).await?;
+  intent.content.validate_priority(&catalog, None)?;
   intent.planning.validate(&catalog, None, &request.assignees)?;
   crate::issues::issue_planning::retain_initial(connection, intent.project_id).await?;
   let workflow = issue_workflow::read_default(connection, &initial).await?.workflow;

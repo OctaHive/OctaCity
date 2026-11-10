@@ -4,7 +4,7 @@ pub use octacity_server_domain::IssueVersion;
 use octacity_server_domain::{IssueId, ProjectId, Timestamp};
 pub use octacity_server_store::{
   AdoptIssueWorkflowIntent, CreateIssueIntent, EditIssueIntent, IssueContent, IssueField, IssueFieldPolicy,
-  IssueMutationOutcome, IssuePage, IssueRevision, IssueStatusHistoryPage, IssueStore, IssueSummary,
+  IssueMutationOutcome, IssuePage, IssuePriority, IssueRevision, IssueStatusHistoryPage, IssueStore, IssueSummary,
   IssueTransitionOutcome, MAX_ISSUE_DOCUMENT_BYTES, MAX_ISSUE_TITLE_BYTES, TransitionIssueIntent,
 };
 use octacity_server_store::{CreateIssue, EditIssue, IdempotencyKey, TransitionIssue};

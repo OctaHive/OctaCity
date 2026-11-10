@@ -9,6 +9,8 @@ function boundsFor(subject) {
 /** Derive task form bounds from the published OpenAPI contract, preserving their units. */
 export function issueConstraints(document) {
   const fields = document.components?.schemas?.IssueContent?.properties;
+  const priority = unwrap(fields?.priority);
+  const legacyPriority = priority?.oneOf?.find((item) => item.type === 'integer') ?? priority;
   const bound = boundsFor('Issue');
   const limit = document.paths?.['/api/v1/projects/{project_id}/issues']?.get?.parameters?.find(
     (p) => p.name === 'limit',
@@ -23,8 +25,8 @@ export function issueConstraints(document) {
     titleMaximumBytes: bound(fields?.title?.['x-max-utf8-bytes']),
     descriptionMaximumBytes: bound(fields?.description?.['x-max-utf8-bytes']),
     acceptanceMaximumBytes: bound(unwrap(fields?.acceptance)?.['x-max-utf8-bytes']),
-    priorityMinimum: bound(unwrap(fields?.priority)?.minimum, 0),
-    priorityMaximum: bound(unwrap(fields?.priority)?.maximum),
+    priorityMinimum: bound(legacyPriority?.minimum, 0),
+    priorityMaximum: bound(legacyPriority?.maximum),
     defaultPageSize: bound(limit?.default),
     outcomeConclusionMaximumBytes: bound(
       document.components?.schemas?.IssueOutcomeCard?.properties?.conclusion?.['x-max-utf8-bytes'],

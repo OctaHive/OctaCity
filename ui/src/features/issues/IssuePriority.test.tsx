@@ -84,3 +84,31 @@ it.each([8, 255])('preserves legacy priority %i through an unrelated edit', asyn
     ),
   );
 });
+
+it.each(['urgent', '2'])(
+  'preserves Project priority choice %s through an unrelated edit',
+  async (priority) => {
+    const { api } = setup('/projects/delivery/issues/' + issue.id, (api) => {
+      api.get.mockResolvedValue({ ...issue, content: { ...issue.content, priority } });
+    });
+    await screen.findByRole('heading', { name: `ISS-42 · ${issue.content.title}` });
+    await userEvent.click(screen.getByRole('button', { name: 'Edit requirements' }));
+    const select = screen.getByRole('combobox', { name: 'Priority' });
+    expect(select.textContent).toBe(priority);
+    await userEvent.click(select);
+    await userEvent.click(screen.getByRole('option', { name: priority }));
+    await userEvent.type(screen.getByRole('textbox', { name: 'Description' }), 'Updated text');
+    await userEvent.click(screen.getByRole('button', { name: 'Review task' }));
+    await userEvent.click(
+      within(screen.getByRole('dialog')).getByRole('button', { name: 'Save task' }),
+    );
+    await waitFor(() =>
+      expect(api.edit).toHaveBeenCalledWith(
+        'delivery',
+        issue.id,
+        { ...issue.content, description: 'Updated text', priority },
+        expect.objectContaining({ 'If-Match': '"1"' }),
+      ),
+    );
+  },
+);

@@ -62,7 +62,7 @@ The outcome editor SHALL provide **Show on Issue** and use the supported outcome
 ## ADDED Requirements
 
 ### Requirement: Project settings administer shared Issue field definitions
-Project settings SHALL provide authorized creation and compatible maintenance of Project-owned Issue property definitions using the existing versioned publication contract. Controls SHALL support text/choice/boolean/bounded-integer/date kinds, their authoritative bounds, choice IDs/display names, compatible display renames, retirement and optional classification semantic bindings. Built-in fields SHALL retain their own contracts; classification SHALL remain an optional subset whose semantic bindings target distinct supported choice properties. Operators SHALL not need hand-written JSON, duplicate per-pipeline vocabulary lists or per-Issue schema administration.
+Project settings SHALL provide authorized creation and compatible maintenance of Project-owned Issue property definitions using the existing versioned publication contract. Controls SHALL support text/choice/boolean/bounded-integer/date kinds, their authoritative bounds, choice IDs/display names, compatible display renames, retirement and optional classification semantic bindings. Priority, component, type and size SHALL be identified as built-in attributes; Project settings SHALL provide dedicated settings for the Project's own priority/component/type choices separately from custom property definitions. Classification SHALL remain an optional subset whose remaining semantic bindings target distinct supported choice properties. Operators SHALL not need hand-written JSON, duplicate per-pipeline vocabulary lists or per-Issue schema administration.
 
 Review SHALL show stable identities, Project-wide availability, exact current catalog version and the effect of additions/retirement. Existing keys/types and retained history SHALL remain explainable. Current-version conflicts and incompatible changes SHALL retain the draft and require renewed review; publication SHALL not silently rewrite Issue values or start execution. Issue value editing SHALL remain separate from Project administration. EN/RU, keyboard and narrow-layout support SHALL cover these controls.
 
@@ -73,6 +73,10 @@ Review SHALL show stable identities, Project-wide availability, exact current ca
 #### Scenario: A field is renamed or retired
 - **WHEN** an administrator publishes a compatible display change or retirement after Issues already reference a field/choice
 - **THEN** current editing explains the new availability while old Issue revisions retain their original definitions and no stored value is silently remapped
+
+#### Scenario: An administrator configures Project components
+- **WHEN** an authorized administrator opens the priority/component/type-list settings for a Project and creates, renames or retires an option
+- **THEN** the reviewed versioned list supplies that Project's built-in Issue selectors independently of custom fields, and existing Issue values/history are not silently rewritten
 
 ### Requirement: Issues manage their own documents and explicitly link shared Project documents
 The Issue workspace SHALL provide a Documents view with Issue-owned text creation, immutable-version publication, safe identity/digest/availability metadata, retained history and independently authorized previews. Creation/editing of a task document SHALL remain within the owning Issue and SHALL NOT publish into shared Project documents. Issue-owned documents SHALL be absent from Project document catalogs and step document selectors, even for an operator authorized for both owners.

@@ -21,8 +21,32 @@ pub struct IssueContent {
   pub description: String,
   /// Optional incomplete acceptance text, validated again at execution review.
   pub acceptance: Option<String>,
-  /// Optional bounded planning priority, independent of admitted scheduling.
-  pub priority: Option<u8>,
+  /// Optional Project priority choice; numeric legacy revisions keep their original encoding.
+  pub priority: Option<IssuePriority>,
+}
+/// One canonical Issue priority. Numbers are retained only for existing publications/receipts;
+/// new classification uses Project-owned choice IDs, never Work scheduling scores.
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(untagged)]
+pub enum IssuePriority {
+  /// Historical byte-sized Issue priority; no implicit conversion to a Project choice.
+  LegacyNumber(u8),
+  /// Stable identity in the owning Project's current priority catalog.
+  Choice(String),
+}
+impl From<u8> for IssuePriority {
+  fn from(value: u8) -> Self {
+    Self::LegacyNumber(value)
+  }
+}
+impl IssuePriority {
+  /// Original numeric value for legacy receipts, never a score inferred from a choice name.
+  pub fn legacy_number(&self) -> Option<u8> {
+    match self {
+      Self::LegacyNumber(value) => Some(*value),
+      Self::Choice(_) => None,
+    }
+  }
 }
 impl std::fmt::Debug for IssueContent {
   fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
@@ -30,6 +54,23 @@ impl std::fmt::Debug for IssueContent {
   }
 }
 impl IssueContent {
+  /// Resolves current Project choice authority while allowing unchanged retired values.
+  pub fn validate_priority(
+    &self,
+    catalog: &crate::PublishedIssueProperties,
+    previous: Option<&Self>,
+  ) -> Result<(), StoreError> {
+    if let Some(IssuePriority::Choice(id)) = &self.priority
+      && !catalog
+        .definition
+        .priorities
+        .iter()
+        .any(|choice| choice.id == *id && (!choice.retired || previous.is_some_and(|p| p.priority == self.priority)))
+    {
+      return Err(invalid_issue(crate::StoreOperation::EditIssue));
+    }
+    Ok(())
+  }
   /// Validates stored text bounds; never interprets prose or runs an action.
   pub fn validate(&self) -> Result<(), StoreError> {
     if self.title.is_empty()
@@ -299,6 +340,12 @@ pub struct IssueStatusHistoryPage {
 #[derive(Clone, Copy, Debug, Deserialize, Eq, Ord, PartialEq, PartialOrd, Serialize)]
 #[serde(rename_all = "snake_case")]
 pub enum IssueField {
+  /// Built-in component from the owning Project's catalog.
+  Component,
+  /// Built-in type from the owning Project's catalog.
+  Type,
+  /// Built-in finite work size.
+  Size,
   /// Organizational assignee.
   Assignee,
   /// Project labels.
