@@ -42,6 +42,8 @@ mod installation;
 mod isolation;
 #[path = "factory_pilot/source.rs"]
 mod local_mirror;
+#[path = "factory_manual_authoring/policies.rs"]
+mod policies;
 #[path = "factory_manual_authoring/recovery.rs"]
 mod recovery;
 #[allow(dead_code)]
@@ -271,6 +273,7 @@ async fn journey(scenario: Scenario<'_>) {
   );
   server = spawn_server(&binary, &config, &log, &directory.join("server.err"));
   wait_for_server_ready(&client, &origin, &mut server, &log).await;
+  policies::provision(&client, &origin, &resources.project, "manual-ceiling").await;
   for collection in ["flow-definitions", "factory-configurations", "builds", "factory-runs"] {
     let page = get_json(
       &client,

@@ -58,6 +58,28 @@ Roles contain reusable generic guidance; assignments belong to the authored
 steps. There is no triage preset, bootstrap Build, copied Run, alternate handler,
 direct business-row insertion or stage-name resolver.
 
+After loading the runtime catalog, the shared headless/Console setup explicitly
+initializes Project policies through
+`POST /api/v1/projects/{project}/factory-policies/provision`. It reads the installed
+launch/access references from the paginated configuration choices, designates
+`manual-ceiling` as the access authority, and imports those exact immutable
+references. Installed aliases alone do not authorize configuration publication;
+an alias without an explicit Project mapping is rejected as `unmapped_legacy_policy`.
+Policy initialization does not create business definitions or start execution.
+
+The setup has a focused regression against the real HTTP API and disposable
+PostgreSQL; it checks publication, exact policy pins, replay, and empty business
+collections without requiring an Agent or Microsandbox:
+
+```sh
+cargo test --locked -p octacity-server --test factory_project_policy_http \
+  manual_authoring_setup_can_publish_configuration_from_a_clean_project \
+  -- --ignored --nocapture
+```
+
+Supply `OCTACITY_POSTGRES_URL` for a disposable administration database as below.
+This focused check does not replace the VM execution and isolation journey.
+
 ## Run
 
 Build the selected binaries with the ordinary workspace commands. Provision the

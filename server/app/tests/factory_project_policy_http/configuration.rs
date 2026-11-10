@@ -1,5 +1,8 @@
 use super::*;
 
+#[path = "../../../tests/octacity-release-harness/tests/factory_manual_authoring/policies.rs"]
+mod manual_authoring_policies;
+
 struct ConfigurationAuthority(Arc<AtomicBool>);
 #[async_trait::async_trait]
 impl octacity_server_store::FactoryCapabilitySource for ConfigurationAuthority {
@@ -175,6 +178,67 @@ pub(super) async fn policies(f: &Fixture) -> (Value, Value) {
     launch["policy"]["policy"]["reference"].clone(),
     access["policy"]["policy"]["reference"].clone(),
   )
+}
+
+#[tokio::test]
+#[ignore = "requires disposable OCTACITY_POSTGRES_URL"]
+async fn manual_authoring_setup_can_publish_configuration_from_a_clean_project() {
+  let f = Fixture::with_installer(Some(Arc::new(ConfigurationAuthority(Arc::new(AtomicBool::new(false)))))).await;
+  let origin = format!("http://{}", f.runtime.management_addr());
+  let setup = manual_authoring_policies::provision(&f.client, &origin, &f.project, "permissions").await;
+  let replay = manual_authoring_policies::provision(&f.client, &origin, &f.project, "permissions").await;
+  assert_eq!(replay["disposition"], "replayed");
+  assert_eq!(replay["defaults"], setup["defaults"]);
+  assert_eq!(replay["mappings"], setup["mappings"]);
+  for collection in ["flow-definitions", "factory-configurations", "builds", "factory-runs"] {
+    let page: Value = f
+      .client
+      .get(format!("{origin}/api/v1/projects/{}/{collection}", f.project))
+      .send()
+      .await
+      .unwrap()
+      .error_for_status()
+      .unwrap()
+      .json()
+      .await
+      .unwrap();
+    assert_eq!(page["items"], json!([]), "policy setup must not seed {collection}");
+  }
+  let candidate = json!({"id":uuid::Uuid::new_v4().to_string(),"project_id":f.project,"definition":{
+    "admission_policy":"admission","permission_ceiling":"permissions","enabled":true,
+    "flow":flow(&f).await,"hard_budget":installed_fixture::budget(),"wip_limits":{"max_active_runs":8,"max_active_nodes":8}}});
+  let response = f
+    .client
+    .post(format!(
+      "http://{}/api/v1/factory-configurations",
+      f.runtime.management_addr()
+    ))
+    .header("idempotency-key", "manual-authoring-configuration")
+    .json(&candidate)
+    .send()
+    .await
+    .unwrap();
+  let status = response.status();
+  let published = response.json::<Value>().await.unwrap();
+  assert_eq!(status, StatusCode::CREATED, "{published}");
+  assert_eq!(
+    published["resource"]["configuration"]["reference"]["project_id"],
+    f.project
+  );
+  let mappings = setup["mappings"].as_array().unwrap();
+  assert_eq!(mappings.len(), 2);
+  for mapping in mappings {
+    let field = match mapping["target"]["kind"].as_str().unwrap() {
+      "launch" => "admission_policy",
+      "access" => "permission_ceiling",
+      _ => unreachable!(),
+    };
+    assert_eq!(
+      published["resource"]["configuration"][field]["project_policy"],
+      mapping["target"]["reference"]
+    );
+  }
+  f.stop().await;
 }
 
 async fn configuration(f: &Fixture, launch: Value, access: Value) -> Value {
