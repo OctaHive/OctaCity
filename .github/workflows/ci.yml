@@ -362,6 +362,12 @@ jobs:
           overwrite: true
 
   quality:
+    # Keep failure locations while avoiding full symbols and incremental caches
+    # for the workspace's many independently linked integration-test binaries.
+    env:
+      CARGO_INCREMENTAL: "0"
+      CARGO_PROFILE_DEV_DEBUG: line-tables-only
+      CARGO_PROFILE_TEST_DEBUG: line-tables-only
     strategy:
       fail-fast: false
       matrix:
@@ -454,6 +460,11 @@ jobs:
 
   coverage:
     runs-on: ubuntu-24.04
+    # Match the bounded debug/test footprint without dropping source-line data.
+    env:
+      CARGO_INCREMENTAL: "0"
+      CARGO_PROFILE_DEV_DEBUG: line-tables-only
+      CARGO_PROFILE_TEST_DEBUG: line-tables-only
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -474,6 +485,9 @@ jobs:
           fallback: none
       - name: Install Linux system dependencies
         run: sudo apt-get update && sudo apt-get install --yes libcap-ng-dev
+      - name: Verify CI Rust artifact profiles
+        run: python3 -m unittest tools.tests.test_ci_rust_profiles -v
+        working-directory: octacity
       - name: Measure workspace coverage
         run: cargo llvm-cov --workspace --all-features --no-report
         working-directory: octacity
