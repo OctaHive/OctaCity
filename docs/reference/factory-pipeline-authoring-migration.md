@@ -126,7 +126,7 @@ capable of processing new admitted subject or execution forms.
 
 This handoff records reusable boundaries for
 [`add-factory-bugfix-quickstart`](../../openspec/changes/add-factory-bugfix-quickstart/proposal.md)
-and [`add-factory-ticket-delivery-pipeline`](../../openspec/changes/add-factory-ticket-delivery-pipeline/proposal.md).
+and [`add-factory-ticket-delivery-pipeline`](../../openspec/changes/archive/2026-11-10-add-factory-ticket-delivery-pipeline/proposal.md).
 Their business workflows, preset/setup decisions and qualification tasks remain
 owned by those changes; none is implemented or marked complete here.
 
