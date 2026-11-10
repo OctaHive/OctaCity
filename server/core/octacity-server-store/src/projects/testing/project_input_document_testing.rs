@@ -1,8 +1,78 @@
 //! The document variant uses the existing in-memory Project text journal.
 use super::*;
 use crate::projects::project_input_document::document_conflict;
+
 #[async_trait::async_trait]
-impl ProjectDocumentInputStore for crate::testing::InMemoryFactoryConfigurationStore {
+impl IssueDocumentInputStore for crate::testing::InMemoryFactoryConfigurationStore {
+  async fn issue_document_input(
+    &self,
+    project: ProjectId,
+    issue: octacity_server_domain::IssueId,
+    artifact: ArtifactId,
+  ) -> Result<Option<PublishedProjectInput>, StoreError> {
+    Ok(self.lock()?.project_text.records.values().find_map(|row| {
+      let document = row.document().ok()?;
+      (document.intent.project_id == project && document.intent.issue.as_ref()?.issue_id == issue)
+        .then(|| row.published_input(project, artifact))
+        .flatten()
+    }))
+  }
+  async fn issue_document_metadata(
+    &self,
+    project: ProjectId,
+    issue: octacity_server_domain::IssueId,
+    artifact: ArtifactId,
+  ) -> Result<Option<IssueDocumentResource>, StoreError> {
+    Ok(
+      self
+        .lock()?
+        .project_text
+        .records
+        .values()
+        .filter_map(|row| row.document().ok())
+        .filter(|row| {
+          row.intent.project_id == project && row.intent.issue.as_ref().is_some_and(|owner| owner.issue_id == issue)
+        })
+        .filter_map(|row| row.issue_resource().ok())
+        .find(|row| row.artifact.artifact_id() == artifact),
+    )
+  }
+  async fn list_issue_documents(&self, request: ListIssueDocuments) -> Result<IssueDocumentPage, StoreError> {
+    let page = request.page;
+    page.validate()?;
+    let mut items = self
+      .lock()?
+      .project_text
+      .records
+      .values()
+      .filter_map(|row| row.document().ok())
+      .filter(|row| {
+        row.intent.project_id == page.project_id
+          && row
+            .intent
+            .issue
+            .as_ref()
+            .is_some_and(|owner| owner.issue_id == request.issue_id)
+          && row.expires_at > page.observed_at
+      })
+      .filter_map(|row| row.issue_resource().ok())
+      .filter(|row| {
+        page.visibility.allows(&row.artifact.artifact_id())
+          && page.after.is_none_or(|after| row.artifact.artifact_id() > after)
+      })
+      .collect::<Vec<_>>();
+    items.sort_by_key(|row| row.artifact.artifact_id());
+    let next_cursor = crate::pagination::finish_bounded_page(
+      &mut items,
+      std::num::NonZeroU16::new(page.limit).ok_or_else(document_conflict)?,
+      |row| row.artifact.artifact_id(),
+    );
+    Ok(IssueDocumentPage { items, next_cursor })
+  }
+}
+
+#[async_trait::async_trait]
+impl ProjectDocumentQueryStore for crate::testing::InMemoryFactoryConfigurationStore {
   async fn project_document_metadata(
     &self,
     project: ProjectId,
@@ -55,6 +125,10 @@ impl ProjectDocumentInputStore for crate::testing::InMemoryFactoryConfigurationS
     );
     Ok(ProjectDocumentPage { items, next_cursor })
   }
+}
+
+#[async_trait::async_trait]
+impl ProjectDocumentInputStore for crate::testing::InMemoryFactoryConfigurationStore {
   async fn project_document_preparation(
     &self,
     project: ProjectId,
@@ -119,7 +193,7 @@ impl ProjectDocumentInputStore for crate::testing::InMemoryFactoryConfigurationS
         .insert(id, RetainedProjectInput::Document(Box::new(next.clone())));
       return Ok(next);
     }
-    let record = request.preparation(audit.security_scope().clone())?;
+    let record = request.preparation(&audit)?;
     state.project_text.documents.insert(
       record.id,
       RetainedProjectInputBody::Document(request.submission.content),

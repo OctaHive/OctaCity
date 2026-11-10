@@ -1388,6 +1388,138 @@ Console discussion uses the card contracts below; explicit retention and holds a
 and [task 6.3 verification](../../openspec/changes/archive/2026-10-22-add-factory-work-card/verification-6.3.md).
 
 
+## Issue-owned text documents
+
+Snapshot task 1.4 adds the authorized application contracts
+`PublishIssueDocumentCommand`, `ListIssueDocumentsQuery` and
+`ReadIssueDocumentQuery`. `ProjectTextIntake::with_issue_documents` installs the
+existing Issue reader for current parent checks. The in-memory and PostgreSQL
+adapters implement the owner-aware document read port; HTTP/Console exposure
+remains tasks 6.7–6.9.
+
+Creating or revising task text uses the shared immutable input journal, byte
+publisher, digest/size validation, lease recovery and retention. Retained metadata
+adds the exact Project/Issue owner and the accepted management actor. A revision
+is another exact Artifact publication; previous publications remain readable
+under their original access and retention rules. Issue/security-scoped replay
+returns the original publication, actor and deadlines, including after a newer
+version exists. Lost byte-write acknowledgement is recovered by verifying the
+original object rather than creating another identity.
+
+Issue document publication requires Issue update rights and parent visibility,
+without requiring shared Project document publication rights. Metadata discovery
+filters the exact Issue and Artifact visibility before pagination. Dedicated body
+reads additionally require Artifact download rights, recheck access after I/O and
+enforce the original expiry. Neither a known Artifact ID nor access to another
+Issue in the same Project supplies the owner check. Actor attribution is
+server-derived; metadata and diagnostics exclude private bodies.
+
+The `issue-document.v1` mapping and retained owner keep task documents out of
+Project document catalogs/selectors and Project content/input readers. Generic
+command and Job execution-input lookup also excludes raw Issue-owned publications:
+putting an attachment's Artifact reference into a manual Work task does not grant
+access to it. Owner-aware Issue reads remain available under their independent
+permissions; snapshot execution preparation must publish its separately authorized
+immutable inputs. Existing shared Project publications retain their encoding and
+ownership. Document
+publication does not edit Issue requirements, advance its revision, select
+pipeline materials or start execution. Explicit material selection and linking an
+existing shared Project document use the separate reviewed mutation below.
+
+Read-only consumers use `IssueDocumentInputStore` for exact Issue-owned inputs and
+`ProjectDocumentQueryStore` for shared Project metadata/discovery. Neither requires
+publication or pending-body recovery methods. `ProjectDocumentInputStore` adds
+those write/recovery operations explicitly for the shared publication workflow.
+Material validation, document queries and outcome navigation depend only on the
+query ports they use.
+
+Task 1.5 qualifies PostgreSQL ownership, replay and history through public store
+ports. Migration `0120_issue_document_ownership.sql` projects the Issue owner
+from retained JSONB into a generated `issue_id`, with a same-Project Issue foreign
+key and owner lookup index. The writer checks that parent before allocating a
+publication; the database retains the relationship on later metadata updates.
+Existing Project/Work inputs keep a null Issue owner and their original metadata,
+references and bodies. No separate document body table or byte store is added.
+
+Qualification upgrades both a schema-119 database and its physical restored copy,
+preserves original shared-document/Issue receipts, and checks owner/Artifact
+visibility and expiry before pagination. Concurrent publication tests retain one
+receipt for a contested key and distinct exact versions for independent keys.
+Lease recovery preserves the original objects, author and expiry; existing input
+cleanup removes the private body while retaining metadata, and replay cannot
+restore deleted text or create a Project document.
+
+Run the application contracts with:
+
+```sh
+cargo test --locked -p octacity-server-application --lib issue_documents_
+```
+
+With `OCTACITY_POSTGRES_URL` explicitly selecting a disposable PostgreSQL service:
+
+```sh
+cargo test --locked -p octacity-server-store-postgres --test issues issue_documents_ -- --ignored --test-threads=2
+```
+
+## Explicit Issue material selections
+
+Snapshot task 1.6 adds `EditIssueMaterialsCommand` and the narrow
+`IssueMaterialHandlers` composition. It replaces the reviewed selection under the
+exact current Issue version using ordinary Issue update rights and current parent
+visibility. Source access is independent: comments require discussion view rights,
+and documents require Artifact download rights for their actual owner. The server
+checks publication availability, original expiry and the supplied digest/size.
+
+An Issue revision retains `materials`, empty when absent on legacy or ordinary
+tasks. Each entry identifies either a same-Issue comment and body digest, an exact
+same-Issue document Artifact/digest/size, or an explicitly linked exact shared
+same-Project document Artifact/digest/size. Source kind and owner stay explicit.
+One shared policy rejects duplicates, foreign owners and more than 32 entries
+across all kinds; changing a claimed owner or digest cannot disguise a duplicate.
+Selection attribution comes from accepted management context and server time;
+unchanged entries retain their original attribution.
+
+Selection changes create immutable Issue revisions and atomic audit/replay
+evidence. They preserve requirements applicability and business status. Exact
+security-scoped replay returns its original revision after later edits, without
+reselecting current publications. Removing a reference drops only the selection:
+it does not delete source bodies, transfer document ownership, publish another
+document or start execution. Source text stays behind its existing dedicated
+reader and retention rules; selection metadata contains no copied body. New
+comments or document versions never select themselves or retarget old entries.
+
+The in-memory and PostgreSQL adapters implement this contract. PostgreSQL task
+1.7 reuses the existing JSONB Issue revision and scoped idempotency journal;
+it needs no additional table, body store or DDL migration. The original reviewed
+references are retained as the journal's sealed command, while the ordinary flat
+Issue outcome keeps existing requirements-retention redaction effective on replay.
+
+New selection writes take the Project/Issue fences and check exact source pins
+in that transaction. The Issue fence excludes discussion cleanup; document journal
+and object rows remain share-locked through commit. Source identity, actual owner,
+publication completeness, digest/size, expiry and deletion state are checked before
+publishing the revision, receipt, audit and outbox together. Removing a reference
+does not reopen an inaccessible source. Exact retry returns its original receipt
+before re-resolving sources, without restoring expired requirements, comments or
+document bodies. Current application authorization remains mandatory.
+
+Public-store qualification covers schema-120 databases and physical restored
+copies, exact historical reads through a new pool, concurrent version/key contests,
+independent security scopes and rollback after an outbox failure. HTTP and Console
+selection operations remain tasks 6.7–6.9. Consumer snapshot byte limits and
+per-step projections belong to section 3 of the change, including the shared
+1 MiB combined selected-text ceiling.
+
+```sh
+CARGO_INCREMENTAL=0 cargo test --locked -p octacity-server-application --lib issue_materials_
+```
+
+With `OCTACITY_POSTGRES_URL` selecting a disposable PostgreSQL service:
+
+```sh
+CARGO_INCREMENTAL=0 cargo test --locked -p octacity-server-store-postgres --test issues issue_materials_ -- --ignored --test-threads=2
+```
+
 ## Bounded activity and result observations
 
 `GET .../issues/{issue_id}/timeline` uses `ListIssueTimelineQuery` and the narrow

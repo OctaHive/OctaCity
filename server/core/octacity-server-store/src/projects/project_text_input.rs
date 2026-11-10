@@ -333,6 +333,7 @@ pub struct PublishedProjectInput {
 #[async_trait::async_trait]
 pub trait ProjectInputQueryStore: Send + Sync {
   /// Resolves only complete Project-owned publication in the selected Project.
+  /// Issue-owned documents require the exact parent through [`crate::IssueDocumentInputStore`].
   async fn project_input_artifact(
     &self,
     project: ProjectId,

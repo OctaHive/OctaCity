@@ -2,6 +2,7 @@
 use super::*;
 use octacity_server_domain::ArtifactId;
 pub use octacity_server_store::ProjectDocumentPage;
+use octacity_server_store::ProjectInputQueryStore;
 
 /// Exact retained document content, returned only after current Project and Artifact authorization.
 #[derive(Clone, serde::Serialize)]
@@ -98,10 +99,8 @@ impl<
   }
 }
 #[async_trait::async_trait]
-impl<
-  S: ProjectTextInputStore + ProjectDocumentInputStore + 'static,
-  B: ArtifactBytePublisher + ArtifactByteReader + 'static,
-> ManagementQueryUseCase<ListProjectInputDocumentsQuery> for ProjectTextIntake<S, B>
+impl<S: ProjectDocumentQueryStore + 'static, B: Send + Sync + 'static>
+  ManagementQueryUseCase<ListProjectInputDocumentsQuery> for ProjectTextIntake<S, B>
 {
   type Error = ApplicationError;
   async fn execute_management_query(
@@ -152,10 +151,8 @@ impl<
 }
 
 #[async_trait::async_trait]
-impl<
-  S: ProjectTextInputStore + ProjectDocumentInputStore + 'static,
-  B: ArtifactBytePublisher + ArtifactByteReader + 'static,
-> ManagementQueryUseCase<ReadProjectInputDocumentQuery> for ProjectTextIntake<S, B>
+impl<S: ProjectInputQueryStore + 'static, B: ArtifactByteReader + 'static>
+  ManagementQueryUseCase<ReadProjectInputDocumentQuery> for ProjectTextIntake<S, B>
 {
   type Error = ApplicationError;
   async fn execute_management_query(
@@ -208,7 +205,7 @@ impl<
   }
 }
 impl<S, B> ProjectTextIntake<S, B> {
-  async fn authorize_document_read(
+  pub(super) async fn authorize_document_read(
     &self,
     context: &ManagementRequestContext,
     query: &ReadProjectInputDocumentQuery,

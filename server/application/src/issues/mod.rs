@@ -5,6 +5,7 @@ pub(crate) mod issue_discussion;
 pub(crate) mod issue_execution;
 pub(crate) mod issue_execution_publication;
 pub(crate) mod issue_legacy;
+pub(crate) mod issue_material;
 pub(crate) mod issue_outcome_links;
 pub(crate) mod issue_reporter;
 pub(crate) mod issue_source;

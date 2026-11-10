@@ -326,6 +326,7 @@ pub(crate) enum MutationKind {
   AdoptIssueWorkflow,
   EditIssue,
   EditIssuePlanning,
+  EditIssueMaterials,
   ApplyIssueClassification,
   TransitionIssue,
   PublishIssueWorkflow,
@@ -471,6 +472,12 @@ impl MutationKind {
         "edit-issue-planning",
         "issue",
         "issue.planning-edited"
+      ),
+      Self::EditIssueMaterials => metadata!(
+        b"octacity.edit-issue-materials.v1\0",
+        "edit-issue-materials",
+        "issue",
+        "issue.materials-edited"
       ),
       Self::EditIssue => metadata!(b"octacity.edit-issue.v1\0", "edit-issue", "issue", "issue.edited"),
       Self::TransitionIssue => metadata!(

@@ -12,6 +12,7 @@ pub(crate) struct IssueMemoryState {
   property_versions: BTreeMap<(ProjectId, u64), PublishedIssueProperties>,
   property_publications: BTreeMap<ManagementIdempotencyKey, (PublishIssuePropertiesIntent, IssuePropertiesOutcome)>,
   planning_edits: BTreeMap<ManagementIdempotencyKey, (EditIssuePlanningIntent, IssueMutationOutcome)>,
+  material_edits: BTreeMap<ManagementIdempotencyKey, IssueMaterialEditReceipt>,
   next_failure: Option<crate::testing::MutationFailurePoint>,
   current: BTreeMap<(ProjectId, IssueId), IssueRevision>,
   revisions: BTreeMap<(IssueId, IssueVersion), IssueRevision>,
@@ -43,6 +44,7 @@ impl IssueMemoryState {
       + self.adoptions.len()
       + self.property_publications.len()
       + self.planning_edits.len()
+      + self.material_edits.len()
   }
 }
 #[async_trait::async_trait]
@@ -471,6 +473,7 @@ fn prepare_issue_creation(
     content: request.intent.content.clone(),
     planning: request.intent.planning.clone(),
     classification: IssueClassificationMetadata::default(),
+    materials: IssueMaterials::default(),
     workflow_id: workflow.id,
     workflow_version: workflow.version,
     status_id: workflow.definition.initial_status_id,
@@ -648,6 +651,9 @@ impl crate::testing::InMemoryProjectStore {
 
 #[path = "issue_planning_testing.rs"]
 mod planning;
+
+#[path = "issue_material_testing.rs"]
+mod materials;
 
 #[path = "issue_execution_testing.rs"]
 mod execution;

@@ -4,7 +4,9 @@ use crate::factory::validation::factory_verification_supplement::{
   MAX_BYTES, ResolvedVerificationRepository, VerificationRepositorySelection, VerificationSubmission,
 };
 use octacity_server_domain::RepositoryId;
-use octacity_server_store::{ProjectDocumentInputStore, ProjectDocumentPreparation, ReserveProjectDocument};
+use octacity_server_store::{
+  ProjectDocumentInputStore, ProjectDocumentPreparation, ProjectDocumentQueryStore, ReserveProjectDocument,
+};
 
 impl<S: ProjectTextInputStore + ProjectDocumentInputStore + 'static, B: ArtifactBytePublisher + ArtifactByteReader>
   ProjectTextIntake<S, B>
@@ -87,6 +89,7 @@ impl<S: ProjectTextInputStore + ProjectDocumentInputStore + 'static, B: Artifact
       .reserve_project_document(crate::management_security::audited_mutation(
         context,
         ReserveProjectDocument {
+          issue_id: None,
           submission,
           selection_digest,
           now: self.clock.now()?,
@@ -100,7 +103,7 @@ impl<S: ProjectTextInputStore + ProjectDocumentInputStore + 'static, B: Artifact
         .release_project_document(record.guard(self.clock.now()?))
         .await;
     }
-    result
+    Ok(result?.resource()?)
   }
   async fn read_verification_repository(
     &self,
@@ -175,9 +178,20 @@ impl<S: ProjectTextInputStore + ProjectDocumentInputStore + 'static, B: Artifact
     context: &ManagementRequestContext,
     record: &ProjectDocumentPreparation,
     repository_id: Option<RepositoryId>,
-  ) -> Result<ProjectDocumentResource, ApplicationError> {
+  ) -> Result<ProjectDocumentPreparation, ApplicationError> {
     let authorize = || async {
-      self.authorize_document(context, record.intent.project_id).await?;
+      if let Some(owner) = &record.intent.issue {
+        self
+          .authorize_issue_document(
+            context,
+            record.intent.project_id,
+            owner.issue_id,
+            ManagementAction::Update,
+          )
+          .await?;
+      } else {
+        self.authorize_document(context, record.intent.project_id).await?;
+      }
       if let Some(id) = repository_id {
         self.authorize_verification_repository(context, id).await?;
       }
@@ -224,8 +238,7 @@ impl<S: ProjectTextInputStore + ProjectDocumentInputStore + 'static, B: Artifact
           context,
           record.guard(self.clock.now()?),
         )?)
-        .await?
-        .resource()?,
+        .await?,
     )
   }
 }
@@ -233,3 +246,7 @@ impl<S: ProjectTextInputStore + ProjectDocumentInputStore + 'static, B: Artifact
 #[path = "project_input_document_management.rs"]
 mod management;
 pub use management::*;
+
+#[path = "issue_input_document.rs"]
+mod issue_documents;
+pub use issue_documents::*;

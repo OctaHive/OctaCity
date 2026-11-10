@@ -290,6 +290,7 @@ async fn issue_outcomes_read_exact_current_accepted_records() {
   let store = admit(&database.pool, &admission).await;
   let reserved = store
     .reserve_project_document(management_mutation(ReserveProjectDocument {
+      issue_id: None,
       submission,
       selection_digest: None,
       now: at(1),

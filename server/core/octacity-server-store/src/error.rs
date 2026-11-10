@@ -50,6 +50,8 @@ pub enum StoreOperation {
   AssociateIssueWork,
   /// Publish organizational task planning without execution.
   EditIssuePlanning,
+  /// Publish explicit collaboration material selections without execution.
+  EditIssueMaterials,
   /// Publish reviewed Project planning definitions.
   PublishIssueProperties,
   /// Discover bounded visible current internal tasks.

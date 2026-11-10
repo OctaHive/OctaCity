@@ -22,6 +22,7 @@ impl ProjectInputQueryStore for crate::testing::InMemoryFactoryConfigurationStor
         .project_text
         .records
         .values()
+        .filter(|record| !matches!(record, RetainedProjectInput::Document(row) if row.intent.issue.is_some()))
         .find_map(|record| record.published_input(project, artifact)),
     )
   }

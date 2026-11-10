@@ -489,6 +489,7 @@ const fn supports_owned_collection(kind: ManagementResourceKind, owner_kind: Man
       | (ManagementResourceKind::Issue, ManagementResourceKind::Project)
       | (ManagementResourceKind::Artifact, ManagementResourceKind::Build)
       | (ManagementResourceKind::Artifact, ManagementResourceKind::Project)
+      | (ManagementResourceKind::Artifact, ManagementResourceKind::Issue)
       | (ManagementResourceKind::CacheSession, ManagementResourceKind::Build)
       | (ManagementResourceKind::Agent, ManagementResourceKind::AgentPool)
       | (

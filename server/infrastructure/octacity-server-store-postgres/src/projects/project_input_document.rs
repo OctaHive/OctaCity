@@ -7,12 +7,12 @@ use octacity_server_store::*;
 use serde_json::{Value, json};
 use sqlx::{PgConnection, types::Json};
 
-fn conflict() -> StoreError {
+pub(super) fn conflict() -> StoreError {
   StoreError::Conflict {
     entity: EntityKind::Artifact,
   }
 }
-fn decode(Json(value): Json<Value>) -> Result<ProjectDocumentPreparation, StoreError> {
+pub(super) fn decode(Json(value): Json<Value>) -> Result<ProjectDocumentPreparation, StoreError> {
   serde_json::from_value(value).map_err(|_| conflict())
 }
 async fn load(connection: &mut PgConnection, id: FactoryDigest) -> Result<ProjectDocumentPreparation, StoreError> {
@@ -34,7 +34,7 @@ async fn save(connection: &mut PgConnection, record: &ProjectDocumentPreparation
   Ok(())
 }
 #[async_trait::async_trait]
-impl ProjectDocumentInputStore for PostgresStore {
+impl ProjectDocumentQueryStore for PostgresStore {
   async fn project_document_metadata(
     &self,
     project: ProjectId,
@@ -74,6 +74,10 @@ impl ProjectDocumentInputStore for PostgresStore {
     )?;
     Ok(ProjectDocumentPage { items, next_cursor })
   }
+}
+
+#[async_trait::async_trait]
+impl ProjectDocumentInputStore for PostgresStore {
   async fn project_document_preparation(
     &self,
     project: ProjectId,
@@ -113,7 +117,7 @@ impl ProjectDocumentInputStore for PostgresStore {
     request: ManagementMutation<ReserveProjectDocument>,
   ) -> Result<ProjectDocumentPreparation, StoreError> {
     let (request, audit) = request.into_parts();
-    let proposed = request.preparation(audit.security_scope().clone())?;
+    let proposed = request.preparation(&audit)?;
     let mut tx = self.pool().begin().await.map_err(unavailable)?;
     sqlx::query("SELECT pg_advisory_xact_lock($1)")
       .bind(i64::from_be_bytes(
@@ -149,6 +153,19 @@ impl ProjectDocumentInputStore for PostgresStore {
       .ok_or(StoreError::NotFound {
         entity: EntityKind::Project,
       })?;
+    if let Some(issue) = request.issue_id {
+      // Return the classified owner failure before allocating any journal/object identities.
+      // The generated owner FK also retains this invariant for every later metadata update.
+      sqlx::query_scalar::<_, uuid::Uuid>("SELECT id FROM issues WHERE project_id=$1 AND id=$2 FOR KEY SHARE")
+        .bind(request.submission.project_id.as_uuid())
+        .bind(issue.as_uuid())
+        .fetch_optional(&mut *tx)
+        .await
+        .map_err(unavailable)?
+        .ok_or(StoreError::NotFound {
+          entity: EntityKind::Issue,
+        })?;
+    }
     sqlx::query("INSERT INTO project_text_preparations(id,project_id,security_scope,replay_key,document,cleanup_at_millis) VALUES ($1,$2,$3,$4,$5,$6)").bind(proposed.id.as_bytes().as_slice()).bind(proposed.intent.project_id.as_uuid()).bind(proposed.security_scope.as_str()).bind(proposed.intent.idempotency_key.as_str()).bind(Json(&proposed)).bind(proposed.expires_at.unix_millis()).execute(&mut *tx).await.map_err(unavailable)?;
     sqlx::query("INSERT INTO project_text_documents(preparation_id,documents) VALUES ($1,$2)")
       .bind(proposed.id.as_bytes().as_slice())

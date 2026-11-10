@@ -100,6 +100,9 @@ impl ProjectDocumentSubmission {
 pub struct ProjectDocumentIntent {
   /// Owning Project.
   pub project_id: ProjectId,
+  /// Exact task owner and original author; absent for existing shared Project publications.
+  #[serde(default, skip_serializing_if = "Option::is_none")]
+  pub issue: Option<crate::IssueDocumentOwnership>,
   /// Reviewed display name.
   pub name: ArtifactName,
   /// Publisher-owned immutable format, never executable policy.
@@ -174,6 +177,7 @@ impl ProjectDocumentPreparation {
       security_scope: scope,
       intent: ProjectDocumentIntent {
         project_id: submission.project_id,
+        issue: None,
         name: submission.name.clone(),
         mapping: FactoryKey::new(submission.purpose.mapping()).map_err(|_| document_conflict())?,
         idempotency_key: submission.idempotency_key.clone(),
@@ -192,9 +196,13 @@ impl ProjectDocumentPreparation {
   }
   /// Exact private replay comparison, without retaining document bodies in metadata.
   pub fn matches_submission(&self, submission: &ProjectDocumentSubmission) -> bool {
+    self.intent.issue.is_none()
+      && self.intent.mapping.as_str() == submission.purpose.mapping()
+      && self.matches_input(submission)
+  }
+  fn matches_input(&self, submission: &ProjectDocumentSubmission) -> bool {
     self.intent.project_id == submission.project_id
       && self.intent.name == submission.name
-      && self.intent.mapping.as_str() == submission.purpose.mapping()
       && self.intent.idempotency_key == submission.idempotency_key
       && self.objects.len() == 1
       && self.objects[0].artifact.encoded_size() == submission.content.len() as u64
@@ -239,12 +247,31 @@ impl ProjectDocumentPreparation {
       expires_at: self.expires_at,
     })
   }
+  /// Requires retained task ownership instead of exposing a task document as Project guidance.
+  pub fn issue_resource(&self) -> Result<crate::IssueDocumentResource, StoreError> {
+    let owner = self.intent.issue.as_ref().ok_or_else(document_conflict)?;
+    if self.intent.mapping.as_str() != crate::ISSUE_DOCUMENT_MAPPING {
+      return Err(document_conflict());
+    }
+    let resource = self.resource()?;
+    Ok(crate::IssueDocumentResource {
+      project_id: resource.project_id,
+      issue_id: owner.issue_id,
+      name: resource.name,
+      artifact: resource.artifact,
+      actor: owner.actor.clone(),
+      published_at: resource.published_at,
+      expires_at: resource.expires_at,
+    })
+  }
 }
 /// Document reservation under existing management audit and scoped replay authority.
 #[derive(Clone, Debug)]
 pub struct ReserveProjectDocument {
   /// Exact reviewed input.
   pub submission: ProjectDocumentSubmission,
+  /// Server-resolved task owner; ordinary Project publications leave this absent.
+  pub issue_id: Option<octacity_server_domain::IssueId>,
   /// Original operator selection identity for transformed documents.
   pub selection_digest: Option<FactoryDigest>,
   /// Trusted observation time.
@@ -252,9 +279,20 @@ pub struct ReserveProjectDocument {
 }
 impl ReserveProjectDocument {
   /// Builds the journal entry with the original selection identity, if any.
-  pub fn preparation(&self, scope: ManagementSecurityScope) -> Result<ProjectDocumentPreparation, StoreError> {
-    let mut preparation = ProjectDocumentPreparation::reserve(&self.submission, scope, self.now)?;
+  pub fn preparation(&self, audit: &crate::MutationAuditContext) -> Result<ProjectDocumentPreparation, StoreError> {
+    let mut preparation =
+      ProjectDocumentPreparation::reserve(&self.submission, audit.security_scope().clone(), self.now)?;
     preparation.intent.selection_digest = self.selection_digest;
+    if let Some(issue_id) = self.issue_id {
+      if self.submission.purpose != ProjectDocumentPurpose::Context || self.selection_digest.is_some() {
+        return Err(document_conflict());
+      }
+      preparation.intent.mapping = FactoryKey::new(crate::ISSUE_DOCUMENT_MAPPING).map_err(|_| document_conflict())?;
+      preparation.intent.issue = Some(crate::IssueDocumentOwnership {
+        issue_id,
+        actor: audit.actor().clone(),
+      });
+    }
     Ok(preparation)
   }
 
@@ -264,12 +302,23 @@ impl ReserveProjectDocument {
       .intent
       .selection_digest
       .is_none_or(|digest| self.selection_digest == Some(digest))
-      && original.matches_submission(&self.submission)
+      && match self.issue_id {
+        None => original.matches_submission(&self.submission),
+        Some(issue) => {
+          original
+            .intent
+            .issue
+            .as_ref()
+            .is_some_and(|owner| owner.issue_id == issue)
+            && original.intent.mapping.as_str() == crate::ISSUE_DOCUMENT_MAPPING
+            && original.matches_input(&self.submission)
+        }
+      }
   }
 }
-/// Standalone documents use the same Project input owner, byte store and cleanup journal.
+/// Read-only Project document discovery and exact publication metadata.
 #[async_trait::async_trait]
-pub trait ProjectDocumentInputStore: crate::ProjectInputQueryStore {
+pub trait ProjectDocumentQueryStore: crate::ProjectInputQueryStore {
   /// Reads one exact published document while its metadata is retained, including after byte expiry.
   async fn project_document_metadata(
     &self,
@@ -278,6 +327,12 @@ pub trait ProjectDocumentInputStore: crate::ProjectInputQueryStore {
   ) -> Result<Option<ProjectDocumentResource>, StoreError>;
   /// Lists complete live named documents under visibility applied before page boundaries.
   async fn list_project_documents(&self, request: ListProjectDocuments) -> Result<ProjectDocumentPage, StoreError>;
+}
+
+/// Publication/recovery over the shared private input journal. Ordinary readers
+/// depend on [`ProjectDocumentQueryStore`] and need no access to pending bodies or writes.
+#[async_trait::async_trait]
+pub trait ProjectDocumentInputStore: ProjectDocumentQueryStore {
   /// Looks up the original scoped document operation; another operation kind is a conflict.
   async fn project_document_preparation(
     &self,

@@ -576,3 +576,10 @@ impl ManagementVisibilityTarget for crate::ListProjectInputDocumentsQuery {
     <ListBuildArtifactsQuery as ManagementVisibilityTarget>::visibility_from(grant)
   }
 }
+impl ManagementVisibilityTarget for crate::ListIssueDocumentsQuery {
+  type Visibility = ArtifactListVisibility;
+  const RESTRICTED_RESOURCE_KINDS: &'static [ManagementResourceKind] = &[ManagementResourceKind::Artifact];
+  fn visibility_from(grant: &ManagementAuthorizationGrant) -> Result<Self::Visibility, ManagementVisibilityError> {
+    <ListBuildArtifactsQuery as ManagementVisibilityTarget>::visibility_from(grant)
+  }
+}

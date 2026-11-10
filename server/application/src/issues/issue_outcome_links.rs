@@ -3,7 +3,7 @@ use crate::*;
 use octacity_artifact_store::MAX_ARTIFACT_READ_BYTES;
 use octacity_server_domain::{ArtifactId, IssueId, ProjectId, Timestamp};
 use octacity_server_factory::{FactoryArtifactReference, FactoryDigest, WorkArtifacts, WorkEnvelopeId};
-use octacity_server_store::{IssueCodeReviewStore, IssueOutcomeReference, ProjectDocumentInputStore};
+use octacity_server_store::{IssueCodeReviewStore, IssueOutcomeReference, ProjectDocumentQueryStore};
 use std::sync::Arc;
 
 /// A visible resource with an owner-supplied title and local navigation target.
@@ -39,7 +39,7 @@ pub enum IssueOutcomeLinkTarget {
 
 /// Composes the existing resource owners for metadata-only Issue outcome links.
 pub struct IssueOutcomeLinkReaders<S> {
-  documents: Arc<dyn ProjectDocumentInputStore>,
+  documents: Arc<dyn ProjectDocumentQueryStore>,
   artifacts: Arc<dyn IssueArtifactReader>,
   reviews: Arc<IssueCodeReviewHandlers<S>>,
   clock: Arc<dyn FactoryExecutionClock>,
@@ -47,7 +47,7 @@ pub struct IssueOutcomeLinkReaders<S> {
 impl<S> IssueOutcomeLinkReaders<S> {
   /// Uses existing readers and the trusted retention clock.
   pub fn new(
-    documents: Arc<dyn ProjectDocumentInputStore>,
+    documents: Arc<dyn ProjectDocumentQueryStore>,
     artifacts: Arc<dyn IssueArtifactReader>,
     reviews: Arc<IssueCodeReviewHandlers<S>>,
     clock: Arc<dyn FactoryExecutionClock>,

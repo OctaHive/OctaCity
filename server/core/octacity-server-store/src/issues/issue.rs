@@ -74,6 +74,9 @@ pub struct IssueRevision {
   /// Optional field attribution and bounded assessment references, absent in legacy revisions.
   #[serde(default, skip_serializing_if = "crate::IssueClassificationMetadata::is_empty")]
   pub classification: crate::IssueClassificationMetadata,
+  /// Exact explicitly selected collaboration sources; absent on legacy revisions.
+  #[serde(default, skip_serializing_if = "crate::IssueMaterials::is_empty")]
+  pub materials: crate::IssueMaterials,
   /// Exact retained business workflow identity.
   pub workflow_id: IssueWorkflowId,
   /// Pinned workflow publication, unaffected by default changes.

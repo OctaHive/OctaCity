@@ -818,6 +818,7 @@ async fn standalone_project_documents_use_the_existing_input_journal_without_adm
   };
   let first = store
     .reserve_project_document(management_mutation(ReserveProjectDocument {
+      issue_id: None,
       selection_digest: None,
       submission: request.clone(),
       now: at(10),

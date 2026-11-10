@@ -44,6 +44,7 @@ pub use issues::issue_code_review::*;
 pub use issues::issue_discussion::*;
 pub use issues::issue_execution::*;
 pub use issues::issue_execution_publication::*;
+pub use issues::issue_material::*;
 pub use issues::issue_outcome_links::*;
 pub use issues::issue_source::*;
 pub use management::project_text_intake::*;

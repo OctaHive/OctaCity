@@ -1,3 +1,4 @@
+pub(crate) mod issue_input_document;
 pub(crate) mod project_input_document;
 pub(crate) mod project_mutation;
 pub(crate) mod project_policy_query;

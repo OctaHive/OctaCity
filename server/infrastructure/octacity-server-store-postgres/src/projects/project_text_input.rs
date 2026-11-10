@@ -1,6 +1,6 @@
 //! One durable journal behind the shared provider-independent text publisher.
 use crate::{PostgresStore, database::unavailable};
-use octacity_server_domain::{ArtifactId, EntityKind, ImmutableRevision, ProjectId};
+use octacity_server_domain::{ArtifactId, EntityKind, ImmutableRevision, IssueId, ProjectId};
 use octacity_server_store::*;
 use serde_json::Value;
 use sqlx::{PgConnection, types::Json};
@@ -43,7 +43,7 @@ impl ProjectInputQueryStore for PostgresStore {
     project: ProjectId,
     artifact: ArtifactId,
   ) -> Result<Option<PublishedProjectInput>, StoreError> {
-    published_input(self.pool(), artifact, Some(project)).await
+    published_input(self.pool(), artifact, Some(project), None).await
   }
 }
 #[async_trait::async_trait]
@@ -252,17 +252,19 @@ pub(crate) async fn execution_input(
   artifact: ArtifactId,
 ) -> Result<Option<PublishedExecutionInput>, StoreError> {
   Ok(
-    published_input(pool, artifact, None)
+    published_input(pool, artifact, None, None)
       .await?
       .map(|p| input(&p.object, p.expires_at)),
   )
 }
 
-// Project reads and protected transfer select only publication metadata, never the admission Flow.
-async fn published_input(
+// An absent Issue selects only Project-owned publications, including legacy inputs.
+// Generic command/Job readers cannot opt into Issue documents by knowing an Artifact ID.
+pub(super) async fn published_input(
   pool: &sqlx::PgPool,
   artifact: ArtifactId,
   project: Option<ProjectId>,
+  issue: Option<IssueId>,
 ) -> Result<Option<PublishedProjectInput>, StoreError> {
   type Row = (
     uuid::Uuid,
@@ -280,11 +282,13 @@ async fn published_input(
     JOIN LATERAL jsonb_array_elements(p.document->'objects') entry(object)
       ON entry.object->'artifact'->>'artifact_id'=o.artifact_id::text
     WHERE o.artifact_id=$1 AND ($2::uuid IS NULL OR p.project_id=$2)
+      AND (p.document->'intent'->'issue'->>'issue_id') IS NOT DISTINCT FROM $3::text
       AND o.deleted_at_millis IS NULL AND p.document->>'published_at' IS NOT NULL
     "#,
   )
   .bind(artifact.as_uuid())
   .bind(project.map(|p| p.as_uuid()))
+  .bind(issue.map(|id| id.to_string()))
   .fetch_optional(pool)
   .await
   .map_err(unavailable)?;

@@ -14,6 +14,8 @@ use std::{
     atomic::{AtomicBool, AtomicUsize, Ordering},
   },
 };
+#[path = "issue_document_tests.rs"]
+mod issue_documents;
 fn run(future: impl std::future::Future<Output = ()>) {
   let mut future = std::pin::pin!(future);
   assert!(

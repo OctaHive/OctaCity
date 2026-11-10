@@ -586,6 +586,7 @@ pub(crate) async fn create_initial_issue(
     content: intent.content.clone(),
     planning: intent.planning.clone(),
     classification: IssueClassificationMetadata::default(),
+    materials: IssueMaterials::default(),
     workflow_id: workflow.id,
     workflow_version: workflow.version,
     status_id: workflow.definition.initial_status_id,

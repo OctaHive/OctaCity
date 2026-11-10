@@ -1491,6 +1491,12 @@ mod planning;
 #[path = "issues/classification_metadata.rs"]
 mod classification_metadata;
 
+#[path = "issues/documents.rs"]
+mod documents;
+
+#[path = "issues/materials.rs"]
+mod materials;
+
 #[path = "issues/discussion.rs"]
 mod discussion;
 

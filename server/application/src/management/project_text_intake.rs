@@ -20,6 +20,7 @@ pub struct ProjectTextIntake<S, B> {
   bytes: Arc<B>,
   revisions: Arc<dyn RevisionResolver>,
   repositories: Option<Arc<dyn octacity_server_store::ConfigurationStore>>,
+  issues: Option<Arc<dyn octacity_server_store::IssueStore>>,
   policy: Arc<dyn ManagementAuthorizationPolicy>,
   clock: Arc<dyn FactoryExecutionClock>,
 }
@@ -37,6 +38,7 @@ impl<S: ProjectTextInputStore + 'static, B: ArtifactBytePublisher + ArtifactByte
       bytes,
       revisions,
       repositories: None,
+      issues: None,
       policy,
       clock,
     }
@@ -44,6 +46,11 @@ impl<S: ProjectTextInputStore + 'static, B: ArtifactBytePublisher + ArtifactByte
   /// Uses the existing Project Repository catalog for declared step sources.
   pub fn with_repositories(mut self, repositories: Arc<dyn octacity_server_store::ConfigurationStore>) -> Self {
     self.repositories = Some(repositories);
+    self
+  }
+  /// Enables task-owned documents with current parent Issue checks; never grants Project publication rights.
+  pub fn with_issue_documents(mut self, issues: Arc<dyn octacity_server_store::IssueStore>) -> Self {
+    self.issues = Some(issues);
     self
   }
   /// Publishes one exact pair and admits one original ordinary Work/Run.
@@ -281,8 +288,9 @@ pub(crate) async fn authorize_project_text(
 mod documents;
 
 pub use documents::{
-  ListProjectInputDocumentsQuery, ProjectDocumentContent, ProjectDocumentPage, PublishProjectDocumentCommand,
-  ReadProjectInputDocumentQuery,
+  IssueDocumentContent, IssueDocumentPage, IssueDocumentResource, IssueDocumentSubmission, ListIssueDocumentsQuery,
+  ListProjectInputDocumentsQuery, ProjectDocumentContent, ProjectDocumentPage, PublishIssueDocumentCommand,
+  PublishProjectDocumentCommand, ReadIssueDocumentQuery, ReadProjectInputDocumentQuery,
 };
 
 #[path = "project_input_publication.rs"]
