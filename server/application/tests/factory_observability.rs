@@ -386,6 +386,7 @@ impl FactoryNodeExecutor for Failed {
     request: FactoryNodeExecutionRequest<'_>,
   ) -> Result<FactoryNodeExecutionStep, ApplicationError> {
     Ok(FactoryNodeExecutionStep::ExecutionStopped {
+      rejection: None,
       execution: Some(Box::new(
         FlowBuildExecution::new(
           request.build.unwrap(),
