@@ -14,6 +14,9 @@ use std::{
   sync::{Arc, Mutex},
 };
 
+#[path = "factory_issue_classification_evidence_tests.rs"]
+mod issue_classification;
+
 fn at(value: i64) -> Timestamp {
   Timestamp::from_unix_millis(value).unwrap()
 }
@@ -89,7 +92,13 @@ impl ArtifactBytePublisher for Bytes {
 #[async_trait]
 impl ArtifactByteReader for Bytes {
   async fn read_published(&self, object: &ArtifactObject, maximum: u64) -> Result<Vec<u8>, ArtifactStoreError> {
-    let bytes = self.0.lock().unwrap().get(&object.artifact_id()).unwrap().clone();
+    let bytes = self
+      .0
+      .lock()
+      .unwrap()
+      .get(&object.artifact_id())
+      .cloned()
+      .ok_or(ArtifactStoreError::NotFound)?;
     assert!(bytes.len() as u64 <= maximum);
     Ok(bytes)
   }

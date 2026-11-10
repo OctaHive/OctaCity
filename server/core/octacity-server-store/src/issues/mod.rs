@@ -3,6 +3,7 @@ pub(crate) mod issue_activity;
 pub(crate) mod issue_check;
 pub(crate) mod issue_classification;
 pub(crate) mod issue_classification_metadata;
+pub(crate) mod issue_classification_review;
 #[cfg(test)]
 mod issue_classification_tests;
 pub(crate) mod issue_code_review;
@@ -15,6 +16,7 @@ pub(crate) mod issue_outcomes;
 pub(crate) mod issue_pipeline_action;
 pub(crate) mod issue_planning;
 pub(crate) mod issue_policy;
+pub(crate) mod issue_reproduction;
 pub(crate) mod issue_retention;
 pub(crate) mod issue_source;
 pub(crate) mod issue_source_import;

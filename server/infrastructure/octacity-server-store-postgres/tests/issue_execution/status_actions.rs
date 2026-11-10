@@ -37,6 +37,7 @@ async fn pipeline_priority_choice_preserves_unselected_planning_and_records_its_
     applied_at: at(20),
     authority: None,
     fields: Some(IssueClassificationUpdate {
+      inputs: Default::default(),
       selection: IssueClassificationFieldSelection {
         definition_version: 1,
         priority: true,

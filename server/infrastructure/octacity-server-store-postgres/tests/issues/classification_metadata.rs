@@ -58,7 +58,14 @@ async fn classification_metadata_round_trip_preserves_exact_history_and_original
     .await
     .unwrap()
     .issue;
-  assert!(legacy.classification.is_empty());
+  assert_eq!(legacy.classification.fields.len(), 2);
+  assert!(
+    legacy
+      .classification
+      .fields
+      .iter()
+      .all(|field| matches!(field.origin, IssueClassificationOrigin::Manual { .. }))
+  );
   let mut retained = legacy.clone();
   retained.version = legacy.version.next().unwrap();
   retained.updated_at = at(3);
@@ -175,7 +182,7 @@ async fn classification_metadata_upgrade_preserves_legacy_documents_catalogs_and
     values: [("effort".into(), IssuePropertyValue::Choice("small".into()))].into(),
     ..Default::default()
   };
-  let original = store
+  let mut original = store
     .create_issue(management_mutation(create.clone()))
     .await
     .unwrap()
@@ -193,7 +200,30 @@ async fn classification_metadata_upgrade_preserves_legacy_documents_catalogs_and
     idempotency_key: key("legacy-edit"),
     edited_at: at(3),
   };
-  let edited = store.edit_issue(management_mutation(edit.clone())).await.unwrap().issue;
+  let mut edited = store.edit_issue(management_mutation(edit.clone())).await.unwrap().issue;
+  // The current manual writer emits attribution. Restore the historical wire
+  // shape in both revisions and receipts before qualifying the old-schema upgrade.
+  let mut legacy = database.pool.begin().await.unwrap();
+  sqlx::query("UPDATE issue_revisions SET document=document-'classification' WHERE issue_id=$1")
+    .bind(original.id.as_uuid())
+    .execute(&mut *legacy)
+    .await
+    .unwrap();
+  let receipts = sqlx::query("UPDATE idempotency_records SET outcome=jsonb_set(outcome,'{value,issue}',(outcome #> '{value,issue}')-'classification') WHERE outcome #>> '{value,issue,id}'=$1")
+    .bind(original.id.to_string()).execute(&mut *legacy).await.unwrap();
+  assert_eq!(receipts.rows_affected(), 2);
+  legacy.commit().await.unwrap();
+  original.classification = Default::default();
+  edited.classification = Default::default();
+  assert_eq!(store.issue(project.id, original.id, None).await.unwrap(), edited);
+  assert_eq!(
+    store
+      .create_issue(management_mutation(create.clone()))
+      .await
+      .unwrap()
+      .issue,
+    original
+  );
   let history = store
     .issue_status_history(project.id, original.id, None, 10)
     .await

@@ -1,6 +1,9 @@
 //! Old and new classification actions share one canonical priority and ordering fence.
 use super::*;
 
+#[path = "classification_replay.rs"]
+mod replay;
+
 async fn apply_typed(
   store: &PostgresStore,
   association: &IssueWorkAssociation,
@@ -26,6 +29,7 @@ async fn apply_typed(
     applied_at: at(20),
     priority: None,
     fields: Some(IssueClassificationUpdate {
+      inputs: Default::default(),
       selection: IssueClassificationFieldSelection {
         definition_version: 1,
         priority: true,

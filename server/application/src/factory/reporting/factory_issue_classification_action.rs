@@ -249,7 +249,40 @@ impl<S: IssueClassificationStore, F: FactoryRunStore> FactoryFlowActionPlugin
           properties.insert(id.to_owned(), value);
         }
       }
+      // New publications may explicitly project exact assessment dependencies.
+      // Earlier payloads retain empty pins and their original receipt encoding.
+      let inputs = if let Some(value) = projected.get("assessment_inputs") {
+        if accepted.get("assessment_inputs") != Some(value) {
+          return Err(invalid());
+        }
+        let inputs: octacity_server_store::IssueClassificationAssessmentInputs =
+          serde_json::from_value(value.clone()).map_err(|_| invalid())?;
+        inputs.validate().map_err(|_| invalid())?;
+        let actual = record
+          .input()
+          .context()
+          .map(|context| context.subject().clone())
+          .filter(|subject| subject.exact().is_ok())
+          .or_else(|| {
+            record
+              .input()
+              .exact_resource()
+              .ok()
+              .map(|subject| FactoryTaskSubject::Exact(subject.clone()))
+          });
+        if inputs
+          .subject
+          .as_ref()
+          .is_some_and(|subject| Some(subject) != actual.as_ref())
+        {
+          return Err(invalid());
+        }
+        inputs
+      } else {
+        Default::default()
+      };
       Some(IssueClassificationUpdate {
+        inputs,
         selection: selection.clone(),
         priority: selected_priority,
         component,

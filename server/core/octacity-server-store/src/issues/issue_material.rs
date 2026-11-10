@@ -70,7 +70,7 @@ impl TryFrom<Vec<IssueMaterialSelection>> for IssueMaterials {
     Ok(Self(entries))
   }
 }
-fn validate_references<'a>(
+pub(crate) fn validate_references<'a>(
   references: impl Iterator<Item = &'a IssueMaterialReference>,
 ) -> Result<(), StoreInputError> {
   let mut identities = BTreeSet::new();

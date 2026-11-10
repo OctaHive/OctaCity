@@ -15,15 +15,26 @@ fn assessment() -> serde_json::Value {
 
 fn classification_flow(assessment: serde_json::Value) -> FlowDefinitionTemplate {
   let mut template = summary_flow(None);
-  let shape = serde_json::from_value(json!({"type":"object","fields":{
+  let mut shape = json!({"type":"object","fields":{
     "priority":{"required":true,"value":{"type":"string","min_bytes":1,"max_bytes":64}},
     "component":{"required":true,"value":{"type":"string","min_bytes":1,"max_bytes":64}},
     "size":{"required":true,"value":{"type":"string","min_bytes":1,"max_bytes":64}},
     "kind":{"required":true,"value":{"type":"string","min_bytes":1,"max_bytes":64}},
     "reproducibility":{"required":true,"value":{"type":"string","min_bytes":1,"max_bytes":64}}
-  }}))
-  .unwrap();
-  template.schemas.get_mut(&key("producer_result")).unwrap().shape = shape;
+  }});
+  if assessment.get("assessment_inputs").is_some() {
+    shape["fields"]["assessment_inputs"] = json!({"required":true,"value":{"type":"object","fields":{
+      "subject":{"required":true,"value":{"type":"object","fields":{
+        "kind":{"required":true,"value":{"type":"enum","values":["exact"]}},
+        "value":{"required":true,"value":{"type":"object","fields":{
+          "project_id":{"required":true,"value":{"type":"string","min_bytes":36,"max_bytes":36}},
+          "repository_id":{"required":true,"value":{"type":"string","min_bytes":36,"max_bytes":36}},
+          "base_revision":{"required":true,"value":{"type":"string","min_bytes":1,"max_bytes":256}}
+        }}}
+      }}}
+    }}});
+  }
+  template.schemas.get_mut(&key("producer_result")).unwrap().shape = serde_json::from_value(shape).unwrap();
   template.schemas.get_mut(&key("custom")).unwrap().shape = serde_json::from_value(json!({
     "type":"object","fields":{"receipt":{"required":true,"value":{"type":"string","min_bytes":64,"max_bytes":64}}}
   }))
@@ -95,8 +106,24 @@ async fn fixture_with_assessment(
   PublishedFactoryAdmission,
   IssueRevision,
 ) {
+  fixture_with_assessment_inputs(assessment, false).await
+}
+
+async fn fixture_with_assessment_inputs(
+  mut assessment: serde_json::Value,
+  declare_code: bool,
+) -> (
+  postgres_support::TestDatabase,
+  Arc<PostgresStore>,
+  PublishedFactoryAdmission,
+  IssueRevision,
+) {
   let database = postgres_support::TestDatabase::migrated().await;
   let fixture = factory_node_test_support::fixtures::work();
+  if declare_code {
+    assessment["assessment_inputs"] =
+      json!({"subject":FactoryTaskSubject::Exact(fixture.subject().repository().unwrap().clone())});
+  }
   let request = IssueExecutionRequestId::generate();
   let content = requirements();
   let (admission, _) =
@@ -155,6 +182,58 @@ async fn fixture_with_assessment(
   (database, store, admission, issue)
 }
 
+#[tokio::test]
+#[ignore = "requires an explicitly configured disposable PostgreSQL service"]
+async fn classification_action_retains_declared_code_inputs_and_reviews_changed_subject_after_restart() {
+  let (database, store, admission, issue) = fixture_with_assessment_inputs(assessment(), true).await;
+  finish_classification(&store, &admission, 30).await;
+  let current = store.issue(issue.project_id, issue.id, None).await.unwrap();
+  let subject = FactoryTaskSubject::Exact(admission.work.subject().repository().unwrap().clone());
+  assert_eq!(current.classification.fields.len(), 5);
+  assert!(
+    current
+      .classification
+      .fields
+      .iter()
+      .all(|field| field.inputs.subject.as_ref() == Some(&subject))
+  );
+  let restarted = Arc::new(PostgresStore::new(database.pool.clone()));
+  assert_eq!(
+    restarted.issue(issue.project_id, issue.id, None).await.unwrap(),
+    current
+  );
+  let policy = Arc::new(TrustedNetworkManagementPolicy);
+  let queries = AuthorizedQueryHandler::new(policy.clone(), Arc::new(IssueHandlers::new(restarted.clone(), policy)));
+  let context = ManagementRequestContext::trusted_network(ManagementRequestId::new(uuid::Uuid::new_v4()).unwrap());
+  let query = ReviewIssueClassificationQuery {
+    project_id: issue.project_id,
+    id: issue.id,
+    version: None,
+    subject: Some(subject.clone()),
+    checked_at: at(100),
+  };
+  let reviewed = queries.handle_query(&context, query.clone()).await.unwrap();
+  assert!(reviewed.fields.iter().all(|field| field.problems.is_empty()));
+  let mut changed = query;
+  changed.subject = Some(FactoryTaskSubject::Exact(ExactSubject::new(
+    issue.project_id,
+    subject.exact().unwrap().repository_id(),
+    "changed-base".parse().unwrap(),
+  )));
+  let stale = queries.handle_query(&context, changed).await.unwrap();
+  assert!(
+    stale
+      .fields
+      .iter()
+      .all(|field| field.problems == vec![IssueClassificationProblem::CodeSubjectChanged])
+  );
+  assert_eq!(
+    restarted.issue(issue.project_id, issue.id, None).await.unwrap(),
+    current
+  );
+  database.cleanup().await;
+}
+
 fn executor(store: &Arc<PostgresStore>) -> Arc<FactoryFlowActionAdapter> {
   let action = Arc::new(FactoryIssueClassificationAction::new(
     plugin(),
@@ -206,6 +285,11 @@ async fn classification_action_atomically_applies_builtin_and_project_fields_wit
     .find(|r| r.input().node() == &key("produce_outcome"))
     .unwrap();
   for field in &current.classification.fields {
+    assert!(
+      field.inputs.is_empty(),
+      "earlier publications declare no assessment input pins"
+    );
+    assert!(serde_json::to_value(field).unwrap().get("inputs").is_none());
     assert_eq!(field.assessed_version, issue.version);
     assert_eq!(field.requirements_version, issue.applicability_version);
     assert!(field.evidence.is_empty());
@@ -243,6 +327,36 @@ async fn classification_action_atomically_applies_builtin_and_project_fields_wit
       .len(),
     1
   );
+  database.cleanup().await;
+}
+
+#[tokio::test]
+#[ignore = "requires an explicitly configured disposable PostgreSQL service"]
+async fn classification_action_rejects_a_subject_not_supplied_to_its_accepted_producer() {
+  let mut value = assessment();
+  let other = factory_node_test_support::fixtures::work();
+  value["assessment_inputs"] =
+    json!({"subject":FactoryTaskSubject::Exact(other.subject().repository().unwrap().clone())});
+  let (database, store, admission, issue) = fixture_with_assessment(value).await;
+  let (runner, claim, accepted) = accepted_producer(&store, &admission, 30).await;
+  let mut rejected = false;
+  for time in 100..125 {
+    match runner.reconcile_flow(admission.run.id(), claim, at(time)).await {
+      Ok(FactoryFlowStep::Advanced) => {}
+      Err(error) => {
+        assert_eq!(error.classification(), ApplicationFailure::Invalid);
+        rejected = true;
+        break;
+      }
+      other => panic!("substituted producer input must be rejected: {other:?}"),
+    }
+  }
+  assert!(rejected);
+  assert_eq!(store.issue(issue.project_id, issue.id, None).await.unwrap(), issue);
+  let after = store.factory_run_snapshot(admission.run.id()).await.unwrap();
+  assert_eq!(after.work, accepted.work);
+  assert_eq!(after.flow.data.records, accepted.flow.data.records);
+  assert_eq!(after.outbox, accepted.outbox);
   database.cleanup().await;
 }
 

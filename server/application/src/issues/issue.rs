@@ -12,6 +12,9 @@ use std::sync::Arc;
 
 #[path = "issue_card.rs"]
 mod card;
+#[path = "issue_classification.rs"]
+mod classification;
+pub use classification::*;
 #[path = "issue_source_links.rs"]
 mod source_links;
 pub use card::*;
@@ -67,6 +70,7 @@ impl ManagementAuthorizationTarget for GetIssueQuery {
 pub struct IssueHandlers<S> {
   store: Arc<S>,
   directory: Option<Arc<dyn IssueAssigneeDirectory>>,
+  classification_evidence: Option<Arc<dyn IssueClassificationEvidenceReader>>,
   policy: Arc<dyn ManagementAuthorizationPolicy>,
 }
 impl<S> IssueHandlers<S> {
@@ -76,6 +80,7 @@ impl<S> IssueHandlers<S> {
       store,
       policy,
       directory: None,
+      classification_evidence: None,
     }
   }
 }

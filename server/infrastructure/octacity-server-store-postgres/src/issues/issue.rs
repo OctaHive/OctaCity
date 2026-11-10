@@ -223,11 +223,10 @@ impl IssueStore for PostgresStore {
     issue_workflow::lock_project(&mut tx, intent.project_id).await?;
     let current = lock(&mut tx, intent.project_id, intent.id).await?;
     let policy = field_policy(&mut tx, intent.project_id, intent.id).await?;
-    intent.content.validate_priority(
-      &crate::issues::issue_planning::read(&mut tx, intent.project_id, None).await?,
-      Some(&current.content),
-    )?;
-    let issue = current.edited(&request, &policy)?;
+    let catalog = crate::issues::issue_planning::read(&mut tx, intent.project_id, None).await?;
+    intent.content.validate_priority(&catalog, Some(&current.content))?;
+    let mut issue = current.edited(&request, &policy)?;
+    issue.attribute_manual_classification(Some(&current), &catalog, audit.actor())?;
     let outcome = IssueMutationOutcome {
       disposition: MutationDisposition::Applied,
       issue,
@@ -582,7 +581,7 @@ pub(crate) async fn create_initial_issue(
   }
   let allocated: i64 = sqlx::query_scalar("INSERT INTO issue_numbers (project_id,last_number) VALUES ($1,1) ON CONFLICT (project_id) DO UPDATE SET last_number=issue_numbers.last_number+1 RETURNING last_number")
       .bind(intent.project_id.as_uuid()).fetch_one(&mut *connection).await.map_err(unavailable)?;
-  let issue = IssueRevision {
+  let mut issue = IssueRevision {
     content_available,
     id: request.id,
     project_id: intent.project_id,
@@ -599,6 +598,9 @@ pub(crate) async fn create_initial_issue(
     created_at: request.created_at,
     updated_at: request.created_at,
   };
+  if origin == IssueTransitionOrigin::Manual {
+    issue.attribute_manual_classification(None, &catalog, actor)?;
+  }
   sqlx::query("INSERT INTO issues (project_id,id,number,current_version) VALUES ($1,$2,$3,1)")
     .bind(issue.project_id.as_uuid())
     .bind(issue.id.as_uuid())

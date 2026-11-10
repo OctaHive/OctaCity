@@ -1491,6 +1491,9 @@ mod planning;
 #[path = "issues/classification_metadata.rs"]
 mod classification_metadata;
 
+#[path = "issues/manual_classification.rs"]
+mod manual_classification;
+
 #[path = "issues/documents.rs"]
 mod documents;
 

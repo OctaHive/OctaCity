@@ -1,5 +1,5 @@
 //! Retained attribution and references; effective scalar values remain in content/planning.
-use crate::{AuditActor, MAX_ISSUE_PROPERTIES, StoreInputError};
+use crate::{AuditActor, IssueRevision, MAX_ISSUE_PROPERTIES, PublishedIssueProperties, StoreInputError};
 use octacity_server_domain::{IssueVersion, Timestamp};
 use octacity_server_factory::{
   FactoryDigest, FactoryKey, FactoryRunId, FactoryTaskSubject, ImmutableReference, WorkEnvelopeId,
@@ -52,9 +52,8 @@ impl IssueClassificationMetadata {
         .any(|d| !dependencies.insert((&d.work_id, &d.run_id, &d.terminal)))
       || self.fields.iter().any(|field| {
         let valid_version = match &field.field {
-          IssueClassificationFieldReference::Priority { definition_version } => *definition_version != Some(0),
+          IssueClassificationFieldReference::Priority { .. } | IssueClassificationFieldReference::Type { .. } => true,
           IssueClassificationFieldReference::Component { definition_version }
-          | IssueClassificationFieldReference::Type { definition_version }
           | IssueClassificationFieldReference::Property { definition_version, .. } => *definition_version != 0,
           IssueClassificationFieldReference::Size | IssueClassificationFieldReference::Dependencies => true,
         };
@@ -73,6 +72,7 @@ impl IssueClassificationMetadata {
         !valid_version
           || !fields.insert(identity)
           || field.requirements_version > field.assessed_version
+          || field.inputs.validate().is_err()
           || crate::management_mutation::validate_management_actor(actor).is_err()
           || field.evidence.len() > MAX_ISSUE_CLASSIFICATION_REFERENCES
           || field.evidence.iter().collect::<BTreeSet<_>>().len() != field.evidence.len()
@@ -82,6 +82,108 @@ impl IssueClassificationMetadata {
       return Err(invalid);
     }
     Ok(())
+  }
+}
+
+impl IssueRevision {
+  /// Records only changed manual classification values after ordinary edit validation.
+  /// The Issue writer commits this metadata with the values and original replay receipt.
+  /// Unchanged fields keep their original applicability, age and evidence references.
+  pub fn attribute_manual_classification(
+    &mut self,
+    previous: Option<&Self>,
+    catalog: &PublishedIssueProperties,
+    actor: &AuditActor,
+  ) -> Result<(), crate::StoreError> {
+    use IssueClassificationFieldReference as Field;
+    // A combined requirements/value edit assesses the new requirements in this revision.
+    let assessed_version = previous.map_or(self.version, |p| p.version.max(self.applicability_version));
+    if self.content.priority.as_ref() != previous.and_then(|p| p.content.priority.as_ref()) {
+      let definition_version = match &self.content.priority {
+        Some(crate::IssuePriority::Choice(_)) => Some(catalog.version),
+        _ => None,
+      };
+      self.record_manual_field(
+        assessed_version,
+        Field::Priority { definition_version },
+        self.content.priority.is_some(),
+        actor,
+      );
+    }
+    for (field, changed, present) in [
+      (
+        Field::Component {
+          definition_version: catalog.version,
+        },
+        self.planning.component.as_ref() != previous.and_then(|p| p.planning.component.as_ref()),
+        self.planning.component.is_some(),
+      ),
+      (
+        Field::Type {
+          definition_version: catalog.version,
+        },
+        self.planning.issue_type.as_ref() != previous.and_then(|p| p.planning.issue_type.as_ref()),
+        self.planning.issue_type.is_some(),
+      ),
+      (
+        Field::Size,
+        self.planning.size != previous.and_then(|p| p.planning.size),
+        self.planning.size.is_some(),
+      ),
+    ] {
+      if changed {
+        self.record_manual_field(assessed_version, field, present, actor);
+      }
+    }
+    let ids: BTreeSet<_> = previous
+      .into_iter()
+      .flat_map(|p| p.planning.values.keys())
+      .chain(self.planning.values.keys())
+      .cloned()
+      .collect();
+    for id in ids {
+      if self.planning.values.get(&id) != previous.and_then(|p| p.planning.values.get(&id)) {
+        let present = self.planning.values.contains_key(&id)
+          && catalog.definition.classification.fields().any(|(_, bound)| bound == id);
+        self.record_manual_field(
+          assessed_version,
+          Field::Property {
+            id,
+            definition_version: catalog.version,
+          },
+          present,
+          actor,
+        );
+      }
+    }
+    self
+      .classification
+      .validate()
+      .map_err(|error| crate::StoreError::invalid(crate::StoreOperation::EditIssuePlanning, error))
+  }
+
+  fn record_manual_field(
+    &mut self,
+    assessed_version: IssueVersion,
+    field: IssueClassificationFieldReference,
+    present: bool,
+    actor: &AuditActor,
+  ) {
+    self
+      .classification
+      .fields
+      .retain(|prior| prior.field.identity() != field.identity());
+    if present {
+      self.classification.fields.push(IssueClassificationAttribution {
+        field,
+        origin: IssueClassificationOrigin::Manual { actor: actor.clone() },
+        assessed_version,
+        requirements_version: self.applicability_version,
+        assessed_at: self.updated_at,
+        evidence: vec![],
+        inputs: Default::default(),
+      });
+    }
   }
 }
 
@@ -119,7 +221,7 @@ pub enum IssueClassificationFieldReference {
   Size,
   /// Built-in type and the exact Project type-list publication.
   Type {
-    /// Positive immutable Project catalog publication.
+    /// Exact Project catalog publication; zero pins the built-in default template.
     definition_version: u64,
   },
   /// Built-in component and the exact Project component-list publication.
@@ -227,6 +329,34 @@ pub struct IssueClassificationAttribution {
   /// Exact evidence records supporting this field; absence claims no verified evidence.
   #[serde(default, skip_serializing_if = "Vec::is_empty")]
   pub evidence: Vec<FactoryDigest>,
+  /// Explicit immutable dependencies of this assessment; legacy data has none declared.
+  #[serde(default, skip_serializing_if = "IssueClassificationAssessmentInputs::is_empty")]
+  pub inputs: IssueClassificationAssessmentInputs,
+}
+
+/// Bounded assessment input pins, without input bodies or execution authority.
+#[derive(Clone, Debug, Default, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(deny_unknown_fields)]
+pub struct IssueClassificationAssessmentInputs {
+  /// Exact code subject only when this field's assessment depends on code.
+  #[serde(default, skip_serializing_if = "Option::is_none")]
+  pub subject: Option<FactoryTaskSubject>,
+  /// Exact explicitly selected material dependencies; bodies stay with their original owners.
+  #[serde(default, skip_serializing_if = "Vec::is_empty")]
+  pub materials: Vec<crate::IssueMaterialReference>,
+}
+impl IssueClassificationAssessmentInputs {
+  /// Reuses the shared exact-material bounds and rejects correlation-only code subjects.
+  pub fn validate(&self) -> Result<(), StoreInputError> {
+    if self.subject.as_ref().is_some_and(|subject| subject.exact().is_err()) {
+      return Err(StoreInputError::InvalidIssue);
+    }
+    super::issue_material::validate_references(self.materials.iter())
+  }
+  /// Empty pins preserve the wire encoding of historical attributions.
+  pub fn is_empty(&self) -> bool {
+    self.subject.is_none() && self.materials.is_empty()
+  }
 }
 
 /// A retained observation reference; qualification still requires independent trusted reads.

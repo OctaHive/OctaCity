@@ -364,14 +364,13 @@ impl IssueStore for crate::testing::InMemoryProjectStore {
       .ok_or(StoreError::NotFound {
         entity: EntityKind::Issue,
       })?;
-    intent.content.validate_priority(
-      &planning::definitions(&state, intent.project_id, None)?,
-      Some(&current.content),
-    )?;
-    let issue = current.edited(
+    let catalog = planning::definitions(&state, intent.project_id, None)?;
+    intent.content.validate_priority(&catalog, Some(&current.content))?;
+    let mut issue = current.edited(
       &request,
       &state.issues.policies.get(&intent.id).cloned().unwrap_or_default(),
     )?;
+    issue.attribute_manual_classification(Some(current), &catalog, audit.actor())?;
     let outcome = IssueMutationOutcome {
       disposition: MutationDisposition::Applied,
       issue: issue.clone(),
@@ -404,7 +403,12 @@ impl IssueStore for crate::testing::InMemoryProjectStore {
         ..outcome.clone()
       });
     }
-    let (issue, initial) = prepare_issue_creation(&state, &request, &audit)?;
+    let (mut issue, initial) = prepare_issue_creation(&state, &request, &audit)?;
+    issue.attribute_manual_classification(
+      None,
+      &planning::definitions(&state, issue.project_id, None)?,
+      audit.actor(),
+    )?;
     let number = issue.number;
     let outcome = IssueMutationOutcome {
       disposition: MutationDisposition::Applied,
@@ -508,6 +512,37 @@ fn prepare_issue_creation(
 }
 
 impl crate::testing::InMemoryProjectStore {
+  /// Restores a historical successor for read qualification; this fixture path is
+  /// unavailable to production commands and creates no mutation receipt or authority.
+  pub fn seed_retained_issue_revision(&self, revision: IssueRevision) -> Result<(), StoreError> {
+    let mut state = self.lock()?;
+    let current = state
+      .issues
+      .current
+      .get(&(revision.project_id, revision.id))
+      .ok_or(StoreError::NotFound {
+        entity: EntityKind::Issue,
+      })?;
+    if current.version.next().ok() != Some(revision.version) || revision.created_at != current.created_at {
+      return Err(StoreError::Conflict {
+        entity: EntityKind::Issue,
+      });
+    }
+    revision
+      .classification
+      .validate()
+      .map_err(|error| StoreError::invalid(StoreOperation::EditIssue, error))?;
+    state
+      .issues
+      .revisions
+      .insert((revision.id, revision.version), revision.clone());
+    state
+      .issues
+      .current
+      .insert((revision.project_id, revision.id), revision);
+    Ok(())
+  }
+
   /// Models a separately authorized retained source association for task-command tests.
   /// No ordinary application edit/create/move accepts this policy or native credentials.
   pub fn seed_issue_field_policy(

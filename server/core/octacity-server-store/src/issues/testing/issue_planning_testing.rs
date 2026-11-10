@@ -95,11 +95,12 @@ impl IssuePropertyStore for crate::testing::InMemoryProjectStore {
       })?;
     validate_parent(&state, i.project_id, i.id, i.planning.parent_id)?;
     let catalog = definitions(&state, i.project_id, None)?;
-    let issue = current.planned(
+    let mut issue = current.planned(
       &request,
       &state.issues.policies.get(&i.id).cloned().unwrap_or_default(),
       &catalog,
     )?;
+    issue.attribute_manual_classification(Some(current), &catalog, audit.actor())?;
     let outcome = IssueMutationOutcome {
       disposition: MutationDisposition::Applied,
       issue,

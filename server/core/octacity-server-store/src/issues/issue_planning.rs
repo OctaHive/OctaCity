@@ -547,6 +547,14 @@ impl IssuePlanning {
       if previous.is_some_and(|p| p.values.get(id) == Some(value)) {
         continue;
       }
+      // Ordinary manual values cannot establish independently verified reproduction.
+      // Retained unchanged claims keep their original evidence and applicability.
+      if catalog.definition.classification.reproducibility.as_ref() == Some(id)
+        && matches!(value, IssuePropertyValue::Choice(claim) if crate::IssueReproductionClaim::from_choice(claim)
+          .is_none_or(crate::IssueReproductionClaim::requires_verified_evidence))
+      {
+        return Err(invalid());
+      }
       if property.retired {
         return Err(invalid());
       }

@@ -69,6 +69,9 @@ pub struct IssueClassificationUpdate {
   pub size: Option<IssueSize>,
   /// Assessed choice values by selected stable property ID; absence preserves that field.
   pub properties: BTreeMap<String, String>,
+  /// Explicit assessment dependencies; omitted on earlier publications and receipts.
+  #[serde(skip_serializing_if = "IssueClassificationAssessmentInputs::is_empty")]
+  pub inputs: IssueClassificationAssessmentInputs,
 }
 impl IssueClassificationUpdate {
   /// Canonical locations actually supplied by the accepted assessment.
@@ -196,7 +199,25 @@ impl IssueRevision {
     }
     if let Some(update) = &request.fields {
       update.selection.validate(catalog)?;
-      if catalog.project_id != self.project_id
+      if update.inputs.validate().is_err()
+        || update
+          .inputs
+          .subject
+          .as_ref()
+          .is_some_and(|subject| subject.exact().is_ok_and(|s| s.project_id() != self.project_id))
+        || update.inputs.materials.iter().any(|reference| {
+          !baseline
+            .materials
+            .entries()
+            .iter()
+            .any(|entry| &entry.reference == reference)
+            || !self
+              .materials
+              .entries()
+              .iter()
+              .any(|entry| &entry.reference == reference)
+        })
+        || catalog.project_id != self.project_id
         || request.priority.is_some()
         || (update.priority.is_some()
           && (!update.selection.priority
@@ -271,10 +292,8 @@ impl IssueRevision {
         if !valid
           || self.planning.values.get(id) != baseline.planning.values.get(id)
           || (slot == "reproducibility"
-            && !matches!(
-              value.as_str(),
-              "unknown" | "needs_input" | "needs_research" | "not_applicable"
-            ))
+            && crate::IssueReproductionClaim::from_choice(value)
+              .is_none_or(crate::IssueReproductionClaim::requires_verified_evidence))
         {
           return Err(conflict());
         }
@@ -318,6 +337,7 @@ impl IssueRevision {
             requirements_version: baseline.applicability_version,
             assessed_at: request.accepted_at,
             evidence: vec![],
+            inputs: update.inputs.clone(),
           }));
         next.classification.validate().map_err(|_| conflict())?;
       }

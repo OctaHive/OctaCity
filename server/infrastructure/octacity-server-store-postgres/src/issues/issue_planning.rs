@@ -166,7 +166,8 @@ impl IssuePropertyStore for PostgresStore {
     validate_parent(&mut tx, i.project_id, i.id, i.planning.parent_id).await?;
     let catalog = read(&mut tx, i.project_id, None).await?;
     let policy = crate::issues::issue::field_policy(&mut tx, i.project_id, i.id).await?;
-    let issue = current.planned(&request, &policy, &catalog)?;
+    let mut issue = current.planned(&request, &policy, &catalog)?;
+    issue.attribute_manual_classification(Some(&current), &catalog, audit.actor())?;
     let outcome = IssueMutationOutcome {
       disposition: MutationDisposition::Applied,
       issue,

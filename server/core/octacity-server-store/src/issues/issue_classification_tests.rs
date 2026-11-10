@@ -3,6 +3,9 @@ use crate::*;
 use octacity_server_domain::{IssueId, IssueVersion, ProjectId, ProjectName, Timestamp};
 use serde_json::{Value, json};
 
+#[path = "issue_classification_applicability_tests.rs"]
+mod applicability;
+
 fn at(value: i64) -> Timestamp {
   Timestamp::from_unix_millis(value).unwrap()
 }
@@ -159,9 +162,14 @@ fn builtin_component_uses_project_choices_independently_of_custom_properties() {
       IssuePropertyValue::Boolean(true)
     );
     assert_eq!(selected.applicability_version, original.applicability_version);
+    assert_eq!(selected.classification.fields.len(), 4);
     assert!(
-      selected.classification.is_empty(),
-      "ordinary planning does not invent a producer"
+      selected
+        .classification
+        .fields
+        .iter()
+        .all(|field| matches!(field.origin, IssueClassificationOrigin::Manual { .. })),
+      "ordinary planning retains its human origin without inventing a producer"
     );
     assert_eq!(
       store
@@ -302,7 +310,11 @@ fn issue_classification_metadata_survives_requirements_edits_without_copying_val
     let store = testing::InMemoryProjectStore::new();
     let original = ordinary_issue(&store).await;
     let mut retained = serde_json::to_value(&original).unwrap();
+    // Historical documents predate manual attribution; new creations now record it.
+    retained.as_object_mut().unwrap().remove("classification");
     assert!(retained.get("classification").is_none());
+    let legacy: IssueRevision = serde_json::from_value(retained.clone()).unwrap();
+    assert!(legacy.classification.is_empty());
     retained["classification"] = manual_priority();
     let classified: IssueRevision = serde_json::from_value(retained.clone()).unwrap();
     assert_eq!(classified.content.priority, Some(20.into()));

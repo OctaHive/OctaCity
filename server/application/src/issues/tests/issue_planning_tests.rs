@@ -1,6 +1,9 @@
 //! Planning is exercised through authorized application commands, with no executor.
 use super::*;
 
+#[path = "issue_manual_classification_tests.rs"]
+mod manual_classification;
+
 #[test]
 fn issue_planning_manual_creation_is_unassigned_without_a_directory() {
   run_ready(async {
