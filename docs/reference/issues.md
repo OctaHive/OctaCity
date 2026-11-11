@@ -1065,6 +1065,31 @@ Reservation and association retain their own boundaries; explicit publication
 uses ordinary admission. Manual creation continues to use `IssueHandlers`
 without these execution dependencies.
 
+### Ordinary Project fields in Issue snapshots
+
+A snapshot can select an ordinary Project property by stable ID using
+`source: {"kind": "property", "id": "environment"}`. The property's exact
+catalog publication supplies its type, text/integer bounds and choice IDs.
+Supported values are text, boolean, bounded integer, date (`YYYY-MM-DD`) and
+choice ID. No classification slot, classification attribution, built-in
+priority/size or producing Run is required for these contextual properties.
+Consumer scalar schemas may be broader than the published property contract;
+the pinned Project definition still validates each supplied value.
+
+`required` checks presence. Empty text, `false` and zero remain real values when
+permitted by the property definition. A missing required value reports
+`issue_snapshot_missing_value` at `/issue_snapshot/fields/{alias}` before an
+execution request is reserved. A missing optional value is absent from Incoming
+and retained as an explicit `Missing` omission, with no fabricated default.
+An optional value that is present must still fit the pinned bounds/vocabulary;
+otherwise it reports `issue_snapshot_incompatible_value`.
+
+New snapshots retain selected field declarations and the exact full catalog
+publication digest, including declarations for selected-but-missing optional
+fields. Unselected property values and declarations are excluded. Later
+renames, bound/choice publications, retirement and Issue value edits preserve
+already admitted Incoming values, definitions, omissions and Work/Run identity.
+
 ### Pinned Issue admission mapping
 
 A producer-independent `FlowIssueSnapshotInput` can pin an `admission` policy
@@ -1580,6 +1605,74 @@ With `OCTACITY_POSTGRES_URL` explicitly selecting a disposable PostgreSQL servic
 ```sh
 cargo test --locked -p octacity-server-store-postgres --test issues issue_documents_ -- --ignored --test-threads=2
 ```
+
+## Selected text in manual Issue execution
+
+Snapshot task 3.8 installs `IssueSnapshotMaterialReaders` in the manual execution
+runtime. A Flow must declare each material alias as either exact references or a
+bounded set of the Issue's approved materials. Exact references must also already
+be approved on that Issue. Selection order is preserved; no discussion scan or
+latest-document lookup supplies missing input. Appending a comment and publishing
+an Issue or Project document neither selects it nor starts a Run.
+
+Preparation uses the existing authorized `GetIssueCommentBodyQuery`,
+`ReadIssueDocumentQuery` and `ReadProjectInputDocumentQuery` for the actual source
+owner. Issue execution rights alone do not grant discussion or Artifact body
+access. Same-Issue comments and documents keep their Issue owner; separately linked
+Project documents keep their Project owner. Issue-owned documents remain absent
+from Project catalogs and readers. Each resolved body must match its exact
+reference, digest and encoded byte size.
+
+The selected alias is an ordered text array in the ordinary Incoming payload.
+UTF-8 text, including CRLF and trailing newlines, is preserved without
+normalization. The private retained snapshot stores the text once in `values`;
+`materials` separately records the approved reference and selection actor/time,
+plus original comment or publication metadata. Comment authorship and Issue
+document publisher attribution remain separate from selection attribution;
+shared Project documents retain their existing publication metadata. Prose does
+not become evidence, a gate response or policy authority. Each step still needs
+its declared Incoming projection under the existing Context contract.
+
+Required unreadable materials block preparation at
+`/issue_snapshot/materials/{alias}` with `issue_snapshot_material_unavailable`.
+Optional unavailable sources retain an explicit `Unavailable` omission. A
+consumer count or aggregate UTF-8 byte overflow blocks even an optional alias,
+with `issue_snapshot_material_limit_exceeded` at the selected material alias.
+The shared authoring boundary bounds the combined declared budgets across aliases
+to 32 entries and 1 MiB; stricter consumer limits and existing source, Incoming
+and private snapshot encoding limits still apply. Configurations without
+installed readers retain required/optional unavailable-source behavior. Older
+reviewed optional omissions remain valid after readers are installed only when
+the complete original snapshot digest matches; required text cannot use this
+compatibility path. The matching candidate is chosen before Incoming/private
+snapshot encoding checks, so newly available optional text cannot invalidate a
+retained omission by exceeding an encoded-size limit. The final selected
+projection still passes both encoding limits. Empty lineage is omitted from
+serialization, preserving existing snapshot bytes and digests.
+
+Managed input publication reuses the existing recoverable preparation and byte
+store. Pending recovery keeps the original frozen values, then reauthorizes and
+checks exactly their original source bodies and metadata immediately before first
+admission. It never rebuilds selection or silently drops an included optional
+value. Revoked access, changed bytes or unavailable content blocks the pending
+request while preserving its snapshot. Restored access can resume that same input.
+
+The PostgreSQL admission transaction also checks current approved selection and
+source ownership/publication/digest/size/lifetime using the shared selection
+validator. Its Project/Issue locks exclude selection edits and discussion cleanup;
+source document rows remain share-locked through commit. Document expiry uses the
+current admission guard time rather than the original preparation timestamp.
+Selection removal or source retirement after byte publication cannot dispatch a
+Run. Unselected comment appends do not invalidate the selected snapshot.
+
+Later comments, document versions or material-selection edits do not replace
+admitted inputs. After content retention removes source and private preparation
+bodies, an admitted retry returns its original association without reopening
+sources, restoring text or starting another Run. Automatic Source intake remains
+section 4; HTTP and Console authoring/review exposure remains section 6.
+
+Verification: [task 3.8](../../openspec/changes/add-issue-classification-snapshots/verification-3.8.md)
+and [task 3.9](../../openspec/changes/add-issue-classification-snapshots/verification-3.9.md).
 
 ## Explicit Issue material selections
 

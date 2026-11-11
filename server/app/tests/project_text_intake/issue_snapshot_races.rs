@@ -7,6 +7,8 @@ use fixture::*;
 mod admission_policy;
 #[path = "issue_snapshot_integrity.rs"]
 mod integrity;
+#[path = "issue_snapshot_materials.rs"]
+mod materials;
 #[path = "issue_snapshot_replay.rs"]
 mod replay;
 

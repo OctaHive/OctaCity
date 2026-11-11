@@ -21,6 +21,7 @@ pub struct ProjectTextIntake<S, B> {
   revisions: Arc<dyn RevisionResolver>,
   repositories: Option<Arc<dyn octacity_server_store::ConfigurationStore>>,
   issues: Option<Arc<dyn octacity_server_store::IssueStore>>,
+  issue_materials: Option<Arc<IssueSnapshotMaterialReaders>>,
   policy: Arc<dyn ManagementAuthorizationPolicy>,
   clock: Arc<dyn FactoryExecutionClock>,
 }
@@ -39,6 +40,7 @@ impl<S: ProjectTextInputStore + 'static, B: ArtifactBytePublisher + ArtifactByte
       revisions,
       repositories: None,
       issues: None,
+      issue_materials: None,
       policy,
       clock,
     }
@@ -51,6 +53,11 @@ impl<S: ProjectTextInputStore + 'static, B: ArtifactBytePublisher + ArtifactByte
   /// Enables task-owned documents with current parent Issue checks; never grants Project publication rights.
   pub fn with_issue_documents(mut self, issues: Arc<dyn octacity_server_store::IssueStore>) -> Self {
     self.issues = Some(issues);
+    self
+  }
+  /// Installed by the Issue adapter for current exact-source access before admission.
+  pub(crate) fn with_issue_materials(mut self, readers: Arc<IssueSnapshotMaterialReaders>) -> Self {
+    self.issue_materials = Some(readers);
     self
   }
   /// Publishes one exact pair and admits one original ordinary Work/Run.
@@ -302,6 +309,14 @@ impl<S: ProjectTextInputStore + 'static, B: ArtifactBytePublisher + ArtifactByte
         .transpose()
         .map_err(|_| ApplicationError::invalid())?
     };
+    if let Some(snapshot) = documents.issue_snapshot() {
+      crate::issues::issue_execution_snapshot_materials::require_available(
+        self.issue_materials.as_deref(),
+        context,
+        snapshot,
+      )
+      .await?;
+    }
     Ok(
       self
         .store

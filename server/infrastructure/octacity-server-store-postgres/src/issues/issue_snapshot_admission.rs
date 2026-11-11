@@ -16,6 +16,7 @@ pub(crate) async fn require_current(
   request: &AdmitFactoryWork,
   preparation: Option<&ProjectTextPreparation>,
   configuration: &FactoryConfiguration,
+  now: octacity_server_domain::Timestamp,
 ) -> Result<(), StoreError> {
   if configuration.flow().issue_snapshot.is_none()
     && request
@@ -51,6 +52,24 @@ pub(crate) async fn require_current(
     || current.version != snapshot.version
     || current.applicability_version != snapshot.applicability_version
     || definitions.version != snapshot.definition_head.unwrap_or(snapshot.input.definition_version)
+  {
+    return Err(conflict());
+  }
+  let selections: Vec<_> = snapshot
+    .materials
+    .values()
+    .flatten()
+    .map(|entry| &entry.selection)
+    .collect();
+  if selections
+    .iter()
+    .any(|selection| !current.materials.entries().contains(selection))
+  {
+    return Err(conflict());
+  }
+  let references: Vec<_> = selections.into_iter().map(|s| s.reference.clone()).collect();
+  if !super::issue_material::sources_available(connection, snapshot.project_id, snapshot.issue_id, &references, now)
+    .await?
   {
     return Err(conflict());
   }

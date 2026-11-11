@@ -69,7 +69,7 @@ impl IssueDocumentSubmission {
 }
 
 /// Safe metadata of an exact immutable Issue document publication.
-#[derive(Clone, Debug, Eq, PartialEq, Serialize)]
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
 pub struct IssueDocumentResource {
   /// Exact owning Project.
   pub project_id: ProjectId,

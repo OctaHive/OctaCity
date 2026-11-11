@@ -21,6 +21,12 @@ mod size;
 #[path = "issue_execution_snapshot_compatibility.rs"]
 mod compatibility;
 
+#[path = "issue_execution_snapshot_properties.rs"]
+mod properties;
+
+#[path = "issue_execution_snapshot_material_tests.rs"]
+mod materials;
+
 #[test]
 fn manual_issue_snapshot_request_freezes_its_selection_without_a_predecessor_or_run() {
   run_ready(async {

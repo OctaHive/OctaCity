@@ -206,7 +206,8 @@ pub(super) fn management_application(
       management_policy.clone(),
       Arc::new(octacity_server_application::SystemFactoryExecutionClock),
     )
-    .with_repositories(store.clone()),
+    .with_repositories(store.clone())
+    .with_issue_documents(store.clone()),
   );
   let pipeline_commands = authorized_commands(&management_policy, pipelines.clone());
   let configuration_commands = authorized_commands(&management_policy, configurations.clone());
@@ -328,11 +329,21 @@ pub(super) fn management_application(
     management_policy.clone(),
     Arc::new(octacity_server_application::SystemFactoryExecutionClock),
   ));
-  let executions = Arc::new(octacity_server_application::IssueExecutionHandlers::new(
-    store.clone(),
-    store.clone(),
-    management_policy.clone(),
-  ));
+  let material_readers = Arc::new(
+    octacity_server_application::IssueSnapshotMaterialReaders::new(authorized_queries(
+      &management_policy,
+      discussion.clone(),
+    ))
+    .with_documents(
+      authorized_queries(&management_policy, project_documents.clone()),
+      authorized_queries(&management_policy, project_documents.clone()),
+      store.clone(),
+    ),
+  );
+  let executions = Arc::new(
+    octacity_server_application::IssueExecutionHandlers::new(store.clone(), store.clone(), management_policy.clone())
+      .with_materials(material_readers.clone()),
+  );
   let retained_artifacts = Arc::new(
     octacity_server_application::FactoryArtifactReader::new(store.clone(), authoritative_store, object_storage.clone())
       .with_project_inputs(store.clone())
@@ -383,7 +394,8 @@ pub(super) fn management_application(
       management_policy.clone(),
       Arc::new(octacity_server_application::SystemFactoryExecutionClock),
     )
-    .with_repositories(store.clone()),
+    .with_repositories(store.clone())
+    .with_materials(material_readers),
   );
   let super::IssueRuntimeIntegrations {
     sources: issue_sources,

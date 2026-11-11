@@ -8,6 +8,9 @@ use std::collections::BTreeMap;
 #[path = "issue_execution_snapshot_definitions.rs"]
 mod definitions;
 pub use definitions::*;
+#[path = "issue_execution_snapshot_materials.rs"]
+mod materials;
+pub use materials::*;
 
 /// Exact selected values and their interpretation; never a second mutable Issue model.
 #[derive(Clone, Deserialize, Eq, PartialEq, Serialize)]
@@ -46,6 +49,9 @@ pub struct IssueExecutionSnapshot {
   pub attribution: BTreeMap<FactoryKey, IssueClassificationAttribution>,
   /// Explicit optional omissions; missing values are never fabricated defaults.
   pub omissions: BTreeMap<FactoryKey, IssueSnapshotOmission>,
+  /// Exact selected source lineage; material text occurs once in `values`.
+  #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+  pub materials: BTreeMap<FactoryKey, Vec<IssueSnapshotMaterial>>,
 }
 impl std::fmt::Debug for IssueExecutionSnapshot {
   fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {

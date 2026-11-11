@@ -35,6 +35,7 @@ pub struct IssueExecutionPublisher<S, F, B> {
   factory: Arc<F>,
   intake: ProjectTextIntake<F, B>,
   policy: Arc<dyn ManagementAuthorizationPolicy>,
+  materials: Option<Arc<IssueSnapshotMaterialReaders>>,
 }
 impl<S, F: ProjectTextInputStore + 'static, B: ArtifactBytePublisher + ArtifactByteReader>
   IssueExecutionPublisher<S, F, B>
@@ -54,7 +55,14 @@ impl<S, F: ProjectTextInputStore + 'static, B: ArtifactBytePublisher + ArtifactB
       factory,
       intake,
       policy,
+      materials: None,
     }
+  }
+  /// Uses the same independent source readers as the request reviewer.
+  pub fn with_materials(mut self, readers: Arc<IssueSnapshotMaterialReaders>) -> Self {
+    self.intake = self.intake.with_issue_materials(readers.clone());
+    self.materials = Some(readers);
+    self
   }
   /// Installs Project Repository resolution on the shared intake.
   pub fn with_repositories(mut self, repositories: Arc<dyn octacity_server_store::ConfigurationStore>) -> Self {
@@ -184,8 +192,11 @@ impl<
           let configuration = self.factory.factory_admission_context(selected).await?;
           let snapshot = crate::issues::issue_execution_snapshot::select(
             self.issues.as_ref(),
-            self.policy.as_ref(),
-            context,
+            crate::issues::issue_execution_snapshot::IssueSnapshotReadContext {
+              policy: self.policy.as_ref(),
+              context,
+              materials: self.materials.as_deref(),
+            },
             &revision,
             target,
             configuration.configuration.configuration.flow(),

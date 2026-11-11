@@ -55,7 +55,7 @@ impl std::fmt::Debug for ProjectDocumentSubmission {
   }
 }
 /// Published immutable document metadata; selection grants no execution authority.
-#[derive(Clone, Debug, Eq, PartialEq, Serialize)]
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
 pub struct ProjectDocumentResource {
   /// Owning Project.
   pub project_id: ProjectId,

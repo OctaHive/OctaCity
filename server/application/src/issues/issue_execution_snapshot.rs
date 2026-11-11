@@ -4,16 +4,26 @@ use octacity_server_factory::*;
 use octacity_server_store::*;
 use std::collections::BTreeMap;
 
+/// Request-scoped authorization and independently installed body readers.
+pub(crate) struct IssueSnapshotReadContext<'a> {
+  pub policy: &'a dyn ManagementAuthorizationPolicy,
+  pub context: &'a ManagementRequestContext,
+  pub materials: Option<&'a IssueSnapshotMaterialReaders>,
+}
 /// A retained digest permits only an exact pre-format reservation to keep its legacy bytes.
 pub(crate) async fn select(
   store: &impl IssuePropertyStore,
-  policy: &dyn ManagementAuthorizationPolicy,
-  context: &ManagementRequestContext,
+  read: IssueSnapshotReadContext<'_>,
   issue: &IssueRevision,
   target: &IssueExecutionTarget,
   flow: &FactoryFlowConfiguration,
   retained_digest: Option<FactoryDigest>,
 ) -> Result<IssueExecutionSnapshot, ApplicationError> {
+  let IssueSnapshotReadContext {
+    policy,
+    context,
+    materials,
+  } = read;
   let input = flow.issue_snapshot.as_ref().ok_or_else(ApplicationError::invalid)?;
   if target.predecessor_run.is_some() || !issue.content_available {
     return Err(FactoryValidationDiagnostics::invalid("/issue_snapshot"));
@@ -65,6 +75,7 @@ pub(crate) async fn select(
     values: BTreeMap::new(),
     attribution: BTreeMap::new(),
     omissions: BTreeMap::new(),
+    materials: BTreeMap::new(),
   };
   for (alias, selection, (value, field)) in selected {
     let Some(value) = value else {
@@ -137,15 +148,10 @@ pub(crate) async fn select(
     }
   }
 
-  // Material/evidence readers are independent capabilities. Until configured, a
-  // required selection blocks; optional selections retain an explicit omission.
-  for (alias, required) in input
-    .materials
-    .iter()
-    .map(|(a, s)| (a, s.required))
-    .chain(input.evidence.iter().map(|(a, s)| (a, s.required)))
-  {
-    if required {
+  crate::issues::issue_execution_snapshot_materials::freeze(materials, context, issue, &mut snapshot).await?;
+  // Evidence remains independently qualified, never inferred from selected prose.
+  for (alias, selection) in &input.evidence {
+    if selection.required {
       return Err(FactoryValidationDiagnostics::unavailable(format!(
         "/issue_snapshot/{alias}"
       )));
@@ -154,16 +160,6 @@ pub(crate) async fn select(
       .omissions
       .insert(alias.clone(), IssueSnapshotOmission::Unavailable);
   }
-  let schema = flow
-    .data_schemas
-    .iter()
-    .find(|s| s.reference() == &input.schema)
-    .ok_or_else(ApplicationError::invalid)?;
-  FlowPayload::new(
-    schema,
-    serde_json::to_value(&snapshot.values).map_err(|_| ApplicationError::invalid())?,
-  )
-  .map_err(|_| FactoryValidationDiagnostics::invalid("/issue_snapshot/fields"))?;
   references.extend(snapshot.attribution.values().map(|assessment| assessment.field.clone()));
   for (&version, definition) in &definitions {
     if version == input.definition_version
@@ -188,31 +184,49 @@ pub(crate) async fn select(
       })
     })
     .transpose()?;
-  let digest = snapshot.digest()?;
   if let Some(expected) = retained_digest
-    && digest != expected
+    && !matches_reviewed_digest(&mut snapshot, expected)
   {
     // The earlier compact format did not seal a reviewed catalog head.
     snapshot.definition_head = None;
-    if snapshot.digest()? == expected {
-      return Ok(snapshot);
-    }
-    // An existing reservation may predate the fragment format. All readiness
-    // checks above still apply; only its exact already-sealed legacy bytes qualify.
-    snapshot.definitions = definitions
-      .into_iter()
-      .map(|(version, catalog)| (version, IssueSnapshotDefinitions::Legacy(catalog)))
-      .collect();
-    if snapshot.digest()? != expected {
-      return Err(
-        StoreError::Conflict {
-          entity: octacity_server_domain::EntityKind::Issue,
-        }
-        .into(),
-      );
+    if !matches_reviewed_digest(&mut snapshot, expected) {
+      // An existing reservation may predate the fragment format. All readiness
+      // checks above still apply; only its exact already-sealed legacy bytes qualify.
+      snapshot.definitions = definitions
+        .into_iter()
+        .map(|(version, catalog)| (version, IssueSnapshotDefinitions::Legacy(catalog)))
+        .collect();
+      if !matches_reviewed_digest(&mut snapshot, expected) {
+        return Err(
+          StoreError::Conflict {
+            entity: octacity_server_domain::EntityKind::Issue,
+          }
+          .into(),
+        );
+      }
     }
   }
+  // Validate the selected reviewed projection, not newly available text that its
+  // original receipt omitted. New requests still validate their complete payload.
+  let schema = flow
+    .data_schemas
+    .iter()
+    .find(|s| s.reference() == &input.schema)
+    .ok_or_else(ApplicationError::invalid)?;
+  FlowPayload::new(
+    schema,
+    serde_json::to_value(&snapshot.values).map_err(|_| ApplicationError::invalid())?,
+  )
+  .map_err(|_| FactoryValidationDiagnostics::invalid("/issue_snapshot/fields"))?;
+  snapshot.digest()?;
   Ok(snapshot)
+}
+
+/// A bounded candidate must match the sealed digest; only then may omissions be restored.
+/// An oversized new encoding is not a match, but must not prevent trying older formats.
+fn matches_reviewed_digest(snapshot: &mut IssueExecutionSnapshot, expected: FactoryDigest) -> bool {
+  crate::issues::issue_execution_snapshot_materials::restore_reviewed_omissions(snapshot, expected)
+    || snapshot.digest().is_ok_and(|digest| digest == expected)
 }
 
 // A value assessed as risk cannot become reproduction merely because an older

@@ -81,7 +81,45 @@ async fn validate_sources(connection: &mut sqlx::PgConnection, request: &EditIss
     operation: StoreOperation::EditIssueMaterials,
     source: StoreInputError::InvalidIssue,
   };
-  for reference in &request.intent.references {
+  if !sources_available(
+    connection,
+    request.intent.project_id,
+    request.intent.id,
+    &request.intent.references,
+    request.edited_at,
+  )
+  .await?
+  {
+    return Err(invalid());
+  }
+  Ok(())
+}
+
+/// Called under the Project/Issue fences. Document rows remain share-locked
+/// through the caller's selection or admission commit, excluding body cleanup.
+pub(crate) async fn sources_available(
+  connection: &mut sqlx::PgConnection,
+  project: octacity_server_domain::ProjectId,
+  issue: octacity_server_domain::IssueId,
+  references: &[IssueMaterialReference],
+  now: octacity_server_domain::Timestamp,
+) -> Result<bool, StoreError> {
+  if references.len() > MAX_ISSUE_MATERIALS {
+    return Ok(false);
+  }
+  for reference in references {
+    let same_owner = match reference {
+      IssueMaterialReference::Comment {
+        project_id, issue_id, ..
+      }
+      | IssueMaterialReference::IssueDocument {
+        project_id, issue_id, ..
+      } => *project_id == project && *issue_id == issue,
+      IssueMaterialReference::ProjectDocument { project_id, .. } => *project_id == project,
+    };
+    if !same_owner {
+      return Ok(false);
+    }
     let (owner, artifact, mapping) = match reference {
       IssueMaterialReference::Comment {
         comment_id,
@@ -91,14 +129,14 @@ async fn validate_sources(connection: &mut sqlx::PgConnection, request: &EditIss
         let metadata: Option<Json<IssueCommentMetadata>> = sqlx::query_scalar(
           "SELECT metadata FROM issue_comments WHERE project_id=$1 AND issue_id=$2 AND id=$3 AND body IS NOT NULL",
         )
-        .bind(request.intent.project_id.as_uuid())
-        .bind(request.intent.id.as_uuid())
+        .bind(project.as_uuid())
+        .bind(issue.as_uuid())
         .bind(comment_id.as_uuid())
         .fetch_optional(&mut *connection)
         .await
         .map_err(unavailable)?;
         if metadata.is_none_or(|Json(comment)| comment.body_digest != *body_digest) {
-          return Err(invalid());
+          return Ok(false);
         }
         continue;
       }
@@ -117,17 +155,17 @@ async fn validate_sources(connection: &mut sqlx::PgConnection, request: &EditIss
          AND p.document->'intent'->>'mapping'=$4 AND p.document->>'published_at' IS NOT NULL \
          AND (p.document->>'expires_at')::bigint>$5 FOR SHARE OF p,o",
     )
-    .bind(request.intent.project_id.as_uuid())
+    .bind(project.as_uuid())
     .bind(owner.map(|id| id.as_uuid()))
     .bind(artifact.artifact_id().as_uuid())
     .bind(mapping)
-    .bind(request.edited_at.unix_millis())
+    .bind(now.unix_millis())
     .fetch_optional(&mut *connection)
     .await
     .map_err(unavailable)?;
     if retained.is_none_or(|Json(retained)| retained != *artifact) {
-      return Err(invalid());
+      return Ok(false);
     }
   }
-  Ok(())
+  Ok(true)
 }

@@ -58,11 +58,22 @@ pub struct IssueExecutionHandlers<S, F> {
   store: Arc<S>,
   factory: Arc<F>,
   policy: Arc<dyn ManagementAuthorizationPolicy>,
+  materials: Option<Arc<IssueSnapshotMaterialReaders>>,
 }
 impl<S, F> IssueExecutionHandlers<S, F> {
   /// Keeps optional execution dependencies outside manual Issue handlers.
   pub fn new(store: Arc<S>, factory: Arc<F>, policy: Arc<dyn ManagementAuthorizationPolicy>) -> Self {
-    Self { store, factory, policy }
+    Self {
+      store,
+      factory,
+      policy,
+      materials: None,
+    }
+  }
+  /// Installs independently authorized source readers; absence keeps materials unavailable.
+  pub fn with_materials(mut self, readers: Arc<IssueSnapshotMaterialReaders>) -> Self {
+    self.materials = Some(readers);
+    self
   }
 }
 #[async_trait::async_trait]
@@ -162,8 +173,11 @@ impl<
       Some(
         crate::issues::issue_execution_snapshot::select(
           self.store.as_ref(),
-          self.policy.as_ref(),
-          context,
+          crate::issues::issue_execution_snapshot::IssueSnapshotReadContext {
+            policy: self.policy.as_ref(),
+            context,
+            materials: self.materials.as_deref(),
+          },
           &issue,
           target,
           selected.configuration.configuration.flow(),

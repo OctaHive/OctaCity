@@ -42,8 +42,6 @@ pub(super) fn snapshot_flow() -> FactoryFlowConfiguration {
 pub(super) fn snapshot_flow_with_fields<const N: usize>(
   fields: [(&str, FlowIssueFieldSource); N],
 ) -> FactoryFlowConfiguration {
-  let fixture = postgres::factory_configuration::fixture(ProjectId::generate());
-  let flow = fixture.draft.flow.unwrap();
   let schema = FlowDataSchema::new(
     "issue.snapshot".parse().unwrap(),
     "v1".parse().unwrap(),
@@ -63,6 +61,33 @@ pub(super) fn snapshot_flow_with_fields<const N: usize>(
     },
   )
   .unwrap();
+  let input = FlowIssueSnapshotInput {
+    admission: None,
+    version: 1,
+    schema: schema.reference().clone(),
+    definition_version: 0,
+    fields: fields
+      .into_iter()
+      .map(|(name, source)| {
+        (
+          name.parse().unwrap(),
+          FlowIssueFieldSelection { source, required: true },
+        )
+      })
+      .collect(),
+    materials: Default::default(),
+    evidence: Default::default(),
+  };
+  snapshot_flow_with_input(input, schema)
+}
+
+/// Shares graph construction for scalar-only and explicit material input contracts.
+pub(super) fn snapshot_flow_with_input(
+  input: FlowIssueSnapshotInput,
+  schema: FlowDataSchema,
+) -> FactoryFlowConfiguration {
+  let fixture = postgres::factory_configuration::fixture(ProjectId::generate());
+  let flow = fixture.draft.flow.unwrap();
   let mut schemas = flow.data_schemas.clone();
   schemas.push(schema.clone());
   let root = flow.closure.definition(flow.closure.root()).unwrap();
@@ -104,23 +129,7 @@ pub(super) fn snapshot_flow_with_fields<const N: usize>(
   let closure = PinnedFlowDefinitionClosure::new(definition.reference(), vec![definition]).unwrap();
   FactoryFlowConfiguration::new(closure, flow.limits, schemas, flow.pools)
     .unwrap()
-    .with_issue_snapshot(FlowIssueSnapshotInput {
-      admission: None,
-      version: 1,
-      schema: schema.reference().clone(),
-      definition_version: 0,
-      fields: fields
-        .into_iter()
-        .map(|(name, source)| {
-          (
-            name.parse().unwrap(),
-            FlowIssueFieldSelection { source, required: true },
-          )
-        })
-        .collect(),
-      materials: Default::default(),
-      evidence: Default::default(),
-    })
+    .with_issue_snapshot(input)
     .unwrap()
 }
 
@@ -129,11 +138,22 @@ pub(super) async fn snapshot_request(
   issue: &IssueRevision,
   submission: &ProjectTextSubmission,
 ) -> IssueExecutionRequest {
+  snapshot_request_with_materials(store, issue, submission, None).await
+}
+
+pub(super) async fn snapshot_request_with_materials(
+  store: Arc<PostgresStore>,
+  issue: &IssueRevision,
+  submission: &ProjectTextSubmission,
+  readers: Option<Arc<IssueSnapshotMaterialReaders>>,
+) -> IssueExecutionRequest {
   let policy = Arc::new(TrustedNetworkManagementPolicy);
-  let requests = AuthorizedCommandHandler::new(
-    policy.clone(),
-    Arc::new(IssueExecutionHandlers::new(store.clone(), store, policy)),
-  );
+  let handler = IssueExecutionHandlers::new(store.clone(), store, policy.clone());
+  let handler = match readers {
+    Some(readers) => handler.with_materials(readers),
+    None => handler,
+  };
+  let requests = AuthorizedCommandHandler::new(policy, Arc::new(handler));
   requests
     .handle_command(
       &context(),

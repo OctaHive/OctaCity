@@ -82,10 +82,6 @@ pub(super) fn snapshot_configuration_with_text_fields(
   definition_version: u64,
   fields: std::collections::BTreeMap<FactoryKey, FlowIssueFieldSelection>,
 ) -> FactoryConfiguration {
-  use crate::factory::admission::tests::factory_admission_tests::{configuration, configuration_with_flow};
-  let ordinary = configuration(project, id);
-  let original = ordinary.flow();
-  let root = original.closure.definition(original.closure.root()).unwrap();
   let shape = FlowValueSchema::Object {
     fields: fields
       .iter()
@@ -105,6 +101,21 @@ pub(super) fn snapshot_configuration_with_text_fields(
       })
       .collect(),
   };
+  snapshot_configuration_with_schema(project, id, definition_version, fields, shape)
+}
+
+/// Uses ordinary scalar consumer schemas; Project catalog bounds remain authoritative.
+pub(super) fn snapshot_configuration_with_schema(
+  project: ProjectId,
+  id: FactoryConfigurationId,
+  definition_version: u64,
+  fields: std::collections::BTreeMap<FactoryKey, FlowIssueFieldSelection>,
+  shape: FlowValueSchema,
+) -> FactoryConfiguration {
+  use crate::factory::admission::tests::factory_admission_tests::{configuration, configuration_with_flow};
+  let ordinary = configuration(project, id);
+  let original = ordinary.flow();
+  let root = original.closure.definition(original.closure.root()).unwrap();
   let schema = FlowDataSchema::new("issue.snapshot".parse().unwrap(), "v1".parse().unwrap(), shape).unwrap();
   let mut nodes = root.nodes().to_vec();
   let index = nodes.iter().position(|node| node.key() == root.entry()).unwrap();

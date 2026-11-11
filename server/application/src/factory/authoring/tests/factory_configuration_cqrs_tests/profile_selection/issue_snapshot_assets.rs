@@ -137,3 +137,25 @@ fn flow_publication_validates_explicit_material_and_evidence_selections() {
     );
   });
 }
+
+#[test]
+fn flow_publication_accepts_the_exact_combined_32_entry_and_one_mib_material_budget() {
+  run_ready(async {
+    let project = ProjectId::generate();
+    let (fixture, mut wire) = asset_draft(project);
+    for alias in ["notes", "more_notes"] {
+      wire["issue_snapshot"]["materials"][alias] = serde_json::json!({
+        "source":{"kind":"selected","max_entries":16},
+        "required":false,"max_bytes":524288
+      });
+    }
+    let expected = wire["issue_snapshot"]["materials"].clone();
+    let published = publish(project, fixture, wire, Some(properties(project).await))
+      .await
+      .unwrap();
+    assert_eq!(
+      serde_json::to_value(published).unwrap()["issue_snapshot"]["materials"],
+      expected
+    );
+  });
+}

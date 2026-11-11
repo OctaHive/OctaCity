@@ -249,6 +249,7 @@ async fn admit_once(
     &request,
     project_preparation.as_ref(),
     &configuration,
+    project_guard.as_ref().map_or(request.admitted_at, |guard| guard.now),
   )
   .await?;
   let active: i64 = sqlx::query_scalar(
