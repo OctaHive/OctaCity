@@ -54,6 +54,7 @@ impl<T: ProjectStore + IssueStore> ProjectStoreIssue for T {}
 
 fn request(issue: &IssueRevision) -> RequestIssueExecution {
   RequestIssueExecution {
+    admission_classification: None,
     snapshot_digest: None,
     id: IssueExecutionRequestId::generate(),
     intent: RequestIssueExecutionIntent {

@@ -31,6 +31,13 @@ pub struct IssueExecutionSnapshot {
   pub acceptance_digest: FactoryDigest,
   /// Exact consumer contract, including required/optional selection and schema identity.
   pub input: FlowIssueSnapshotInput,
+  /// Catalog head observed during review; a concurrent publication requires fresh review.
+  /// Absent only on retained snapshots created before the admission fence.
+  #[serde(default, skip_serializing_if = "Option::is_none")]
+  pub definition_head: Option<u64>,
+  /// Exact policy result sealed with this snapshot; absent on older explicit-classification contracts.
+  #[serde(default, skip_serializing_if = "Option::is_none")]
+  pub admission_classification: Option<octacity_server_factory::WorkClassification>,
   /// Selected declarations and original publication pins used to interpret values and origins.
   pub definitions: BTreeMap<u64, IssueSnapshotDefinitions>,
   /// Only explicitly selected canonical scalar/dependency values, under consumer aliases.
@@ -57,6 +64,55 @@ pub enum IssueSnapshotOmission {
   Inapplicable,
 }
 impl IssueExecutionSnapshot {
+  /// Binds the complete retained selection and payload to the ordinary prepared admission.
+  /// Matching a caller-supplied digest alone does not establish payload integrity.
+  pub fn validate_prepared_admission(
+    &self,
+    preparation: &ProjectTextPreparation,
+    request: &AdmitFactoryWork,
+  ) -> Result<(), StoreError> {
+    let schema = request
+      .flow
+      .data_schema(&self.input.schema)
+      .ok_or_else(snapshot_conflict)?;
+    let target = &preparation.intent.target;
+    let classification = self
+      .input
+      .admission
+      .as_ref()
+      .map(|policy| policy.classify(&self.values).map_err(|_| snapshot_conflict()))
+      .transpose()?;
+    if classification != self.admission_classification
+      || classification.as_ref().is_some_and(|expected| {
+        expected != &preparation.intent.classification
+          || expected.priority() != request.work.priority()
+          || expected.risk() != request.work.risk()
+          || expected.metadata() != request.work.metadata()
+      })
+      || Some(self.digest()?) != preparation.intent.snapshot_digest
+      || self.project_id != target.project_id
+      || self.target.configuration_id != target.configuration_id
+      || self.target.configuration_version != target.configuration_version
+      || Some(self.target.repository_id) != target.repository_id
+      || Some(self.target.repository_version) != target.repository_version
+      || self.target.source != preparation.intent.source
+      || self.target.predecessor_run.is_some()
+      || request.incoming.as_ref() != Some(&self.incoming(&request.work, &request.flow, schema)?)
+      || self
+        .incompatible_subject_field(&octacity_server_factory::FactoryTaskSubject::Exact(
+          request
+            .work
+            .subject()
+            .repository()
+            .map_err(|_| snapshot_conflict())?
+            .clone(),
+        ))
+        .is_some()
+    {
+      return Err(snapshot_conflict());
+    }
+    Ok(())
+  }
   /// Identifies the first selected assessment tied to another exact code subject.
   /// Fields with no code dependency remain applicable without inventing a subject pin.
   pub fn incompatible_subject_field(
@@ -107,6 +163,11 @@ impl IssueExecutionSnapshot {
       return Err(invalid_snapshot());
     }
     Ok(FactoryDigest::content_sha256(&bytes))
+  }
+}
+fn snapshot_conflict() -> StoreError {
+  StoreError::Conflict {
+    entity: octacity_server_domain::EntityKind::Issue,
   }
 }
 fn invalid_snapshot() -> StoreError {

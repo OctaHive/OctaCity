@@ -1,6 +1,8 @@
 //! Snapshot publication uses ordinary Project definitions and explicit Incoming projections.
 use super::*;
 use octacity_server_store::testing::{InMemoryProjectStore, management_mutation};
+#[path = "issue_snapshot_policy.rs"]
+mod admission_policy;
 #[path = "issue_snapshot_assets.rs"]
 mod assets;
 #[path = "issue_snapshot_fields.rs"]

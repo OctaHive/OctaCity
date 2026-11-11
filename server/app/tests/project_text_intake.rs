@@ -16,9 +16,13 @@ use std::sync::{
   Arc,
   atomic::{AtomicBool, AtomicI64, AtomicUsize, Ordering},
 };
+#[path = "project_text_intake/issue_snapshot_races.rs"]
+mod issue_snapshot_races;
 #[allow(dead_code)]
 #[path = "../../infrastructure/octacity-server-store-postgres/tests/support/mod.rs"]
 mod postgres;
+#[path = "project_text_intake/publication_crash.rs"]
+mod publication_crash;
 #[path = "project_text_intake/status_actions.rs"]
 mod status_actions;
 fn at(n: i64) -> Timestamp {
@@ -311,6 +315,7 @@ async fn reviewed_request(
 ) -> IssueExecutionRequest {
   store
     .request_issue_execution(management_mutation(RequestIssueExecution {
+      admission_classification: None,
       snapshot_digest: None,
       id: IssueExecutionRequestId::generate(),
       intent: RequestIssueExecutionIntent {
@@ -457,17 +462,6 @@ async fn crash_child() {
 #[tokio::test]
 #[ignore = "requires an explicitly configured disposable PostgreSQL service"]
 async fn killed_publishers_resume_at_byte_publication_admission_and_association_boundaries() {
-  use std::{
-    process::{Command, Stdio},
-    time::Duration,
-  };
-  struct Child(std::process::Child);
-  impl Drop for Child {
-    fn drop(&mut self) {
-      let _ = self.0.kill();
-      let _ = self.0.wait();
-    }
-  }
   for stage in ["first-byte", "both-bytes", "published", "admitted", "associated"] {
     let database = postgres::TestDatabase::migrated().await;
     let store = Arc::new(PostgresStore::new(database.pool.clone()));
@@ -475,77 +469,7 @@ async fn killed_publishers_resume_at_byte_publication_admission_and_association_
     let request = reviewed_request(&store, &issue, &submission).await;
     let directory = tempfile::tempdir().unwrap();
     let root = directory.path();
-    let url = std::env::var("OCTACITY_POSTGRES_URL").unwrap();
-    let (base, _) = url.rsplit_once('/').unwrap();
-    let url = format!("{base}/{}", database.name);
-    let spec = root.join("child.json");
-    std::fs::write(&spec,serde_json::to_vec(&serde_json::json!({"database":url,"submission":submission,"issue_id":issue.id,"request_id":request.id,"root":root,"pause_after":match stage {"first-byte"=>1,"both-bytes"=>2,_=>0}})).unwrap()).unwrap();
-    let mut barrier = database.pool.begin().await.unwrap();
-    match stage {
-      "published" => {
-        sqlx::query("LOCK TABLE factory_work_envelopes IN SHARE MODE")
-          .execute(&mut *barrier)
-          .await
-          .unwrap();
-      }
-      "admitted" => {
-        sqlx::query("LOCK TABLE issue_work_associations IN SHARE MODE")
-          .execute(&mut *barrier)
-          .await
-          .unwrap();
-      }
-      _ => {}
-    }
-    let mut child = Child(
-      Command::new(std::env::current_exe().unwrap())
-        .args(["--exact", "crash_child", "--ignored", "--nocapture"])
-        .env("OCTACITY_WORK_CARD_CRASH", &spec)
-        .stdout(Stdio::null())
-        .stderr(Stdio::piped())
-        .spawn()
-        .unwrap(),
-    );
-    let retained = tokio::time::timeout(Duration::from_secs(15), async {
-      loop {
-        if let Some(record) = store
-          .project_text_preparation(
-            issue.project_id,
-            &ManagementSecurityScope::trusted_network(),
-            &request.admission_key(),
-          )
-          .await
-          .unwrap()
-        {
-          let ready = match stage {
-            "first-byte" | "both-bytes" => root.join("paused").exists(),
-            "published" => record.published_at.is_some(),
-            "admitted" => record.admission.is_some(),
-            "associated" => store
-              .issue_execution(issue.project_id, issue.id, request.id)
-              .await
-              .unwrap()
-              .association
-              .is_some(),
-            _ => false,
-          };
-          if ready {
-            break record;
-          }
-        }
-        assert!(
-          child.0.try_wait().unwrap().is_none(),
-          "child exited before crash boundary {stage}"
-        );
-        tokio::time::sleep(Duration::from_millis(10)).await;
-      }
-    })
-    .await
-    .expect("child reaches retained crash boundary");
-    if stage != "associated" {
-      child.0.kill().unwrap();
-    }
-    child.0.wait().unwrap();
-    barrier.rollback().await.unwrap();
+    let retained = publication_crash::crash_at(&database, &store, &issue, &submission, &request, root, stage).await;
     let pending = store
       .issue_execution(issue.project_id, issue.id, request.id)
       .await

@@ -48,6 +48,7 @@ pub(crate) async fn select(
   }
   let review = issue.review_classification(&catalog, &definitions, None, issue.updated_at);
   let mut snapshot = IssueExecutionSnapshot {
+    admission_classification: None,
     project_id: issue.project_id,
     issue_id: issue.id,
     version: issue.version,
@@ -59,6 +60,7 @@ pub(crate) async fn select(
       issue.content.acceptance.as_deref().unwrap_or_default().as_bytes(),
     ),
     input: input.clone(),
+    definition_head: Some(store.issue_properties(issue.project_id, None).await?.version),
     definitions: BTreeMap::new(),
     values: BTreeMap::new(),
     attribution: BTreeMap::new(),
@@ -174,10 +176,27 @@ pub(crate) async fn select(
         .insert(version, IssueSnapshotDefinitions::selected(definition, &references)?);
     }
   }
+  snapshot.admission_classification = input
+    .admission
+    .as_ref()
+    .map(|policy| {
+      policy.classify(&snapshot.values).map_err(|field| {
+        FactoryValidationDiagnostics::unavailable_with_code(
+          format!("/issue_snapshot/admission/{field}"),
+          "issue_snapshot_policy_ineligible",
+        )
+      })
+    })
+    .transpose()?;
   let digest = snapshot.digest()?;
   if let Some(expected) = retained_digest
     && digest != expected
   {
+    // The earlier compact format did not seal a reviewed catalog head.
+    snapshot.definition_head = None;
+    if snapshot.digest()? == expected {
+      return Ok(snapshot);
+    }
     // An existing reservation may predate the fragment format. All readiness
     // checks above still apply; only its exact already-sealed legacy bytes qualify.
     snapshot.definitions = definitions
@@ -185,7 +204,12 @@ pub(crate) async fn select(
       .map(|(version, catalog)| (version, IssueSnapshotDefinitions::Legacy(catalog)))
       .collect();
     if snapshot.digest()? != expected {
-      return Err(ApplicationError::invalid());
+      return Err(
+        StoreError::Conflict {
+          entity: octacity_server_domain::EntityKind::Issue,
+        }
+        .into(),
+      );
     }
   }
   Ok(snapshot)

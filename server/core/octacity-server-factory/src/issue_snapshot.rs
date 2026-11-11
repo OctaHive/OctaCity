@@ -13,6 +13,10 @@ pub struct FlowIssueSnapshotInput {
   pub schema: ImmutableReference,
   /// Exact Project definition publication, including zero for the default catalog.
   pub definition_version: u64,
+  /// Optional exact scheduling/readiness mapping, pinned by this Flow publication.
+  /// Absent on earlier contracts retaining explicit operator classification.
+  #[serde(default, skip_serializing_if = "Option::is_none")]
+  pub admission: Option<FlowIssueAdmissionPolicy>,
   /// Named field projections; keys address top-level fields in the Incoming schema.
   pub fields: BTreeMap<FactoryKey, FlowIssueFieldSelection>,
   /// Explicit text selections, empty unless the author opts in.
@@ -162,4 +166,62 @@ pub struct FlowIssueEvidenceSelection {
   pub required: bool,
   /// Inclusive reference count ceiling; no report bytes are projected.
   pub maximum: u16,
+}
+
+/// Deterministic admission rules over selected canonical classification, never model output.
+/// Missing mappings deny admission; there is no inferred numeric priority or risk default.
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(deny_unknown_fields)]
+pub struct FlowIssueAdmissionPolicy {
+  /// Explicit translation of Project priority choice IDs to Work scheduling priorities.
+  pub priority: FlowIssueAdmissionMapping<crate::WorkPriority>,
+  /// Explicit translation of an assessed classification field to admission risk.
+  pub risk: FlowIssueAdmissionMapping<crate::RiskClass>,
+  /// Additional exact choice allowlists; all must match after applicability/evidence checks.
+  #[serde(default)]
+  pub allowed: BTreeMap<FactoryKey, std::collections::BTreeSet<String>>,
+}
+/// A finite mapping under a declared field alias; vocabularies remain Project-owned.
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(deny_unknown_fields)]
+pub struct FlowIssueAdmissionMapping<T> {
+  /// Required selected classification field, not a path into arbitrary metadata.
+  pub field: FactoryKey,
+  /// Explicit supported choices only; unmapped choices block admission.
+  pub values: BTreeMap<String, T>,
+}
+impl FlowIssueAdmissionPolicy {
+  /// Maps already qualified selected data. This neither grants execution authority
+  /// nor replaces the independent launch, access, evidence and code-subject checks.
+  pub fn classify(
+    &self,
+    values: &BTreeMap<FactoryKey, serde_json::Value>,
+  ) -> Result<crate::WorkClassification, FactoryKey> {
+    for (field, allowed) in &self.allowed {
+      if !values
+        .get(field)
+        .and_then(serde_json::Value::as_str)
+        .is_some_and(|v| allowed.contains(v))
+      {
+        return Err(field.clone());
+      }
+    }
+    let priority = mapped(&self.priority, values)?;
+    let risk = mapped(&self.risk, values)?;
+    Ok(crate::WorkClassification::new(
+      *priority,
+      *risk,
+      crate::FactoryMetadata::default(),
+    ))
+  }
+}
+fn mapped<'a, T>(
+  mapping: &'a FlowIssueAdmissionMapping<T>,
+  values: &BTreeMap<FactoryKey, serde_json::Value>,
+) -> Result<&'a T, FactoryKey> {
+  values
+    .get(&mapping.field)
+    .and_then(serde_json::Value::as_str)
+    .and_then(|v| mapping.values.get(v))
+    .ok_or_else(|| mapping.field.clone())
 }

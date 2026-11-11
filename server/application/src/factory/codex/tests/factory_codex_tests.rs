@@ -2242,3 +2242,6 @@ fn capture_observations_require_the_exact_installed_report_contract_without_mode
     );
   }
 }
+
+#[path = "factory_issue_snapshot_context_tests.rs"]
+pub(crate) mod issue_snapshot_context;

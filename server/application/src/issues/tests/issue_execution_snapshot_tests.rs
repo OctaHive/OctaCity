@@ -1,5 +1,8 @@
 //! A manual Issue supplies snapshot data without a producing execution.
 use super::*;
+
+#[path = "issue_execution_snapshot_policy_tests.rs"]
+mod policy;
 use octacity_server_factory::*;
 
 #[path = "issue_execution_snapshot_fixture.rs"]

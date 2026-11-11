@@ -109,6 +109,7 @@ impl<
     let request = crate::management_security::audited_mutation(
       context,
       RequestIssueExecution {
+        admission_classification: None,
         snapshot_digest: None,
         id: octacity_server_domain::IssueExecutionRequestId::generate(),
         intent: command.intent,
@@ -148,7 +149,7 @@ impl<
       )
       .await?;
     }
-    let snapshot_digest = if selected.configuration.configuration.flow().issue_snapshot.is_some() {
+    let snapshot = if selected.configuration.configuration.flow().issue_snapshot.is_some() {
       let issue = self.store.issue(intent.project_id, intent.issue_id, None).await?;
       if issue.version != intent.expected_version {
         return Err(
@@ -168,8 +169,7 @@ impl<
           selected.configuration.configuration.flow(),
           None,
         )
-        .await?
-        .digest()?,
+        .await?,
       )
     } else {
       None
@@ -203,7 +203,8 @@ impl<
     )
     .map_err(|_| ApplicationError::InvalidInput)?;
     let mutation = RequestIssueExecution {
-      snapshot_digest,
+      admission_classification: snapshot.as_ref().and_then(|s| s.admission_classification.clone()),
+      snapshot_digest: snapshot.as_ref().map(|s| s.digest()).transpose()?,
       ..request.mutation().clone()
     };
     Ok(

@@ -54,6 +54,7 @@ async fn journal_runtime_reads_original_pending_request_after_restart_without_pr
   // must neither publish inputs nor require a configured Factory or provider.
   store
     .request_issue_execution(management_mutation(RequestIssueExecution {
+      admission_classification: None,
       snapshot_digest: None,
       id: request_id,
       intent: RequestIssueExecutionIntent {

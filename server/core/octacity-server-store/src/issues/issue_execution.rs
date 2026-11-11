@@ -45,7 +45,8 @@ pub struct RequestIssueExecutionIntent {
   pub expected_version: IssueVersion,
   /// Frozen target, source policy and text selection.
   pub target: IssueExecutionTarget,
-  /// Reviewed ordinary admission classification; absent only in legacy reservations.
+  /// Explicit classification for contracts without an Issue admission mapping.
+  /// Policy-driven snapshot requests use the server-derived result instead.
   #[serde(default, skip_serializing_if = "Option::is_none")]
   pub classification: Option<octacity_server_factory::WorkClassification>,
 }
@@ -54,6 +55,8 @@ pub struct RequestIssueExecutionIntent {
 pub struct RequestIssueExecution {
   /// Server-resolved selection identity; never supplied by the management caller.
   pub snapshot_digest: Option<FactoryDigest>,
+  /// Server-derived pinned policy result; never part of caller intent or replay identity.
+  pub admission_classification: Option<octacity_server_factory::WorkClassification>,
   /// Generated logical identity, excluded from replay equivalence.
   pub id: octacity_server_domain::IssueExecutionRequestId,
   /// Original reviewed intent.
@@ -87,6 +90,9 @@ pub struct IssueExecutionRequest {
   /// Immutable producer-independent Issue input, absent on legacy requests.
   #[serde(default, skip_serializing_if = "Option::is_none")]
   pub snapshot_digest: Option<FactoryDigest>,
+  /// Original scheduling result from the pinned Issue policy, retained after input-body retirement.
+  #[serde(default, skip_serializing_if = "Option::is_none")]
+  pub admission_classification: Option<octacity_server_factory::WorkClassification>,
   /// Stable server-generated request identity.
   pub id: octacity_server_domain::IssueExecutionRequestId,
   /// Exact Issue revision and reviewed target; never implicitly latest.
@@ -183,6 +189,13 @@ impl IssueExecutionMapping {
   }
 }
 impl IssueExecutionRequest {
+  /// Uses the original policy result when present; legacy requests retain their reviewed classification.
+  pub fn effective_classification(&self) -> Option<&octacity_server_factory::WorkClassification> {
+    self
+      .admission_classification
+      .as_ref()
+      .or(self.intent.classification.as_ref())
+  }
   /// Stable ordinary manual Work identity, distinct for each intentional request.
   pub fn external_identity(&self) -> octacity_server_factory::ExternalWorkIdentity {
     octacity_server_factory::ExternalWorkIdentity::new(format!("issue-execution/{}", self.id))
@@ -233,7 +246,7 @@ impl AssociateIssueWork {
       if r.intent.project_id != self.project_id
         || r.intent.issue_id != self.issue_id
         || admission.work.external_identity() != &r.external_identity()
-        || r.intent.classification.as_ref().is_some_and(|reviewed| {
+        || r.effective_classification().is_some_and(|reviewed| {
           reviewed.priority() != admission.work.priority()
             || reviewed.risk() != admission.work.risk()
             || reviewed.metadata() != admission.work.metadata()
@@ -295,6 +308,7 @@ impl RequestIssueExecution {
       disposition: MutationDisposition::Applied,
       request: IssueExecutionRequest {
         snapshot_digest: self.snapshot_digest,
+        admission_classification: self.admission_classification.clone(),
         id: self.id,
         task_digest: octacity_server_factory::FactoryDigest::content_sha256(&task),
         task_size: task.len() as u64,

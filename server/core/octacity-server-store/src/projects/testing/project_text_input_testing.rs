@@ -175,6 +175,12 @@ impl ProjectTextInputStore for crate::testing::InMemoryFactoryConfigurationStore
       .ok_or_else(project_text_conflict)?
       .work()?
       .validate_admission(&guard, &request)?;
+    if let Some(RetainedProjectInputBody::Work(documents)) = state.project_text.documents.get(&guard.id)
+      && let Some(snapshot) = documents.issue_snapshot()
+    {
+      let preparation = state.project_text.records[&guard.id].work()?;
+      snapshot.validate_prepared_admission(preparation, request.mutation())?;
+    }
     let outcome = crate::factory::authoring::testing::factory_configuration_testing::admit_factory_work_locked(
       &mut state, request,
     )?;

@@ -59,6 +59,9 @@ pub(crate) async fn resolve(
       compatible(targets, alias, selection.required, producer, &field)?,
     );
   }
+  if let Some(policy) = &input.admission {
+    validate_admission_policy(input, policy, &catalog)?;
+  }
   let mut identities = std::collections::BTreeSet::new();
   let mut total_entries = 0;
   let mut total_bytes = 0;
@@ -291,4 +294,58 @@ fn compatible(
   } else {
     FlowFieldSchema::optional(producer)
   })
+}
+
+// Policy aliases must name required canonical classification, not arbitrary prose or
+// an editable ordinary `accepted` property. Catalogs remain the choice/type owner.
+fn validate_admission_policy(
+  input: &FlowIssueSnapshotInput,
+  policy: &FlowIssueAdmissionPolicy,
+  catalog: &PublishedIssueProperties,
+) -> Result<(), ApplicationError> {
+  let invalid = || FactoryValidationDiagnostics::invalid("/issue_snapshot/admission");
+  if !input
+    .fields
+    .get(&policy.priority.field)
+    .is_some_and(|s| matches!(s.source, FlowIssueFieldSource::Priority))
+  {
+    return Err(invalid());
+  }
+  let mappings = std::iter::once((
+    &policy.priority.field,
+    policy.priority.values.keys().collect::<Vec<_>>(),
+  ))
+  .chain(std::iter::once((
+    &policy.risk.field,
+    policy.risk.values.keys().collect(),
+  )))
+  .chain(
+    policy
+      .allowed
+      .iter()
+      .map(|(field, allowed)| (field, allowed.iter().collect())),
+  );
+  for (field, values) in mappings {
+    let selection = input.fields.get(field).ok_or_else(invalid)?;
+    let classified = match &selection.source {
+      FlowIssueFieldSource::Priority
+      | FlowIssueFieldSource::Component
+      | FlowIssueFieldSource::Type
+      | FlowIssueFieldSource::Size
+      | FlowIssueFieldSource::Classification { .. } => true,
+      FlowIssueFieldSource::Property { id } => catalog.definition.classification.fields().any(|(_, bound)| bound == id),
+      _ => false,
+    };
+    if !selection.required || !classified || values.is_empty() || values.len() > MAX_FLOW_SCHEMA_ENTRIES {
+      return Err(invalid());
+    }
+    let shape = field_shape(selection, catalog).ok_or_else(invalid)?;
+    if values
+      .iter()
+      .any(|v| !shape.accepts_value(&serde_json::Value::String((*v).clone())))
+    {
+      return Err(invalid());
+    }
+  }
+  Ok(())
 }

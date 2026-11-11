@@ -362,3 +362,86 @@ fn retained_protected_tests_restore_exact_selected_inventory_and_file_identities
     );
   });
 }
+
+#[test]
+fn issue_snapshot_context_does_not_grant_implementation_or_review_protected_test_body_access() {
+  let protected = crate::factory::validation::tests::factory_protected_test_tests::retained_author_fixture();
+  crate::factory::admission::tests::factory_admission_tests::run_ready(async {
+    let id = protected.manifest.record.identity();
+    let lease = LeaseAccess {
+      lease_id: id.lease_id,
+      fence: LeaseFence::from_bytes([1; 32]),
+      agent_id: AgentId::generate(),
+      registration_epoch: RegistrationEpoch::new(1).unwrap(),
+    };
+    let artifacts = Arc::new(InMemoryArtifactRecordStore::new(ArtifactLeaseFixture {
+      access: lease,
+      build_id: id.build_id,
+      attempt_id: id.attempt_id,
+      attempt: AttemptNumber::FIRST,
+      job_id: id.job_id,
+      expires_at: at(1000),
+    }));
+    publish(&artifacts, &protected.manifest, lease, true).await;
+    publish(&artifacts, &protected.file, lease, false).await;
+    let bytes = Arc::new(InventoryBytes {
+      id: id.artifact_id,
+      bytes: protected.manifest.bytes.clone(),
+      reads: AtomicUsize::new(0),
+    });
+    let reader = FactoryArtifactReader::new(artifacts, protected.builds, bytes.clone());
+    let snapshot =
+      crate::factory::codex::tests::factory_codex_tests::issue_snapshot_context::SnapshotContextFixture::new(
+        protected.work,
+      );
+    for name in ["implementation", "review"] {
+      let input = snapshot.input(name);
+      assert!(input.incoming_digest().is_some());
+      assert!(
+        reader.read_context(&input, at(32), at(899)).await.unwrap().is_empty(),
+        "inline selected snapshot values need no producer Artifact access"
+      );
+      for artifact in [protected.bundle.artifact(), &protected.bundle.files()[0].artifact] {
+        reader
+          .read_record(ReadFactoryArtifact {
+            project_id: input.subject().project_id(),
+            artifact: artifact.clone(),
+            maximum_bytes: octacity_artifact_store::MAX_ARTIFACT_READ_BYTES,
+            observed_at: at(32),
+            required_until: at(899),
+          })
+          .await
+          .expect("the exact live same-Project reference remains available to trusted execution");
+        let subject = input.task_subject().unwrap();
+        let entry = ContextManifestEntry::new(
+          ContextSourceKind::Evidence,
+          key("private-tests"),
+          subject.clone(),
+          FactoryContextReference::Artifact(artifact.clone()),
+          artifact.content_digest(),
+          artifact.encoded_size(),
+          FactorySafeText::new("Attempted private model context").unwrap(),
+          FactoryDigest::from_bytes([3; 32]),
+        )
+        .unwrap();
+        let context = ContextManifest::new(
+          ContextManifestId::generate(),
+          subject,
+          FactoryDigest::from_bytes([3; 32]),
+          vec![entry],
+        )
+        .unwrap();
+        let substituted = input.clone().with_context(context, vec![]).unwrap();
+        assert!(
+          reader.read_context(&substituted, at(32), at(899)).await.is_err(),
+          "knowing a same-Project protected reference does not authorize model Context: {name}"
+        );
+      }
+    }
+    assert_eq!(
+      bytes.reads.load(Ordering::SeqCst),
+      0,
+      "private bytes must be rejected before any read"
+    );
+  });
+}

@@ -110,6 +110,7 @@ fn configured_issue_action_retains_exact_push_review_and_origin_without_provider
       };
       let request = issues
         .request_issue_execution(store_testing::management_mutation(RequestIssueExecution {
+          admission_classification: None,
           snapshot_digest: None,
           id: IssueExecutionRequestId::generate(),
           intent: RequestIssueExecutionIntent {

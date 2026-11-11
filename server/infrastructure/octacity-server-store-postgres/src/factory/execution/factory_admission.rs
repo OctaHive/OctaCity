@@ -244,6 +244,13 @@ async fn admit_once(
   require_access_profile(&mut transaction, &configuration, &request).await?;
   require_repository(&mut transaction, &request).await?;
   require_current_predecessor_issue(&mut transaction, &request, preparation.as_mut()).await?;
+  crate::issues::issue_snapshot_admission::require_current(
+    &mut transaction,
+    &request,
+    project_preparation.as_ref(),
+    &configuration,
+  )
+  .await?;
   let active: i64 = sqlx::query_scalar(
     "SELECT COUNT(*) FROM factory_runs \
      WHERE factory_configuration_id = $1 AND factory_configuration_version = $2 \

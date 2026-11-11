@@ -724,6 +724,7 @@ async fn associate(
   if let Some(id) = request {
     store
       .request_issue_execution(management_mutation(RequestIssueExecution {
+        admission_classification: None,
         snapshot_digest: None,
         id,
         intent: RequestIssueExecutionIntent {

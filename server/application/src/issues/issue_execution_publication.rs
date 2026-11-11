@@ -8,7 +8,7 @@ use octacity_server_store::{
   ReadFactoryAdmissionContext,
 };
 use std::sync::Arc;
-/// Processes an already reviewed request with explicit ordinary admission classification.
+/// Processes an already reviewed request using its sealed policy result or legacy explicit classification.
 #[derive(Clone, Debug)]
 pub struct PublishIssueExecutionCommand {
   /// Original owning Project.
@@ -17,7 +17,7 @@ pub struct PublishIssueExecutionCommand {
   pub issue_id: IssueId,
   /// Exact retained request; current text is never silently selected.
   pub request_id: IssueExecutionRequestId,
-  /// Explicit reviewed classification; must match the request when present.
+  /// Legacy explicit classification. A snapshot admission policy supplies its own retained result.
   pub classification: WorkClassification,
 }
 impl Command for PublishIssueExecutionCommand {
@@ -93,11 +93,13 @@ impl<
         &context.security_scope().to_store(),
       )
       .await?;
+    let classification = request
+      .admission_classification
+      .clone()
+      .unwrap_or(command.classification);
     if request
-      .intent
-      .classification
-      .as_ref()
-      .is_some_and(|reviewed| reviewed != &command.classification)
+      .effective_classification()
+      .is_some_and(|reviewed| reviewed != &classification)
     {
       return Err(
         octacity_server_store::StoreError::Conflict {
@@ -127,7 +129,7 @@ impl<
     let admission = if let Some(admission) = original.as_ref().and_then(|p| p.admission.as_ref()) {
       if original
         .as_ref()
-        .is_none_or(|p| p.intent.classification != command.classification)
+        .is_none_or(|p| p.intent.classification != classification)
       {
         return Err(
           octacity_server_store::StoreError::Conflict {
@@ -219,7 +221,7 @@ impl<
               target: selected,
               external_identity: request.external_identity(),
               source: target.source.clone(),
-              classification: command.classification,
+              classification,
               mapping: FactoryKey::new("issue.title-description-acceptance.v1")
                 .map_err(|_| ApplicationError::invalid())?,
               idempotency_key: request.admission_key(),

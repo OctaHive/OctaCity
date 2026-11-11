@@ -1065,6 +1065,43 @@ Reservation and association retain their own boundaries; explicit publication
 uses ordinary admission. Manual creation continues to use `IssueHandlers`
 without these execution dependencies.
 
+### Pinned Issue admission mapping
+
+A producer-independent `FlowIssueSnapshotInput` can pin an `admission` policy
+inside the immutable Flow/Configuration. Its `priority` mapping names a required
+built-in Issue priority selection and explicitly translates Project choice IDs
+to numeric `WorkPriority`. Its `risk` mapping names a required classification
+selection and translates its choices to `RiskClass`. Optional `allowed` choice
+sets add conjunctive readiness checks. For example, with required `priority`
+and `size` aliases:
+
+```json
+{
+  "priority": {"field": "priority", "values": {"high": 80, "medium": 40}},
+  "risk": {"field": "size", "values": {"small": "low", "medium": "medium", "large": "high"}},
+  "allowed": {"size": ["small", "medium"]}
+}
+```
+
+These numbers and risk assignments are authored policy, not built-in defaults.
+Publication validates each alias, required selection and choice against the
+pinned Project catalog. Ordinary unclassified properties and requirements prose
+cannot drive admission rules. Missing, stale or evidence-ineligible selected
+fields still fail their independent checks. A valid but unmapped/disallowed
+choice returns `issue_snapshot_policy_ineligible` at
+`/issue_snapshot/admission/{alias}` without reserving execution.
+
+Review seals the policy result in the snapshot and retains
+`admission_classification` on the execution request. Publication uses that result
+with empty Work metadata; caller `classification`, `accepted` and
+`admission_risk` metadata do not replace it. Final admission compares the retained
+policy decision with the preparation and Work. Recovery returns the same Work/Run
+after Issue edits and private input retirement without recomputing current
+classification. Contracts without `admission` retain their explicit reviewed
+classification and original wire/digest; adopting a policy requires a new
+publication. Project launch/access policies and later requirements gates remain
+independent.
+
 ## Shared Project text publication
 
 `ProjectTextIntake` is the common application service for manual Project-owned
@@ -1074,7 +1111,8 @@ it with its reviewed submission without creating an Issue. The Issue adapter
 requires the original admission security partition and current Issue/Project/
 target rights. It uses the retained exact revision on first preparation, then the
 shared retained submission on replay; later text edits never replace its inputs.
-Explicit classification is frozen at the first shared reservation. The response
+The effective classification is frozen at review for policy-driven Issue snapshots
+and at the first shared reservation for explicit-classification contracts. The response
 contains a Work/Run association only after that association commits. A failed
 association retains the admitted Work and resumes the same link.
 

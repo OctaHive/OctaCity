@@ -444,6 +444,7 @@ async fn explicit_content_expiry_keeps_identity_replay_quota_and_hold() {
     .unwrap();
   let pending = store
     .request_issue_execution(management_mutation(RequestIssueExecution {
+      admission_classification: None,
       snapshot_digest: None,
       id: octacity_server_domain::IssueExecutionRequestId::generate(),
       intent: RequestIssueExecutionIntent {

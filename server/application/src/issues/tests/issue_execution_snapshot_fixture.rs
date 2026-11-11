@@ -151,6 +151,7 @@ pub(super) fn snapshot_configuration_with_text_fields(
   )
   .unwrap()
   .with_issue_snapshot(FlowIssueSnapshotInput {
+    admission: None,
     version: 1,
     schema: schema.reference().clone(),
     definition_version,
