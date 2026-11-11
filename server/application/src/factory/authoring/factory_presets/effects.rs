@@ -45,6 +45,7 @@ pub(super) fn ordinary_draft(
 ) -> FactoryFlowDefinitionDraft {
   FactoryFlowDefinitionDraft {
     accepted_predecessor: None,
+    issue_snapshot: None,
     root: FactoryFlowRootDraft {
       name: root.name().cloned(),
       code_sources: root.code_sources().cloned(),

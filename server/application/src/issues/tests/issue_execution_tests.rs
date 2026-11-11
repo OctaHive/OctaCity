@@ -6,6 +6,8 @@ use octacity_server_store::*;
 
 #[path = "issue_execution_read_tests.rs"]
 mod projections;
+#[path = "issue_execution_snapshot_tests.rs"]
+mod snapshots;
 
 #[test]
 fn issue_discussion_mentions_and_approval_text_cannot_change_execution_context_or_later_inputs() {
@@ -427,6 +429,7 @@ fn manual_delivery_admits_the_original_issue_and_exact_triage_result() {
     )
     .unwrap();
     let draft = FactoryFlowDefinitionDraft {
+      issue_snapshot: None,
       root: FactoryFlowRootDraft {
         name: Some(FactoryText::new("Manually authored delivery").unwrap()),
         code_sources: None,

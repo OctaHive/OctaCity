@@ -41,6 +41,8 @@ pub struct FactoryInputObject {
 pub struct ProjectTextDocuments {
   task: String,
   acceptance: String,
+  #[serde(default, skip_serializing_if = "Option::is_none")]
+  issue_snapshot: Option<Box<IssueExecutionSnapshot>>,
 }
 impl std::fmt::Debug for ProjectTextDocuments {
   fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
@@ -53,12 +55,16 @@ impl ProjectTextDocuments {
     let result = Self {
       task: task.into(),
       acceptance: acceptance.into(),
+      issue_snapshot: None,
     };
     result.validate()?;
     Ok(result)
   }
   /// Checks common byte/control bounds; ingress-specific schemas may be stricter.
   pub fn validate(&self) -> Result<(), StoreError> {
+    if let Some(snapshot) = &self.issue_snapshot {
+      snapshot.digest()?;
+    }
     if [&self.task, &self.acceptance].iter().any(|text| {
       text.trim().is_empty()
         || text.len() > MAX_SOURCE_INPUT_BYTES as usize
@@ -81,11 +87,28 @@ impl ProjectTextDocuments {
   pub fn acceptance(&self) -> &[u8] {
     self.acceptance.as_bytes()
   }
+  /// Attaches a trusted canonical selection under the same private retention owner.
+  pub fn with_issue_snapshot(mut self, snapshot: IssueExecutionSnapshot) -> Result<Self, StoreError> {
+    self.issue_snapshot = Some(Box::new(snapshot));
+    self.validate()?;
+    Ok(self)
+  }
+  /// Selected private data, never automatically included in task/acceptance documents.
+  pub fn issue_snapshot(&self) -> Option<&IssueExecutionSnapshot> {
+    self.issue_snapshot.as_deref()
+  }
+  /// Exact selection identity, with the same bound validation used by reservation and replay.
+  pub fn snapshot_digest(&self) -> Result<Option<FactoryDigest>, StoreError> {
+    self.issue_snapshot().map(IssueExecutionSnapshot::digest).transpose()
+  }
 }
 /// Retained reviewed intent; private documents have a separate storage lifetime.
 #[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct ProjectTextIntent {
+  /// Exact private Issue selection. Legacy and generic manual inputs omit it.
+  #[serde(default, skip_serializing_if = "Option::is_none")]
+  pub snapshot_digest: Option<FactoryDigest>,
   /// Exact owning Project and immutable target/repository policy.
   pub target: ReadFactoryAdmissionContext,
   /// Stable ordinary manual Work identity supplied by the application ingress.
@@ -164,6 +187,7 @@ impl ProjectTextPreparation {
   /// Compares exact intent using retained byte identities even after private body retirement.
   pub fn matches_submission(&self, submitted: &ProjectTextSubmission) -> bool {
     self.intent == submitted.intent
+      && submitted.documents.snapshot_digest().ok() == Some(self.intent.snapshot_digest)
       && [
         (FactoryInputRole::Task, submitted.documents.task()),
         (FactoryInputRole::Acceptance, submitted.documents.acceptance()),
@@ -240,6 +264,12 @@ impl ProjectTextPreparation {
         .and_then(|incoming| incoming.predecessor())
         .map(|source| source.record().digest())
         != self.intent.predecessor_digest
+      || r
+        .incoming
+        .as_ref()
+        .and_then(|incoming| incoming.issue_snapshot())
+        .map(|snapshot| snapshot.digest)
+        != self.intent.snapshot_digest
       || work.external_identity() != &intent.external_identity
       || work.artifacts() != &intent.artifacts
       || work.subject().project_id() != intent.project_id
@@ -405,6 +435,9 @@ impl ProjectTextPreparation {
   /// Reserves deterministic private identities and original preparation bounds before I/O.
   pub fn reserve(s: ProjectTextSubmission, scope: ManagementSecurityScope, now: Timestamp) -> Result<Self, StoreError> {
     s.documents.validate()?;
+    if s.documents.snapshot_digest()? != s.intent.snapshot_digest {
+      return Err(project_text_conflict());
+    }
     let id = crate::projects::project_input_policy::operation_id(
       s.intent.target.project_id,
       &scope,

@@ -262,6 +262,16 @@ pub enum IssueClassificationFieldIdentity<'a> {
   Dependencies,
 }
 impl IssueClassificationFieldReference {
+  /// Exact Project publication supplying this field's meaning; fixed built-ins have none.
+  pub fn definition_version(&self) -> Option<u64> {
+    match self {
+      Self::Priority { definition_version } => *definition_version,
+      Self::Component { definition_version }
+      | Self::Type { definition_version }
+      | Self::Property { definition_version, .. } => Some(*definition_version),
+      Self::Size | Self::Dependencies => None,
+    }
+  }
   /// Identifies the same effective field across Project definition publications.
   pub fn identity(&self) -> IssueClassificationFieldIdentity<'_> {
     match self {

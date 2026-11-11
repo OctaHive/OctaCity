@@ -94,6 +94,7 @@ fn submission(
   let ordinary = crate::factory::admission::tests::factory_admission_tests::command(project, configuration, repository);
   ProjectTextSubmission {
     intent: ProjectTextIntent {
+      snapshot_digest: None,
       predecessor_digest: None,
       target: ReadFactoryAdmissionContext {
         project_id: project,

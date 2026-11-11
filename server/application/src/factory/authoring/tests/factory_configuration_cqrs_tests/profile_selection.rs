@@ -4,6 +4,7 @@ use octacity_server_factory::*;
 use octacity_server_store::*;
 use std::collections::BTreeMap;
 
+mod issue_snapshot;
 mod ticket_delivery;
 
 fn selected_fixture(project: ProjectId) -> Fixture {
@@ -295,6 +296,7 @@ fn standalone_flow_publication_uses_the_same_profile_compatibility_validation() 
     let root = flow.closure.definition(flow.closure.root()).unwrap();
     let draft = crate::FactoryFlowDefinitionDraft {
       accepted_predecessor: None,
+      issue_snapshot: None,
       root: crate::FactoryFlowRootDraft {
         name: None,
         code_sources: None,
@@ -554,6 +556,7 @@ fn standalone_flow_requires_compatible_verification_and_current_retention() {
       project_id: project,
       draft: crate::FactoryFlowDefinitionDraft {
         accepted_predecessor: None,
+        issue_snapshot: None,
         root: draft,
         limits: flow.limits.clone(),
         data_schemas: flow.data_schemas,
@@ -988,6 +991,7 @@ fn decision_profile_answers_are_checked_before_flow_publication() {
     );
     let draft = crate::FactoryFlowDefinitionDraft {
       accepted_predecessor: None,
+      issue_snapshot: None,
       root: crate::FactoryFlowRootDraft {
         name: None,
         code_sources: None,

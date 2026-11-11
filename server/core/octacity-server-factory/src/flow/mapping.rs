@@ -103,6 +103,14 @@ impl FlowDataMapping {
     self.value.fits(input, target)
   }
 
+  pub(super) fn fits_pointers(
+    &self,
+    target: &FlowValueSchema,
+    mut check: impl FnMut(&str, &FlowValueSchema, &[&str]) -> bool,
+  ) -> bool {
+    self.value.fits_checked(target, &mut Vec::new(), &mut check)
+  }
+
   /// Whether this mapping can be checked without observing an admitted input.
   pub(crate) fn is_input_independent(&self) -> bool {
     self.value.is_input_independent()
@@ -136,40 +144,19 @@ impl FlowValueMapping {
   }
 
   fn fits(&self, input: &FlowValueSchema, target: &FlowValueSchema) -> bool {
+    self.fits_checked(target, &mut Vec::new(), &mut |path, target, _| {
+      schema_pointer(input, path, "", |_| true).is_some_and(|shape| target.covers(shape))
+    })
+  }
+
+  fn fits_checked<'a>(
+    &'a self,
+    target: &FlowValueSchema,
+    present: &mut Vec<&'a str>,
+    check: &mut impl FnMut(&str, &FlowValueSchema, &[&str]) -> bool,
+  ) -> bool {
     match self {
-      Self::Pointer { path } => {
-        let mut shape = input;
-        for segment in path.split('/').skip(1) {
-          let key = segment.replace("~1", "/").replace("~0", "~");
-          match shape {
-            FlowValueSchema::Object { fields } => {
-              let Some(field) = fields
-                .iter()
-                .find(|(name, _)| name.as_str() == key)
-                .map(|(_, field)| field)
-              else {
-                return false;
-              };
-              shape = field.value();
-            }
-            FlowValueSchema::Array { item, max_items, .. }
-              if key
-                .parse::<u16>()
-                .is_ok_and(|index| index < *max_items && index.to_string() == key) =>
-            {
-              shape = item;
-            }
-            FlowValueSchema::ExternallyTagged { variants } => {
-              let Some(value) = variants.get(&key).and_then(Option::as_deref) else {
-                return false;
-              };
-              shape = value;
-            }
-            _ => return false,
-          }
-        }
-        target.covers(shape)
-      }
+      Self::Pointer { path } => check(path, target, present),
       Self::Constant { value } => target.accepts(value),
       Self::Object { fields } => {
         let FlowValueSchema::Object { fields: expected } = target else {
@@ -178,7 +165,7 @@ impl FlowValueMapping {
         fields.iter().all(|(name, mapping)| {
           expected
             .get(name)
-            .is_some_and(|field| mapping.fits(input, field.value()))
+            .is_some_and(|field| mapping.fits_checked(field.value(), present, check))
         }) && expected
           .iter()
           .all(|(name, field)| !field.is_required() || fields.contains_key(name))
@@ -193,9 +180,14 @@ impl FlowValueMapping {
           return false;
         };
         (usize::from(*min_items)..=usize::from(*max_items)).contains(&items.len())
-          && items.iter().all(|mapping| mapping.fits(input, item))
+          && items.iter().all(|mapping| mapping.fits_checked(item, present, check))
       }
-      Self::IfPresent { then, otherwise, .. } => then.fits(input, target) && otherwise.fits(input, target),
+      Self::IfPresent { path, then, otherwise } => {
+        present.push(path);
+        let valid = then.fits_checked(target, present, check);
+        present.pop();
+        valid && otherwise.fits_checked(target, present, check)
+      }
     }
   }
 
@@ -290,4 +282,48 @@ fn invalid() -> FactoryError {
   FactoryError::InvalidConfiguration {
     field: "Flow data mapping",
   }
+}
+
+// A shared typed pointer walk. Ordinary mappings preserve their existing presence
+// contract; Incoming qualification additionally requires a dominating presence guard.
+pub(super) fn schema_pointer<'a>(
+  mut shape: &'a FlowValueSchema,
+  path: &str,
+  prefix: &str,
+  mut optional: impl FnMut(&str) -> bool,
+) -> Option<&'a FlowValueSchema> {
+  let mut prefix = prefix.to_owned();
+  for segment in path.split('/').skip(1) {
+    prefix.push('/');
+    prefix.push_str(segment);
+    let key = segment.replace("~1", "/").replace("~0", "~");
+    shape = match shape {
+      FlowValueSchema::Object { fields } => {
+        let field = fields.iter().find(|(name, _)| name.as_str() == key)?.1;
+        if !field.is_required() && !optional(&prefix) {
+          return None;
+        }
+        field.value()
+      }
+      FlowValueSchema::Array {
+        item,
+        min_items,
+        max_items,
+      } => {
+        let index = key.parse::<u16>().ok()?;
+        if index >= *max_items || index.to_string() != key || (index >= *min_items && !optional(&prefix)) {
+          return None;
+        }
+        item
+      }
+      FlowValueSchema::ExternallyTagged { variants } => {
+        if variants.len() != 1 && !optional(&prefix) {
+          return None;
+        }
+        variants.get(&key)?.as_deref()?
+      }
+      _ => return None,
+    };
+  }
+  Some(shape)
 }

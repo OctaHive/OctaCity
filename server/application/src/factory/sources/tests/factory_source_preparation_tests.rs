@@ -1018,6 +1018,7 @@ fn source_preparation_binds_an_exact_project_completion_document_without_build_p
           &context(),
           crate::ProjectTextSubmission {
             intent: crate::ProjectTextIntent {
+              snapshot_digest: None,
               predecessor_digest: None,
               target: ReadFactoryAdmissionContext {
                 project_id: project,
@@ -1253,6 +1254,7 @@ fn downstream_source_preparation_retains_original_ticket_and_acceptance_across_r
         &context(),
         crate::ProjectTextSubmission {
           intent: crate::ProjectTextIntent {
+            snapshot_digest: None,
             predecessor_digest: None,
             target: ReadFactoryAdmissionContext {
               project_id,

@@ -32,6 +32,9 @@ pub struct FactoryFlowConfiguration {
   /// Required accepted upstream result for this configuration's incoming fields.
   #[serde(default, skip_serializing_if = "Option::is_none")]
   pub accepted_predecessor: Option<FlowAcceptedPredecessor>,
+  /// Explicit producer-independent Issue snapshot; omitted on all earlier publications.
+  #[serde(default, skip_serializing_if = "Option::is_none")]
+  pub issue_snapshot: Option<crate::FlowIssueSnapshotInput>,
 }
 impl FactoryFlowConfiguration {
   /// Constructs a bounded composition; logical stage names have no execution meaning.
@@ -48,6 +51,7 @@ impl FactoryFlowConfiguration {
       data_schemas,
       pools,
       accepted_predecessor: None,
+      issue_snapshot: None,
     };
     configuration.validate_generic()?;
     Ok(configuration)
@@ -55,6 +59,9 @@ impl FactoryFlowConfiguration {
   fn validate_generic(&self) -> Result<(), FactoryError> {
     self.closure.clone().validate(self.limits.clone())?;
     crate::flow::validate_data_catalogue(&self.closure, &self.data_schemas)?;
+    if let Some(input) = &self.issue_snapshot {
+      input.validate_structure(self)?;
+    }
     if let Some(policy) = &self.accepted_predecessor {
       let mut schemas = self.incoming_schemas();
       if policy.definition == self.closure.root()
@@ -74,6 +81,12 @@ impl FactoryFlowConfiguration {
   /// Pins the reviewed predecessor contract at publication.
   pub fn with_accepted_predecessor(mut self, predecessor: FlowAcceptedPredecessor) -> Result<Self, FactoryError> {
     self.accepted_predecessor = Some(predecessor);
+    self.validate_generic()?;
+    Ok(self)
+  }
+  /// Retains the reviewed Issue input declaration without changing node projection grammar.
+  pub fn with_issue_snapshot(mut self, input: crate::FlowIssueSnapshotInput) -> Result<Self, FactoryError> {
+    self.issue_snapshot = Some(input);
     self.validate_generic()?;
     Ok(self)
   }

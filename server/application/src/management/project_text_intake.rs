@@ -67,6 +67,30 @@ impl<S: ProjectTextInputStore + 'static, B: ArtifactBytePublisher + ArtifactByte
     submission: ProjectTextSubmission,
     predecessor: Option<&FlowNodeRecord>,
   ) -> Result<FactoryAdmissionMutationOutcome, ApplicationError> {
+    self.submit_selected(context, submission, predecessor, false).await
+  }
+  /// Only the authorized Issue adapter can supply canonical snapshot data.
+  pub(crate) async fn submit_issue_input(
+    &self,
+    context: &ManagementRequestContext,
+    submission: ProjectTextSubmission,
+    predecessor: Option<&FlowNodeRecord>,
+  ) -> Result<FactoryAdmissionMutationOutcome, ApplicationError> {
+    self.submit_selected(context, submission, predecessor, true).await
+  }
+  async fn submit_selected(
+    &self,
+    context: &ManagementRequestContext,
+    submission: ProjectTextSubmission,
+    predecessor: Option<&FlowNodeRecord>,
+    issue_input: bool,
+  ) -> Result<FactoryAdmissionMutationOutcome, ApplicationError> {
+    if (!issue_input && submission.documents.issue_snapshot().is_some())
+      || submission.documents.snapshot_digest()? != submission.intent.snapshot_digest
+      || (submission.intent.snapshot_digest.is_some() && predecessor.is_some())
+    {
+      return Err(ApplicationError::invalid());
+    }
     let digest = predecessor
       .map(FlowNodeRecord::digest)
       .transpose()
@@ -109,7 +133,19 @@ impl<S: ProjectTextInputStore + 'static, B: ArtifactBytePublisher + ArtifactByte
       &selected,
       octacity_server_factory::FactoryAdmissionOrigin::Manual,
     )?;
-    if predecessor.is_none() {
+    if let Some(snapshot) = submission.documents.issue_snapshot() {
+      let flow = selected.configuration.configuration.flow();
+      if flow.issue_snapshot.as_ref() != Some(&snapshot.input)
+        || snapshot.project_id != submission.intent.target.project_id
+        || snapshot.target.configuration_id != submission.intent.target.configuration_id
+        || snapshot.target.configuration_version != submission.intent.target.configuration_version
+        || Some(snapshot.target.repository_id) != submission.intent.target.repository_id
+        || Some(snapshot.target.repository_version) != submission.intent.target.repository_version
+        || snapshot.target.source != submission.intent.source
+      {
+        return Err(ApplicationError::invalid());
+      }
+    } else if predecessor.is_none() {
       crate::factory::admission::factory_admission::reject_missing_incoming_result(
         selected.configuration.configuration.flow(),
       )?;
@@ -185,6 +221,24 @@ impl<S: ProjectTextInputStore + 'static, B: ArtifactBytePublisher + ArtifactByte
     }
     let revision = record.frozen_revision.clone().ok_or_else(ApplicationError::invalid)?;
     require_predecessor_revision(predecessor, &revision)?;
+    if let Some(snapshot) = documents.issue_snapshot() {
+      let subject = octacity_server_factory::FactoryTaskSubject::Exact(octacity_server_factory::ExactSubject::new(
+        record.intent.target.project_id,
+        record
+          .intent
+          .target
+          .repository_id
+          .ok_or_else(ApplicationError::invalid)?,
+        revision.clone(),
+      ));
+      if let Some(alias) = snapshot.incompatible_subject_field(&subject) {
+        return Err(FactoryValidationDiagnostics::unavailable_with_code(
+          format!("/issue_snapshot/fields/{alias}"),
+          "issue_snapshot_wrong_subject",
+        ));
+      }
+    }
+
     if record.published_at.is_none() {
       for object in &record.objects {
         let bytes = match object.role {
@@ -217,6 +271,20 @@ impl<S: ProjectTextInputStore + 'static, B: ArtifactBytePublisher + ArtifactByte
       }
       record = self.store.publish_project_text(record.guard(self.clock.now()?)).await?;
     }
+    let snapshot_schema = documents
+      .issue_snapshot()
+      .map(|snapshot| {
+        selected
+          .configuration
+          .configuration
+          .flow()
+          .data_schemas
+          .iter()
+          .find(|schema| schema.reference() == &snapshot.input.schema)
+          .cloned()
+          .ok_or_else(ApplicationError::invalid)
+      })
+      .transpose()?;
     let intent = record.admission_intent()?;
     let probe = crate::factory::admission::factory_admission::admission_probe(context, &intent)?;
     let mut admission =
@@ -225,10 +293,15 @@ impl<S: ProjectTextInputStore + 'static, B: ArtifactBytePublisher + ArtifactByte
       .flow
       .with_code_pins(record.frozen_code_pins.clone(), record.intent.target.project_id)
       .map_err(|_| ApplicationError::invalid())?;
-    admission.incoming = predecessor
-      .map(|record| FlowIncomingData::from_predecessor(&admission.work, &admission.flow, record))
-      .transpose()
-      .map_err(|_| ApplicationError::invalid())?;
+    admission.incoming = if let Some(snapshot) = documents.issue_snapshot() {
+      let schema = snapshot_schema.as_ref().ok_or_else(ApplicationError::invalid)?;
+      Some(snapshot.incoming(&admission.work, &admission.flow, schema)?)
+    } else {
+      predecessor
+        .map(|record| FlowIncomingData::from_predecessor(&admission.work, &admission.flow, record))
+        .transpose()
+        .map_err(|_| ApplicationError::invalid())?
+    };
     Ok(
       self
         .store

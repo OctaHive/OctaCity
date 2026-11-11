@@ -4,6 +4,25 @@ use crate::{
 };
 use serde::{Deserialize, Serialize};
 
+/// Producer-independent selection identity. The containing Incoming digest also
+/// binds this selection to the Work's exact resolved code and destination Run.
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(deny_unknown_fields)]
+pub struct FlowIncomingIssueSnapshot {
+  /// Canonical private selection retained by the managed input owner.
+  pub digest: FactoryDigest,
+  /// Canonical Project.
+  pub project_id: octacity_server_domain::ProjectId,
+  /// Canonical Issue; this is not a producing Run identity.
+  pub issue_id: octacity_server_domain::IssueId,
+  /// Reviewed Issue revision.
+  pub version: octacity_server_domain::IssueVersion,
+  /// Assessed requirements applicability.
+  pub applicability_version: octacity_server_domain::IssueVersion,
+  /// Exact Project catalog selected by the input contract.
+  pub definition_version: u64,
+}
+
 /// Immutable producer provenance retained separately from projected result data.
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
 #[serde(deny_unknown_fields)]
@@ -49,6 +68,8 @@ pub struct FlowIncomingData {
   payload: FlowPayload,
   #[serde(skip_serializing_if = "Option::is_none")]
   predecessor: Option<FlowIncomingPredecessor>,
+  #[serde(skip_serializing_if = "Option::is_none")]
+  issue_snapshot: Option<FlowIncomingIssueSnapshot>,
 }
 impl FlowIncomingData {
   /// Freezes bounded incoming data under the exact Work and admitted definition.
@@ -59,7 +80,21 @@ impl FlowIncomingData {
       root_definition: admitted.closure().root(),
       payload,
       predecessor: None,
+      issue_snapshot: None,
     };
+    data.validate_size()?;
+    Ok(data)
+  }
+  /// Freezes canonical Issue data after the Issue owner resolves its exact selection.
+  pub fn from_issue_snapshot(
+    work: &WorkEnvelope,
+    admitted: &AdmittedFlow,
+    payload: FlowPayload,
+    snapshot: FlowIncomingIssueSnapshot,
+  ) -> Result<Self, FactoryError> {
+    let mut data = Self::new(work, admitted, payload)?;
+    data.issue_snapshot = Some(snapshot);
+    data.verify(work, admitted)?;
     data.validate_size()?;
     Ok(data)
   }
@@ -96,6 +131,10 @@ impl FlowIncomingData {
       || self.factory_run_id != admitted.root_run().factory_run_id()
       || self.root_definition != admitted.closure().root()
       || self
+        .issue_snapshot
+        .as_ref()
+        .is_some_and(|snapshot| snapshot.project_id != work.subject().project_id() || self.predecessor.is_some())
+      || self
         .predecessor
         .as_ref()
         .is_some_and(|source| source.run_id == self.factory_run_id)
@@ -126,6 +165,11 @@ impl FlowIncomingData {
       .map(|source| serde_json::from_value(source.clone()))
       .transpose()
       .map_err(|_| invalid())?;
+    data.issue_snapshot = wire
+      .get("issue_snapshot")
+      .map(|snapshot| serde_json::from_value(snapshot.clone()))
+      .transpose()
+      .map_err(|_| invalid())?;
     data.verify(work, admitted)?;
     if wire != serde_json::to_value(&data).map_err(|_| invalid())? || data.digest()? != expected {
       return Err(invalid());
@@ -141,6 +185,11 @@ impl FlowIncomingData {
   #[must_use]
   pub const fn predecessor(&self) -> Option<&FlowIncomingPredecessor> {
     self.predecessor.as_ref()
+  }
+  /// Returns the canonical selection identity without exposing unprojected private values.
+  #[must_use]
+  pub const fn issue_snapshot(&self) -> Option<&FlowIncomingIssueSnapshot> {
+    self.issue_snapshot.as_ref()
   }
   /// Returns the identity retained in each prepared node input using this source.
   pub fn digest(&self) -> Result<FactoryDigest, FactoryError> {

@@ -312,6 +312,7 @@ fn layout_draft() -> crate::FactoryFlowDefinitionDraft {
   }
   crate::FactoryFlowDefinitionDraft {
     accepted_predecessor: None,
+    issue_snapshot: None,
     root: crate::FactoryFlowRootDraft {
       name: None,
       code_sources: None,

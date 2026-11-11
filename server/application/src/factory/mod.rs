@@ -4,6 +4,7 @@ pub(crate) mod authoring;
 pub(crate) mod codex;
 pub(crate) mod commands;
 pub(crate) mod execution;
+pub(crate) mod issue_snapshot;
 pub(crate) mod profiles;
 pub(crate) mod reporting;
 pub(crate) mod sources;

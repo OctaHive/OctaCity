@@ -70,6 +70,7 @@ fn publication_requires_an_installed_scoped_tester_and_protected_verifier() {
     data_schemas: vec![schema],
     pools: Default::default(),
     accepted_predecessor: None,
+    issue_snapshot: None,
   };
   let choices = FactoryConfigurationChoices::try_new(Default::default()).unwrap();
   let result = super::super::factory_verification_supplement::validate_verification_capabilities(&flow, &choices);

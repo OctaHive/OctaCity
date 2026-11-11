@@ -66,8 +66,10 @@ impl<S, F> IssueExecutionHandlers<S, F> {
   }
 }
 #[async_trait::async_trait]
-impl<S: IssueExecutionStore + octacity_server_store::IssueStore, F: FactoryAdmissionStore + FactoryRunStore>
-  ManagementCommandUseCase<RequestIssueExecutionCommand> for IssueExecutionHandlers<S, F>
+impl<
+  S: IssueExecutionStore + octacity_server_store::IssueStore + octacity_server_store::IssuePropertyStore,
+  F: FactoryAdmissionStore + FactoryRunStore,
+> ManagementCommandUseCase<RequestIssueExecutionCommand> for IssueExecutionHandlers<S, F>
 {
   type Error = ApplicationError;
   async fn execute_management_command(
@@ -107,6 +109,7 @@ impl<S: IssueExecutionStore + octacity_server_store::IssueStore, F: FactoryAdmis
     let request = crate::management_security::audited_mutation(
       context,
       RequestIssueExecution {
+        snapshot_digest: None,
         id: octacity_server_domain::IssueExecutionRequestId::generate(),
         intent: command.intent,
         idempotency_key: command.idempotency_key,
@@ -134,15 +137,43 @@ impl<S: IssueExecutionStore + octacity_server_store::IssueStore, F: FactoryAdmis
       &selected,
       octacity_server_factory::FactoryAdmissionOrigin::Manual,
     )?;
-    resolve_issue_predecessor(
-      self.store.as_ref(),
-      self.factory.as_ref(),
-      self.policy.as_ref(),
-      context,
-      intent,
-      selected.configuration.configuration.flow(),
-    )
-    .await?;
+    if selected.configuration.configuration.flow().issue_snapshot.is_none() {
+      resolve_issue_predecessor(
+        self.store.as_ref(),
+        self.factory.as_ref(),
+        self.policy.as_ref(),
+        context,
+        intent,
+        selected.configuration.configuration.flow(),
+      )
+      .await?;
+    }
+    let snapshot_digest = if selected.configuration.configuration.flow().issue_snapshot.is_some() {
+      let issue = self.store.issue(intent.project_id, intent.issue_id, None).await?;
+      if issue.version != intent.expected_version {
+        return Err(
+          octacity_server_store::StoreError::Conflict {
+            entity: octacity_server_domain::EntityKind::Issue,
+          }
+          .into(),
+        );
+      }
+      Some(
+        crate::issues::issue_execution_snapshot::select(
+          self.store.as_ref(),
+          self.policy.as_ref(),
+          context,
+          &issue,
+          target,
+          selected.configuration.configuration.flow(),
+          None,
+        )
+        .await?
+        .digest()?,
+      )
+    } else {
+      None
+    };
     let mut actions = crate::factory::reporting::factory_issue_status_authoring::flow_issue_status_selections(
       selected.configuration.configuration.flow(),
     )
@@ -171,7 +202,16 @@ impl<S: IssueExecutionStore + octacity_server_store::IssueStore, F: FactoryAdmis
       selected.repository.as_ref().ok_or_else(ApplicationError::invalid)?,
     )
     .map_err(|_| ApplicationError::InvalidInput)?;
-    Ok(self.store.request_issue_execution(request).await?)
+    let mutation = RequestIssueExecution {
+      snapshot_digest,
+      ..request.mutation().clone()
+    };
+    Ok(
+      self
+        .store
+        .request_issue_execution(crate::management_security::audited_mutation(context, mutation)?)
+        .await?,
+    )
   }
 }
 

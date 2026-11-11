@@ -104,6 +104,58 @@ pub(super) struct ProjectedInput {
   pub caller_input_digest: Option<crate::FactoryDigest>,
 }
 impl FlowInputBinding {
+  /// Qualifies this Incoming channel's paths, types and optional-presence guards.
+  /// Other sources keep their existing contracts; no source or Context is widened.
+  pub fn fits_incoming(
+    &self,
+    reference: &crate::ImmutableReference,
+    incoming: &crate::FlowValueSchema,
+    target: &crate::FlowDataSchema,
+  ) -> bool {
+    use super::mapping::{projection_segment, schema_pointer};
+    use crate::FlowValueSchema;
+    let mut known = BTreeMap::new();
+    for (alias, source) in &self.sources {
+      if let FlowInputSource::Incoming { schema, path } = source
+        && schema == reference
+      {
+        let Some(shape) = schema_pointer(incoming, path, "", |_| false) else {
+          return false;
+        };
+        known.insert(alias, shape);
+      }
+    }
+    if known.is_empty() {
+      return true;
+    }
+    self.mapping.fits_pointers(target.shape(), |path, target, present| {
+      if path.is_empty() {
+        let FlowValueSchema::Object { fields } = target else {
+          return false;
+        };
+        return self.sources.keys().all(|alias| fields.contains_key(alias))
+          && known
+            .iter()
+            .all(|(alias, shape)| fields.get(*alias).is_some_and(|field| field.value().covers(shape)))
+          && fields
+            .iter()
+            .all(|(alias, field)| !field.is_required() || self.sources.contains_key(alias));
+      }
+      let Some((alias, tail)) = projection_segment(path) else {
+        return false;
+      };
+      let Some((_, shape)) = known.iter().find(|(name, _)| name.as_str() == alias) else {
+        return self.sources.keys().any(|name| name.as_str() == alias);
+      };
+      schema_pointer(shape, tail, &format!("/{alias}"), |optional| {
+        present
+          .iter()
+          .any(|guard| *guard == optional || guard.starts_with(&format!("{optional}/")))
+      })
+      .is_some_and(|source| target.covers(source))
+    })
+  }
+
   /// Checks the configured sources of one projected input field without evaluating data.
   pub fn selects_only(&self, path: &str, mut check: impl FnMut(&FlowInputSource, &str) -> bool) -> bool {
     self.mapping.selects_only(path, &mut |pointer| {

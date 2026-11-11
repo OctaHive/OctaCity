@@ -36,6 +36,7 @@ where
     &fixture.profile.read.context,
     ProjectTextSubmission {
       intent: ProjectTextIntent {
+        snapshot_digest: None,
         predecessor_digest: None,
         target: ReadFactoryAdmissionContext {
           project_id: project,

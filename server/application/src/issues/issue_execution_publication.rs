@@ -64,7 +64,7 @@ impl<S, F: ProjectTextInputStore + 'static, B: ArtifactBytePublisher + ArtifactB
 }
 #[async_trait::async_trait]
 impl<
-  S: IssueStore + IssueExecutionStore,
+  S: IssueStore + IssueExecutionStore + octacity_server_store::IssuePropertyStore,
   F: ProjectTextInputStore + FactoryRunStore + 'static,
   B: ArtifactBytePublisher + ArtifactByteReader,
 > ManagementCommandUseCase<PublishIssueExecutionCommand> for IssueExecutionPublisher<S, F, B>
@@ -177,12 +177,29 @@ impl<
             Some(request.intent.expected_version),
           )
           .await?;
-        crate::issues::issue_execution::issue_execution_documents(&revision.content, &target.mapping)?
+        let documents = crate::issues::issue_execution::issue_execution_documents(&revision.content, &target.mapping)?;
+        if let Some(expected) = request.snapshot_digest {
+          let configuration = self.factory.factory_admission_context(selected).await?;
+          let snapshot = crate::issues::issue_execution_snapshot::select(
+            self.issues.as_ref(),
+            self.policy.as_ref(),
+            context,
+            &revision,
+            target,
+            configuration.configuration.configuration.flow(),
+            Some(expected),
+          )
+          .await?;
+          documents.with_issue_snapshot(snapshot)?
+        } else {
+          documents
+        }
       };
       if FactoryDigest::content_sha256(documents.task()) != request.task_digest
         || documents.task().len() as u64 != request.task_size
         || FactoryDigest::content_sha256(documents.acceptance()) != request.acceptance_digest
         || documents.acceptance().len() as u64 != request.acceptance_size
+        || documents.snapshot_digest()? != request.snapshot_digest
       {
         return Err(
           octacity_server_store::StoreError::Conflict {
@@ -193,10 +210,11 @@ impl<
       }
       self
         .intake
-        .submit_with_predecessor(
+        .submit_issue_input(
           context,
           ProjectTextSubmission {
             intent: ProjectTextIntent {
+              snapshot_digest: request.snapshot_digest,
               predecessor_digest,
               target: selected,
               external_identity: request.external_identity(),

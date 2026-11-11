@@ -511,7 +511,16 @@ impl FactoryValidationDiagnostics {
     }
   }
   pub(crate) fn flow_validation_error(error: &octacity_server_factory::FactoryError) -> Option<ApplicationError> {
-    Self::constraint_ceiling_error(error).or_else(|| Self::issue_presentation_error(error))
+    Self::constraint_ceiling_error(error)
+      .or_else(|| Self::issue_presentation_error(error))
+      .or_else(|| match error {
+        octacity_server_factory::FactoryError::InvalidConfiguration { field }
+          if field.starts_with("issue_snapshot") =>
+        {
+          Some(Self::invalid(format!("/{field}")))
+        }
+        _ => None,
+      })
   }
   pub(crate) fn invalid_binding(
     definition: octacity_server_factory::FlowDefinitionRef,
@@ -743,6 +752,14 @@ where
         "/flow",
         super::factory_configuration_choices::FlowChoiceValidation::Authoring,
       )?;
+      let _ = crate::factory::issue_snapshot::resolve(
+        flow,
+        project_id,
+        self.issue_properties.as_deref(),
+        self.policy.as_ref(),
+        context,
+      )
+      .await?;
       super::factory_flow_definition::validate_accepted_predecessor(
         flow,
         project_id,

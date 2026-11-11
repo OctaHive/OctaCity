@@ -216,6 +216,7 @@ async fn setup_target(
     .unwrap();
   let submission = ProjectTextSubmission {
     intent: ProjectTextIntent {
+      snapshot_digest: None,
       predecessor_digest: None,
       target: ReadFactoryAdmissionContext {
         project_id: project,
@@ -310,6 +311,7 @@ async fn reviewed_request(
 ) -> IssueExecutionRequest {
   store
     .request_issue_execution(management_mutation(RequestIssueExecution {
+      snapshot_digest: None,
       id: IssueExecutionRequestId::generate(),
       intent: RequestIssueExecutionIntent {
         classification: None,

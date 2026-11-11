@@ -172,7 +172,7 @@ impl FlowDataSchema {
   /// individually, while objects and ranges are compared structurally.
   #[must_use]
   pub fn accepts_all(&self, producer: &FlowValueSchema) -> bool {
-    producer.validate(0).is_ok() && self.shape.covers(producer)
+    self.shape.accepts_all(producer)
   }
   /// Returns the validated shape for trusted capability compilers.
   #[must_use]
@@ -236,6 +236,17 @@ impl FlowPayload {
   }
 }
 impl FlowValueSchema {
+  /// Checks an observed canonical value against this complete bounded shape.
+  #[must_use]
+  pub fn accepts_value(&self, value: &Value) -> bool {
+    self.validate(0).is_ok() && self.accepts(value)
+  }
+  /// Proves structural compatibility without constructing a synthetic named publication.
+  /// Invalid or unresolved shapes fail closed on either side.
+  #[must_use]
+  pub fn accepts_all(&self, producer: &Self) -> bool {
+    self.validate(0).is_ok() && producer.validate(0).is_ok() && self.covers(producer)
+  }
   /// Whether the pointer is present in every value allowed by this shape.
   pub(super) fn guarantees_pointer(&self, path: &str) -> bool {
     if path.is_empty() {

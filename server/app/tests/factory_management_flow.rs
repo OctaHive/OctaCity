@@ -52,6 +52,7 @@ fn draft(subflow: Option<FlowDefinitionRef>) -> FactoryFlowDefinitionDraft {
   .unwrap();
   FactoryFlowDefinitionDraft {
     accepted_predecessor: None,
+    issue_snapshot: None,
     root: FactoryFlowRootDraft {
       name: None,
       code_sources: None,

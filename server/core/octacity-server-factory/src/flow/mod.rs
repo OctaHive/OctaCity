@@ -42,7 +42,7 @@ pub use predicate::{
 };
 mod incoming;
 mod input;
-pub use incoming::{FlowIncomingData, FlowIncomingPredecessor};
+pub use incoming::{FlowIncomingData, FlowIncomingIssueSnapshot, FlowIncomingPredecessor};
 mod journal;
 pub use journal::FlowDataHistory;
 mod code;

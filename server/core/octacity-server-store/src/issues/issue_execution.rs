@@ -52,6 +52,8 @@ pub struct RequestIssueExecutionIntent {
 /// Trusted request reservation with scoped replay and original time.
 #[derive(Clone, Debug)]
 pub struct RequestIssueExecution {
+  /// Server-resolved selection identity; never supplied by the management caller.
+  pub snapshot_digest: Option<FactoryDigest>,
   /// Generated logical identity, excluded from replay equivalence.
   pub id: octacity_server_domain::IssueExecutionRequestId,
   /// Original reviewed intent.
@@ -82,6 +84,9 @@ pub struct IssueWorkAssociation {
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
 #[serde(deny_unknown_fields)]
 pub struct IssueExecutionRequest {
+  /// Immutable producer-independent Issue input, absent on legacy requests.
+  #[serde(default, skip_serializing_if = "Option::is_none")]
+  pub snapshot_digest: Option<FactoryDigest>,
   /// Stable server-generated request identity.
   pub id: octacity_server_domain::IssueExecutionRequestId,
   /// Exact Issue revision and reviewed target; never implicitly latest.
@@ -289,6 +294,7 @@ impl RequestIssueExecution {
     Ok(IssueExecutionOutcome {
       disposition: MutationDisposition::Applied,
       request: IssueExecutionRequest {
+        snapshot_digest: self.snapshot_digest,
         id: self.id,
         task_digest: octacity_server_factory::FactoryDigest::content_sha256(&task),
         task_size: task.len() as u64,

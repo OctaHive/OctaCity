@@ -54,6 +54,7 @@ impl<T: ProjectStore + IssueStore> ProjectStoreIssue for T {}
 
 fn request(issue: &IssueRevision) -> RequestIssueExecution {
   RequestIssueExecution {
+    snapshot_digest: None,
     id: IssueExecutionRequestId::generate(),
     intent: RequestIssueExecutionIntent {
       classification: None,
@@ -164,6 +165,7 @@ fn submission(issue: &IssueRevision, replay: &str) -> ProjectTextSubmission {
   let r = request(issue);
   ProjectTextSubmission {
     intent: ProjectTextIntent {
+      snapshot_digest: None,
       predecessor_digest: None,
       target: ReadFactoryAdmissionContext {
         project_id: issue.project_id,

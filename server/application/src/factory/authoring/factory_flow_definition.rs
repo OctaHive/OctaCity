@@ -143,6 +143,9 @@ pub struct FactoryFlowRootDraft {
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
 #[serde(deny_unknown_fields)]
 pub struct FactoryFlowDefinitionDraft {
+  /// Producer-independent Issue input selection; absent on legacy drafts.
+  #[serde(default, skip_serializing_if = "Option::is_none")]
+  pub issue_snapshot: Option<octacity_server_factory::FlowIssueSnapshotInput>,
   /// Exact successful upstream result required at admission.
   #[serde(default, skip_serializing_if = "Option::is_none")]
   pub accepted_predecessor: Option<octacity_server_factory::FlowAcceptedPredecessor>,
@@ -393,6 +396,10 @@ impl<S: FactoryFlowDefinitionStore + octacity_server_store::FactoryConfiguration
       Some(predecessor) => flow.with_accepted_predecessor(predecessor),
       None => Ok(flow),
     })
+    .and_then(|flow| match draft.issue_snapshot {
+      Some(input) => flow.with_issue_snapshot(input),
+      None => Ok(flow),
+    })
     .map_err(|error| {
       crate::FactoryValidationDiagnostics::flow_validation_error(&error).unwrap_or_else(ApplicationError::invalid)
     })?;
@@ -402,6 +409,14 @@ impl<S: FactoryFlowDefinitionStore + octacity_server_store::FactoryConfiguration
       "",
       super::factory_configuration_choices::FlowChoiceValidation::Authoring,
     )?;
+    let _ = crate::factory::issue_snapshot::resolve(
+      &flow,
+      project,
+      self.issue_properties.as_deref(),
+      self.policy.as_ref(),
+      context,
+    )
+    .await?;
     validate_accepted_predecessor(&flow, project, Some(self.store.as_ref()), self.policy.as_ref(), context).await?;
     crate::factory::validation::factory_verification_supplement::validate_verification_selections(
       &flow,

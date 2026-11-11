@@ -365,6 +365,7 @@ fn issue_text_and_installed_source_admit_the_same_declared_code_resources() {
         &context(),
         crate::ProjectTextSubmission {
           intent: crate::ProjectTextIntent {
+            snapshot_digest: None,
             predecessor_digest: None,
             target: ReadFactoryAdmissionContext {
               project_id: request.project_id,

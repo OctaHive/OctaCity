@@ -1554,6 +1554,7 @@ async fn publish_manual_delivery_configuration(
         project_id: project,
         draft: FactoryFlowDefinitionDraft {
           accepted_predecessor: None,
+          issue_snapshot: None,
           root: serde_json::from_value(wire).unwrap(),
           limits: admitted.limits().clone(),
           data_schemas: admitted.data_schemas().to_vec(),
