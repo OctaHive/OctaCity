@@ -36,7 +36,7 @@ impl<S: WorkSourceArtifactStore, B: ArtifactStore + ?Sized> FactorySourceInputRe
       recheck_millis,
     })
   }
-  /// Deletes at most two objects per preparation and at most `limit` preparations.
+  /// Deletes current and bounded superseded objects from at most `limit` preparations.
   /// Also purges at most `min(limit, 64)` expired private polling pages.
   /// Failure acknowledges nothing for that preparation; restart safely repeats deletion.
   pub async fn run_once(

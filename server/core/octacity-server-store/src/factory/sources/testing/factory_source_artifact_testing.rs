@@ -29,6 +29,28 @@ impl SourceMemoryState {
 }
 #[async_trait]
 impl WorkSourceArtifactStore for InMemoryFactoryConfigurationStore {
+  async fn refresh_source_issue_input(
+    &self,
+    request: RefreshSourceIssueInput,
+  ) -> Result<WorkSourcePreparation, StoreError> {
+    let mut state = self.lock()?;
+    let change = &request.replacement;
+    let preparation = state
+      .sources
+      .artifact_owner(&change.claim, change.preparation_id, change.now)?;
+    if state.has_admission(&preparation.admission_identity(request.security_scope.clone())) {
+      return Err(source_conflict());
+    }
+    let (retained, manifest) = request.retain(
+      preparation,
+      state.sources.materializations.get(&change.preparation_id).cloned(),
+    )?;
+    if let Some(manifest) = manifest {
+      state.sources.materializations.insert(manifest.preparation_id, manifest);
+    }
+    state.sources.preparations.insert(retained.id, retained.clone());
+    Ok(retained)
+  }
   async fn freeze_source_preparation_policy(
     &self,
     request: FreezeSourcePreparationPolicy,
@@ -81,7 +103,7 @@ impl WorkSourceArtifactStore for InMemoryFactoryConfigurationStore {
                 .sources
                 .materializations
                 .get(&p.id)
-                .is_some_and(|m| !m.objects.is_empty()))
+                .is_some_and(|m| !m.cleanup_objects().is_empty()))
         })
         .map(|p| SourcePreparationCleanup::from_preparation(p, state.sources.materializations.get(&p.id)))
         .filter(|p| p.is_due(now))
@@ -113,7 +135,7 @@ impl WorkSourceArtifactStore for InMemoryFactoryConfigurationStore {
     }
     if let Some(manifest) = state.sources.materializations.get_mut(&expected.preparation_id) {
       manifest.cleaned_at.get_or_insert(now);
-      manifest.next_cleanup_at = (!manifest.objects.is_empty()).then_some(recheck_at);
+      manifest.next_cleanup_at = (!manifest.cleanup_objects().is_empty()).then_some(recheck_at);
     }
     let preparation = state
       .sources
@@ -123,6 +145,7 @@ impl WorkSourceArtifactStore for InMemoryFactoryConfigurationStore {
     preparation.snapshot.clear();
     preparation.observed_issue_text = None;
     preparation.policy = None;
+    preparation.issue_input = None;
     preparation.initial_policy = None;
     preparation.predecessor_cursor = None;
     Ok(())
@@ -141,7 +164,7 @@ impl WorkSourceArtifactStore for InMemoryFactoryConfigurationStore {
     )?;
     if state.sources.materializations.values().any(|other| {
       other.preparation_id != manifest.preparation_id
-        && other.objects.iter().any(|old| {
+        && other.cleanup_objects().iter().any(|old| {
           manifest
             .objects
             .iter()

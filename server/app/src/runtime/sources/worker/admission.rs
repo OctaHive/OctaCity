@@ -3,6 +3,7 @@ use super::process::execute_source;
 use super::*;
 pub(super) struct SourceCandidateBridge<S, B> {
   pub(super) predecessors: Option<Arc<dyn FactorySourcePredecessors>>,
+  pub(super) issue_snapshots: Option<Arc<dyn FactorySourceIssueSnapshots>>,
   pub(super) repositories: Option<Arc<dyn ConfigurationStore>>,
   pub(super) verification_inputs: Option<Arc<dyn octacity_server_store::ProjectInputQueryStore>>,
   pub(super) managed_connections: Option<ManagedIntegrationConnections>,
@@ -125,6 +126,9 @@ impl<S: WorkSourceArtifactStore + 'static, B: ArtifactBytePublisher + 'static> S
       authorizer,
     )
     .with_clock(self.clock.clone());
+    if let Some(reader) = &self.issue_snapshots {
+      admission = admission.with_issue_snapshots(reader.clone());
+    }
     if let Some(reader) = &self.predecessors {
       admission = admission.with_predecessors(reader.clone());
     }
@@ -148,7 +152,7 @@ impl<S: WorkSourceArtifactStore + 'static, B: ArtifactBytePublisher + 'static> S
     match self.finish_preparation(claim.clone(), input, &retained).await {
       Ok(()) => Ok(true),
       Err(error) => {
-        let Some((reason, cursor)) = source_predecessor_wait(&error) else {
+        let Some((reason, cursor)) = source_input_wait(&error) else {
           return Err(error);
         };
         let policy = if retained.intent.is_none() && retained.policy.is_none() && retained.initial_policy.is_none() {
@@ -167,7 +171,7 @@ impl<S: WorkSourceArtifactStore + 'static, B: ArtifactBytePublisher + 'static> S
             policy,
           })
           .await?;
-        tracing::info!(project_id = %input.project_id(), %preparation_id, reason = ?wait.reason, "automatic admission awaiting predecessor");
+        tracing::info!(project_id = %input.project_id(), %preparation_id, reason = ?wait.reason, "automatic admission awaiting input");
         Ok(false)
       }
     }
@@ -216,14 +220,14 @@ impl<S: WorkSourceArtifactStore + 'static, B: ArtifactBytePublisher + 'static> S
     }
     let authorizer = self.authority(claim.clone(), input)?;
     let admission = self.admission(authorizer.clone());
-    let handoff = if retained.intent.is_none() {
+    let handoff = if retained.intent.is_none() || (retained.issue_input.is_some() && retained.admission.is_none()) {
       let authorized = authorizer.authorize(input.id(), input.version()).await?;
       let settings = match retained.policy.as_ref().or(retained.initial_policy.as_ref()) {
         Some(bytes) => serde_json::from_slice(bytes).map_err(|_| ApplicationError::invalid())?,
         None => self.original_settings(retained)?.clone(),
       };
-      let handoff = admission
-        .prepared_source_handoff(
+      let original_input = admission
+        .prepared_source_input(
           &authorized,
           &claim,
           retained,
@@ -236,17 +240,26 @@ impl<S: WorkSourceArtifactStore + 'static, B: ArtifactBytePublisher + 'static> S
       if let Some(reader) = &self.project_inputs {
         preparer = preparer.with_project_inputs(reader.clone());
       }
-      let prepared = if let Some(handoff) = &handoff {
-        preparer
-          .prepare_handoff(claim.clone(), retained.id, settings, handoff)
-          .await?
-      } else {
-        preparer.prepare(claim.clone(), retained.id, settings).await?
+      let prepared = match &original_input {
+        FactorySourcePreparedInput::Issue(documents) => {
+          preparer
+            .prepare_issue_input(claim.clone(), retained.id, settings, documents)
+            .await?
+        }
+        FactorySourcePreparedInput::Predecessor(handoff) => {
+          preparer
+            .prepare_handoff(claim.clone(), retained.id, settings, handoff)
+            .await?
+        }
+        FactorySourcePreparedInput::Provider => preparer.prepare(claim.clone(), retained.id, settings).await?,
       };
       if matches!(prepared, SourcePreparationOutcome::Rejected(_)) {
         return Ok(());
       }
-      handoff
+      match original_input {
+        FactorySourcePreparedInput::Predecessor(handoff) => Some(*handoff),
+        _ => None,
+      }
     } else {
       None
     };

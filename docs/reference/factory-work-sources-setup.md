@@ -230,6 +230,16 @@ are rejected; unrelated native labels remain outside the reviewed effect scope.
 
 ## Versions, repeats and optional task cards
 
+An Issue-snapshot target requires a canonical Issue linked to the native item in
+the Source's authorized security partition. It reads the Issue's canonical
+requirements, acceptance and selected fields through the same snapshot builder
+as manual Issue execution, without requiring a triage Run. Missing required
+classification leaves that item waiting while other eligible items progress;
+a later poll can resume it after classification. This mode is separate from
+provider text mapping and explicit predecessor-result input. See
+[automatic Issue intake](issues.md#automatic-source-intake-from-a-canonical-issue)
+for the current scope and admission fences.
+
 | Operation | Resulting identity/behavior |
 | --- | --- |
 | Edit selector, target, mapping or enabled state under the same input ID | Publish a new immutable version; original Work/Run and pending effects stay frozen. An already admitted native task is not automatically processed again. |

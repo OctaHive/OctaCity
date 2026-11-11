@@ -367,9 +367,10 @@ pub use factory::profiles::factory_credentials::{
 };
 pub use factory::sources::factory_source_admission::{
   AdmitPreparedSourceFactoryWorkCommand, AdmitSourceFactoryWorkCommand, FactorySourceAdmissionHandlers,
-  FactorySourceAuthorization, FactorySourceAuthorizer, FactorySourceHandoff, FactorySourceItem,
-  FactorySourcePredecessorTarget, FactorySourcePredecessors, IssueSourcePredecessorReader,
-  RecoverSourceFactoryWorkCommand, source_predecessor_wait,
+  FactorySourceAuthorization, FactorySourceAuthorizer, FactorySourceHandoff, FactorySourceIssueSnapshots,
+  FactorySourceItem, FactorySourcePredecessorTarget, FactorySourcePredecessors, FactorySourcePreparedInput,
+  IssueSourcePredecessorReader, IssueSourceSnapshotReader, RecoverSourceFactoryWorkCommand, source_input_wait,
+  source_predecessor_wait,
 };
 pub use factory::validation::factory_evaluation::FactoryEvaluationDecision;
 pub use factory::validation::factory_evidence::{

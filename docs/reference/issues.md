@@ -1668,11 +1668,63 @@ Run. Unselected comment appends do not invalidate the selected snapshot.
 Later comments, document versions or material-selection edits do not replace
 admitted inputs. After content retention removes source and private preparation
 bodies, an admitted retry returns its original association without reopening
-sources, restoring text or starting another Run. Automatic Source intake remains
-section 4; HTTP and Console authoring/review exposure remains section 6.
+sources, restoring text or starting another Run. Automatic material intake remains
+task 4.4; HTTP and Console authoring/review exposure remains section 6.
 
 Verification: [task 3.8](../../openspec/changes/add-issue-classification-snapshots/verification-3.8.md)
 and [task 3.9](../../openspec/changes/add-issue-classification-snapshots/verification-3.9.md).
+
+## Automatic Source intake from a canonical Issue
+
+For a target Flow declaring `issue_snapshot`, the Source worker resolves the
+canonical Issue through the native link in its current authorized security
+partition. It uses the same field/readiness snapshot builder as manual Issue
+execution. Provider title/body text does not replace the Issue's requirements or
+acceptance, and no triage Run or accepted predecessor is needed.
+
+A linked Issue missing a required classification value remains an unadmitted
+Source preparation with a bounded input wait. Other eligible items in that poll
+can progress. Once classification is supplied, a later poll resumes the same
+preparation, freezes canonical task/acceptance text and selected fields, and
+publishes ordinary Work inputs. If the Flow declares an admission policy mapping,
+its classification supplies the immutable scheduling values.
+
+The private snapshot is retained with the original Source preparation policy in
+the existing journal. Before first admission, the worker rechecks the canonical
+input; the PostgreSQL transaction fences Issue and definition heads, native link
+identity and exact frozen Incoming, then associates the Work with that Issue
+revision. This introduces no new input table or byte store. Existing targets
+without an Issue snapshot keep their provider/predecessor input paths.
+
+If canonical requirements or classification change while preparation is still
+unadmitted, a later poll can replace that pending snapshot under its current scan
+lease and original snapshot seal. The stable preparation/input identity, original
+reservation time and expiry stay unchanged. Replaced objects remain in the same
+bounded cleanup manifest, including interrupted writes. Reservations must match
+the current snapshot's task/acceptance digests, so a late old writer cannot pin
+superseded bytes. Publication acknowledgements additionally bind the exact
+Artifact/upload/digest/size/role/media-type set from that writer's reservation.
+The policy digest alone cannot publish replacement objects, whether an old
+acknowledgement arrives before or after their reservation. An existing admission
+excludes refresh; admitted inputs and receipts remain immutable.
+
+Snapshot preparation authorizes canonical Issue data and actual Work inputs.
+An installed provider completion document is independently authorized only by a
+mode consuming it; an unused completion reference cannot block canonical intake.
+The target is resolved once to select provider, predecessor or Issue input.
+
+Automatic discussion/document ingestion is not enabled by this reader; an
+explicit automatic material policy is task 4.4. Duplicate/restart qualification
+in task 4.2 covers later size/priority edits, label removal/readdition and a new
+Configuration/input version under the same stable input ID. These changes retain
+one original Work/Run, its Incoming, canonical Issue association and input bytes.
+A restart after a lost byte-publication acknowledgement resumes the same
+preparation and exact Artifact identities. Expanded diagnostic qualification
+remains task 4.3.
+
+Verification: [task 4.1](../../openspec/changes/add-issue-classification-snapshots/verification-4.1.md)
+and [task 4.2](../../openspec/changes/add-issue-classification-snapshots/verification-4.2.md),
+with [review fixes](../../openspec/changes/add-issue-classification-snapshots/verification-4.2-review.md).
 
 ## Explicit Issue material selections
 

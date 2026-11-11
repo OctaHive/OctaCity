@@ -490,9 +490,13 @@ pub struct WorkSourcePreparation {
   /// Historical preparations omit this field; cleanup removes it with the snapshot.
   #[serde(default, skip_serializing_if = "Option::is_none")]
   pub policy: Option<Vec<u8>>,
+  /// Canonical Issue documents and selected input frozen with policy before byte publication.
+  /// Absent on legacy/provider-only preparations; cleanup removes this private body.
+  #[serde(default, skip_serializing_if = "Option::is_none")]
+  pub issue_input: Option<crate::ProjectTextDocuments>,
   /// Complete normalized original command before mutable VCS resolution.
   pub intent: Option<crate::FactoryWorkAdmissionIntent>,
-  /// Last predecessor wait, recorded independently from covered provider pages.
+  /// Last input-readiness wait, recorded independently from covered provider pages.
   #[serde(default, skip_serializing_if = "Option::is_none")]
   pub waiting: Option<WorkSourceWait>,
   /// Installed settings pinned with the observation, before resolving a predecessor.
@@ -511,11 +515,11 @@ pub struct WorkSourcePreparation {
 pub enum WorkSourceWaitReason {
   /// Another bounded page of previously linked Work remains to inspect.
   Searching,
-  /// No accepted result was found.
+  /// A required Issue value, canonical link or accepted result is missing.
   Missing,
   /// A result exists but was not accepted.
   NotAccepted,
-  /// Current Issue requirements differ from the original accepted inputs.
+  /// Reviewed Issue input or an accepted producer result is no longer applicable.
   Stale,
   /// The result cannot be read in the current scope.
   Inaccessible,
@@ -673,6 +677,7 @@ impl ReserveWorkSourcePreparation {
       .map_err(|_| source_conflict())?,
       snapshot: self.snapshot,
       policy: None,
+      issue_input: None,
       intent: None,
       waiting: None,
       initial_policy,
@@ -809,6 +814,9 @@ impl WorkSourcePreparation {
       || matches!(&intent.source, crate::FactoryAdmissionSource::Repository(crate::RepositorySourceSelection::ExactRevision(revision)) if revision != subject.base_revision())
     {
       return Err(source_conflict());
+    }
+    if self.admission.is_none() {
+      self.validate_issue_input(request)?;
     }
     Ok(())
   }

@@ -253,6 +253,7 @@ async fn frozen_policy_contract(
       .is_none()
   );
   let request = FreezeSourcePreparationPolicy {
+    issue_input: None,
     claim,
     preparation_id: preparation.id,
     policy: br#"{"criteria":"private-completion\r\n","source":"reviewed","configuration":"original"}"#.to_vec(),
@@ -865,6 +866,7 @@ async fn source_artifact_contract(
         claim: stale,
         preparation_id: preparation.id,
         mapping_digest: digest(88),
+        objects: objects.clone(),
         now: time(4)
       })
       .await
@@ -874,6 +876,7 @@ async fn source_artifact_contract(
     claim: scan.claim.clone(),
     preparation_id: preparation.id,
     mapping_digest: digest(88),
+    objects: objects.clone(),
     now: time(4),
   };
   let published = store.publish_source_artifacts(publication.clone()).await.unwrap();

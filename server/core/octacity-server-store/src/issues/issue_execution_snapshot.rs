@@ -77,24 +77,12 @@ impl IssueExecutionSnapshot {
     preparation: &ProjectTextPreparation,
     request: &AdmitFactoryWork,
   ) -> Result<(), StoreError> {
-    let schema = request
-      .flow
-      .data_schema(&self.input.schema)
-      .ok_or_else(snapshot_conflict)?;
+    self.validate_admitted_input(request)?;
     let target = &preparation.intent.target;
-    let classification = self
-      .input
-      .admission
+    if self
+      .admission_classification
       .as_ref()
-      .map(|policy| policy.classify(&self.values).map_err(|_| snapshot_conflict()))
-      .transpose()?;
-    if classification != self.admission_classification
-      || classification.as_ref().is_some_and(|expected| {
-        expected != &preparation.intent.classification
-          || expected.priority() != request.work.priority()
-          || expected.risk() != request.work.risk()
-          || expected.metadata() != request.work.metadata()
-      })
+      .is_some_and(|expected| expected != &preparation.intent.classification)
       || Some(self.digest()?) != preparation.intent.snapshot_digest
       || self.project_id != target.project_id
       || self.target.configuration_id != target.configuration_id
@@ -103,6 +91,29 @@ impl IssueExecutionSnapshot {
       || Some(self.target.repository_version) != target.repository_version
       || self.target.source != preparation.intent.source
       || self.target.predecessor_run.is_some()
+    {
+      return Err(snapshot_conflict());
+    }
+    Ok(())
+  }
+  /// Shared Incoming, policy and exact-subject validation for manual and Source owners.
+  pub fn validate_admitted_input(&self, request: &AdmitFactoryWork) -> Result<(), StoreError> {
+    let schema = request
+      .flow
+      .data_schema(&self.input.schema)
+      .ok_or_else(snapshot_conflict)?;
+    let classification = self
+      .input
+      .admission
+      .as_ref()
+      .map(|policy| policy.classify(&self.values).map_err(|_| snapshot_conflict()))
+      .transpose()?;
+    if classification != self.admission_classification
+      || classification.as_ref().is_some_and(|expected| {
+        expected.priority() != request.work.priority()
+          || expected.risk() != request.work.risk()
+          || expected.metadata() != request.work.metadata()
+      })
       || request.incoming.as_ref() != Some(&self.incoming(&request.work, &request.flow, schema)?)
       || self
         .incompatible_subject_field(&octacity_server_factory::FactoryTaskSubject::Exact(

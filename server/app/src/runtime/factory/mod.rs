@@ -203,6 +203,10 @@ impl FactoryRuntimeResources {
       Arc::new(
         worker
           .with_repositories(self.runs.clone())
+          .with_issue_snapshots(Arc::new(octacity_server_application::IssueSourceSnapshotReader::new(
+            self.runs.clone(),
+            authorization.clone(),
+          )))
           .with_predecessors(Arc::new(
             octacity_server_application::IssueSourcePredecessorReader::new(
               self.runs.clone(),

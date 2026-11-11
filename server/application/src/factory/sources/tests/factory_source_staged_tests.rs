@@ -1111,7 +1111,7 @@ fn resumes_legacy_published_source_preparation_without_policy() {
       .admission_identity(octacity_server_store::ManagementSecurityScope::trusted_network())
       .external_identity;
     let mapping_digest = digest(76);
-    store
+    let reserved = store
       .reserve_source_artifacts(ReserveSourceArtifacts {
         claim: claim.clone(),
         preparation_id: preparation.id,
@@ -1138,6 +1138,7 @@ fn resumes_legacy_published_source_preparation_without_policy() {
         claim: claim.clone(),
         preparation_id: preparation.id,
         mapping_digest,
+        objects: reserved.objects.clone(),
         now: time(11),
       })
       .await

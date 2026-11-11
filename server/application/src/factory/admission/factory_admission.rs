@@ -75,6 +75,7 @@ pub struct FactoryAdmissionHandlers<S> {
 pub(crate) struct SourceAdmissionSelection<'a> {
   pub input: &'a octacity_server_factory::WorkSourceInput,
   pub handoff: Option<&'a crate::FactorySourceHandoff>,
+  pub issue_input: Option<&'a octacity_server_store::ProjectTextDocuments>,
 }
 
 impl<S> FactoryAdmissionHandlers<S> {
@@ -189,7 +190,14 @@ impl<S: FactoryAdmissionStore + 'static> FactoryAdmissionHandlers<S> {
     if let Some(policy) = &preparation.policy {
       let settings: crate::SourcePreparationSettings =
         serde_json::from_slice(policy).map_err(|_| ApplicationError::invalid())?;
-      settings.authorize(self.policy.as_ref(), context, preparation).await?;
+      settings
+        .authorize(
+          self.policy.as_ref(),
+          context,
+          preparation,
+          preparation.issue_input.as_ref(),
+        )
+        .await?;
     }
     Ok(())
   }
@@ -364,7 +372,15 @@ impl<S: FactoryAdmissionStore + 'static> FactoryAdmissionHandlers<S> {
     )
     .await?;
     let handoff = source.as_ref().and_then(|selected| selected.handoff);
-    if let Some(handoff) = handoff {
+    let issue_input = source.as_ref().and_then(|selected| selected.issue_input);
+    if let Some(documents) = issue_input {
+      documents.validate()?;
+      if handoff.is_some()
+        || configuration.flow().issue_snapshot.as_ref() != documents.issue_snapshot().map(|snapshot| &snapshot.input)
+      {
+        return Err(ApplicationError::invalid());
+      }
+    } else if let Some(handoff) = handoff {
       if !handoff.matches_artifacts(&command.artifacts) {
         return Err(crate::FactoryValidationDiagnostics::unavailable_with_code(
           "/incoming_result",
@@ -433,14 +449,26 @@ impl<S: FactoryAdmissionStore + 'static> FactoryAdmissionHandlers<S> {
       .flow
       .with_code_pins(pins, project)
       .map_err(|_| ApplicationError::invalid())?;
-    admission.incoming = handoff
-      .map(|handoff| {
-        octacity_server_factory::FlowIncomingData::from_predecessor(&admission.work, &admission.flow, &handoff.record)
-      })
-      .transpose()
-      .map_err(|_| {
-        crate::FactoryValidationDiagnostics::unavailable_with_code("/incoming_result", "incoming_result_wrong_subject")
-      })?;
+    admission.incoming = if let Some(documents) = issue_input {
+      let snapshot = documents.issue_snapshot().ok_or_else(ApplicationError::invalid)?;
+      let schema = admission
+        .flow
+        .data_schema(&snapshot.input.schema)
+        .ok_or_else(ApplicationError::invalid)?;
+      Some(snapshot.incoming(&admission.work, &admission.flow, schema)?)
+    } else {
+      handoff
+        .map(|handoff| {
+          octacity_server_factory::FlowIncomingData::from_predecessor(&admission.work, &admission.flow, &handoff.record)
+        })
+        .transpose()
+        .map_err(|_| {
+          crate::FactoryValidationDiagnostics::unavailable_with_code(
+            "/incoming_result",
+            "incoming_result_wrong_subject",
+          )
+        })?
+    };
     Ok(admission)
   }
 }

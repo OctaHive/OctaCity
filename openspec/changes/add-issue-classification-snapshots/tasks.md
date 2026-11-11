@@ -30,8 +30,8 @@
 
 ## 4. Automatic intake using the same snapshot contract
 
-- [ ] 4.1 Add a Red/Green Source-worker test where an unadmitted linked Issue waits for classification and later admits through the shared snapshot builder; another eligible item must progress while that Issue is blocked.
-- [ ] 4.2 Add Red/Green duplicate/restart tests preserving stable input identity across classification changes, label removal/readdition and Configuration replacement after admission; verify one Work/Run and no new automatic cycle.
+- [x] 4.1 Add a Red/Green Source-worker test where an unadmitted linked Issue waits for classification and later admits through the shared snapshot builder; another eligible item must progress while that Issue is blocked.
+- [x] 4.2 Add Red/Green duplicate/restart tests preserving stable input identity across classification changes, label removal/readdition and Configuration replacement after admission; verify one Work/Run and no new automatic cycle.
 - [ ] 4.3 Add Red/Green Source admission tests for missing canonical Issue correlation, stale requirements, inaccessible required evidence and an incompatible repository subject; expose bounded actionable reasons without fallback to a guessed triage Run or broadening access.
 - [ ] 4.4 Add Red/Green Source tests for an explicitly published bounded Issue-material selection policy: an unadmitted item can wait for required approved text, while new comments, reference replacement and document publications after admission preserve its original bytes and processing identity; intake without that policy must ingest no discussion.
 

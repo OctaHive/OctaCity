@@ -64,6 +64,7 @@ pub use factory::execution::factory_build_acceptance::{
   AcceptFactoryBuild, AcceptedFactoryBuild, CancelFactoryBuildExecution, FactoryBuildAcceptanceStore,
   FactoryBuildCancellationStore, FactoryScopedBuildCaller, MAX_FACTORY_BUILD_JOBS,
 };
+pub use factory::sources::RefreshSourceIssueInput;
 pub use factory::sources::factory_source::*;
 pub use factory::sources::factory_source_artifact::*;
 pub use factory::sources::factory_source_poll::*;

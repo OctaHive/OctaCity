@@ -18,6 +18,8 @@ const TEST_WAIT: Duration = Duration::from_secs(30);
 mod completion;
 #[path = "work_source_configuration_tests.rs"]
 mod configuration;
+#[path = "issue_snapshot_tests.rs"]
+mod issue_snapshots;
 #[path = "work_source_observation_tests.rs"]
 mod observations;
 #[allow(dead_code)]
@@ -768,6 +770,7 @@ async fn retained_preparation_uses_frozen_policy_after_source_profile_replacemen
   fixture
     .store
     .freeze_source_preparation_policy(FreezeSourcePreparationPolicy {
+      issue_input: None,
       claim,
       preparation_id: retained.id,
       policy: serde_json::to_vec(&fixture.profile.preparation).unwrap(),

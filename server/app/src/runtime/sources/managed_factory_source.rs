@@ -66,6 +66,10 @@ impl ManagedFactorySource {
     .with_managed_connections(ManagedIntegrationConnections::new(sources.store.clone()))
     .with_repositories(sources.store.clone())
     .with_verification_inputs(sources.store.clone())
+    .with_issue_snapshots(Arc::new(IssueSourceSnapshotReader::new(
+      sources.store.clone(),
+      sources.policy.clone(),
+    )))
     .with_predecessors(Arc::new(IssueSourcePredecessorReader::new(
       sources.store.clone(),
       sources.store.clone(),

@@ -21,6 +21,8 @@ pub struct FreezeSourcePreparationPolicy {
   pub preparation_id: FactoryDigest,
   /// Bounded serialized application settings; never ticket-selected authority.
   pub policy: Vec<u8>,
+  /// Optional canonical Issue input, frozen atomically with the original installed policy.
+  pub issue_input: Option<crate::ProjectTextDocuments>,
   /// Trusted observation time.
   pub now: Timestamp,
 }
@@ -44,6 +46,14 @@ impl FreezeSourcePreparationPolicy {
     {
       return Err(source_conflict());
     }
+    if preparation.issue_input.is_some() && preparation.issue_input != self.issue_input {
+      return Err(source_conflict());
+    }
+    if let Some(documents) = &self.issue_input {
+      documents.validate()?;
+      preparation.require_issue_input_target(documents)?;
+    }
+    preparation.issue_input = self.issue_input.clone();
     preparation.policy = Some(self.policy.clone());
     preparation.initial_policy = None;
     Ok(preparation)
@@ -65,6 +75,9 @@ pub struct SourceMaterialization {
   pub mapping_digest: FactoryDigest,
   /// Complete task and acceptance metadata; no private byte content.
   pub objects: Vec<SourceArtifactObject>,
+  /// Replaced pending objects remain owned for expiry and late-write cleanup.
+  #[serde(default, skip_serializing_if = "Vec::is_empty")]
+  pub retired_objects: Vec<SourceArtifactObject>,
   /// Original retention duration, never renewed by retry.
   pub retention_millis: u64,
   /// Original metadata reservation time.
@@ -84,6 +97,17 @@ pub struct SourceMaterialization {
   pub published_at: Option<Timestamp>,
 }
 impl SourceMaterialization {
+  /// Every exact deletion target, including superseded pending publications.
+  pub fn cleanup_objects(&self) -> Vec<SourceArtifactObject> {
+    let mut seen = std::collections::BTreeSet::new();
+    self
+      .objects
+      .iter()
+      .chain(&self.retired_objects)
+      .filter(|object| seen.insert((object.artifact.artifact_id(), object.upload_id)))
+      .cloned()
+      .collect()
+  }
   /// Produces exact ordinary Work references, without adding specifications.
   pub fn work_artifacts(&self) -> Result<WorkArtifacts, StoreError> {
     let role = |role| {
@@ -147,6 +171,9 @@ impl ReserveSourceArtifacts {
     current: Option<&SourceMaterialization>,
   ) -> Result<SourceMaterialization, StoreError> {
     self.validate()?;
+    for object in &self.objects {
+      preparation.require_issue_input_bytes(object.role, &object.artifact)?;
+    }
     if self.now >= preparation.snapshot_expires_at || preparation.snapshot.is_empty() {
       return Err(source_conflict());
     }
@@ -154,14 +181,16 @@ impl ReserveSourceArtifacts {
       if current.cleaned_at.is_some()
         || current.rejection.is_some()
         || current.mapping_digest != self.mapping_digest
-        || current.objects != self.objects
+        || (!current.objects.is_empty() && current.objects != self.objects)
         || current.retention_millis != self.retention_millis
         || self.now < current.reserved_at
         || self.now >= current.expires_at
       {
         return Err(source_conflict());
       }
-      return Ok(current.clone());
+      let mut retained = current.clone();
+      retained.objects = self.objects.clone();
+      return Ok(retained);
     }
     let expires = self
       .now
@@ -175,6 +204,7 @@ impl ReserveSourceArtifacts {
       input_version: preparation.input.version(),
       mapping_digest: self.mapping_digest,
       objects: self.objects.clone(),
+      retired_objects: vec![],
       retention_millis: self.retention_millis,
       reserved_at: self.now,
       expires_at: Timestamp::from_unix_millis(expires)
@@ -196,6 +226,8 @@ pub struct PublishSourceArtifacts {
   pub preparation_id: FactoryDigest,
   /// Exact original mapping/choices digest.
   pub mapping_digest: FactoryDigest,
+  /// Exact reserved objects whose bytes this writer verified, not a later manifest reread.
+  pub objects: Vec<SourceArtifactObject>,
   /// Trusted publication time.
   pub now: Timestamp,
 }
@@ -207,6 +239,8 @@ impl SourceMaterialization {
       || self.preparation_id != request.preparation_id
       || self.project_id != request.claim.project_id
       || self.mapping_digest != request.mapping_digest
+      || self.objects.len() != 2
+      || self.objects != request.objects
       || request.now < self.reserved_at
       || request.now >= self.expires_at
     {
@@ -268,6 +302,11 @@ pub trait SourceArtifactQueryStore: Send + Sync {
 /// Trusted source byte lifecycle, separate from Agent output publication.
 #[async_trait]
 pub trait WorkSourceArtifactStore: FactorySourceStore + SourceArtifactQueryStore {
+  /// Replaces only a still-unadmitted Issue snapshot, retaining its identity and cleanup history.
+  async fn refresh_source_issue_input(
+    &self,
+    request: crate::RefreshSourceIssueInput,
+  ) -> Result<crate::WorkSourcePreparation, StoreError>;
   /// Freezes installed choices before I/O, without a separate journal or publication owner.
   async fn freeze_source_preparation_policy(
     &self,
@@ -362,6 +401,7 @@ impl RejectSourcePreparation {
       input_version: preparation.input.version(),
       mapping_digest: self.mapping_digest,
       objects: vec![],
+      retired_objects: vec![],
       retention_millis: self.retention_millis,
       reserved_at: self.now,
       expires_at: Timestamp::from_unix_millis(expires)
@@ -436,7 +476,7 @@ impl SourcePreparationCleanup {
       expires_at: manifest.map_or(preparation.snapshot_expires_at, |m| {
         m.expires_at.min(preparation.snapshot_expires_at)
       }),
-      objects: manifest.map_or_else(Vec::new, |m| m.objects.clone()),
+      objects: manifest.map_or_else(Vec::new, SourceMaterialization::cleanup_objects),
       cleaned_at: manifest.and_then(|m| m.cleaned_at),
       next_cleanup_at: manifest.and_then(|m| m.next_cleanup_at),
     }

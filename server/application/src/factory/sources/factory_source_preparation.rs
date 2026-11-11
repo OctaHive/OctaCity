@@ -37,6 +37,7 @@ impl SourcePreparationSettings {
     policy: &dyn crate::ManagementAuthorizationPolicy,
     context: &crate::ManagementRequestContext,
     preparation: &octacity_server_store::WorkSourcePreparation,
+    issue_input: Option<&octacity_server_store::ProjectTextDocuments>,
   ) -> Result<(), ApplicationError> {
     use crate::{ManagementResourceKind, factory::authoring::factory_configuration_choices::require_visible_reference};
     crate::factory::admission::factory_admission::authorize_project_admission(
@@ -59,10 +60,11 @@ impl SourcePreparationSettings {
       preparation.input.definition().repository.id,
     )
     .await?;
-    if let crate::SourceAcceptanceMapping::ProcessCompletion(crate::SourceCompletionDocument::ProjectInput {
-      artifact,
-      ..
-    }) = &self.mapping.acceptance
+    if issue_input.is_none()
+      && let crate::SourceAcceptanceMapping::ProcessCompletion(crate::SourceCompletionDocument::ProjectInput {
+        artifact,
+        ..
+      }) = &self.mapping.acceptance
     {
       require_visible_reference(
         policy,
@@ -148,6 +150,26 @@ impl<S: WorkSourceArtifactStore, B: ArtifactBytePublisher> FactoryWorkSourcePrep
       .await
   }
 
+  /// Freezes the common canonical Issue documents without inventing a producer result.
+  pub async fn prepare_issue_input(
+    &self,
+    claim: WorkSourceScanClaim,
+    id: FactoryDigest,
+    mut settings: SourcePreparationSettings,
+    documents: &octacity_server_store::ProjectTextDocuments,
+  ) -> Result<SourcePreparationOutcome, ApplicationError> {
+    let snapshot = documents.issue_snapshot().ok_or_else(ApplicationError::invalid)?;
+    if settings.predecessor_digest.is_some() || settings.source != snapshot.target.source {
+      return Err(ApplicationError::invalid());
+    }
+    if let Some(classification) = &snapshot.admission_classification {
+      settings.classification = classification.clone();
+    }
+    self
+      .prepare_inputs(claim, id, settings, Some(OriginalSourceInputs::IssueText(documents)))
+      .await
+  }
+
   async fn prepare_original(
     &self,
     claim: WorkSourceScanClaim,
@@ -170,15 +192,24 @@ impl<S: WorkSourceArtifactStore, B: ArtifactBytePublisher> FactoryWorkSourcePrep
     settings: SourcePreparationSettings,
     original: Option<OriginalSourceInputs<'_>>,
   ) -> Result<SourcePreparationOutcome, ApplicationError> {
-    if original.is_some() != settings.predecessor_digest.is_some() {
+    let issue_input = match original {
+      Some(OriginalSourceInputs::IssueText(documents)) if documents.issue_snapshot().is_some() => Some(documents),
+      _ => None,
+    };
+    if (issue_input.is_some() && settings.predecessor_digest.is_some())
+      || (issue_input.is_none() && original.is_some() != settings.predecessor_digest.is_some())
+    {
       return Err(ApplicationError::invalid());
     }
     settings.mapping.validate().map_err(|_| ApplicationError::invalid())?;
     let retained = self.store.source_preparation(claim.project_id, id).await?;
     if let Some((policy, context)) = &self.authorization {
-      settings.authorize(policy.as_ref(), context, &retained).await?;
+      settings
+        .authorize(policy.as_ref(), context, &retained, issue_input)
+        .await?;
     }
-    if let crate::SourceAcceptanceMapping::ProcessCompletion(document) = &settings.mapping.acceptance
+    if issue_input.is_none()
+      && let crate::SourceAcceptanceMapping::ProcessCompletion(document) = &settings.mapping.acceptance
       && document.project_id() != claim.project_id
     {
       return Err(ApplicationError::invalid());
@@ -199,17 +230,48 @@ impl<S: WorkSourceArtifactStore, B: ArtifactBytePublisher> FactoryWorkSourcePrep
       &selected,
       octacity_server_factory::FactoryAdmissionOrigin::AutomaticSource,
     )?;
+    if let Some(documents) = issue_input {
+      documents.validate()?;
+      if selected.configuration.configuration.flow().issue_snapshot.as_ref()
+        != documents.issue_snapshot().map(|snapshot| &snapshot.input)
+      {
+        return Err(ApplicationError::invalid());
+      }
+    }
     let policy = serde_json::to_vec(&settings).map_err(|_| ApplicationError::invalid())?;
     let digest = FactoryDigest::content_sha256(&policy);
-    let preparation = self
-      .store
-      .freeze_source_preparation_policy(octacity_server_store::FreezeSourcePreparationPolicy {
-        claim: claim.clone(),
-        preparation_id: id,
-        policy,
-        now: self.clock.now()?,
-      })
-      .await?;
+    let freeze = octacity_server_store::FreezeSourcePreparationPolicy {
+      claim: claim.clone(),
+      preparation_id: id,
+      policy,
+      issue_input: issue_input.cloned(),
+      now: self.clock.now()?,
+    };
+    let preparation = if issue_input.is_some()
+      && retained
+        .issue_input
+        .as_ref()
+        .is_some_and(|original| Some(original) != issue_input)
+    {
+      self
+        .store
+        .refresh_source_issue_input(octacity_server_store::RefreshSourceIssueInput {
+          expected_snapshot: retained
+            .issue_input
+            .as_ref()
+            .and_then(|documents| documents.issue_snapshot())
+            .ok_or_else(ApplicationError::invalid)?
+            .digest()?,
+          security_scope: self.authorization.as_ref().map_or_else(
+            octacity_server_store::ManagementSecurityScope::trusted_network,
+            |(_, context)| context.security_scope().to_store(),
+          ),
+          replacement: freeze,
+        })
+        .await?
+    } else {
+      self.store.freeze_source_preparation_policy(freeze).await?
+    };
     let required_until = claim.until.min(preparation.snapshot_expires_at);
     let mut retained_until = None;
     let (mapped, media_type) = if let Some(OriginalSourceInputs::IssueText(text)) = original {
@@ -289,7 +351,9 @@ impl<S: WorkSourceArtifactStore, B: ArtifactBytePublisher> FactoryWorkSourcePrep
     if retained_until.is_some()
       && let Some((policy, context)) = &self.authorization
     {
-      settings.authorize(policy.as_ref(), context, &preparation).await?;
+      settings
+        .authorize(policy.as_ref(), context, &preparation, issue_input)
+        .await?;
     }
     let mapped = match mapped {
       Ok(mapped) => mapped,
@@ -387,6 +451,7 @@ impl<S: WorkSourceArtifactStore, B: ArtifactBytePublisher> FactoryWorkSourcePrep
           claim: claim.clone(),
           preparation_id: id,
           mapping_digest: digest,
+          objects: reserved.objects.clone(),
           now: self.clock.now()?,
         })
         .await?;

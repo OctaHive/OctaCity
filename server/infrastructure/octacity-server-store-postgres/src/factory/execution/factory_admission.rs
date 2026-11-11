@@ -40,8 +40,8 @@ struct AdmissionRow {
   admitted_at_millis: i64,
 }
 
-pub(crate) async fn recover(
-  pool: &PgPool,
+pub(crate) async fn recover<'e>(
+  executor: impl sqlx::PgExecutor<'e>,
   identity: &FactoryAdmissionIdentity,
 ) -> Result<Option<PublishedFactoryAdmission>, StoreError> {
   let security_digest = FactoryDigest::sha256(
@@ -62,7 +62,7 @@ pub(crate) async fn recover(
   .bind(identity.source_scope.source.as_str())
   .bind(security_digest.as_bytes().as_slice())
   .bind(identity.external_identity.as_str())
-  .fetch_optional(pool)
+  .fetch_optional(executor)
   .await
   .map_err(unavailable)?;
   row.map(decode_admission).transpose()
@@ -248,8 +248,13 @@ async fn admit_once(
     &mut transaction,
     &request,
     project_preparation.as_ref(),
+    preparation.as_mut(),
     &configuration,
-    project_guard.as_ref().map_or(request.admitted_at, |guard| guard.now),
+    project_guard
+      .as_ref()
+      .map(|guard| guard.now)
+      .or_else(|| guard.as_ref().map(|guard| guard.now))
+      .unwrap_or(request.admitted_at),
   )
   .await?;
   let active: i64 = sqlx::query_scalar(

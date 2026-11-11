@@ -107,6 +107,7 @@ struct SourceWorkerIntegrations {
   managed_connections: Option<ManagedIntegrationConnections>,
   profile_provider: Option<Arc<dyn FactorySourceProfileProvider>>,
   predecessors: Option<Arc<dyn FactorySourcePredecessors>>,
+  issue_snapshots: Option<Arc<dyn FactorySourceIssueSnapshots>>,
   repositories: Option<Arc<dyn ConfigurationStore>>,
   verification_inputs: Option<Arc<dyn octacity_server_store::ProjectInputQueryStore>>,
 }
@@ -169,6 +170,10 @@ impl<S: WorkSourceArtifactStore + 'static, B: ArtifactBytePublisher + 'static> F
   }
   pub(in crate::runtime) fn with_predecessors(mut self, reader: Arc<dyn FactorySourcePredecessors>) -> Self {
     self.integrations.predecessors = Some(reader);
+    self
+  }
+  pub(in crate::runtime) fn with_issue_snapshots(mut self, reader: Arc<dyn FactorySourceIssueSnapshots>) -> Self {
+    self.integrations.issue_snapshots = Some(reader);
     self
   }
   pub(in crate::runtime) fn with_repositories(mut self, repositories: Arc<dyn ConfigurationStore>) -> Self {
@@ -250,6 +255,7 @@ async fn poll_target<S: WorkSourceArtifactStore + 'static, B: ArtifactBytePublis
     managed_connections,
     profile_provider,
     predecessors,
+    issue_snapshots,
     repositories,
     verification_inputs,
   } = integrations;
@@ -298,6 +304,7 @@ async fn poll_target<S: WorkSourceArtifactStore + 'static, B: ArtifactBytePublis
     });
     let processor = Arc::new(SourceCandidateBridge {
       predecessors,
+      issue_snapshots,
       repositories,
       verification_inputs,
       managed_connections: managed_connections.clone(),

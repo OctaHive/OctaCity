@@ -257,6 +257,14 @@ struct StoredMutation {
   outcome: PublishedFactoryConfiguration,
 }
 
+impl FactoryConfigurationMemoryState {
+  pub(crate) fn has_admission(&self, identity: &FactoryAdmissionIdentity) -> bool {
+    self
+      .admissions
+      .contains_key(&(identity.source_scope.clone(), identity.external_identity.clone()))
+  }
+}
+
 #[derive(Clone)]
 struct StoredAdmission {
   source_scope: FactoryWorkSourceScope,

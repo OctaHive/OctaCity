@@ -10,7 +10,7 @@ use octacity_server_factory::{
 };
 use octacity_server_store::{
   FactoryAdmissionIdentity, FactoryAdmissionStore, IssueExecutionObservation, PublishedFactoryAdmission,
-  WorkSourcePredecessorCursor, WorkSourcePredecessorPosition, WorkSourceWaitReason,
+  WorkSourcePredecessorCursor, WorkSourcePredecessorPosition, WorkSourcePreparation, WorkSourceWaitReason,
 };
 
 use crate::factory::admission::factory_admission::SourceAdmissionSelection;
@@ -458,6 +458,7 @@ pub struct FactorySourceAdmissionHandlers<S> {
   clock: Arc<dyn crate::FactoryExecutionClock>,
   authorization: Arc<dyn FactorySourceAuthorizer>,
   predecessors: Option<Arc<dyn FactorySourcePredecessors>>,
+  issue_snapshots: Option<Arc<dyn FactorySourceIssueSnapshots>>,
 }
 
 impl<S: FactoryAdmissionStore + 'static> FactorySourceAdmissionHandlers<S> {
@@ -475,6 +476,7 @@ impl<S: FactoryAdmissionStore + 'static> FactorySourceAdmissionHandlers<S> {
       clock: Arc::new(crate::SystemFactoryExecutionClock),
       authorization,
       predecessors: None,
+      issue_snapshots: None,
     }
   }
 
@@ -504,6 +506,12 @@ impl<S: FactoryAdmissionStore + 'static> FactorySourceAdmissionHandlers<S> {
     self
   }
 
+  /// Installs canonical Issue resolution for producer-independent snapshot targets.
+  pub fn with_issue_snapshots(mut self, reader: Arc<dyn FactorySourceIssueSnapshots>) -> Self {
+    self.issue_snapshots = Some(reader);
+    self
+  }
+
   /// Resumes against the original target while checking the currently selected Source owner.
   pub async fn prepared_source_handoff(
     &self,
@@ -524,13 +532,7 @@ impl<S: FactoryAdmissionStore + 'static> FactorySourceAdmissionHandlers<S> {
         PredecessorSearch::Page(preparation.predecessor_cursor),
       )
       .await?;
-    if let Some(handoff) = &handoff
-      && preparation
-        .observed_issue_text
-        .is_some_and(|digest| handoff.issue_text_digest != Some(digest))
-    {
-      return Err(stale_source_handoff());
-    }
+    require_prepared_handoff(preparation, handoff.as_ref())?;
     Ok(handoff)
   }
 
@@ -545,26 +547,38 @@ impl<S: FactoryAdmissionStore + 'static> FactorySourceAdmissionHandlers<S> {
   ) -> Result<Option<FactorySourceHandoff>, ApplicationError> {
     validate_authorization(authorized, authorized.input.id(), authorized.input.version(), item)?;
     let selected = self.admission.require_source_launch(&authorized.context, input).await?;
-    let flow = selected.configuration.configuration.flow();
+    self
+      .source_handoff_for_target(
+        authorized,
+        item,
+        input,
+        FactorySourcePredecessorTarget {
+          expected_record,
+          search,
+          ..FactorySourcePredecessorTarget::new(
+            selected.repository.as_ref().ok_or_else(ApplicationError::invalid)?,
+            selected.configuration.configuration.flow(),
+            source,
+            self.admission.revisions.as_ref(),
+          )
+        },
+      )
+      .await
+  }
+
+  async fn source_handoff_for_target(
+    &self,
+    authorized: &FactorySourceAuthorization,
+    item: &FactorySourceItem,
+    input: &WorkSourceInput,
+    target: FactorySourcePredecessorTarget<'_>,
+  ) -> Result<Option<FactorySourceHandoff>, ApplicationError> {
+    let flow = target.flow;
+    let source = target.source;
     if flow.accepted_predecessor.is_some()
       && let Some(predecessors) = &self.predecessors
     {
-      let mut handoff = predecessors
-        .resolve(
-          authorized,
-          item,
-          FactorySourcePredecessorTarget {
-            expected_record,
-            search,
-            ..FactorySourcePredecessorTarget::new(
-              selected.repository.as_ref().ok_or_else(ApplicationError::invalid)?,
-              flow,
-              source,
-              self.admission.revisions.as_ref(),
-            )
-          },
-        )
-        .await?;
+      let mut handoff = predecessors.resolve(authorized, item, target).await?;
       handoff.selection = source.map(|source| SourceHandoffSelection {
         input: input.clone(),
         item: item.clone(),
@@ -692,6 +706,7 @@ impl<S: FactoryAdmissionStore + 'static> FactorySourceAdmissionHandlers<S> {
         Some(SourceAdmissionSelection {
           input: &authorized.input,
           handoff: handoff.as_ref(),
+          issue_input: None,
         }),
         octacity_server_factory::FactoryAdmissionOrigin::AutomaticSource,
       )
@@ -763,12 +778,16 @@ impl<S: octacity_server_store::FactorySourceStore + 'static> FactorySourceAdmiss
         .transpose()
         .map_err(|_| ApplicationError::invalid())?;
       let expected = settings.and_then(|settings| settings.predecessor_digest);
-      let handoff = match handoff {
-        Some(proof) if proof.matches_preparation(&authorized, &preparation, source) => Some(proof),
-        _ => {
-          self
-            .prepared_source_handoff(&authorized, &command.guard.claim, &preparation, source, expected)
-            .await?
+      let handoff = if preparation.issue_input.is_some() {
+        None
+      } else {
+        match handoff {
+          Some(proof) if proof.matches_preparation(&authorized, &preparation, source) => Some(proof),
+          _ => {
+            self
+              .prepared_source_handoff(&authorized, &command.guard.claim, &preparation, source, expected)
+              .await?
+          }
         }
       };
       let predecessor = handoff.as_ref().map(FactorySourceHandoff::record_digest).transpose()?;
@@ -785,11 +804,20 @@ impl<S: octacity_server_store::FactorySourceStore + 'static> FactorySourceAdmiss
           Some(SourceAdmissionSelection {
             input: &preparation.input,
             handoff: handoff.as_ref(),
+            issue_input: preparation.issue_input.as_ref(),
           }),
           octacity_server_factory::FactoryAdmissionOrigin::AutomaticSource,
         )
         .await?
     };
+    if request
+      .incoming
+      .as_ref()
+      .and_then(|data| data.issue_snapshot())
+      .is_some()
+    {
+      self.require_current_issue_input(&authorized, &preparation).await?;
+    }
     // Revision resolution may yield after the initial grant/visibility checks.
     // Neither retained Source bytes nor an earlier grant authorize a revoked input.
     let current = self
@@ -861,3 +889,23 @@ fn source_item_identity(
     .external_identity,
   )
 }
+
+fn require_prepared_handoff(
+  preparation: &WorkSourcePreparation,
+  handoff: Option<&FactorySourceHandoff>,
+) -> Result<(), ApplicationError> {
+  if let Some(handoff) = handoff
+    && preparation
+      .observed_issue_text
+      .is_some_and(|digest| handoff.issue_text_digest != Some(digest))
+  {
+    return Err(stale_source_handoff());
+  }
+  Ok(())
+}
+
+#[path = "factory_source_issue_snapshot.rs"]
+mod issue_snapshots;
+pub use issue_snapshots::{
+  FactorySourceIssueSnapshots, FactorySourcePreparedInput, IssueSourceSnapshotReader, source_input_wait,
+};

@@ -56,6 +56,29 @@ async fn save(tx: &mut Transaction<'_, Postgres>, manifest: &SourceMaterializati
 }
 #[async_trait]
 impl WorkSourceArtifactStore for PostgresStore {
+  async fn refresh_source_issue_input(
+    &self,
+    request: RefreshSourceIssueInput,
+  ) -> Result<WorkSourcePreparation, StoreError> {
+    let change = &request.replacement;
+    let mut tx = self.pool().begin().await.map_err(unavailable)?;
+    let preparation = owner(&mut tx, &change.claim, change.preparation_id, change.now).await?;
+    let identity = preparation.admission_identity(request.security_scope.clone());
+    if crate::factory::execution::factory_admission::recover(&mut *tx, &identity)
+      .await?
+      .is_some()
+    {
+      return Err(source_conflict());
+    }
+    let current = load(&mut tx, change.claim.project_id, change.preparation_id).await?;
+    let (retained, manifest) = request.retain(preparation, current)?;
+    if let Some(manifest) = manifest {
+      save(&mut tx, &manifest).await?;
+    }
+    crate::factory::sources::factory_source::save_preparation(&mut tx, &retained).await?;
+    tx.commit().await.map_err(unavailable)?;
+    Ok(retained)
+  }
   async fn freeze_source_preparation_policy(
     &self,
     request: FreezeSourcePreparationPolicy,
@@ -126,7 +149,7 @@ impl WorkSourceArtifactStore for PostgresStore {
         expires_at: Timestamp::from_unix_millis(expires).map_err(|_| StoreError::Unavailable)?,
         cleaned_at: manifest.as_ref().and_then(|m| m.cleaned_at),
         next_cleanup_at: manifest.as_ref().and_then(|m| m.next_cleanup_at),
-        objects: manifest.map_or_else(Vec::new, |m| m.objects),
+        objects: manifest.map_or_else(Vec::new, |m| m.cleanup_objects()),
       });
     }
     Ok(result)
@@ -150,7 +173,7 @@ impl WorkSourceArtifactStore for PostgresStore {
     }
     if let Some(manifest) = &mut manifest {
       manifest.cleaned_at.get_or_insert(now);
-      manifest.next_cleanup_at = (!manifest.objects.is_empty()).then_some(recheck_at);
+      manifest.next_cleanup_at = (!manifest.cleanup_objects().is_empty()).then_some(recheck_at);
       save(&mut tx, manifest).await?;
     }
     // A scheduled recheck updates only its schedule, never the frozen preparation again.
@@ -158,6 +181,7 @@ impl WorkSourceArtifactStore for PostgresStore {
       preparation.snapshot.clear();
       preparation.observed_issue_text = None;
       preparation.policy = None;
+      preparation.issue_input = None;
       preparation.initial_policy = None;
       preparation.predecessor_cursor = None;
       crate::factory::sources::factory_source::save_preparation(&mut tx, &preparation).await?;
@@ -179,10 +203,11 @@ impl WorkSourceArtifactStore for PostgresStore {
     let current = load(&mut tx, request.claim.project_id, request.preparation_id).await?;
     let manifest = request.retain(&preparation, current.as_ref())?;
     save(&mut tx, &manifest).await?;
-    if current.is_none() {
+    if current.as_ref().is_none_or(|m| m.objects.is_empty()) {
       for object in &manifest.objects {
         sqlx::query(
-          "INSERT INTO factory_source_input_objects (artifact_id,upload_id,preparation_id) VALUES ($1,$2,$3)",
+          "INSERT INTO factory_source_input_objects (artifact_id,upload_id,preparation_id) VALUES ($1,$2,$3)
+           ON CONFLICT (artifact_id) DO NOTHING",
         )
         .bind(object.artifact.artifact_id().as_uuid())
         .bind(object.upload_id.as_uuid())
@@ -190,6 +215,13 @@ impl WorkSourceArtifactStore for PostgresStore {
         .execute(&mut *tx)
         .await
         .map_err(|_| source_conflict())?;
+        let same_owner: bool = sqlx::query_scalar(
+          "SELECT EXISTS(SELECT 1 FROM factory_source_input_objects WHERE artifact_id=$1 AND upload_id=$2 AND preparation_id=$3)",
+        ).bind(object.artifact.artifact_id().as_uuid()).bind(object.upload_id.as_uuid())
+          .bind(manifest.preparation_id.as_bytes().as_slice()).fetch_one(&mut *tx).await.map_err(unavailable)?;
+        if !same_owner {
+          return Err(source_conflict());
+        }
       }
     }
     tx.commit().await.map_err(unavailable)?;
