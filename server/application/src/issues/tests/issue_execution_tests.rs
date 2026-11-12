@@ -304,7 +304,7 @@ impl ManagementAuthorizationPolicy for ResourcePolicy {
   }
 }
 #[test]
-fn manual_delivery_admits_the_original_issue_and_exact_triage_result() {
+fn explicit_producer_result_publication_executes_and_recovers_without_issue_classification() {
   use crate::factory::admission::tests::factory_admission_tests::{
     configuration_with_flow, incoming_result_configuration, seed_permitted_configuration,
   };
@@ -707,6 +707,25 @@ fn manual_delivery_admits_the_original_issue_and_exact_triage_result() {
       .await
       .unwrap()
       .request;
+    // Legacy publications/requests carry no implicit Issue-snapshot input.
+    let legacy_flow = serde_json::to_value(published.flow()).unwrap();
+    assert!(legacy_flow.get("issue_snapshot").is_none());
+    let restored_flow: FactoryFlowConfiguration = serde_json::from_value(legacy_flow.clone()).unwrap();
+    assert_eq!(serde_json::to_value(&restored_flow).unwrap(), legacy_flow);
+    assert_eq!(&restored_flow, published.flow());
+    let legacy_configuration = serde_json::to_value(&published).unwrap();
+    let restored_configuration: FactoryConfiguration = serde_json::from_value(legacy_configuration.clone()).unwrap();
+    assert_eq!(
+      serde_json::to_value(&restored_configuration).unwrap(),
+      legacy_configuration
+    );
+    assert_eq!(restored_configuration, published);
+    let legacy_request = serde_json::to_value(&reviewed).unwrap();
+    assert!(legacy_request.get("snapshot_digest").is_none());
+    assert!(legacy_request.get("admission_classification").is_none());
+    let restored_request: IssueExecutionRequest = serde_json::from_value(legacy_request.clone()).unwrap();
+    assert_eq!(serde_json::to_value(&restored_request).unwrap(), legacy_request);
+    assert_eq!(restored_request, reviewed);
     let first = publisher()
       .handle_command(&context(), publish(reviewed.id))
       .await
@@ -854,8 +873,8 @@ fn manual_delivery_admits_the_original_issue_and_exact_triage_result() {
       .admit(automatic.clone())
       .await
       .unwrap();
-    let restarted = automatic_handler(installed, policy.clone())
-      .admit(automatic)
+    let restarted = automatic_handler(installed.clone(), policy.clone())
+      .admit(automatic.clone())
       .await
       .unwrap();
     assert_eq!(auto.factory_run_id, restarted.factory_run_id);
@@ -895,13 +914,112 @@ fn manual_delivery_admits_the_original_issue_and_exact_triage_result() {
     assert_eq!(report.errors[0].code, "incoming_result_stale");
     assert_eq!(
       commands
-        .handle_command(&context(), downstream)
+        .handle_command(&context(), downstream.clone())
         .await
         .unwrap()
         .request
         .id,
       reviewed.id
     );
+    let before_execution = store.issue(issue.project_id, issue.id, None).await.unwrap();
+    assert!(before_execution.classification.fields.is_empty());
+    assert!(before_execution.planning.values.is_empty());
+    for run in [first.run_id, automatic_run.run.id()] {
+      let before = factory.factory_run_snapshot(run).await.unwrap();
+      let old_run = serde_json::to_value(&before.run).unwrap();
+      let restored_run: FactoryRun = serde_json::from_value(old_run.clone()).unwrap();
+      assert_eq!(serde_json::to_value(&restored_run).unwrap(), old_run);
+      assert_eq!(restored_run, before.run);
+      let old_admission = serde_json::to_value(&before.admitted_flow).unwrap();
+      let restored_admission: AdmittedFlow = serde_json::from_value(old_admission.clone()).unwrap();
+      assert_eq!(serde_json::to_value(&restored_admission).unwrap(), old_admission);
+      assert_eq!(restored_admission, before.admitted_flow);
+      let incoming = &before.flow.data.incoming[0];
+      let schema = before.admitted_flow.data_schema(incoming.payload().schema()).unwrap();
+      let old_incoming = serde_json::to_value(incoming).unwrap();
+      assert!(old_incoming.get("issue_snapshot").is_none());
+      let restored = FlowIncomingData::restore(
+        &serde_json::to_vec(&old_incoming).unwrap(),
+        &before.work,
+        &restored_admission,
+        schema,
+        incoming.digest().unwrap(),
+      )
+      .unwrap();
+      assert_eq!(&restored, incoming);
+      let mut substituted = old_incoming;
+      substituted["predecessor"]["run_id"] = serde_json::json!(superseded.run_id);
+      assert!(
+        FlowIncomingData::restore(
+          &serde_json::to_vec(&substituted).unwrap(),
+          &before.work,
+          &restored_admission,
+          schema,
+          incoming.digest().unwrap(),
+        )
+        .is_err(),
+        "legacy recovery must preserve the selected producer Run"
+      );
+      let claim =
+        crate::factory::execution::tests::factory_requirements_tests::claim_run(factory.as_ref(), run, 61).await;
+      // A replacement owner consumes the original accepted result after the Issue edit.
+      let restarted_owner = FactoryFlowRunner::new(
+        factory.clone(),
+        Arc::new(crate::factory_flow_tests::FakePending),
+        Arc::new(crate::factory_flow_tests::Inputs),
+        crate::factory_node_test_support::clock(),
+      );
+      let mut terminal = None;
+      for tick in 62..80 {
+        if let FactoryFlowStep::Resolved(outcome) = crate::factory_node_test_support::reconcile_admission_then_observe(
+          &restarted_owner,
+          factory.as_ref(),
+          run,
+          claim.id,
+          at(tick),
+        )
+        .await
+        .unwrap()
+        {
+          terminal = Some(outcome);
+          break;
+        }
+      }
+      assert_eq!(terminal, Some(key("triaged")));
+      let executed = factory.factory_run_snapshot(run).await.unwrap();
+      let accepted = executed
+        .flow
+        .data
+        .records
+        .iter()
+        .find(|record| record.input().node() == &key("reviewed-input"))
+        .unwrap();
+      assert_eq!(accepted.payload().value(), &serde_json::json!(true));
+      assert_eq!(
+        accepted.input().incoming_digest(),
+        Some(before.flow.data.incoming[0].digest().unwrap())
+      );
+      assert_eq!(executed.flow.data.incoming, before.flow.data.incoming);
+      assert_eq!(executed.work, before.work);
+      assert!(executed.flow.data.incoming[0].issue_snapshot().is_none());
+    }
+    assert_eq!(
+      store.issue(issue.project_id, issue.id, None).await.unwrap(),
+      before_execution
+    );
+    assert_eq!(
+      publisher()
+        .handle_command(&context(), publish(reviewed.id))
+        .await
+        .unwrap()
+        .association,
+      Some(first)
+    );
+    let recovered = automatic_handler(installed, policy.clone())
+      .admit(automatic)
+      .await
+      .unwrap();
+    assert_eq!(recovered.factory_run_id, auto.factory_run_id);
   });
 }
 

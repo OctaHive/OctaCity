@@ -22,6 +22,7 @@ struct DeliveryFixture {
   reader: Arc<AuthorizedQueryHandler<Prerequisites>>,
   installed: FactoryConfigurationChoices,
   base_choices: FactoryConfigurationChoices,
+  repository: PublishedRepository,
   predecessor: PublishedFactoryFlowDefinition,
   selection: FactoryPresetResolutionRequest,
   build: FlowBuildBinding,
@@ -105,7 +106,7 @@ async fn delivery_fixture() -> DeliveryFixture {
   let reader = Arc::new(AuthorizedQueryHandler::new(
     policy.clone(),
     Arc::new(Prerequisites {
-      repository,
+      repository: repository.clone(),
       flow: predecessor.clone(),
     }),
   ));
@@ -290,6 +291,7 @@ async fn delivery_fixture() -> DeliveryFixture {
     reader,
     installed,
     base_choices,
+    repository,
     predecessor,
     selection,
     build,
@@ -310,6 +312,7 @@ fn resolved_delivery_is_an_editable_ordinary_flow_with_no_implicit_activation() 
       predecessor,
       selection,
       build,
+      repository: _,
     } = delivery_fixture().await;
     let flow_id = selection.flow_id.unwrap();
     let published_at = Timestamp::from_unix_millis(1).unwrap();

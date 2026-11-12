@@ -391,6 +391,14 @@ for selecting Project fields are not yet available. The catalog offers both
 when `v2` is selected. See the
 [example's prerequisites and request shape](../../config/factory/presets/ticket-delivery/README.md#current-v2-issue-snapshot-example).
 
+An empty dependency list is valid without a dependency assessment. Nonempty
+dependency claims still require applicable provenance. Admission freezes the
+selected size, component, priority and reproduction decision; later Issue edits
+do not change that Run's requirements branch or human-acceptance policy.
+Recovery also preserves an older request's omitted empty optional dependency
+list under its original snapshot digest; it does not add newly available input
+to that sealed request.
+
 For retained `v1` examples or intentionally authored producer-result consumers,
 select the exact published triage completion and compatible executors, command
 reports and review target. The existing **Incoming pipeline completion** controls
@@ -398,6 +406,11 @@ remain supported. **Earlier Flow version** selects an exact older publication;
 it does not reinterpret it as an Issue snapshot. Upgrading uses new reviewed Flow
 and Configuration versions. Connect code to the steps that need it and review
 each access request before publishing.
+
+New Flows can also select producer-result mode explicitly: pin the producing
+Flow, terminal and eligible outcomes, then select an accepted Run. Its result is
+frozen as Incoming data without copying it into Issue classification. Manual and
+automatic recovery retain that original result and producer identity.
 
 For trusted Delivery, choose **Server action** and **Publish candidate**.
 Select the installed Project target and review its receipt result. Connect the

@@ -1243,4 +1243,4 @@ fn classified_requirements_correction_restarts_every_accepted_gate_in_a_fresh_cy
 }
 
 #[path = "factory_requirements_tests/ticket_delivery.rs"]
-mod ticket_delivery;
+pub(crate) mod ticket_delivery;

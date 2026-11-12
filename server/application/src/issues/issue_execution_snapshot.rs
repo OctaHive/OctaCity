@@ -238,8 +238,44 @@ pub(crate) async fn select(
 /// A bounded candidate must match the sealed digest; only then may omissions be restored.
 /// An oversized new encoding is not a match, but must not prevent trying older formats.
 fn matches_reviewed_digest(snapshot: &mut IssueExecutionSnapshot, expected: FactoryDigest) -> bool {
-  crate::issues::issue_execution_snapshot_materials::restore_reviewed_omissions(snapshot, expected)
-    || snapshot.digest().is_ok_and(|digest| digest == expected)
+  let matches = |snapshot: &mut IssueExecutionSnapshot| {
+    crate::issues::issue_execution_snapshot_materials::restore_reviewed_omissions(snapshot, expected)
+      || snapshot.digest().is_ok_and(|digest| digest == expected)
+  };
+  if matches(snapshot) {
+    return true;
+  }
+  // Earlier optional dependency selections omitted the canonical empty list as
+  // inapplicable. Only an exact sealed request may retain that old projection.
+  let omitted: Vec<_> = snapshot
+    .input
+    .fields
+    .iter()
+    .filter_map(|(alias, selection)| {
+      (!selection.required
+        && selection.source == FlowIssueFieldSource::Dependencies
+        && snapshot
+          .values
+          .get(alias)
+          .is_some_and(|value| value.as_array().is_some_and(Vec::is_empty)))
+      .then_some(alias)
+    })
+    .collect();
+  if omitted.is_empty() {
+    return false;
+  }
+  let mut legacy = snapshot.clone();
+  for alias in omitted {
+    legacy.values.remove(alias);
+    legacy
+      .omissions
+      .insert(alias.clone(), IssueSnapshotOmission::Inapplicable);
+  }
+  if !matches(&mut legacy) {
+    return false;
+  }
+  *snapshot = legacy;
+  true
 }
 
 // A value assessed as risk cannot become reproduction merely because an older
@@ -325,7 +361,8 @@ fn field_value(
     ),
     Source::Dependencies => (
       Some(serde_json::to_value(&issue.classification.dependencies).expect("typed dependencies")),
-      Some(Field::Dependencies),
+      // An empty collection makes no dependency claim and needs no assessment origin.
+      (!issue.classification.dependencies.is_empty()).then_some(Field::Dependencies),
     ),
     Source::Property { id } => property(id),
     Source::Classification { slot } => catalog

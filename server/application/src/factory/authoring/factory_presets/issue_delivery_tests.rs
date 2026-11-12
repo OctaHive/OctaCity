@@ -1,6 +1,9 @@
 //! Issue-based release resolution and ordinary publication, without producer reads.
 use super::*;
 
+#[path = "issue_delivery_route_tests.rs"]
+mod routes;
+
 async fn issue_selection(fixture: &DeliveryFixture) -> FactoryPresetResolutionRequest {
   let page = AuthorizedQueryHandler::new(
     fixture.policy.clone(),

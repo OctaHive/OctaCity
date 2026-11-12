@@ -6,10 +6,28 @@ fn delivery_context() -> ManagementRequestContext {
 }
 
 fn delivery_requirements_template(extra_parts: &[&str]) -> FlowDefinitionTemplate {
+  requirements_template(extra_parts, false)
+}
+
+fn requirements_template(extra_parts: &[&str], issue_input: bool) -> FlowDefinitionTemplate {
   let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../config/factory");
   let manifest = std::fs::read(root.join("presets/ticket-delivery/requirements-v1.json"))
     .expect("ticket delivery provides a configurable requirements Flow");
   let mut manifest: Value = serde_json::from_slice(&manifest).unwrap();
+  if issue_input {
+    for part in manifest["parts"].as_array_mut().unwrap() {
+      *part = match part.as_str().unwrap() {
+        "flows/base-flow/schemas/summary.json" => json!("presets/ticket-delivery/issue-summary-v2.json"),
+        "presets/ticket-delivery/requirements-branch-v1.json" => {
+          json!("presets/ticket-delivery/requirements-branch-v2.json")
+        }
+        "presets/ticket-delivery/requirements-approval-v1.json" => {
+          json!("presets/ticket-delivery/requirements-approval-v2.json")
+        }
+        _ => part.clone(),
+      };
+    }
+  }
   manifest["parts"]
     .as_array_mut()
     .unwrap()
@@ -34,8 +52,39 @@ fn delivery_requirements_fixture(
 }
 
 fn delivery_fixture_with_profiles(
-  mut template: FlowDefinitionTemplate,
+  template: FlowDefinitionTemplate,
   triage: Value,
+  configure: impl FnMut(&mut FlowTemplateNode, &mut FlowBuildBinding),
+) -> (
+  PublishedFactoryAdmission,
+  Arc<Execution>,
+  Arc<FactoryNodeExecutorRegistry>,
+) {
+  let work = testing::factory_node_journal_contract_fixture().admission.work;
+  requirements_fixture_with_work(template, triage, work, configure)
+}
+
+/// Qualifies v2 specification capture and human review with an already frozen Issue payload.
+/// Admission and edits are exercised by the caller through the ordinary Issue owner.
+pub(crate) fn issue_requirements_fixture(
+  snapshot: &FactoryRunSnapshot,
+) -> (
+  PublishedFactoryAdmission,
+  Arc<Execution>,
+  Arc<FactoryNodeExecutorRegistry>,
+) {
+  requirements_fixture_with_work(
+    requirements_template(&[], true),
+    snapshot.flow.data.incoming[0].payload().value().clone(),
+    snapshot.work.clone(),
+    |_, _| {},
+  )
+}
+
+fn requirements_fixture_with_work(
+  mut template: FlowDefinitionTemplate,
+  input: Value,
+  work: WorkEnvelope,
   configure: impl FnMut(&mut FlowTemplateNode, &mut FlowBuildBinding),
 ) -> (
   PublishedFactoryAdmission,
@@ -50,10 +99,9 @@ fn delivery_fixture_with_profiles(
     .unwrap()
     .input_binding = FlowInputBinding::new(
     BTreeMap::new(),
-    FlowDataMapping::new(FlowValueMapping::Constant { value: triage }).unwrap(),
+    FlowDataMapping::new(FlowValueMapping::Constant { value: input }).unwrap(),
   )
   .unwrap();
-  let work = testing::factory_node_journal_contract_fixture().admission.work;
   let (admission, execution) = crate::factory_flow_tests::configured_fixture_with_profiles(template, work, configure);
   let mut execution = Arc::try_unwrap(execution).ok().unwrap();
   execution.output_builder = Some(Arc::new(QualifiedOutputs {

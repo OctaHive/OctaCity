@@ -39,8 +39,8 @@
 
 - [x] 5.1 Add a Red/Green triage authoring/execution test for explicit application using Project-defined field contracts; extend the optional local action without per-step duplicate vocabularies, implicit label effects, provider writes or automatic delivery activation.
 - [x] 5.2 Add a Red/Green ticket-delivery resolver/publication test for a new example version with Issue snapshot input and no required accepted predecessor; preserve earlier example bytes and all required executor/command/access validation.
-- [ ] 5.3 Add Red/Green delivery route tests proving that frozen Issue size and component/priority select reproduction, small/medium versus large requirements and human acceptance correctly after a later Issue edit; retain protected-test isolation, candidate review, mandatory verification and trusted PR publication.
-- [ ] 5.4 Extend existing compatibility tests before changing wire decoding: old Flow/Configuration/request documents and predecessor-bound manual/automatic executions must retain their original validation, exact upstream input and recovery behavior; add a public publication/execution test proving a newly authored pipeline can still explicitly consume another pipeline's exact accepted result without copying it to Issue fields.
+- [x] 5.3 Add Red/Green delivery route tests proving that frozen Issue size and component/priority select reproduction, small/medium versus large requirements and human acceptance correctly after a later Issue edit; retain protected-test isolation, candidate review, mandatory verification and trusted PR publication.
+- [x] 5.4 Extend existing compatibility tests before changing wire decoding: old Flow/Configuration/request documents and predecessor-bound manual/automatic executions must retain their original validation, exact upstream input and recovery behavior; add a public publication/execution test proving a newly authored pipeline can still explicitly consume another pipeline's exact accepted result without copying it to Issue fields.
 
 ## 6. Management API and Console
 
