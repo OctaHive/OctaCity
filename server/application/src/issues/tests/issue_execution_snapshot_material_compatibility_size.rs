@@ -195,18 +195,11 @@ fn issue_material_snapshot_rejects_new_oversized_text_without_a_reviewed_omissio
           .review(f.readers(Arc::new(TrustedNetworkManagementPolicy)))
           .await
           .expect_err("newly selected text must still satisfy Incoming and private snapshot encoding limits");
-        if escaped {
-          let Some(ApplicationError::FactoryValidation(report)) = error.application() else {
-            panic!("{error:?}")
-          };
-          assert_eq!(report.errors[0].field, "/issue_snapshot/fields");
-          assert_eq!(report.errors[0].code, "invalid_contract");
-        } else {
-          assert!(matches!(
-            error.application(),
-            Some(ApplicationError::Store(StoreError::InvalidInput { .. }))
-          ));
-        }
+        let Some(ApplicationError::FactoryValidation(report)) = error.application() else {
+          panic!("expected an encoding-limit diagnostic: {error:?}")
+        };
+        assert_eq!(report.errors[0].field, "/issue_snapshot/encoding");
+        assert_eq!(report.errors[0].code, "issue_snapshot_encoding_limit_exceeded");
         assert_eq!(f.issues.mutation_evidence_counts().await, before);
         f.no_runs().await;
       }

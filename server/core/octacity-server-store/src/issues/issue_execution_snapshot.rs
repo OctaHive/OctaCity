@@ -177,7 +177,10 @@ impl IssueExecutionSnapshot {
   pub fn digest(&self) -> Result<FactoryDigest, StoreError> {
     let bytes = serde_json::to_vec(self).map_err(|_| invalid_snapshot())?;
     if bytes.len() > MAX_SOURCE_INPUT_BYTES as usize {
-      return Err(invalid_snapshot());
+      return Err(StoreError::invalid(
+        StoreOperation::ReserveProjectTextInput,
+        StoreInputError::JsonDocumentTooLarge,
+      ));
     }
     Ok(FactoryDigest::content_sha256(&bytes))
   }

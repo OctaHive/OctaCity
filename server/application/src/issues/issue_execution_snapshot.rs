@@ -152,9 +152,10 @@ pub(crate) async fn select(
   // Evidence remains independently qualified, never inferred from selected prose.
   for (alias, selection) in &input.evidence {
     if selection.required {
-      return Err(FactoryValidationDiagnostics::unavailable(format!(
-        "/issue_snapshot/{alias}"
-      )));
+      return Err(FactoryValidationDiagnostics::unavailable_with_code(
+        format!("/issue_snapshot/evidence/{alias}"),
+        "issue_snapshot_evidence_unavailable",
+      ));
     }
     snapshot
       .omissions
@@ -213,12 +214,24 @@ pub(crate) async fn select(
     .iter()
     .find(|s| s.reference() == &input.schema)
     .ok_or_else(ApplicationError::invalid)?;
+  // The private encoding encloses the same values and schema pin as Incoming,
+  // plus provenance. Bound it first so escaping/metadata overflow stays distinct
+  // from an invalid consumer schema, without duplicating either wire format.
+  snapshot.digest().map_err(|error| match error {
+    StoreError::InvalidInput {
+      operation: StoreOperation::ReserveProjectTextInput,
+      source: StoreInputError::JsonDocumentTooLarge,
+    } => FactoryValidationDiagnostics::unavailable_with_code(
+      "/issue_snapshot/encoding",
+      "issue_snapshot_encoding_limit_exceeded",
+    ),
+    other => other.into(),
+  })?;
   FlowPayload::new(
     schema,
     serde_json::to_value(&snapshot.values).map_err(|_| ApplicationError::invalid())?,
   )
   .map_err(|_| FactoryValidationDiagnostics::invalid("/issue_snapshot/fields"))?;
-  snapshot.digest()?;
   Ok(snapshot)
 }
 

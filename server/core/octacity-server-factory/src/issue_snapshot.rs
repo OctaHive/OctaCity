@@ -130,7 +130,7 @@ pub enum FlowIssueMaterialSource {
   },
   /// An explicit opt-in to a bounded set already selected on the Issue.
   Selected {
-    /// Inclusive source count ceiling; automatic intake still needs its own selection policy.
+    /// Inclusive source count ceiling; the Source must explicitly target this published material contract.
     max_entries: u16,
   },
 }

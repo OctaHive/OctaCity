@@ -34,6 +34,14 @@ impl ManagedFactorySource {
     principal: &str,
   ) -> Result<Arc<dyn FactorySourceRuntime>, ApplicationError> {
     let consumer = sources.profiles.consumer;
+    let clock = Arc::new(SystemFactoryExecutionClock);
+    let issue_snapshots = super::source_issue_snapshots::reader(
+      sources.store.clone(),
+      bytes.clone(),
+      revisions.clone(),
+      sources.policy.clone(),
+      clock.clone(),
+    );
     let worker = FactorySourceWorker::new(
       FactorySourceWorkerDependencies {
         store: sources.store.clone(),
@@ -45,7 +53,7 @@ impl ManagedFactorySource {
         revisions,
         authorization: sources.policy.clone(),
         registry: sources.registry.clone(),
-        clock: Arc::new(SystemFactoryExecutionClock),
+        clock,
       },
       FactorySourceInstallation {
         projects: vec![],
@@ -66,10 +74,7 @@ impl ManagedFactorySource {
     .with_managed_connections(ManagedIntegrationConnections::new(sources.store.clone()))
     .with_repositories(sources.store.clone())
     .with_verification_inputs(sources.store.clone())
-    .with_issue_snapshots(Arc::new(IssueSourceSnapshotReader::new(
-      sources.store.clone(),
-      sources.policy.clone(),
-    )))
+    .with_issue_snapshots(issue_snapshots)
     .with_predecessors(Arc::new(IssueSourcePredecessorReader::new(
       sources.store.clone(),
       sources.store.clone(),

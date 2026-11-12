@@ -184,6 +184,14 @@ impl FactoryRuntimeResources {
     registry: Arc<octacity_server_work_source::WorkAdapterRegistry>,
     authorization: Arc<dyn octacity_server_application::ManagementAuthorizationPolicy>,
   ) -> Result<Arc<dyn super::FactorySourceRuntime>, FactoryRuntimeInstallationError> {
+    let clock = Arc::new(octacity_server_application::SystemFactoryExecutionClock);
+    let issue_snapshots = super::sources::source_issue_snapshots::reader(
+      self.runs.clone(),
+      self.objects.clone(),
+      self.revisions.clone(),
+      authorization.clone(),
+      clock.clone(),
+    );
     super::FactorySourceWorker::new(
       super::FactorySourceWorkerDependencies {
         store: self.runs.clone(),
@@ -195,7 +203,7 @@ impl FactoryRuntimeResources {
         revisions: self.revisions.clone(),
         authorization: authorization.clone(),
         registry,
-        clock: Arc::new(octacity_server_application::SystemFactoryExecutionClock),
+        clock,
       },
       installation,
     )
@@ -203,10 +211,7 @@ impl FactoryRuntimeResources {
       Arc::new(
         worker
           .with_repositories(self.runs.clone())
-          .with_issue_snapshots(Arc::new(octacity_server_application::IssueSourceSnapshotReader::new(
-            self.runs.clone(),
-            authorization.clone(),
-          )))
+          .with_issue_snapshots(issue_snapshots)
           .with_predecessors(Arc::new(
             octacity_server_application::IssueSourcePredecessorReader::new(
               self.runs.clone(),

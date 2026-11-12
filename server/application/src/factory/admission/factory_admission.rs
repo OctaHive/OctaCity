@@ -451,6 +451,20 @@ impl<S: FactoryAdmissionStore + 'static> FactoryAdmissionHandlers<S> {
       .map_err(|_| ApplicationError::invalid())?;
     admission.incoming = if let Some(documents) = issue_input {
       let snapshot = documents.issue_snapshot().ok_or_else(ApplicationError::invalid)?;
+      let subject = octacity_server_factory::FactoryTaskSubject::Exact(
+        admission
+          .work
+          .subject()
+          .repository()
+          .map_err(|_| ApplicationError::invalid())?
+          .clone(),
+      );
+      if let Some(alias) = snapshot.incompatible_subject_field(&subject) {
+        return Err(crate::FactoryValidationDiagnostics::unavailable_with_code(
+          format!("/issue_snapshot/fields/{alias}"),
+          "issue_snapshot_wrong_subject",
+        ));
+      }
       let schema = admission
         .flow
         .data_schema(&snapshot.input.schema)

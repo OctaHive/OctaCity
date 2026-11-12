@@ -31,11 +31,21 @@ pub enum FactorySourcePreparedInput {
 pub struct IssueSourceSnapshotReader<I> {
   issues: Arc<I>,
   policy: Arc<dyn ManagementAuthorizationPolicy>,
+  materials: Option<Arc<crate::IssueSnapshotMaterialReaders>>,
 }
 impl<I> IssueSourceSnapshotReader<I> {
-  /// Body/material ingestion remains disabled until an explicit automatic selection policy exists.
+  /// Starts with body reads disabled, independently of Issue visibility.
   pub fn new(issues: Arc<I>, policy: Arc<dyn ManagementAuthorizationPolicy>) -> Self {
-    Self { issues, policy }
+    Self {
+      issues,
+      policy,
+      materials: None,
+    }
+  }
+  /// Installs owner-aware readers; only the published Flow's bounded material contract consumes them.
+  pub fn with_materials(mut self, readers: Arc<crate::IssueSnapshotMaterialReaders>) -> Self {
+    self.materials = Some(readers);
+    self
   }
 }
 #[async_trait]
@@ -85,7 +95,7 @@ impl<I: IssueSourceStore + IssuePropertyStore> FactorySourceIssueSnapshots for I
       crate::issues::issue_execution_snapshot::IssueSnapshotReadContext {
         policy: self.policy.as_ref(),
         context: &authorized.context,
-        materials: None,
+        materials: self.materials.as_deref(),
       },
       &issue,
       &target,
@@ -212,6 +222,11 @@ pub fn source_input_wait(
   let reason = match issue.code {
     "issue_snapshot_missing_issue" | "issue_snapshot_missing_value" => WorkSourceWaitReason::Missing,
     "issue_snapshot_stale" | "issue_snapshot_inapplicable" => WorkSourceWaitReason::Stale,
+    "issue_snapshot_evidence_unavailable" | "issue_snapshot_material_unavailable" => WorkSourceWaitReason::Inaccessible,
+    "issue_snapshot_wrong_subject" => WorkSourceWaitReason::WrongSubject,
+    "issue_snapshot_material_limit_exceeded" | "issue_snapshot_encoding_limit_exceeded" => {
+      WorkSourceWaitReason::Incompatible
+    }
     _ => return None,
   };
   Some((reason, None))

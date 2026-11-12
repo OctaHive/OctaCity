@@ -1713,18 +1713,54 @@ An installed provider completion document is independently authorized only by a
 mode consuming it; an unused completion reference cannot block canonical intake.
 The target is resolved once to select provider, predecessor or Issue input.
 
-Automatic discussion/document ingestion is not enabled by this reader; an
-explicit automatic material policy is task 4.4. Duplicate/restart qualification
-in task 4.2 covers later size/priority edits, label removal/readdition and a new
-Configuration/input version under the same stable input ID. These changes retain
+Automatic material ingestion requires a published `issue_snapshot.materials`
+contract in the exact Flow/Configuration selected by the enabled Source input.
+That existing contract is the explicit automatic selection policy; there is no
+second selection vocabulary in Source settings. A `selected` source consumes only
+the Issue's approved references, within its `max_entries` and aggregate UTF-8
+`max_bytes`; an `exact` source additionally restricts those approved references to
+the declared immutable identities. Existing shared limits still cap selections at
+32 entries and 1 MiB of combined text, and consumer bounds can be stricter.
+Without a material declaration, intake reads no discussion or document body,
+even when the Issue has approved references and body readers are installed.
+
+Both legacy-profile and managed-connection Source installations use the same
+authorized comment reader and owner-aware Issue/Project document readers as
+manual execution. Required unavailable text leaves its candidate waiting with
+`inaccessible`; optional unavailable text records an explicit `unavailable`
+omission. Exceeding a declared count/byte bound waits with `incompatible`, even
+for optional text, without truncation or fabricated empty input. Incoming and
+private snapshot JSON limits also include escaping, schema and provenance
+overhead; text within the raw UTF-8 limit can still produce
+`issue_snapshot_encoding_limit_exceeded` at `/issue_snapshot/encoding` and leave
+only its own candidate waiting. Before first
+admission, the worker rechecks the exact selected sources under current access.
+Posting text, publishing documents and selecting references do not start a Run.
+After admission, later comments, reference replacement and new Issue or shared
+Project document versions preserve the original selected bytes, source/owner
+identities, preparation, Work and Run across rediscovery and restart.
+
+Duplicate/restart qualification in task 4.2 covers later size/priority edits,
+label removal/readdition and a new Configuration/input version under the same
+stable input ID. These changes retain
 one original Work/Run, its Incoming, canonical Issue association and input bytes.
 A restart after a lost byte-publication acknowledgement resumes the same
-preparation and exact Artifact identities. Expanded diagnostic qualification
-remains task 4.3.
+preparation and exact Artifact identities.
+
+Missing canonical correlation or selected values, stale requirements,
+unavailable required evidence and code-dependent classification for a different
+resolved Repository/base retain candidate-local `missing`, `stale`, `inaccessible`
+or `wrong_subject` waits. See [Source readiness diagnostics](factory-source-diagnostics.md#canonical-issue-readiness)
+for recovery actions. A wait never searches for a substitute producing Run or
+grants additional access. Required evidence without an independently qualifying
+reader remains unavailable; its existence or a field's prose cannot qualify it.
 
 Verification: [task 4.1](../../openspec/changes/add-issue-classification-snapshots/verification-4.1.md)
 and [task 4.2](../../openspec/changes/add-issue-classification-snapshots/verification-4.2.md),
 with [review fixes](../../openspec/changes/add-issue-classification-snapshots/verification-4.2-review.md).
+Readiness qualification is recorded in [task 4.3](../../openspec/changes/add-issue-classification-snapshots/verification-4.3.md).
+Automatic material qualification is recorded in [task 4.4](../../openspec/changes/add-issue-classification-snapshots/verification-4.4.md).
+Encoded-size handling and Source fairness are qualified in [the review fixes](../../openspec/changes/add-issue-classification-snapshots/verification-4.4-review.md).
 
 ## Explicit Issue material selections
 

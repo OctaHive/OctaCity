@@ -240,6 +240,15 @@ provider text mapping and explicit predecessor-result input. See
 [automatic Issue intake](issues.md#automatic-source-intake-from-a-canonical-issue)
 for the current scope and admission fences.
 
+Supplementary text requires an explicit bounded `issue_snapshot.materials`
+declaration in that published target. Its `selected` policy reads only approved
+Issue material references; `exact` narrows them to named immutable sources.
+Set required/optional handling and count/UTF-8 byte limits, then separately
+approve the exact same-Issue comments/documents or linked Project publications.
+Missing required text waits for that candidate. Enabling intake without this
+contract ingests no discussion or document bodies. Later comments, reference
+replacement and document versions retain an admitted task's original snapshot.
+
 | Operation | Resulting identity/behavior |
 | --- | --- |
 | Edit selector, target, mapping or enabled state under the same input ID | Publish a new immutable version; original Work/Run and pending effects stay frozen. An already admitted native task is not automatically processed again. |

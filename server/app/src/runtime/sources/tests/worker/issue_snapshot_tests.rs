@@ -6,40 +6,81 @@ use octacity_server_store_postgres::PostgresStore;
 
 #[path = "issue_snapshot_authorization_tests.rs"]
 mod authorization;
+#[path = "issue_snapshot_material_tests.rs"]
+mod materials;
+#[path = "issue_snapshot_readiness_tests.rs"]
+mod readiness;
 #[path = "issue_snapshot_recovery_tests.rs"]
 mod recovery;
 
 fn snapshot_flow() -> FactoryFlowConfiguration {
-  let schema = FlowDataSchema::new(
-    key("source.issue"),
-    key("v1"),
-    FlowValueSchema::Object {
-      fields: [
-        (
-          key("title"),
-          FlowFieldSchema::required(FlowValueSchema::String {
-            min_bytes: 1,
-            max_bytes: 512,
-          }),
-        ),
-        (
-          key("size"),
-          FlowFieldSchema::required(FlowValueSchema::Enum {
-            values: ["small", "medium", "large"].map(serde_json::Value::from).into(),
-          }),
-        ),
-        (
-          key("priority"),
-          FlowFieldSchema::required(FlowValueSchema::String {
-            min_bytes: 1,
-            max_bytes: 256,
-          }),
-        ),
-      ]
-      .into(),
-    },
-  )
-  .unwrap();
+  snapshot_flow_with_evidence(false)
+}
+
+fn snapshot_flow_with_evidence(required: bool) -> FactoryFlowConfiguration {
+  snapshot_flow_with_inputs(required, None)
+}
+
+fn snapshot_flow_with_inputs(required: bool, material: Option<FlowIssueMaterialSelection>) -> FactoryFlowConfiguration {
+  let mut fields: std::collections::BTreeMap<_, _> = [
+    (
+      key("title"),
+      FlowFieldSchema::required(FlowValueSchema::String {
+        min_bytes: 1,
+        max_bytes: 512,
+      }),
+    ),
+    (
+      key("size"),
+      FlowFieldSchema::required(FlowValueSchema::Enum {
+        values: ["small", "medium", "large"].map(serde_json::Value::from).into(),
+      }),
+    ),
+    (
+      key("priority"),
+      FlowFieldSchema::required(FlowValueSchema::String {
+        min_bytes: 1,
+        max_bytes: 256,
+      }),
+    ),
+  ]
+  .into();
+  if required {
+    fields.insert(
+      key("proof"),
+      FlowFieldSchema::required(FlowValueSchema::Array {
+        item: Box::new(FlowValueSchema::String {
+          min_bytes: 64,
+          max_bytes: 64,
+        }),
+        min_items: 1,
+        max_items: 1,
+      }),
+    );
+  }
+  if let Some(selection) = &material {
+    let maximum = match &selection.source {
+      FlowIssueMaterialSource::Selected { max_entries } => *max_entries,
+      FlowIssueMaterialSource::Exact { references } => references.len() as u16,
+    };
+    let shape = FlowValueSchema::Array {
+      item: Box::new(FlowValueSchema::String {
+        min_bytes: 0,
+        max_bytes: selection.max_bytes,
+      }),
+      min_items: u16::from(selection.required),
+      max_items: maximum,
+    };
+    fields.insert(
+      key("materials"),
+      if selection.required {
+        FlowFieldSchema::required(shape)
+      } else {
+        FlowFieldSchema::optional(shape)
+      },
+    );
+  }
+  let schema = FlowDataSchema::new(key("source.issue"), key("v1"), FlowValueSchema::Object { fields }).unwrap();
   let base = configuration(ProjectId::generate(), FactoryConfigurationId::generate())
     .flow()
     .clone();
@@ -101,8 +142,22 @@ fn snapshot_flow() -> FactoryFlowConfiguration {
     .into_iter()
     .map(|(name, source)| (key(name), FlowIssueFieldSelection { source, required: true }))
     .collect(),
-    materials: Default::default(),
-    evidence: Default::default(),
+    materials: material
+      .map(|selection| [(key("materials"), selection)].into())
+      .unwrap_or_default(),
+    evidence: if required {
+      [(
+        key("proof"),
+        FlowIssueEvidenceSelection {
+          field: key("size"),
+          required: true,
+          maximum: 1,
+        },
+      )]
+      .into()
+    } else {
+      Default::default()
+    },
   })
   .unwrap()
 }

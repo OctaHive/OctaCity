@@ -1,5 +1,6 @@
 pub(in crate::runtime) mod issue_source_worker;
 pub(in crate::runtime) mod managed_factory_source;
+pub(in crate::runtime) mod source_issue_snapshots;
 pub(in crate::runtime) mod source_management;
 pub(in crate::runtime) mod source_profiles_file;
 #[cfg(all(test, unix))]

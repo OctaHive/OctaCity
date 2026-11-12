@@ -521,13 +521,13 @@ pub enum WorkSourceWaitReason {
   NotAccepted,
   /// Reviewed Issue input or an accepted producer result is no longer applicable.
   Stale,
-  /// The result cannot be read in the current scope.
+  /// Required evidence or a producer result cannot be qualified in the current scope.
   Inaccessible,
   /// The producer or result does not meet the declared input contract.
   Incompatible,
   /// The result belongs to a different Issue.
   WrongIssue,
-  /// The result was produced against a different source subject.
+  /// Selected Issue classification or a producer result concerns a different code subject.
   WrongSubject,
   /// The original Issue has no applicable implementation acceptance.
   MissingImplementationAcceptance,

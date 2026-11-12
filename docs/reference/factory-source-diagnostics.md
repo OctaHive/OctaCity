@@ -98,6 +98,31 @@ The separate [optional observation port](work-source-observations.md) supplies
 private current snapshots to explicitly enabled consumers. Preview/diagnostic
 routes do not invoke it or advance a consumer's refresh progress.
 
+## Canonical Issue readiness
+
+For an input declaring `issue_snapshot`, `last_wait.reason` describes one
+unadmitted candidate; it does not fail the whole Source scan. Other eligible
+candidates can progress. The same closed reasons are retained with the pending
+preparation and exposed by the authorized diagnostics reader:
+
+| Reason | Operator action |
+| --- | --- |
+| `missing` | Import/link the canonical Issue in this Source's security partition, or supply its required selected field. |
+| `stale` | Review the current requirements and refresh their classification; retry input preparation if requirements changed during admission. |
+| `inaccessible` | Supply approved required material and restore its independent owner/content access, or make required evidence independently verifiable. Without a qualifying reader the input remains unavailable. |
+| `incompatible` | Review material count/UTF-8 bounds and Incoming/private snapshot JSON limits, including escaping and provenance overhead; explicitly narrow the selection. Oversized optional text is not silently omitted. |
+| `wrong_subject` | Reassess code-dependent classification for the selected Repository and resolved immutable base, or explicitly review the intended target. |
+
+Wait diagnostics contain only the preparation identity, check time and closed
+reason. They expose no evidence body, hidden producer identity or transcript.
+Issue mode never searches for a substitute triage Run, switches to provider
+prose, or expands permissions to satisfy a prerequisite. Unrelated authorization,
+storage and provider errors keep their existing failure handling. Once admitted,
+the original Work/Run continues to use its frozen inputs.
+
+Verification: [task 4.3](../../openspec/changes/add-issue-classification-snapshots/verification-4.3.md).
+Material policy qualification: [task 4.4](../../openspec/changes/add-issue-classification-snapshots/verification-4.4.md).
+
 ## Stage and action provenance
 
 A reporting operation can include optional `origin` metadata. `origin.action`
