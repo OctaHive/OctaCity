@@ -110,8 +110,21 @@ async fn fixture_with_assessment(
 }
 
 async fn fixture_with_assessment_inputs(
+  assessment: serde_json::Value,
+  declare_code: bool,
+) -> (
+  postgres_support::TestDatabase,
+  Arc<PostgresStore>,
+  PublishedFactoryAdmission,
+  IssueRevision,
+) {
+  fixture_with_assessment_flow(assessment, declare_code, |flow| flow).await
+}
+
+async fn fixture_with_assessment_flow(
   mut assessment: serde_json::Value,
   declare_code: bool,
+  adapt_flow: impl FnOnce(FlowDefinitionTemplate) -> FlowDefinitionTemplate,
 ) -> (
   postgres_support::TestDatabase,
   Arc<PostgresStore>,
@@ -126,8 +139,10 @@ async fn fixture_with_assessment_inputs(
   }
   let request = IssueExecutionRequestId::generate();
   let content = requirements();
-  let (admission, _) =
-    flow_contract::configured_fixture_with_work(classification_flow(assessment), work_for(&fixture, request, &content));
+  let (admission, _) = flow_contract::configured_fixture_with_work(
+    adapt_flow(classification_flow(assessment)),
+    work_for(&fixture, request, &content),
+  );
   let store = admit(&database.pool, &admission).await;
   let project = admission.work.subject().project_id();
   let property = |id: &str, values: &[&str]| {
@@ -728,5 +743,73 @@ async fn classification_applies_a_project_priority_named_unknown() {
     .unwrap();
   assert_eq!(accepted.payload().value()["priority"], "unknown");
   assert_eq!(snapshot.work, admission.work);
+  database.cleanup().await;
+}
+
+#[tokio::test]
+#[ignore = "requires an explicitly configured disposable PostgreSQL service"]
+async fn classification_cannot_drop_accepted_assessment_dependencies_at_execution() {
+  let (database, store, admission, issue) = fixture_with_assessment_flow(assessment(), true, |mut flow| {
+    let FlowValueSchema::Object { mut fields } = flow.schemas[&key("producer_result")].shape.clone() else {
+      panic!("assessment object")
+    };
+    fields.remove(&key("assessment_inputs"));
+    let mapping = FlowValueMapping::Object {
+      fields: fields
+        .keys()
+        .map(|name| {
+          (
+            name.clone(),
+            FlowValueMapping::Pointer {
+              path: format!("/assessment/{name}"),
+            },
+          )
+        })
+        .collect(),
+    };
+    flow.schemas.insert(
+      key("values_only"),
+      FlowTemplateSchema {
+        identity: key("assessment.values-only"),
+        version: key("1"),
+        shape: FlowValueSchema::Object { fields },
+      },
+    );
+    let action = &mut flow.nodes[1];
+    action.input_schema = key("values_only");
+    action.input_binding = FlowInputBinding::new(
+      [(
+        key("assessment"),
+        FlowInputSource::Record {
+          node: key("produce_outcome"),
+          outcome: key("produced"),
+          view: FlowRecordView::Payload,
+          path: String::new(),
+        },
+      )]
+      .into(),
+      FlowDataMapping::new(mapping).unwrap(),
+    )
+    .unwrap();
+    flow
+  })
+  .await;
+  let (runner, claim, before) = accepted_producer(&store, &admission, 30).await;
+  let mut rejected = false;
+  for time in 100..125 {
+    match runner.reconcile_flow(admission.run.id(), claim, at(time)).await {
+      Ok(FactoryFlowStep::Advanced) => {}
+      Err(_) => {
+        rejected = true;
+        break;
+      }
+      other => panic!("dependency omission must reject, got {other:?}"),
+    }
+  }
+  assert!(rejected);
+  assert_eq!(store.issue(issue.project_id, issue.id, None).await.unwrap(), issue);
+  let after = store.factory_run_snapshot(admission.run.id()).await.unwrap();
+  assert_eq!(after.flow.data.records, before.flow.data.records);
+  assert_eq!(after.outbox, before.outbox);
   database.cleanup().await;
 }

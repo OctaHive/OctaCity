@@ -372,6 +372,7 @@ pub(super) fn management_application(
     None => readiness,
   });
   let presets = octacity_server_application::FactoryPresetHandlers::new(store.clone(), management_policy.clone())
+    .with_issue_properties(store.clone())
     .with_repositories(configuration_queries.clone())
     .with_flows(flow_queries.clone())
     .with_artifacts(retained_artifacts.clone());

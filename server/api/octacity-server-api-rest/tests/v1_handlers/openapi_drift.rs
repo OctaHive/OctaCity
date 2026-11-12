@@ -1120,3 +1120,64 @@ fn factory_setup_inventory_keeps_read_authority_and_shared_contract_bounds() {
       .contains(&serde_json::json!("label_presence"))
   );
 }
+
+#[test]
+fn classification_capabilities_document_the_shared_project_contract() {
+  let contract = serde_json::json!({
+    "selection":{"definition_version":7,"priority":true,"component":false,"kind":false,"size":false,"properties":{"reproducibility":"repro"}},
+    "schema":{"reference":{"identity":"issue-classification.fields","version":"7","digest":"a".repeat(64)},
+      "shape":{"type":"object","fields":{"priority":{"required":false,"value":{"type":"enum","values":["high"]}}}}}
+  });
+  let document = openapi_document();
+  assert_component_exists(&document, "FactoryIssueClassificationFieldContract");
+  assert_json_matches_component(&document, "FactoryIssueClassificationFieldContract", &contract);
+  let choices = &document["components"]["schemas"]["FactoryIssueClassificationChoices"];
+  assert_eq!(
+    choices["properties"]["field_contract"]["$ref"],
+    "#/components/schemas/FactoryIssueClassificationFieldContract"
+  );
+  assert!(
+    !choices["required"]
+      .as_array()
+      .unwrap()
+      .contains(&serde_json::json!("field_contract")),
+    "legacy installations need no typed contract"
+  );
+}
+
+#[test]
+fn ticket_delivery_v2_contract_accepts_project_input_without_a_predecessor() {
+  let document = openapi_document();
+  let request = serde_json::json!({"preset":{"identity":"ticket-delivery","version":"v2","digest":"a".repeat(64)},
+  "issue_snapshot":{"definition_version":1,"admission":{
+    "priority":{"field":"priority","values":{"high":80}},
+    "risk":{"field":"risk","values":{"low":"low"}},"allowed":{"work_kind":["defect","feature_request"]}
+  }}});
+  let decoded: octacity_server_application::FactoryPresetResolutionRequest =
+    serde_json::from_value(request.clone()).unwrap();
+  assert!(decoded.accepted_predecessor.is_none());
+  assert!(decoded.issue_snapshot.is_some());
+  assert_json_matches_component(&document, "FactoryPresetResolutionRequest", &request);
+  let snapshot = serde_json::json!({"version":1,"schema":{"identity":"factory.ticket-delivery.issue-input","version":"v2","digest":"c".repeat(64)},"definition_version":1,
+    "fields":{"priority":{"source":{"kind":"priority"},"required":true}},"materials":{},"evidence":{},"admission":request["issue_snapshot"]["admission"]});
+  assert_json_matches_component(&document, "FactoryFlowIssueSnapshotInput", &snapshot);
+  for component in ["FactoryFlowDefinitionDraft", "FactoryFlowConfiguration"] {
+    assert_eq!(
+      document["components"]["schemas"][component]["properties"]["issue_snapshot"]["$ref"],
+      "#/components/schemas/FactoryFlowIssueSnapshotInput"
+    );
+    assert!(
+      !document["components"]["schemas"][component]["required"]
+        .as_array()
+        .unwrap()
+        .contains(&serde_json::json!("issue_snapshot"))
+    );
+  }
+
+  let legacy = serde_json::json!({"preset":{"identity":"ticket-delivery","version":"v1","digest":"b".repeat(64)}});
+  let decoded: octacity_server_application::FactoryPresetResolutionRequest =
+    serde_json::from_value(legacy.clone()).unwrap();
+  assert!(decoded.issue_snapshot.is_none());
+  assert_json_matches_component(&document, "FactoryPresetResolutionRequest", &legacy);
+  assert!(document["components"]["schemas"]["FactoryPresetSummary"]["properties"]["parameters"]["items"]["properties"]["kind"]["enum"].as_array().unwrap().contains(&serde_json::json!("issue_snapshot")));
+}

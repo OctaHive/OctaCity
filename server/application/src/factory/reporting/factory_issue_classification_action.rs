@@ -76,6 +76,7 @@ pub(crate) struct Selection {
   pub(crate) source_outcome: FactoryKey,
   outcome: FactoryKey,
   pub(crate) policy: FactoryKey,
+  #[serde(default)]
   pub(crate) size_labels: BTreeMap<FactoryKey, FactoryKey>,
   #[serde(default)]
   pub(crate) fields: Option<IssueClassificationFieldSelection>,
@@ -251,10 +252,10 @@ impl<S: IssueClassificationStore, F: FactoryRunStore> FactoryFlowActionPlugin
       }
       // New publications may explicitly project exact assessment dependencies.
       // Earlier payloads retain empty pins and their original receipt encoding.
+      if accepted.get("assessment_inputs") != projected.get("assessment_inputs") {
+        return Err(invalid());
+      }
       let inputs = if let Some(value) = projected.get("assessment_inputs") {
-        if accepted.get("assessment_inputs") != Some(value) {
-          return Err(invalid());
-        }
         let inputs: octacity_server_store::IssueClassificationAssessmentInputs =
           serde_json::from_value(value.clone()).map_err(|_| invalid())?;
         inputs.validate().map_err(|_| invalid())?;

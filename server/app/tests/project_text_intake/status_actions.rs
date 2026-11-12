@@ -1,6 +1,9 @@
 //! Native local Issue actions use ordinary admission, the node owner and PostgreSQL replay.
 use super::*;
 
+#[path = "classification_fields.rs"]
+mod classification_fields;
+
 fn plugin_identity() -> ImmutableReference {
   ImmutableReference::new(
     FactoryKey::new("issue-status").unwrap(),
@@ -1133,9 +1136,11 @@ async fn classification_publication_reuses_project_mapping_and_rejects_substitut
     .publish_issue_properties(management_mutation(publish_catalog(1, true)))
     .await
     .unwrap();
-  assert!(
-    serde_json::to_value(roles.handle_query(&context(), capabilities).await.unwrap()).unwrap()["issue_classification"]
-      .is_null()
+  let current = serde_json::to_value(roles.handle_query(&context(), capabilities).await.unwrap()).unwrap();
+  assert_eq!(current["issue_classification"]["size_labels"], serde_json::json!([]));
+  assert_eq!(
+    current["issue_classification"]["field_contract"]["selection"]["definition_version"],
+    2
   );
   assert!(flow_queries.handle_query(&context(), validate(root)).await.is_err());
 }

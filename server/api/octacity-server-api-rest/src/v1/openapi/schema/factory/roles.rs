@@ -89,12 +89,44 @@ pub(super) fn insert(schemas: &mut Map<String, Value>) {
     ),
   );
   schemas.insert(
+    "FactoryIssueClassificationFieldSelection".into(),
+    object(
+      [
+        ("definition_version", positive_integer()),
+        ("priority", boolean()),
+        ("component", boolean()),
+        ("kind", boolean()),
+        ("size", boolean()),
+        ("properties", schema_ref("IssueClassificationBindings")),
+      ],
+      &[
+        "definition_version",
+        "priority",
+        "component",
+        "kind",
+        "size",
+        "properties",
+      ],
+    ),
+  );
+  schemas.insert(
+    "FactoryIssueClassificationFieldContract".into(),
+    object(
+      [
+        ("selection", schema_ref("FactoryIssueClassificationFieldSelection")),
+        ("schema", schema_ref("FactoryFlowDataSchema")),
+      ],
+      &["selection", "schema"],
+    ),
+  );
+  schemas.insert(
     "FactoryIssueClassificationChoices".into(),
     object(
       [
         ("plugin", reference()),
         ("policy", key()),
         ("priority_maximum", positive_integer()),
+        ("field_contract", schema_ref("FactoryIssueClassificationFieldContract")),
         ("receipt_schema", schema_ref("FactoryFlowDataSchema")),
         ("receipt_output_bytes", positive_integer()),
         (

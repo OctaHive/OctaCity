@@ -27,7 +27,10 @@ MANDATORY_FINAL_DENIES = frozenset(
     }
 )
 
-FACTORY_RELEASE_MANIFEST = "config/factory/presets/ticket-delivery/v1.json"
+FACTORY_RELEASE_MANIFESTS = (
+    "config/factory/presets/ticket-delivery/v1.json",
+    "config/factory/presets/ticket-delivery/v2.json",
+)
 
 REQUIRED_CONTEXT_PATHS = (
     "Cargo.lock",
@@ -458,19 +461,21 @@ def validate_staging_directory(
 
 
 def required_context_paths(repository: Path) -> tuple[str, ...]:
-    """Read release parts from the same manifest used to load the preset."""
-    manifest = _load_json(repository / FACTORY_RELEASE_MANIFEST, "Factory release manifest")
-    parts = manifest.get("parts")
-    if not isinstance(parts, list) or not parts:
-        raise ContextError(f"invalid release parts in {FACTORY_RELEASE_MANIFEST}")
-    paths = []
-    for part in parts:
-        if not isinstance(part, str) or not re.fullmatch(
-            r"(?:[a-zA-Z0-9_-]+/)+[a-zA-Z0-9_-]+\.json", part
-        ):
-            raise ContextError(f"invalid release part path in {FACTORY_RELEASE_MANIFEST}")
-        paths.append(f"config/factory/{part}")
-    return (*REQUIRED_CONTEXT_PATHS, FACTORY_RELEASE_MANIFEST, *paths)
+    """Retain current and historical bundled releases without widening the build context."""
+    paths = list(REQUIRED_CONTEXT_PATHS)
+    for manifest_path in FACTORY_RELEASE_MANIFESTS:
+        manifest = _load_json(repository / manifest_path, "Factory release manifest")
+        parts = manifest.get("parts")
+        if not isinstance(parts, list) or not parts:
+            raise ContextError(f"invalid release parts in {manifest_path}")
+        paths.append(manifest_path)
+        for part in parts:
+            if not isinstance(part, str) or not re.fullmatch(
+                r"(?:[a-zA-Z0-9_-]+/)+[a-zA-Z0-9_-]+\.json", part
+            ):
+                raise ContextError(f"invalid release part path in {manifest_path}")
+            paths.append(f"config/factory/{part}")
+    return tuple(dict.fromkeys(paths))
 
 
 def validate_materialized_context(

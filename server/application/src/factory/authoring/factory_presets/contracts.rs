@@ -6,7 +6,7 @@ use serde::{Deserialize, Serialize};
 /// Bounded discovery in one visible Project, available before Factory execution is enabled.
 #[derive(Clone, Debug)]
 pub struct ListFactoryPresetsQuery {
-  /// Owning Project and exclusive release identity cursor.
+  /// Owning Project and opaque release/version continuation cursor.
   pub page: CurrentDefinitionPageInput<FactoryKey>,
 }
 impl Query for ListFactoryPresetsQuery {
@@ -94,6 +94,8 @@ pub enum FactoryPresetParameterKind {
   Publication,
   /// Exact successful upstream Flow result.
   AcceptedPredecessor,
+  /// Project field contract used instead of a producing Flow result.
+  IssueSnapshot,
 }
 /// Ordinary bounded discovery envelope, without private profile content or installation paths.
 #[derive(Clone, Debug, Serialize)]
@@ -102,7 +104,7 @@ pub struct FactoryPresetPage {
   pub total: u64,
   /// Release summaries in identity order.
   pub items: Vec<FactoryPresetSummary>,
-  /// Exclusive continuation identity, absent at the end.
+  /// Opaque versioned continuation cursor, absent at the end; legacy identity cursors remain accepted.
   pub next_cursor: Option<FactoryKey>,
 }
 /// Closed preset selection; dependency choices remain explicit ordinary authoring parameters.
@@ -142,6 +144,20 @@ pub struct FactoryPresetResolutionRequest {
   pub publication: Option<FactoryPresetPublicationSelection>,
   /// Exact already published source of the accepted incoming payload.
   pub accepted_predecessor: Option<FlowAcceptedPredecessor>,
+  /// Exact Project definitions and reviewed scheduling policy for the Issue-based example.
+  #[serde(default)]
+  pub issue_snapshot: Option<FactoryPresetIssueSnapshotSelection>,
+}
+
+/// Project-owned types for the release's explicit classification selections.
+#[derive(Clone, Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct FactoryPresetIssueSnapshotSelection {
+  /// Exact published Project field definitions; no per-step vocabulary is supplied.
+  pub definition_version: u64,
+  /// Reviewed conversion to Work scheduling/risk; omission is an unmet preset dependency.
+  #[serde(default)]
+  pub admission: Option<FlowIssueAdmissionPolicy>,
 }
 
 /// Ordinary command definition, independent of a particular stage alias.

@@ -92,7 +92,8 @@ export function FlowIssueClassification({
     [onPendingChange],
   );
   const capabilities = useFactoryAuthoringCapabilities(services, enabled || configured, 0);
-  const choices = capabilities.data?.issue_classification;
+  const offered = capabilities.data?.issue_classification;
+  const choices = offered?.size_labels.length ? offered : undefined;
   const producers = root.transitions.flatMap((edge) => {
     if (
       edge.target.kind !== 'node' ||

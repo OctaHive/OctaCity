@@ -177,6 +177,50 @@ closing requires its own authorized state change. An unmatched model value uses
 the configured fallback, never an inferred label or close command. Delivery
 pending/failure remains distinct from the accepted action result.
 
+## Apply triage classification to the Issue
+
+Classification is an explicit local trusted action. An accepted analyst result
+alone does not edit the Issue or start delivery. The installed capability and
+Project field administration remain separate from Flow publication.
+
+For API-authored Flows, read the authorized Project's authoring capabilities and
+reuse `issue_classification.field_contract.schema` as the analyst outcome and
+classification action input schema. It contains optional built-in priority,
+component, type (`kind`) and size fields, plus active semantic properties such as
+severity, risk, reproducibility and recommended route. Choice IDs come from the
+published Project definitions; size uses `small`, `medium`, `large`. Reference the
+same immutable schema in each step rather than maintaining another enum list.
+The all-fields preview is unavailable until a Project catalog is published, or
+when the complete preview exceeds the existing Flow schema limits. A bounded
+selection from a published catalog can still be authored and published without
+that preview; validation compiles only its selected fields.
+
+Configure `apply_issue_classification` with the offered `plugin`, `policy` and
+`field_contract.selection` under `fields`, the exact accepted `source_node` and
+`source_outcome`, and a successful receipt `outcome`. Bind the accepted record's
+payload explicitly; constants cannot replace its values. Use the offered receipt
+schema and byte budget. A narrower explicit field selection may reuse the
+corresponding subset of the offered schema; it must retain the catalog version
+and semantic bindings. Publication rejects incompatible choices, stale catalog
+pins and substituted mappings. At execution the Issue owner also checks the
+current catalog, Issue baseline, concurrent edits and accepted-result provenance.
+
+If the accepted assessment declares `assessment_inputs`, retain that object in
+the action input and project it unchanged from the same accepted record. It
+records the exact subject and material dependencies used by the assessment;
+publication and execution reject omission or substitution. The Issue owner
+validates the references and detects changes to the selected materials.
+
+Omit `size_labels` for typed size without label effects. Legacy numeric-priority
+and explicit size-label actions remain supported with their reviewed mappings.
+Unavailable legacy labels disable those label effects, while typed classification
+without label effects remains available. Existing immutable examples keep their
+original contracts. The local action
+writes no provider effect, preserves admitted Work scheduling and cannot activate
+another pipeline. Both reviewed manual execution and automatic Source intake
+must retain an exact Issue requirements baseline. A reproduction choice alone
+supplies no independently verified evidence.
+
 ## Select code only where needed
 
 Declare authorized repositories in **Available code sources**, with revision
@@ -337,15 +381,23 @@ original triage handoff, operator decisions, Builds and publication receipt in
 the Run. Check the corresponding cards in the Issue's **Overview**. For a
 reproducible test environment, see [ticket delivery qualification](../testing/manual-factory-authoring.md#ticket-delivery-qualification).
 
-For an optional starting point, open **Add pipeline → Start from an example →
-Ticket delivery · v1**. Select the published triage completion, compatible
-executors and command reports, and an installed review target. The example opens
-an editable Flow draft. Connect code to the steps that need it and review each
-access request before publishing. Set up the launch Configuration separately.
-To use an older triage Flow, open **Earlier Flow version**, select the Flow
-and its version, then choose that version's completion in **Incoming pipeline
-completion**. Delivery pins the exact version and selected outcome.
-See the [example's prerequisite guide](../../config/factory/presets/ticket-delivery/README.md).
+The optional `ticket-delivery/v2` example resolves through the preset
+API using an exact Project field-definition version and an explicit
+`issue_snapshot.admission` policy. It produces an editable Issue-snapshot Flow
+and, when requested, a disabled launch Configuration. It needs no triage Flow or
+Run selector. The Issue input currently requires API authoring; visual controls
+for selecting Project fields are not yet available. The catalog offers both
+`v1` and `v2`; Console can open `v1` and explains the unsupported required input
+when `v2` is selected. See the
+[example's prerequisites and request shape](../../config/factory/presets/ticket-delivery/README.md#current-v2-issue-snapshot-example).
+
+For retained `v1` examples or intentionally authored producer-result consumers,
+select the exact published triage completion and compatible executors, command
+reports and review target. The existing **Incoming pipeline completion** controls
+remain supported. **Earlier Flow version** selects an exact older publication;
+it does not reinterpret it as an Issue snapshot. Upgrading uses new reviewed Flow
+and Configuration versions. Connect code to the steps that need it and review
+each access request before publishing.
 
 For trusted Delivery, choose **Server action** and **Publish candidate**.
 Select the installed Project target and review its receipt result. Connect the

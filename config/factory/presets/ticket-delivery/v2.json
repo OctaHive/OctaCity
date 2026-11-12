@@ -1,0 +1,99 @@
+{
+  "input_schema": "reproduction_route",
+  "entry": "reproduction-needed",
+  "execution": {
+    "budget": {
+      "max_attempts": 40,
+      "max_elapsed_millis": 3600000,
+      "max_tokens": 1000000,
+      "max_cost_micro_units": 100000000,
+      "max_output_bytes": 33554432
+    },
+    "permissions": {
+      "plugins": [],
+      "executables": [],
+      "tools": [],
+      "commands": [],
+      "max_descendants": 0,
+      "mounts": [],
+      "network_hosts": [],
+      "secret_profiles": [],
+      "workload_identity_profiles": [],
+      "resources": {
+        "cpu_millis": 0,
+        "memory_bytes": 0,
+        "disk_bytes": 0,
+        "process_count": 0,
+        "elapsed_millis": 0
+      },
+      "outputs": {
+        "kinds": [],
+        "max_artifact_count": 0,
+        "max_artifact_bytes": 0,
+        "max_report_count": 0,
+        "max_report_bytes": 0
+      }
+    },
+    "max_active_nodes": 1
+  },
+  "terminal_routes": {
+    "bypass": "requirements_needed",
+    "reproduced": "requirements_needed",
+    "ready": "protected_tests",
+    "verified_candidate": null
+  },
+  "without_pools": [
+    "protected_tests"
+  ],
+  "parts": [
+    "presets/ticket-delivery/assignments-v1.json",
+    "flows/base-flow/schemas/artifact_reference.json",
+    "flows/base-flow/schemas/declared_requirements.json",
+    "presets/ticket-delivery/issue-summary-v2.json",
+    "flows/base-flow/schemas/spec_manifest.json",
+    "flows/base-flow/schemas/spec_handoff.json",
+    "flows/base-flow/schemas/spec_facts.json",
+    "flows/base-flow/schemas/spec_result.json",
+    "flows/base-flow/schemas/spec_author_input.json",
+    "flows/base-flow/schemas/spec_gate_input.json",
+    "flows/base-flow/nodes/specification_author.json",
+    "flows/base-flow/nodes/specification_gate.json",
+    "presets/ticket-delivery/requirements-branch-v2.json",
+    "presets/ticket-delivery/requirements-approval-v2.json",
+    "flows/base-flow/schemas/test_correction_input.json",
+    "flows/base-flow/schemas/protected_author_input.json",
+    "flows/base-flow/schemas/protected_test_handoff.json",
+    "flows/base-flow/schemas/implementation_entry_input.json",
+    "flows/base-flow/schemas/implementation_input.json",
+    "flows/base-flow/schemas/execution_facts.json",
+    "flows/base-flow/schemas/candidate_capture_facts.json",
+    "flows/base-flow/schemas/candidate_subject.json",
+    "flows/base-flow/schemas/code_review.json",
+    "flows/base-flow/schemas/code_review_input.json",
+    "flows/base-flow/schemas/spec_review_facts.json",
+    "flows/base-flow/schemas/execution_gate_input.json",
+    "flows/base-flow/schemas/protected_validation_input.json",
+    "flows/base-flow/schemas/protected_validation_report.json",
+    "flows/base-flow/schemas/protected_validation_facts.json",
+    "flows/base-flow/schemas/protected_validation_gate_input.json",
+    "flows/base-flow/schemas/validation_diagnostic_input.json",
+    "flows/base-flow/schemas/validation_classification.json",
+    "flows/base-flow/schemas/validation_classification_input.json",
+    "flows/base-flow/nodes/protected_tests.json",
+    "flows/base-flow/nodes/implementation_entry.json",
+    "flows/base-flow/nodes/implementation.json",
+    "flows/base-flow/nodes/implementation_rework_entry.json",
+    "flows/base-flow/nodes/review.json",
+    "flows/base-flow/nodes/protected_validation.json",
+    "flows/base-flow/nodes/protected_validation_gate.json",
+    "flows/base-flow/nodes/validation_classification.json",
+    "flows/base-flow/policies/public-deliverables.json",
+    "flows/base-flow/gate-programs.json",
+    "presets/ticket-delivery/reproduction-branch-v1.json",
+    "presets/ticket-delivery/protected-preparation-v1.json",
+    "presets/ticket-delivery/implementation-capture-gate-v1.json",
+    "presets/ticket-delivery/agent-result-gates-v1.json",
+    "presets/ticket-delivery/development-v1.json",
+    "presets/ticket-delivery/pull-request-v1.json"
+  ]
+}

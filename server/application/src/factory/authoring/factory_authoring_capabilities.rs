@@ -186,7 +186,7 @@ pub struct FactoryIssueClassificationChoices {
   pub plugin: ImmutableReference,
   /// Stable policy shared by the Project's Flows.
   pub policy: FactoryKey,
-  /// Inclusive maximum accepted numeric priority. The minimum is zero.
+  /// Legacy numeric priority maximum (minimum zero); typed priority uses the Project contract.
   pub priority_maximum: u8,
   /// Canonical result schema for newly configured local writes.
   pub receipt_schema: FlowDataSchema,
@@ -194,6 +194,19 @@ pub struct FactoryIssueClassificationChoices {
   pub receipt_output_bytes: u64,
   /// Active labels and their corresponding assessment size keys.
   pub size_labels: Vec<FactoryIssueClassificationSizeLabel>,
+  /// One server-derived Project contract shared by the analyst, gates and local action.
+  /// Absent for unpublished catalogs or a contract exceeding the shared Flow schema budget.
+  #[serde(skip_serializing_if = "Option::is_none")]
+  pub field_contract: Option<FactoryIssueClassificationFieldContract>,
+}
+
+/// Explicit field selection and its immutable Project-derived value schema.
+#[derive(Clone, Debug, serde::Serialize)]
+pub struct FactoryIssueClassificationFieldContract {
+  /// Exact catalog pin, built-ins and stable semantic property bindings.
+  pub selection: octacity_server_store::IssueClassificationFieldSelection,
+  /// Optional values can be omitted; supplied values reuse the Project's active choices.
+  pub schema: FlowDataSchema,
 }
 
 /// One installed mapping row resolved through the Issue catalog.
@@ -300,7 +313,8 @@ impl<S: FactoryConfigurationStore> ManagementQueryUseCase<GetFactoryAuthoringCap
           context,
           query.project_id,
         )
-        .await?;
+        .await?
+        .map(|resolved| resolved.choices);
         (
           command_contracts(&choices),
           verification_authors(&choices),

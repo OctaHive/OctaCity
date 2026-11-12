@@ -125,7 +125,9 @@ function ExampleBindings({
   });
   const commandRequired = (step: Editor['steps'][number]) =>
     preset.parameters.some((item) => item.path === `/commands/${step.alias}` && item.required);
+  const unsupportedInput = needs('issue_snapshot');
   const ready =
+    !unsupportedInput &&
     (!needs('accepted_predecessor') || !!inputs.accepted_predecessor?.outcomes.length) &&
     (!needs('publication') || !!publisher) &&
     commandSteps.every(
@@ -202,6 +204,7 @@ function ExampleBindings({
           empty={t('factory.exampleNeedsPredecessor')}
         />
       ) : null}
+      {unsupportedInput ? <p role="status">{t('factory.exampleInputUnsupported')}</p> : null}
       {reasoningSteps.map((step) => (
         <details key={step.alias}>
           <summary>

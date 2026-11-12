@@ -9,6 +9,7 @@ mod constraints;
 mod data;
 mod diagnostics;
 mod flow;
+mod issue_snapshot;
 mod permissions;
 mod presets;
 mod project_policies;
@@ -489,6 +490,7 @@ pub(super) fn insert_factory_schemas(schemas: &mut Map<String, Value>) {
     ),
   );
   flow::insert(schemas);
+  issue_snapshot::insert(schemas);
   code::insert(schemas);
   let mut validation = schemas["FactoryFlowConfiguration"].clone();
   validation["properties"]["diagnostics"] = schema_ref("FactoryValidationDiagnostics");
@@ -506,6 +508,7 @@ pub(super) fn insert_factory_schemas(schemas: &mut Map<String, Value>) {
       [
         ("root", schema_ref("FactoryFlowRootDraft")),
         ("accepted_predecessor", schema_ref("FactoryFlowAcceptedPredecessor")),
+        ("issue_snapshot", schema_ref("FactoryFlowIssueSnapshotInput")),
         ("limits", schema_ref("FactoryFlowAdmissionLimits")),
         (
           "data_schemas",

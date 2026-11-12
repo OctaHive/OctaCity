@@ -146,7 +146,9 @@ async fn evaluate(
   .fetch_optional(&mut *connection)
   .await
   .map_err(unavailable)?;
-  if retained.as_deref() != Some(a) || a.request_id.is_none() {
+  // Native intake has no manual request. The retained association and exact
+  // requirements baseline below provide the same local Issue ownership fence.
+  if retained.as_deref() != Some(a) {
     return Err(conflict());
   }
   let mut baseline = issue::read(

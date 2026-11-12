@@ -140,6 +140,10 @@ config/factory/presets/ticket-delivery/*
 !config/factory/presets/ticket-delivery/requirements-approval-v1.json
 !config/factory/presets/ticket-delivery/requirements-branch-v1.json
 !config/factory/presets/ticket-delivery/v1.json
+!config/factory/presets/ticket-delivery/v2.json
+!config/factory/presets/ticket-delivery/issue-summary-v2.json
+!config/factory/presets/ticket-delivery/requirements-branch-v2.json
+!config/factory/presets/ticket-delivery/requirements-approval-v2.json
 !config/factory/flows/
 config/factory/flows/*
 !config/factory/flows/base-flow/

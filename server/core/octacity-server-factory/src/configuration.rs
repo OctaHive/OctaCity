@@ -241,7 +241,7 @@ pub struct FactoryChoiceMetadata {
 pub struct FactoryIssueClassificationMapping {
   /// Stable ownership key across Flow and mapping versions.
   pub policy: FactoryKey,
-  /// Accepted size keys and active Project label identities.
+  /// Explicit legacy size-to-label mapping; empty for typed Issue fields without label effects.
   pub size_labels: BTreeMap<FactoryKey, FactoryKey>,
 }
 
@@ -425,7 +425,6 @@ impl FactoryConfigurationChoices {
         .any(|choice| !installed(choice.kind, &choice.alias))
       || metadata.issue_classification.as_ref().is_some_and(|mapping| {
         kind != FactoryChoiceKind::NodeCapability
-          || mapping.size_labels.is_empty()
           || mapping.size_labels.len() > MAX_FACTORY_CLASSIFICATION_SIZE_LABELS
           || self
             .metadata

@@ -54,6 +54,7 @@ pub(super) fn insert(schemas: &mut Map<String, Value>) {
       [
         ("closure", schema_ref("FactoryFlowDefinitionClosure")),
         ("accepted_predecessor", schema_ref("FactoryFlowAcceptedPredecessor")),
+        ("issue_snapshot", schema_ref("FactoryFlowIssueSnapshotInput")),
         ("limits", schema_ref("FactoryFlowAdmissionLimits")),
         (
           "data_schemas",

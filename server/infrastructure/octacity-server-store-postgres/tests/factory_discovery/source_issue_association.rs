@@ -235,7 +235,55 @@ async fn native_source_admission_retains_the_matching_linked_issue_revision() {
     Some((issue_id, admission.run.id(), Some(revision.version))),
     "native intake must preserve the exact local Issue revision without inventing a reviewed request",
   );
-  assert!(association.unwrap().request_id.is_none());
+  let association = association.unwrap();
+  assert!(association.request_id.is_none());
+  // Automatic triage has an exact Issue baseline, but no manually reviewed execution request.
+  use octacity_server_store::{FactoryRunStore, IssueClassificationStore, IssuePropertyStore};
+  store
+    .publish_issue_properties(management_mutation(octacity_server_store::PublishIssueProperties {
+      intent: octacity_server_store::PublishIssuePropertiesIntent {
+        project_id: input.project_id(),
+        expected_version: 0,
+        definition: Default::default(),
+      },
+      idempotency_key: idempotency("native-classification-catalog"),
+      published_at: time(40),
+    }))
+    .await
+    .unwrap();
+  let applied = store
+    .apply_issue_classification(management_mutation(octacity_server_store::ApplyIssueClassification {
+      association,
+      policy: key("triage"),
+      record: digest(41),
+      accepted_at: time(41),
+      operation_id: digest(42),
+      priority: None,
+      fields: Some(octacity_server_store::IssueClassificationUpdate {
+        selection: serde_json::from_value(serde_json::json!({"definition_version":1,"size":true})).unwrap(),
+        priority: None,
+        component: None,
+        issue_type: None,
+        size: Some(octacity_server_store::IssueSize::Small),
+        properties: Default::default(),
+        inputs: Default::default(),
+      }),
+      size_label: None,
+      managed_labels: Default::default(),
+      applied_at: time(42),
+      authority: None,
+    }))
+    .await
+    .expect("an exact native Issue baseline must support explicit local triage application");
+  assert_eq!(
+    applied.issue.planning.size,
+    Some(octacity_server_store::IssueSize::Small)
+  );
+  assert!(applied.issue.planning.labels.is_empty());
+  assert_eq!(
+    store.factory_run_snapshot(admission.run.id()).await.unwrap().work,
+    admission.work
+  );
   database.cleanup().await;
 }
 

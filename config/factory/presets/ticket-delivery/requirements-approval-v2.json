@@ -1,0 +1,181 @@
+{
+  "schemas": {
+    "requirements_review_decision": {
+      "identity": "factory.ticket-delivery.requirements-review-decision",
+      "version": "v1",
+      "shape": {
+        "type": "object",
+        "fields": {
+          "operation": {"required": true, "value": {"type": "enum", "values": ["escalation"]}},
+          "disposition": {"required": true, "value": {"type": "enum", "values": ["resume", "abort"]}},
+          "reason": {"required": true, "value": {"type": "string", "min_bytes": 1, "max_bytes": 4096}}
+        }
+      }
+    }
+  },
+  "nodes": [
+    {
+      "key": "requirements_review_policy",
+      "kind": "deterministic_gate",
+      "input_schema": "delivery_requirements_input",
+      "outcomes": [
+        {"key": "automatic", "kind": "success", "schema": "summary"},
+        {"key": "review", "kind": "success", "schema": "summary"}
+      ],
+      "budget": {
+        "max_attempts": 1,
+        "max_elapsed_millis": 1000,
+        "max_tokens": 0,
+        "max_cost_micro_units": 0,
+        "max_output_bytes": 1048576
+      },
+      "required": true,
+      "input_binding": {
+        "sources": {"summary": {"source": "predecessor", "view": "payload", "path": ""}},
+        "mapping": {
+          "value": {
+            "mapping": "if_present",
+            "path": "/summary/summary",
+            "then": {"mapping": "pointer", "path": "/summary/summary"},
+            "otherwise": {"mapping": "pointer", "path": "/summary"}
+          }
+        }
+      },
+      "gate": {
+        "rules": [
+          {
+            "when": {
+              "operation": "all",
+              "predicates": [
+                {
+                  "operation": "compare",
+                  "comparison": "equal",
+                  "left": {"source": "path", "path": "/component"},
+                  "right": {"source": "literal", "value": "api"}
+                },
+                {
+                  "operation": "any",
+                  "predicates": [
+                    {
+                      "operation": "compare",
+                      "comparison": "equal",
+                      "left": {"source": "path", "path": "/size"},
+                      "right": {"source": "literal", "value": "medium"}
+                    },
+                    {
+                      "operation": "compare",
+                      "comparison": "equal",
+                      "left": {"source": "path", "path": "/size"},
+                      "right": {"source": "literal", "value": "large"}
+                    }
+                  ]
+                },
+                {
+                  "operation": "any",
+                  "predicates": [
+                    {
+                      "operation": "compare",
+                      "comparison": "equal",
+                      "left": {"source": "path", "path": "/priority"},
+                      "right": {"source": "literal", "value": "blocker"}
+                    },
+                    {
+                      "operation": "compare",
+                      "comparison": "equal",
+                      "left": {"source": "path", "path": "/priority"},
+                      "right": {"source": "literal", "value": "high"}
+                    }
+                  ]
+                }
+              ]
+            },
+            "outcome": "review"
+          }
+        ],
+        "fallback": "automatic",
+        "default_output": {"value": {"mapping": "pointer", "path": ""}}
+      },
+      "accepted_work_outcomes": ["automatic"]
+    },
+    {
+      "key": "requirements_review",
+      "kind": "human_gate",
+      "input_schema": "summary",
+      "outcomes": [
+        {"key": "approved", "kind": "success", "schema": "requirements_review_decision"},
+        {"key": "rejected", "kind": "failure", "schema": "requirements_review_decision"}
+      ],
+      "budget": {
+        "max_attempts": 1,
+        "max_elapsed_millis": 1800000,
+        "max_tokens": 0,
+        "max_cost_micro_units": 0,
+        "max_output_bytes": 1048576
+      },
+      "required": true,
+      "input_binding": {
+        "sources": {"requirements": {"source": "predecessor", "view": "payload", "path": ""}},
+        "mapping": {"value": {"mapping": "pointer", "path": "/requirements"}}
+      },
+      "operator_requests": {"operation": "escalation", "outcomes": {"resume": "approved", "abort": "rejected"}}
+    },
+    {
+      "key": "requirements_approved",
+      "kind": "deterministic_gate",
+      "input_schema": "summary",
+      "outcomes": [{"key": "accepted", "kind": "success", "schema": "summary"}],
+      "budget": {
+        "max_attempts": 1,
+        "max_elapsed_millis": 1000,
+        "max_tokens": 0,
+        "max_cost_micro_units": 0,
+        "max_output_bytes": 1048576
+      },
+      "required": true,
+      "input_binding": {
+        "sources": {"reviewed": {"source": "predecessor", "view": "input_payload", "path": ""}},
+        "mapping": {"value": {"mapping": "pointer", "path": "/reviewed"}}
+      },
+      "gate": {"rules": [], "fallback": "accepted", "default_output": {"value": {"mapping": "pointer", "path": ""}}},
+      "accepted_work_outcomes": ["accepted"]
+    }
+  ],
+  "transitions": [
+    {
+      "predecessor": "requirements_review_policy",
+      "outcome": "automatic",
+      "target": {"kind": "terminal", "key": "ready"},
+      "max_repeats": 0,
+      "exhausted_terminal": null
+    },
+    {
+      "predecessor": "requirements_review_policy",
+      "outcome": "review",
+      "target": {"kind": "node", "key": "requirements_review"},
+      "max_repeats": 0,
+      "exhausted_terminal": null
+    },
+    {
+      "predecessor": "requirements_review",
+      "outcome": "approved",
+      "target": {"kind": "node", "key": "requirements_approved"},
+      "max_repeats": 0,
+      "exhausted_terminal": null
+    },
+    {
+      "predecessor": "requirements_review",
+      "outcome": "rejected",
+      "target": {"kind": "terminal", "key": "needs_correction"},
+      "max_repeats": 0,
+      "exhausted_terminal": null
+    },
+    {
+      "predecessor": "requirements_approved",
+      "outcome": "accepted",
+      "target": {"kind": "terminal", "key": "ready"},
+      "max_repeats": 0,
+      "exhausted_terminal": null
+    }
+  ],
+  "terminals": {"ready": "summary", "needs_correction": "requirements_review_decision"}
+}

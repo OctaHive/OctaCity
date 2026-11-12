@@ -189,9 +189,9 @@ async fn ticket_delivery_example_is_discoverable_and_reports_missing_bindings_be
     .as_array()
     .unwrap()
     .iter()
-    .find(|item| item["reference"]["identity"] == "ticket-delivery")
+    .find(|item| item["reference"]["identity"] == "ticket-delivery" && item["reference"]["version"] == "v2")
     .expect("optional ticket delivery example");
-  assert_eq!(preset["reference"]["version"], "v1");
+  assert_eq!(preset["reference"]["version"], "v2");
   assert_eq!(preset["editor"]["name"], "Ticket delivery");
   assert!(
     preset["parameters"]
@@ -225,7 +225,7 @@ async fn ticket_delivery_example_is_discoverable_and_reports_missing_bindings_be
     "/commands/tests_on_base",
     "/commands/protected.validation",
     "/publication",
-    "/accepted_predecessor",
+    "/issue_snapshot",
   ] {
     assert!(
       diagnostics
@@ -245,7 +245,12 @@ async fn ticket_delivery_example_rejects_an_uninstalled_publication_target() {
   let mut parameters = selected_parameters(&router, project, &store).await;
   let path = format!("/api/v1/projects/{project}/factory-presets");
   let page = json(router.clone().oneshot(empty_request("GET", &path, None)).await.unwrap()).await;
-  let example = &page["items"][0];
+  let example = page["items"]
+    .as_array()
+    .unwrap()
+    .iter()
+    .find(|item| item["reference"]["identity"] == "ticket-delivery" && item["reference"]["version"] == "v2")
+    .unwrap();
   parameters["preset"] = example["reference"].clone();
   parameters["context"] = serde_json::json!({});
   let profile = parameters["profiles"]["eligibility"].clone();
@@ -287,10 +292,10 @@ async fn ticket_delivery_example_rejects_an_uninstalled_publication_target() {
     "target": {"identity":"unknown-target","version":"v1","digest":"d".repeat(64)},
     "permissions":parameters["execution"]["permissions"]
   });
-  parameters["accepted_predecessor"] = serde_json::json!({
-    "definition":{"id":uuid::Uuid::new_v4().to_string(),"version":1,"digest":"e".repeat(64)},
-    "terminal":"eligible","outcomes":["requirements"]
-  });
+  parameters["issue_snapshot"] = serde_json::json!({"definition_version":1,"admission":{
+    "priority":{"field":"priority","values":{"high":80}},"risk":{"field":"risk","values":{"low":"low"}},
+    "allowed":{"work_kind":["defect","feature_request"]}
+  }});
   let before = store.mutation_evidence_counts().await;
   let response = router
     .oneshot(json_request(
@@ -320,6 +325,7 @@ async fn ticket_delivery_example_rejects_an_uninstalled_publication_target() {
 async fn presets_discovery_exposes_bounded_release_identity_without_factory_execution() {
   let (router, project, _) = preset_router();
   let response = router
+    .clone()
     .oneshot(empty_request(
       "GET",
       &format!("/api/v1/projects/{project}/factory-presets?limit=1"),
@@ -330,10 +336,26 @@ async fn presets_discovery_exposes_bounded_release_identity_without_factory_exec
   assert_eq!(response.status(), StatusCode::OK);
   assert_eq!(response.headers()["cache-control"], "no-store");
   let page = json(response).await;
-  assert_eq!(page["total"], 2);
+  assert_eq!(page["total"], 3);
   assert_eq!(page["items"].as_array().unwrap().len(), 1);
   assert_eq!(page["items"][0]["reference"]["identity"], "ticket-delivery");
-  assert_eq!(page["next_cursor"], "ticket-delivery");
+  assert_eq!(page["items"][0]["reference"]["version"], "v1");
+  let cursor = page["next_cursor"].as_str().expect("version continuation");
+  let next = json(
+    router
+      .clone()
+      .oneshot(empty_request(
+        "GET",
+        &format!("/api/v1/projects/{project}/factory-presets?after={cursor}&limit=1"),
+        None,
+      ))
+      .await
+      .unwrap(),
+  )
+  .await;
+  assert_eq!(next["items"][0]["reference"]["identity"], "ticket-delivery");
+  assert_eq!(next["items"][0]["reference"]["version"], "v2");
+  assert!(next["next_cursor"].is_string());
   assert_json_matches_component(&openapi_document(), "FactoryPresetPage", &page);
   let (router, project, _) = preset_router();
   let response = router
@@ -1067,7 +1089,7 @@ async fn preset_http_contract_bounds_discovery_and_rejects_authority_or_unsuppor
       .unwrap(),
   )
   .await;
-  assert_eq!(page["total"], 2);
+  assert_eq!(page["total"], 3);
   assert_eq!(page["items"], serde_json::json!([]));
   let response = router
     .oneshot(empty_request(

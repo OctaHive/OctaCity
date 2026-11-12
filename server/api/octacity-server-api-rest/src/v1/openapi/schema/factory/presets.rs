@@ -6,7 +6,7 @@ pub(super) fn insert(schemas: &mut Map<String, Value>) {
     object(
       [
         ("reference", schema_ref("FactoryImmutableReferenceResource")),
-        ("parameters", bounded_array(object([("path", non_empty_string()), ("kind", json!({"type":"string","enum":["identity","role_profile","repository","project_context","execution_policy","configuration_policy","source_input","reporting_effects","command","publication","accepted_predecessor"]})), ("required", boolean())], &["path","kind","required"]), octacity_server_application::factory_configuration_document_bounds().choice_entries)),
+        ("parameters", bounded_array(object([("path", non_empty_string()), ("kind", json!({"type":"string","enum":["identity","role_profile","repository","project_context","execution_policy","configuration_policy","source_input","reporting_effects","command","publication","accepted_predecessor","issue_snapshot"]})), ("required", boolean())], &["path","kind","required"]), octacity_server_application::factory_configuration_document_bounds().choice_entries)),
         ("required_node_kinds", bounded_array(schema_ref("FactoryFlowNodeKind"), octacity_server_application::factory_configuration_document_bounds().nodes)),
         ("editor", schema_ref("FactoryPresetEditor")),
         (
@@ -137,6 +137,10 @@ pub(super) fn insert(schemas: &mut Map<String, Value>) {
           bounded_map(schema_ref("FactoryPresetCommandSelection"), b.nodes),
         ),
         ("publication", nullable(schema_ref("FactoryPresetPublicationSelection"))),
+        (
+          "issue_snapshot",
+          nullable(schema_ref("FactoryPresetIssueSnapshotSelection")),
+        ),
         (
           "accepted_predecessor",
           nullable(schema_ref("FactoryFlowAcceptedPredecessor")),

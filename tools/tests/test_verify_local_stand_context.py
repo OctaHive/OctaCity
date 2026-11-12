@@ -170,6 +170,17 @@ class LocalStandContextTests(unittest.TestCase):
                     finally:
                         shutil.copyfile(REPOSITORY / relative, root / relative)
 
+    def test_issue_delivery_v2_assets_survive_the_filtered_build_context(self):
+        manifest = "config/factory/presets/ticket-delivery/v2.json"
+        document = json.loads((REPOSITORY / manifest).read_text(encoding="utf-8"))
+        required = VERIFY.required_context_paths(REPOSITORY)
+        rules = VERIFY.validate_dockerignore(REPOSITORY / ".dockerignore")
+        for path in (manifest, *(f"config/factory/{part}" for part in document["parts"])):
+            with self.subTest(path=path):
+                self.assertIn(path, required)
+                self.assertTrue(VERIFY.docker_path_included(path, rules))
+        self.assertFalse(VERIFY.docker_path_included("config/factory/presets/ticket-delivery/private.json", rules))
+
     def test_context_preflight_checks_parts_declared_by_ticket_delivery_manifest(self):
         manifest = "config/factory/presets/ticket-delivery/v1.json"
         part = "config/factory/presets/ticket-delivery/new-release-part.json"

@@ -18,6 +18,7 @@ afterEach(cleanup);
 it.each([
   'available',
   'missing',
+  'missing-labels',
   'edited',
   'disabled',
   'reordered',
@@ -26,7 +27,7 @@ it.each([
 ] as const)(
   'opts into local classification only with a usable Project mapping (%s)',
   async (scenario) => {
-    const available = scenario !== 'missing';
+    const available = scenario !== 'missing' && scenario !== 'missing-labels';
     const draft = emptyFlowDraft();
     const sample = configurationFixture().configuration.flow.closure.definitions[0]!.nodes[0]!;
     const plugin = { identity: 'local-classification', version: 'v1', digest: 'f'.repeat(64) };
@@ -121,7 +122,10 @@ it.each([
       priority_maximum: 100,
       receipt_schema: receipt,
       receipt_output_bytes: 317,
-      size_labels: [{ size: 'small', label: 'team-small', name: 'Small work' }],
+      size_labels:
+        scenario === 'missing-labels'
+          ? []
+          : [{ size: 'small', label: 'team-small', name: 'Small work' }],
     };
     let finishNormalization: () => void = () => {};
     const normalization = new Promise<void>((resolve) => {
@@ -140,7 +144,7 @@ it.each([
           max_parameter_bytes: 65536,
           resource_modes: ['none' as const],
         },
-        ...(available ? { issue_classification: choices } : {}),
+        ...(scenario !== 'missing' ? { issue_classification: choices } : {}),
       })),
       normalizeSchema: vi.fn<FactoryApi['normalizeSchema']>(async (body) => {
         if (scenario === 'edited' && body.identity.startsWith('issue-classification.'))

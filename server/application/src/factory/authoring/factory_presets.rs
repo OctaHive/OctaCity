@@ -5,6 +5,7 @@ mod contracts;
 mod delivery;
 mod effects;
 mod input;
+mod issue_delivery;
 mod release;
 #[cfg(test)]
 mod tests;
@@ -24,6 +25,7 @@ pub struct FactoryPresetHandlers<S> {
   repositories: Option<Arc<dyn AuthorizedManagementQueryHandler<GetRepositoryQuery, Error = ApplicationError>>>,
   flows: Option<Arc<dyn AuthorizedManagementQueryHandler<GetFactoryFlowDefinitionQuery, Error = ApplicationError>>>,
   policy: Arc<dyn ManagementAuthorizationPolicy>,
+  issue_properties: Option<Arc<dyn octacity_server_store::IssuePropertyStore>>,
 }
 impl<S> FactoryPresetHandlers<S> {
   /// Uses the existing Project catalogs and management authority, without provider services.
@@ -31,12 +33,18 @@ impl<S> FactoryPresetHandlers<S> {
     Self {
       store,
       policy,
+      issue_properties: None,
       repositories: None,
       flows: None,
       artifacts: None,
       sources: None,
       source_actions: None,
     }
+  }
+  /// Resolves Project-owned classification types under the granted Project visibility.
+  pub fn with_issue_properties(mut self, properties: Arc<dyn octacity_server_store::IssuePropertyStore>) -> Self {
+    self.issue_properties = Some(properties);
+    self
   }
   /// Reuses current installed Source/Reporter validation for ordinary reporting actions.
   pub fn with_source_actions(mut self, authorizer: Arc<dyn FactoryStageSourceAuthorizer>) -> Self {
@@ -94,19 +102,27 @@ impl<S: FactoryConfigurationStore> ManagementQueryUseCase<ListFactoryPresetsQuer
       query.page.project_id(),
     )
     .await?;
+    let after = query.page.after();
+    let version_offset = after
+      .and_then(|cursor| RELEASES.iter().position(|release| &release.cursor() == cursor))
+      .map(|index| index + 1);
     let mut items = Vec::new();
-    for release in RELEASES {
+    for release in RELEASES.into_iter().skip(version_offset.unwrap_or(0)) {
       let (template, reference) = release.load()?;
-      if query.page.after().is_none_or(|after| reference.identity() > after) {
-        items.push(summary(template, reference, release.name)?);
+      // Older identity cursors still advance beyond every version of that identity.
+      if version_offset.is_some() || after.is_none_or(|after| reference.identity() > after) {
+        items.push((
+          release.cursor(),
+          summary(template, reference, release.name, release.issue_snapshot)?,
+        ));
       }
     }
     let limit = usize::from(query.page.limit());
-    let next_cursor = (items.len() > limit).then(|| items[limit - 1].reference.identity().clone());
+    let next_cursor = (items.len() > limit).then(|| items[limit - 1].0.clone());
     items.truncate(limit);
     Ok(FactoryPresetPage {
       total: RELEASES.len() as u64,
-      items,
+      items: items.into_iter().map(|(_, item)| item).collect(),
       next_cursor,
     })
   }
@@ -116,6 +132,7 @@ fn summary(
   template: FlowDefinitionTemplate,
   reference: ImmutableReference,
   name: Option<&'static str>,
+  issue_snapshot: bool,
 ) -> Result<FactoryPresetSummary, ApplicationError> {
   let delivery = name.is_some();
   let mut parameters = vec![
@@ -135,8 +152,16 @@ fn summary(
   if delivery {
     parameters.push(parameter("/publication", FactoryPresetParameterKind::Publication));
     parameters.push(parameter(
-      "/accepted_predecessor",
-      FactoryPresetParameterKind::AcceptedPredecessor,
+      if issue_snapshot {
+        "/issue_snapshot"
+      } else {
+        "/accepted_predecessor"
+      },
+      if issue_snapshot {
+        FactoryPresetParameterKind::IssueSnapshot
+      } else {
+        FactoryPresetParameterKind::AcceptedPredecessor
+      },
     ));
   }
   for node in &template.nodes {
@@ -246,6 +271,12 @@ impl<S: FactoryConfigurationStore + octacity_server_store::FactoryRoleProfileSto
     };
     let p = query.selection;
     let delivery = release.is_delivery();
+    if release.issue_snapshot && p.accepted_predecessor.is_some() {
+      return Err(FactoryValidationDiagnostics::invalid("/accepted_predecessor"));
+    }
+    if !release.issue_snapshot && p.issue_snapshot.is_some() {
+      return Err(FactoryValidationDiagnostics::invalid("/issue_snapshot"));
+    }
     if p.flow_only && (!delivery || p.input.is_some() || p.configuration.is_some() || p.configuration_id.is_some()) {
       return Err(FactoryValidationDiagnostics::invalid("/flow_only"));
     }
@@ -291,7 +322,11 @@ impl<S: FactoryConfigurationStore + octacity_server_store::FactoryRoleProfileSto
       (!p.flow_only && p.repository.is_none(), "/repository"),
       (!delivery && p.context.is_empty(), "/context"),
       (delivery && p.publication.is_none(), "/publication"),
-      (delivery && p.accepted_predecessor.is_none(), "/accepted_predecessor"),
+      (
+        delivery && !release.issue_snapshot && p.accepted_predecessor.is_none(),
+        "/accepted_predecessor",
+      ),
+      (release.issue_snapshot && p.issue_snapshot.is_none(), "/issue_snapshot"),
       (p.flow_id.is_none(), "/flow_id"),
       (!p.flow_only && p.configuration_id.is_none(), "/configuration_id"),
       (p.execution.is_none(), "/execution"),
@@ -471,6 +506,30 @@ impl<S: FactoryConfigurationStore + octacity_server_store::FactoryRoleProfileSto
         return Ok(result.unavailable("/accepted_predecessor/schema"));
       }
     }
+    let issue_snapshot = if let Some(selection) = &p.issue_snapshot {
+      let unavailable = || "/issue_snapshot/definition_version";
+      let Some(properties) = &self.issue_properties else {
+        return Ok(result.unavailable(unavailable()));
+      };
+      let catalog = match properties
+        .issue_properties(query.project_id, Some(selection.definition_version))
+        .await
+      {
+        Ok(catalog) if catalog.project_id == query.project_id && catalog.version == selection.definition_version => {
+          catalog
+        }
+        Ok(_) | Err(octacity_server_store::StoreError::NotFound { .. }) => {
+          return Ok(result.unavailable(unavailable()));
+        }
+        Err(error) => return Err(error.into()),
+      };
+      match issue_delivery::bind(&mut template, selection, &catalog) {
+        Ok(input) => Some(input),
+        Err(path) => return Ok(result.unavailable(path)),
+      }
+    } else {
+      None
+    };
     template.execution = p.execution.unwrap();
     for node in &mut template.nodes {
       let Some(alias) = node.build_profile.clone() else {
@@ -566,7 +625,19 @@ impl<S: FactoryConfigurationStore + octacity_server_store::FactoryRoleProfileSto
       Some(predecessor) => flow.with_accepted_predecessor(predecessor.clone()),
       None => Ok(flow),
     })
+    .and_then(|flow| match issue_snapshot {
+      Some(input) => flow.with_issue_snapshot(input),
+      None => Ok(flow),
+    })
     .map_err(|_| FactoryValidationDiagnostics::invalid("/execution"))?;
+    crate::factory::issue_snapshot::resolve(
+      &flow,
+      query.project_id,
+      self.issue_properties.as_deref(),
+      self.policy.as_ref(),
+      context,
+    )
+    .await?;
     crate::factory::authoring::factory_configuration_choices::validate_flow_choices(
       &flow,
       &choices,
@@ -637,6 +708,7 @@ impl<S: FactoryConfigurationStore + octacity_server_store::FactoryRoleProfileSto
     }
     let mut draft = effects::ordinary_draft(root, limits, schemas);
     draft.accepted_predecessor = flow.accepted_predecessor;
+    draft.issue_snapshot = flow.issue_snapshot;
     result.flow = Some(draft);
     for child in children {
       let execution = child.definition.execution();

@@ -11,261 +11,308 @@ use octacity_server_store::{
 };
 use std::collections::BTreeMap;
 
+#[path = "issue_delivery_tests.rs"]
+mod issue_delivery;
+
+struct DeliveryFixture {
+  project: ProjectId,
+  store: Arc<InMemoryFactoryConfigurationStore>,
+  policy: Arc<TrustedNetworkManagementPolicy>,
+  context: ManagementRequestContext,
+  reader: Arc<AuthorizedQueryHandler<Prerequisites>>,
+  installed: FactoryConfigurationChoices,
+  base_choices: FactoryConfigurationChoices,
+  predecessor: PublishedFactoryFlowDefinition,
+  selection: FactoryPresetResolutionRequest,
+  build: FlowBuildBinding,
+}
+
+async fn delivery_fixture() -> DeliveryFixture {
+  let project = ProjectId::generate();
+  let store = Arc::new(InMemoryFactoryConfigurationStore::new());
+  store.seed_project(project).unwrap();
+  let policy = Arc::new(TrustedNetworkManagementPolicy);
+  let context = ManagementRequestContext::trusted_network(ManagementRequestId::new(uuid::Uuid::new_v4()).unwrap());
+  let delivery = release::TICKET_DELIVERY;
+  let triage = release::TRIAGE;
+  let (template, preset) = delivery.load().unwrap();
+  let (mut triage, _) = triage.load().unwrap();
+  // Successful triage reaches this completion only after a bounded repeat.
+  for outcome in triage.nodes.iter_mut().flat_map(|node| &mut node.outcomes) {
+    outcome.issue_presentation = None;
+  }
+  let route = triage
+    .transitions
+    .iter_mut()
+    .find(|route| route.outcome() == &key("requirements"))
+    .unwrap();
+  *route = FlowTransition::repeated(
+    route.predecessor().clone(),
+    route.outcome().clone(),
+    FlowTransitionTarget::Node(route.predecessor().clone()),
+    1,
+    key("triaged"),
+  )
+  .unwrap();
+  let (installed, definition) = installed_preset_choices(project);
+  let build = FlowBuildBinding {
+    execution_permissions: None,
+    tool: definition.toolchain.executable.clone(),
+    plugin: definition.toolchain.plugin.clone(),
+    model_or_tool: definition.toolchain.model.clone(),
+    build_configuration: definition.build_configuration.clone(),
+    task_digest: FactoryDigest::from_bytes([34; 32]),
+    result_output: key("report"),
+    result_output_kind: EvidenceOutputKind::Report,
+    result_outcome: key("observed"),
+    result_tool: None,
+    capture_write_paths: None,
+    capture_deliverables: None,
+    evidence: vec![],
+  };
+  let predecessor = triage
+    .instantiate(
+      FlowDefinitionId::generate(),
+      FlowDefinitionVersion::INITIAL,
+      &[
+        (key("eligibility"), build.clone()),
+        (key("classification"), build.clone()),
+      ]
+      .into(),
+    )
+    .unwrap();
+  let predecessor_ref = predecessor.definition.reference();
+  let predecessor = FactoryFlowConfiguration::new(
+    PinnedFlowDefinitionClosure::new(predecessor_ref, vec![predecessor.definition]).unwrap(),
+    FlowAdmissionLimits::product_defaults(
+      triage.execution.max_active_nodes(),
+      triage.execution.budget(),
+      triage.execution.permissions().clone(),
+    )
+    .unwrap(),
+    predecessor.schemas,
+    Default::default(),
+  )
+  .unwrap();
+  let repository = repository(project, RepositoryId::generate(), None);
+  let repository_ref = crate::factory::execution::factory_code_sources::repository_reference(&repository).unwrap();
+  let published_at = Timestamp::from_unix_millis(1).unwrap();
+  let predecessor = PublishedFactoryFlowDefinition {
+    project_id: project,
+    flow: predecessor,
+    published_at,
+  };
+  let reader = Arc::new(AuthorizedQueryHandler::new(
+    policy.clone(),
+    Arc::new(Prerequisites {
+      repository,
+      flow: predecessor.clone(),
+    }),
+  ));
+  let schemas = template.data_schemas().unwrap();
+  let receipt_schema = schemas[&key("pull_request_receipt")].clone();
+  let target = ImmutableReference::new(key("review"), key("v1"), FactoryDigest::from_bytes([44; 32]));
+  let mut installed = installed
+    .with_build_pipeline_contract(FactoryBuildPipelineContract {
+      protected_tests: None,
+      command: None,
+      build_configuration: build.build_configuration.clone(),
+      tool: build.tool.clone(),
+      plugin: build.plugin.clone(),
+      model_or_tool: build.model_or_tool.clone(),
+      pipeline_node: PipelineNodeId::new("step").unwrap(),
+      compilation: Some(FactoryBuildCompilationContract {
+        permissions: None,
+        capture_write_paths: None,
+        scoped_validation: false,
+        evidence: vec![],
+        task_digest: build.task_digest,
+        role_profiles: true,
+        requires_task_context: false,
+        result_output: build.result_output.clone(),
+        result_output_kind: build.result_output_kind,
+        mcp_result_tool: None,
+      }),
+    })
+    .unwrap();
+  store.enable_project(project, installed.clone()).unwrap();
+  let mut intent = role_profile_contract_intent(project);
+  intent.profiles.truncate(1);
+  intent.profiles[0].definition = definition.clone();
+  let executor = AuthorizedCommandHandler::new(
+    policy.clone(),
+    Arc::new(FactoryRoleProfileHandlers::with_policy(store.clone(), policy.clone())),
+  )
+  .handle_command(
+    &context,
+    PublishFactoryRoleProfilesCommand {
+      intent,
+      published_at,
+      idempotency_key: "delivery-profiles".parse().unwrap(),
+    },
+  )
+  .await
+  .unwrap();
+  let mut profiles = BTreeMap::new();
+  let mut commands = BTreeMap::new();
+  for node in template.nodes.iter().filter(|node| node.build_profile.is_some()) {
+    let alias = node.build_profile.clone().unwrap();
+    if node.kind == FlowNodeKind::BuildCommand {
+      let result = schemas
+        .get(&node.outcomes[0].schema)
+        .cloned()
+        .unwrap_or_else(|| probe_observation_contract().report_schema().unwrap());
+      let mut command = build.clone();
+      if node.key == key("protected_validation") {
+        command.evidence.push(EvidenceRequirement::new(
+          key("validation_facts"),
+          EvidenceOutputKind::Report,
+          schemas[&key("protected_validation_facts")].reference().clone(),
+          command.tool.clone(),
+          command.plugin.clone(),
+        ));
+      }
+      command.model_or_tool = ImmutableReference::new(
+        alias.clone(),
+        key("v1"),
+        FactoryDigest::content_sha256(alias.as_str().as_bytes()),
+      );
+      installed = installed
+        .with_reference_choice(FactoryReferenceChoice {
+          alias: alias.clone(),
+          kind: FactoryChoiceKind::NodeCapability,
+          reference: command.model_or_tool.clone(),
+        })
+        .unwrap()
+        .with_build_pipeline_contract(FactoryBuildPipelineContract {
+          protected_tests: None,
+          command: Some(FactoryBuildCommandContract {
+            task_digest: command.task_digest,
+            outputs: std::iter::once(EvidenceRequirement::new(
+              command.result_output.clone(),
+              command.result_output_kind,
+              result.reference().clone(),
+              command.tool.clone(),
+              command.plugin.clone(),
+            ))
+            .chain(command.evidence.iter().cloned())
+            .collect(),
+            observation_schema: Some(result.clone()),
+            permissions: Default::default(),
+          }),
+          build_configuration: command.build_configuration.clone(),
+          tool: command.tool.clone(),
+          plugin: command.plugin.clone(),
+          model_or_tool: command.model_or_tool.clone(),
+          pipeline_node: PipelineNodeId::new("step").unwrap(),
+          compilation: None,
+        })
+        .unwrap();
+      commands.insert(
+        alias,
+        FactoryPresetCommandSelection {
+          build: command,
+          result,
+          permissions: Default::default(),
+        },
+      );
+    } else {
+      profiles.insert(
+        alias,
+        FactoryPresetProfileSelection {
+          role: executor.role.as_ref().unwrap().reference().clone(),
+          profile: executor.profiles[0].reference().clone(),
+          build: Some(build.clone()),
+        },
+      );
+    }
+  }
+  let base_choices = installed.clone();
+  let installed = installed
+    .with_candidate_publication(FactoryCandidatePublicationChoice {
+      plugin: build.plugin.clone(),
+      target: target.clone(),
+      repository_id: repository_ref.id,
+      outcome: FlowOutcomeDefinition::new(
+        key("published"),
+        FlowOutcomeKind::Success,
+        receipt_schema.reference().clone(),
+      ),
+      receipt_schema: Some(receipt_schema),
+      review_url: true,
+      permissions: Default::default(),
+    })
+    .unwrap();
+  store.enable_project(project, installed.clone()).unwrap();
+  let permissions = FactoryPermissionSet::try_new(FactoryPermissionDraft {
+    plugins: vec![build.plugin.clone()],
+    executables: definition.permissions.executables().cloned().collect(),
+    commands: definition.permissions.commands().cloned().collect(),
+    ..Default::default()
+  })
+  .unwrap();
+  let flow_id = FlowDefinitionId::generate();
+  let selection = FactoryPresetResolutionRequest {
+    issue_snapshot: None,
+    preset,
+    flow_only: false,
+    flow_id: Some(flow_id),
+    configuration_id: Some(FactoryConfigurationId::generate()),
+    profiles,
+    repository: Some(repository_ref),
+    context: Default::default(),
+    execution: Some(FlowExecutionPolicy::new(template.execution.budget(), permissions.clone(), 1).unwrap()),
+    configuration: Some(FactoryPresetConfigurationParameters {
+      admission_policy: key("admission"),
+      permission_ceiling: key("permissions"),
+      wip_limits: FactoryWipLimits::new(1, 1).unwrap(),
+      hard_budget: template.execution.budget(),
+    }),
+    input: None,
+    effects: Default::default(),
+    commands,
+    publication: Some(FactoryPresetPublicationSelection {
+      plugin: build.plugin.clone(),
+      target,
+      permissions,
+    }),
+    accepted_predecessor: Some(FlowAcceptedPredecessor {
+      definition: predecessor_ref,
+      terminal: key("triaged"),
+      outcomes: [key("requirements")].into(),
+    }),
+  };
+  DeliveryFixture {
+    project,
+    store,
+    policy,
+    context,
+    reader,
+    installed,
+    base_choices,
+    predecessor,
+    selection,
+    build,
+  }
+}
+
 #[test]
 fn resolved_delivery_is_an_editable_ordinary_flow_with_no_implicit_activation() {
   run_ready(async {
-    let project = ProjectId::generate();
-    let store = Arc::new(InMemoryFactoryConfigurationStore::new());
-    store.seed_project(project).unwrap();
-    let policy = Arc::new(TrustedNetworkManagementPolicy);
-    let context = ManagementRequestContext::trusted_network(ManagementRequestId::new(uuid::Uuid::new_v4()).unwrap());
-    let [delivery, triage] = RELEASES;
-    let (template, preset) = delivery.load().unwrap();
-    let (mut triage, _) = triage.load().unwrap();
-    // Successful triage reaches this completion only after a bounded repeat.
-    for outcome in triage.nodes.iter_mut().flat_map(|node| &mut node.outcomes) {
-      outcome.issue_presentation = None;
-    }
-    let route = triage
-      .transitions
-      .iter_mut()
-      .find(|route| route.outcome() == &key("requirements"))
-      .unwrap();
-    *route = FlowTransition::repeated(
-      route.predecessor().clone(),
-      route.outcome().clone(),
-      FlowTransitionTarget::Node(route.predecessor().clone()),
-      1,
-      key("triaged"),
-    )
-    .unwrap();
-    let (installed, definition) = installed_preset_choices(project);
-    let build = FlowBuildBinding {
-      execution_permissions: None,
-      tool: definition.toolchain.executable.clone(),
-      plugin: definition.toolchain.plugin.clone(),
-      model_or_tool: definition.toolchain.model.clone(),
-      build_configuration: definition.build_configuration.clone(),
-      task_digest: FactoryDigest::from_bytes([34; 32]),
-      result_output: key("report"),
-      result_output_kind: EvidenceOutputKind::Report,
-      result_outcome: key("observed"),
-      result_tool: None,
-      capture_write_paths: None,
-      capture_deliverables: None,
-      evidence: vec![],
-    };
-    let predecessor = triage
-      .instantiate(
-        FlowDefinitionId::generate(),
-        FlowDefinitionVersion::INITIAL,
-        &[
-          (key("eligibility"), build.clone()),
-          (key("classification"), build.clone()),
-        ]
-        .into(),
-      )
-      .unwrap();
-    let predecessor_ref = predecessor.definition.reference();
-    let predecessor = FactoryFlowConfiguration::new(
-      PinnedFlowDefinitionClosure::new(predecessor_ref, vec![predecessor.definition]).unwrap(),
-      FlowAdmissionLimits::product_defaults(
-        triage.execution.max_active_nodes(),
-        triage.execution.budget(),
-        triage.execution.permissions().clone(),
-      )
-      .unwrap(),
-      predecessor.schemas,
-      Default::default(),
-    )
-    .unwrap();
-    let repository = repository(project, RepositoryId::generate(), None);
-    let repository_ref = crate::factory::execution::factory_code_sources::repository_reference(&repository).unwrap();
+    let DeliveryFixture {
+      project,
+      store,
+      policy,
+      context,
+      reader,
+      installed,
+      base_choices,
+      predecessor,
+      selection,
+      build,
+    } = delivery_fixture().await;
+    let flow_id = selection.flow_id.unwrap();
     let published_at = Timestamp::from_unix_millis(1).unwrap();
-    let predecessor = PublishedFactoryFlowDefinition {
-      project_id: project,
-      flow: predecessor,
-      published_at,
-    };
-    let reader = Arc::new(AuthorizedQueryHandler::new(
-      policy.clone(),
-      Arc::new(Prerequisites {
-        repository,
-        flow: predecessor.clone(),
-      }),
-    ));
-    let schemas = template.data_schemas().unwrap();
-    let receipt_schema = schemas[&key("pull_request_receipt")].clone();
-    let target = ImmutableReference::new(key("review"), key("v1"), FactoryDigest::from_bytes([44; 32]));
-    let mut installed = installed
-      .with_build_pipeline_contract(FactoryBuildPipelineContract {
-        protected_tests: None,
-        command: None,
-        build_configuration: build.build_configuration.clone(),
-        tool: build.tool.clone(),
-        plugin: build.plugin.clone(),
-        model_or_tool: build.model_or_tool.clone(),
-        pipeline_node: PipelineNodeId::new("step").unwrap(),
-        compilation: Some(FactoryBuildCompilationContract {
-          permissions: None,
-          capture_write_paths: None,
-          scoped_validation: false,
-          evidence: vec![],
-          task_digest: build.task_digest,
-          role_profiles: true,
-          requires_task_context: false,
-          result_output: build.result_output.clone(),
-          result_output_kind: build.result_output_kind,
-          mcp_result_tool: None,
-        }),
-      })
-      .unwrap();
-    store.enable_project(project, installed.clone()).unwrap();
-    let mut intent = role_profile_contract_intent(project);
-    intent.profiles.truncate(1);
-    intent.profiles[0].definition = definition.clone();
-    let executor = AuthorizedCommandHandler::new(
-      policy.clone(),
-      Arc::new(FactoryRoleProfileHandlers::with_policy(store.clone(), policy.clone())),
-    )
-    .handle_command(
-      &context,
-      PublishFactoryRoleProfilesCommand {
-        intent,
-        published_at,
-        idempotency_key: "delivery-profiles".parse().unwrap(),
-      },
-    )
-    .await
-    .unwrap();
-    let mut profiles = BTreeMap::new();
-    let mut commands = BTreeMap::new();
-    for node in template.nodes.iter().filter(|node| node.build_profile.is_some()) {
-      let alias = node.build_profile.clone().unwrap();
-      if node.kind == FlowNodeKind::BuildCommand {
-        let result = schemas
-          .get(&node.outcomes[0].schema)
-          .cloned()
-          .unwrap_or_else(|| probe_observation_contract().report_schema().unwrap());
-        let mut command = build.clone();
-        if node.key == key("protected_validation") {
-          command.evidence.push(EvidenceRequirement::new(
-            key("validation_facts"),
-            EvidenceOutputKind::Report,
-            schemas[&key("protected_validation_facts")].reference().clone(),
-            command.tool.clone(),
-            command.plugin.clone(),
-          ));
-        }
-        command.model_or_tool = ImmutableReference::new(
-          alias.clone(),
-          key("v1"),
-          FactoryDigest::content_sha256(alias.as_str().as_bytes()),
-        );
-        installed = installed
-          .with_reference_choice(FactoryReferenceChoice {
-            alias: alias.clone(),
-            kind: FactoryChoiceKind::NodeCapability,
-            reference: command.model_or_tool.clone(),
-          })
-          .unwrap()
-          .with_build_pipeline_contract(FactoryBuildPipelineContract {
-            protected_tests: None,
-            command: Some(FactoryBuildCommandContract {
-              task_digest: command.task_digest,
-              outputs: std::iter::once(EvidenceRequirement::new(
-                command.result_output.clone(),
-                command.result_output_kind,
-                result.reference().clone(),
-                command.tool.clone(),
-                command.plugin.clone(),
-              ))
-              .chain(command.evidence.iter().cloned())
-              .collect(),
-              observation_schema: Some(result.clone()),
-              permissions: Default::default(),
-            }),
-            build_configuration: command.build_configuration.clone(),
-            tool: command.tool.clone(),
-            plugin: command.plugin.clone(),
-            model_or_tool: command.model_or_tool.clone(),
-            pipeline_node: PipelineNodeId::new("step").unwrap(),
-            compilation: None,
-          })
-          .unwrap();
-        commands.insert(
-          alias,
-          FactoryPresetCommandSelection {
-            build: command,
-            result,
-            permissions: Default::default(),
-          },
-        );
-      } else {
-        profiles.insert(
-          alias,
-          FactoryPresetProfileSelection {
-            role: executor.role.as_ref().unwrap().reference().clone(),
-            profile: executor.profiles[0].reference().clone(),
-            build: Some(build.clone()),
-          },
-        );
-      }
-    }
-    let base_choices = installed.clone();
-    let installed = installed
-      .with_candidate_publication(FactoryCandidatePublicationChoice {
-        plugin: build.plugin.clone(),
-        target: target.clone(),
-        repository_id: repository_ref.id,
-        outcome: FlowOutcomeDefinition::new(
-          key("published"),
-          FlowOutcomeKind::Success,
-          receipt_schema.reference().clone(),
-        ),
-        receipt_schema: Some(receipt_schema),
-        review_url: true,
-        permissions: Default::default(),
-      })
-      .unwrap();
-    store.enable_project(project, installed.clone()).unwrap();
-    let permissions = FactoryPermissionSet::try_new(FactoryPermissionDraft {
-      plugins: vec![build.plugin.clone()],
-      executables: definition.permissions.executables().cloned().collect(),
-      commands: definition.permissions.commands().cloned().collect(),
-      ..Default::default()
-    })
-    .unwrap();
-    let flow_id = FlowDefinitionId::generate();
-    let selection = FactoryPresetResolutionRequest {
-      preset,
-      flow_only: false,
-      flow_id: Some(flow_id),
-      configuration_id: Some(FactoryConfigurationId::generate()),
-      profiles,
-      repository: Some(repository_ref),
-      context: Default::default(),
-      execution: Some(FlowExecutionPolicy::new(template.execution.budget(), permissions.clone(), 1).unwrap()),
-      configuration: Some(FactoryPresetConfigurationParameters {
-        admission_policy: key("admission"),
-        permission_ceiling: key("permissions"),
-        wip_limits: FactoryWipLimits::new(1, 1).unwrap(),
-        hard_budget: template.execution.budget(),
-      }),
-      input: None,
-      effects: Default::default(),
-      commands,
-      publication: Some(FactoryPresetPublicationSelection {
-        plugin: build.plugin,
-        target,
-        permissions,
-      }),
-      accepted_predecessor: Some(FlowAcceptedPredecessor {
-        definition: predecessor_ref,
-        terminal: key("triaged"),
-        outcomes: [key("requirements")].into(),
-      }),
-    };
     let resolver = AuthorizedQueryHandler::new(
       policy.clone(),
       Arc::new(
@@ -1121,6 +1168,105 @@ fn authoring_exposes_only_installed_scoped_validation_profiles() {
     assert_eq!(
       result["scoped_validation_executions"][0]["model_or_tool"],
       serde_json::json!(expected)
+    );
+  });
+}
+
+#[test]
+fn delivery_discovery_offers_issue_snapshot_v2_without_a_required_producer() {
+  run_ready(async {
+    let project = ProjectId::generate();
+    let store = Arc::new(InMemoryFactoryConfigurationStore::new());
+    store.seed_project(project).unwrap();
+    let context = ManagementRequestContext::trusted_network(ManagementRequestId::new(uuid::Uuid::new_v4()).unwrap());
+    let policy = Arc::new(TrustedNetworkManagementPolicy);
+    let presets = AuthorizedQueryHandler::new(policy.clone(), Arc::new(FactoryPresetHandlers::new(store, policy)))
+      .handle_query(
+        &context,
+        ListFactoryPresetsQuery {
+          page: CurrentDefinitionPageInput::try_new(project, None, 100).unwrap(),
+        },
+      )
+      .await
+      .unwrap();
+    let delivery = presets
+      .items
+      .iter()
+      .find(|p| p.reference.identity() == &key("ticket-delivery") && p.reference.version() == &key("v2"))
+      .unwrap();
+    assert_eq!(
+      delivery.reference.version(),
+      &key("v2"),
+      "discovery must include the Issue-based release"
+    );
+    let parameters = serde_json::to_value(&delivery.parameters).unwrap();
+    assert!(
+      parameters
+        .as_array()
+        .unwrap()
+        .iter()
+        .any(|p| p["path"] == "/issue_snapshot" && p["kind"] == "issue_snapshot" && p["required"] == true)
+    );
+    assert!(!delivery.parameters.iter().any(|p| p.path == "/accepted_predecessor"));
+  });
+}
+
+#[test]
+fn preset_discovery_retains_versions_with_lossless_pagination() {
+  run_ready(async {
+    let project = ProjectId::generate();
+    let store = Arc::new(InMemoryFactoryConfigurationStore::new());
+    store.seed_project(project).unwrap();
+    let policy = Arc::new(TrustedNetworkManagementPolicy);
+    let context = ManagementRequestContext::trusted_network(ManagementRequestId::new(uuid::Uuid::new_v4()).unwrap());
+    let queries = AuthorizedQueryHandler::new(policy.clone(), Arc::new(FactoryPresetHandlers::new(store, policy)));
+    let page = |after, limit| ListFactoryPresetsQuery {
+      page: CurrentDefinitionPageInput::try_new(project, after, limit).unwrap(),
+    };
+    let all = queries.handle_query(&context, page(None, 100)).await.unwrap();
+    let versions = all
+      .items
+      .iter()
+      .filter(|item| item.reference.identity() == &key("ticket-delivery"))
+      .map(|item| item.reference.version().as_str())
+      .collect::<Vec<_>>();
+    assert_eq!(
+      versions,
+      ["v1", "v2"],
+      "the usable Console release must remain discoverable alongside the Issue example"
+    );
+    let mut after = None;
+    let mut references = vec![];
+    loop {
+      let next = queries.handle_query(&context, page(after, 1)).await.unwrap();
+      assert_eq!(next.items.len(), 1);
+      references.push((
+        next.items[0].reference.identity().to_string(),
+        next.items[0].reference.version().to_string(),
+      ));
+      after = next.next_cursor;
+      if after.is_none() {
+        break;
+      }
+      assert!(references.len() < 4, "version cursors must progress");
+    }
+    assert_eq!(
+      references,
+      [
+        ("ticket-delivery".into(), "v1".into()),
+        ("ticket-delivery".into(), "v2".into()),
+        ("triage".into(), "v3".into())
+      ]
+    );
+    let legacy = queries
+      .handle_query(&context, page(Some(key("ticket-delivery")), 100))
+      .await
+      .unwrap();
+    assert_eq!(legacy.items.len(), 1);
+    assert_eq!(
+      legacy.items[0].reference.identity(),
+      &key("triage"),
+      "legacy identity cursors still advance beyond that identity"
     );
   });
 }

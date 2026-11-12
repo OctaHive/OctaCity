@@ -1,16 +1,71 @@
 # Ticket delivery Flow branches
 
-## Versioned example
+## Current v2 Issue snapshot example
 
-`v1.json` composes the branches below, declares which standalone terminals
-continue to another step, and disables the optional test-authoring queue for
-this example. The assignment part supplies the step instructions. In Factory, open **Add pipeline →
-Start from an example → Ticket delivery · v1**. Choose the exact successful
-triage completion, stage Profiles, installed command reports and review target.
-**Open example draft** opens the same editor used for a blank graph. Review the
-initial assignments, step data, code selections, access requests and limits
-there. Configure and publish the Flow and the launch Configuration separately.
-The example never selects a credential, activates intake or grants access.
+`v2.json` is the Issue-snapshot `ticket-delivery` release. Resolve its exact
+reference from the Project preset catalog through the resolver API. Select the
+Project's published field-definition version and an explicit admission policy:
+
+```json
+{
+  "issue_snapshot": {
+    "definition_version": 1,
+    "admission": {
+      "priority": {"field": "priority", "values": {"blocker": 100, "high": 80, "medium": 50, "low": 20}},
+      "risk": {"field": "risk", "values": {"low": "low", "medium": "medium", "high": "high", "critical": "critical"}},
+      "allowed": {"work_kind": ["defect", "feature_request"]}
+    }
+  }
+}
+```
+
+Use the actual active choice IDs in that Project. These mappings are reviewed
+scheduling/risk policy, not another agent assessment or a per-step vocabulary.
+The explicit type allowlist must be a nonempty subset of the release's supported
+`defect`/`feature_request` routes; adding a Project type does not assign a route.
+
+The example selects built-in priority, component, type (`work_kind`) and size,
+existing dependency references, and the Project's severity, risk, recommended
+route and reproducibility semantic bindings. Publish those definitions first.
+The resolver derives the shared result/input types from that exact catalog;
+operators do not copy its enums into each step. No `accepted_predecessor`,
+producing Flow/terminal/schema or triage Run is required. Passing a predecessor
+alongside this mode is rejected. An eligible manually prepared Issue uses the
+same contract as an Issue classified by any authorized triage implementation.
+
+The frozen Issue supplies the reproduction decision and requirements summary.
+Requirements approval uses Project priority IDs: the released example requests
+human acceptance for component `api`, size `medium`/`large`, and priority
+`blocker`/`high`. Review these literal policy choices in the resulting editable
+Flow. Admission/scheduling scores remain separate from the canonical choice.
+Requirements, protected tests, candidate review, verification and trusted PR
+publication keep their ordinary owners and independently selected executors.
+
+Resolution is read-only. It can return an editable Flow alone (`flow_only`) or a
+disabled Configuration draft; publish and select exact versions explicitly.
+Source intake and Reporter effects remain separate opt-ins. The default snapshot
+selects no comment or document text. Add any required ordinary fields, explicit
+materials/evidence and per-step projections through the generic Flow contract;
+prose grants no evidence or approval authority. Visual Project-field selection
+is not yet available; use API authoring for this preset's Issue input. Console
+explains this required-input limitation and disables opening `v2`; choose `v1`
+there to use the existing producer-result controls.
+
+## Retained v1 producer-result example
+
+`v1.json` and its parts retain their original bytes and exact accepted-triage
+contract. Discovery offers both `v1` and `v2`, and exact references for both
+remain resolvable. Follow the catalog's opaque `next_cursor` to visit every
+version; older identity cursors still skip all versions of that identity.
+Existing published Flows,
+Configurations and Runs are not upgraded in place. Their Incoming pipeline
+completion controls and exact earlier-Run selections remain supported.
+
+Both versions compose the branches below and disable the optional test-authoring
+queue. Review stage Profiles, installed command reports, the publication target,
+step data, code selections, access requests and limits before ordinary Flow and
+Configuration publication. The example selects no credential, activates no intake
+and grants no access.
 
 The reproduction command is optional. Leave it unselected for feature tickets:
 the ordinary entry gate routes features and already reproduced defects onward.

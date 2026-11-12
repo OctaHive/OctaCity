@@ -1,0 +1,204 @@
+{
+  "schemas": {
+    "delivery_issue_artifact": {
+      "identity": "factory.ticket-delivery.issue-artifact",
+      "version": "v1",
+      "shape": {
+        "type": "object",
+        "fields": {
+          "artifact_id": {"required": true, "value": {"type": "string", "min_bytes": 36, "max_bytes": 36}},
+          "content_digest": {"required": true, "value": {"type": "string", "min_bytes": 64, "max_bytes": 64}},
+          "encoded_size": {"required": true, "value": {"type": "integer", "minimum": 1, "maximum": 16777216}}
+        }
+      }
+    },
+    "delivery_specification_result": {
+      "identity": "factory.ticket-delivery.specification-result",
+      "version": "v1",
+      "shape": {
+        "type": "object",
+        "fields": {
+          "summary": {"required": true, "value": {"type": "reference", "schema": "summary"}},
+          "conclusion": {"required": true, "value": {"type": "string", "min_bytes": 1, "max_bytes": 256}},
+          "manifest": {"required": true, "value": {"type": "reference", "schema": "delivery_issue_artifact"}},
+          "bundle": {"required": true, "value": {"type": "reference", "schema": "delivery_issue_artifact"}}
+        }
+      }
+    },
+    "delivery_requirements_input": {
+      "identity": "factory.ticket-delivery.requirements-input",
+      "version": "v2",
+      "shape": {"type": "reference", "schema": "summary"}
+    },
+    "delivery_spec_acceptance": {
+      "identity": "factory.ticket-delivery.specification-acceptance",
+      "version": "v2",
+      "shape": {
+        "type": "object",
+        "fields": {
+          "decision": {"required": true, "value": {"type": "reference", "schema": "summary"}},
+          "specification": {"required": true, "value": {"type": "reference", "schema": "spec_result"}}
+        }
+      }
+    }
+  },
+  "nodes": [
+    {
+      "key": "requirements_needed",
+      "kind": "deterministic_gate",
+      "input_schema": "delivery_requirements_input",
+      "outcomes": [
+        {"key": "prepared", "kind": "success", "schema": "summary"},
+        {"key": "specification", "kind": "success", "schema": "summary"}
+      ],
+      "budget": {
+        "max_attempts": 1,
+        "max_elapsed_millis": 1000,
+        "max_tokens": 0,
+        "max_cost_micro_units": 0,
+        "max_output_bytes": 1048576
+      },
+      "required": true,
+      "input_binding": {
+        "sources": {"triage": {"source": "caller_input", "path": ""}},
+        "mapping": {"value": {"mapping": "pointer", "path": "/triage"}}
+      },
+      "gate": {
+        "rules": [
+          {
+            "when": {
+              "operation": "compare",
+              "comparison": "equal",
+              "left": {"source": "path", "path": "/size"},
+              "right": {"source": "literal", "value": "large"}
+            },
+            "outcome": "specification"
+          }
+        ],
+        "fallback": "prepared",
+        "default_output": {"value": {"mapping": "pointer", "path": ""}}
+      }
+    },
+    {
+      "key": "specification_accepted",
+      "kind": "deterministic_gate",
+      "input_schema": "delivery_spec_acceptance",
+      "outcomes": [
+        {
+          "key": "accepted",
+          "kind": "success",
+          "schema": "delivery_specification_result",
+          "issue_presentation": {
+            "kind": "custom_v1",
+            "title": "Specifications",
+            "conclusion_field": "conclusion",
+            "references": [{"field": "manifest", "kind": "artifact"}, {"field": "bundle", "kind": "artifact"}]
+          }
+        }
+      ],
+      "budget": {
+        "max_attempts": 1,
+        "max_elapsed_millis": 1000,
+        "max_tokens": 0,
+        "max_cost_micro_units": 0,
+        "max_output_bytes": 1048576
+      },
+      "required": true,
+      "input_binding": {
+        "sources": {
+          "specification": {"source": "predecessor", "view": "payload", "path": ""},
+          "decision": {
+            "source": "record",
+            "node": "requirements_needed",
+            "outcome": "specification",
+            "view": "input_payload",
+            "path": ""
+          }
+        },
+        "mapping": {
+          "value": {
+            "mapping": "object",
+            "fields": {
+              "decision": {"mapping": "pointer", "path": "/decision"},
+              "specification": {"mapping": "pointer", "path": "/specification"}
+            }
+          }
+        }
+      },
+      "gate": {
+        "rules": [],
+        "fallback": "accepted",
+        "default_output": {
+          "value": {
+            "mapping": "object",
+            "fields": {
+              "conclusion": {"mapping": "constant", "value": "Specification changes are ready for requirements review."},
+              "manifest": {"mapping": "pointer", "path": "/specification/artifacts/manifest"},
+              "bundle": {"mapping": "pointer", "path": "/specification/artifacts/bundle"},
+              "summary": {
+                "mapping": "object",
+                "fields": {
+                  "work_kind": {"mapping": "pointer", "path": "/decision/work_kind"},
+                  "size": {"mapping": "pointer", "path": "/decision/size"},
+                  "risk": {"mapping": "pointer", "path": "/decision/risk"},
+                  "recommended_route": {"mapping": "pointer", "path": "/decision/recommended_route"},
+                  "component": {"mapping": "pointer", "path": "/decision/component"},
+                  "severity": {"mapping": "pointer", "path": "/decision/severity"},
+                  "dependencies": {"mapping": "pointer", "path": "/decision/dependencies"},
+                  "specification": {"mapping": "pointer", "path": "/specification"},
+                  "priority": {"mapping": "pointer", "path": "/decision/priority"},
+                  "reproducibility": {"mapping": "pointer", "path": "/decision/reproducibility"}
+                }
+              }
+            }
+          }
+        }
+      }
+    }
+  ],
+  "transitions": [
+    {
+      "predecessor": "requirements_needed",
+      "outcome": "prepared",
+      "target": {"kind": "node", "key": "requirements_review_policy"},
+      "max_repeats": 0,
+      "exhausted_terminal": null
+    },
+    {
+      "predecessor": "requirements_needed",
+      "outcome": "specification",
+      "target": {"kind": "node", "key": "specification_author"},
+      "max_repeats": 0,
+      "exhausted_terminal": null
+    },
+    {
+      "predecessor": "specification_author",
+      "outcome": "observed",
+      "target": {"kind": "node", "key": "specification_gate"},
+      "max_repeats": 0,
+      "exhausted_terminal": null
+    },
+    {
+      "predecessor": "specification_gate",
+      "outcome": "review_pending",
+      "target": {"kind": "node", "key": "specification_accepted"},
+      "max_repeats": 0,
+      "exhausted_terminal": null
+    },
+    {
+      "predecessor": "specification_gate",
+      "outcome": "invalid",
+      "target": {"kind": "terminal", "key": "invalid"},
+      "max_repeats": 0,
+      "exhausted_terminal": null
+    },
+    {
+      "predecessor": "specification_accepted",
+      "outcome": "accepted",
+      "target": {"kind": "node", "key": "requirements_review_policy"},
+      "max_repeats": 0,
+      "exhausted_terminal": null
+    }
+  ],
+  "terminals": {"invalid": "spec_result"}
+}

@@ -2042,6 +2042,8 @@ export const enMessages = {
     'Optional. Without a command, tickets that need this check are sent for review.',
   'factory.exampleNeedsPredecessor':
     'Publish a Flow with a typed result to use as the predecessor.',
+  'factory.exampleInputUnsupported':
+    'The required input settings for this version are not supported here. Choose another version.',
   'factory.exampleUnavailable': 'The selected resource is unavailable or incompatible',
   'factory.exampleRequired': 'Choose a value',
   'factory.openExample': 'Open example draft',

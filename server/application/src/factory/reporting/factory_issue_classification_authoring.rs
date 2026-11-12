@@ -6,7 +6,14 @@ use octacity_server_factory::{
   FactoryConfigurationChoices, FactoryFlowConfiguration, FlowDataSchema, FlowFieldSchema, FlowOutcomeKind,
   FlowValueMapping, FlowValueSchema,
 };
-use octacity_server_store::IssuePropertyStore;
+use octacity_server_store::{IssuePropertyStore, PublishedIssueProperties};
+use std::collections::BTreeSet;
+
+/// One authorized catalog read feeds both preview and selected-field publication checks.
+pub(crate) struct ClassificationAuthoring {
+  pub(crate) choices: FactoryIssueClassificationChoices,
+  catalog: PublishedIssueProperties,
+}
 
 pub(crate) async fn current_choices(
   choices: &FactoryConfigurationChoices,
@@ -14,7 +21,7 @@ pub(crate) async fn current_choices(
   policy: &dyn ManagementAuthorizationPolicy,
   context: &ManagementRequestContext,
   project: ProjectId,
-) -> Result<Option<FactoryIssueClassificationChoices>, ApplicationError> {
+) -> Result<Option<ClassificationAuthoring>, ApplicationError> {
   let (Some((plugin, mapping)), Some(properties)) = (choices.issue_classification(), properties) else {
     return Ok(None);
   };
@@ -49,18 +56,20 @@ pub(crate) async fn current_choices(
         name: choice.name.clone(),
       })
     })
-    .collect::<Option<_>>();
-  let Some(size_labels) = size_labels else {
-    return Ok(None);
-  };
+    .collect::<Option<Vec<_>>>()
+    .unwrap_or_default();
   let (receipt_schema, receipt_output_bytes) = authoring_receipt()?;
-  Ok(Some(FactoryIssueClassificationChoices {
-    plugin: plugin.clone(),
-    policy: mapping.policy.clone(),
-    priority_maximum: octacity_server_factory::MAX_WORK_PRIORITY,
-    size_labels,
-    receipt_schema,
-    receipt_output_bytes,
+  Ok(Some(ClassificationAuthoring {
+    choices: FactoryIssueClassificationChoices {
+      plugin: plugin.clone(),
+      policy: mapping.policy.clone(),
+      priority_maximum: octacity_server_factory::MAX_WORK_PRIORITY,
+      size_labels,
+      receipt_schema,
+      receipt_output_bytes,
+      field_contract: super::factory_issue_classification_contract::current(&catalog),
+    },
+    catalog,
   }))
 }
 
@@ -100,14 +109,16 @@ pub(crate) async fn validate_publication(
         .map_err(|_| {
           FactoryValidationDiagnostics::invalid_binding(definition.reference(), node.key(), "/action/parameters")
         })?;
-    let current = current.as_ref().ok_or_else(unavailable)?;
+    let resolved = current.as_ref().ok_or_else(unavailable)?;
+    let current = &resolved.choices;
     if action.plugin() != &current.plugin
       || selection.policy != current.policy
-      || selection.size_labels.len() != current.size_labels.len()
-      || current
-        .size_labels
-        .iter()
-        .any(|choice| selection.size_labels.get(&choice.size) != Some(&choice.label))
+      || (!(selection.fields.is_some() && selection.size_labels.is_empty())
+        && (selection.size_labels.len() != current.size_labels.len()
+          || current
+            .size_labels
+            .iter()
+            .any(|choice| selection.size_labels.get(&choice.size) != Some(&choice.label))))
     {
       return Err(unavailable());
     }
@@ -124,12 +135,50 @@ pub(crate) async fn validate_publication(
       .input_schema()
       .and_then(schema)
       .ok_or_else(|| invalid("/input_schema"))?;
+    let supported = if let Some(selection) = &selection.fields {
+      let shape = super::factory_issue_classification_contract::selected(&resolved.catalog, selection)
+        .ok_or_else(|| invalid("/action/parameters/fields"))?;
+      let FlowValueSchema::Object { fields: mut projected } = target.shape().clone() else {
+        return Err(invalid("/input_schema"));
+      };
+      // Dependencies retain the producer's bounded schema and exact record projection.
+      // Their values are independently validated by the Issue owner, not Project choices.
+      let metadata_key = "assessment_inputs".parse().expect("static assessment input key");
+      let dependencies = projected.remove(&metadata_key);
+      if dependencies.is_none()
+        && matches!(source.shape(), FlowValueSchema::Object { fields } if fields.contains_key(&metadata_key))
+      {
+        return Err(invalid("/input_schema/assessment_inputs"));
+      }
+      if dependencies
+        .as_ref()
+        .is_some_and(|field| !matches!(field.value(), FlowValueSchema::Object { .. }))
+      {
+        return Err(invalid("/input_schema/assessment_inputs"));
+      }
+      if projected.is_empty() || !shape.accepts_all(&FlowValueSchema::Object { fields: projected }) {
+        return Err(invalid("/input_schema"));
+      }
+      let FlowValueSchema::Object { fields } = shape else {
+        unreachable!()
+      };
+      let mut supported = fields.into_keys().collect::<BTreeSet<_>>();
+      if dependencies.is_some() {
+        supported.insert(metadata_key);
+      }
+      supported
+    } else {
+      ["priority", "size"]
+        .into_iter()
+        .map(|name| name.parse().expect("static classification field"))
+        .collect()
+    };
     let (alias, mapping) = node
       .input_binding()
       .and_then(|input| input.record_payload_mapping(&selection.source_node, &selection.source_outcome))
       .ok_or_else(|| invalid("/input_binding"))?;
     let alias_path = format!("/{alias}");
-    if !valid_projection(mapping, &alias_path, source, target, &mut Vec::new()) {
+    if !valid_projection(mapping, &alias_path, source, target, &supported, &mut Vec::new()) {
       return Err(invalid("/input_binding/mapping"));
     }
     if !node.permissions().plugins().any(|plugin| plugin == action.plugin()) {
@@ -146,13 +195,14 @@ pub(crate) async fn validate_publication(
   Ok(())
 }
 
-// A classification input may narrow the accepted assessment to priority and size.
+// A classification input may narrow an accepted assessment to its explicitly selected fields.
 // Check both presence branches and reuse the schema owner's compatibility rules.
 fn valid_projection<'a>(
   mapping: &'a FlowValueMapping,
   alias: &str,
   source: &FlowDataSchema,
   target: &FlowDataSchema,
+  supported: &BTreeSet<octacity_server_factory::FactoryKey>,
   present: &mut Vec<&'a str>,
 ) -> bool {
   let (FlowValueSchema::Object { fields: source_fields }, FlowValueSchema::Object { fields: target_fields }) =
@@ -160,8 +210,7 @@ fn valid_projection<'a>(
   else {
     return false;
   };
-  let supported = |key: &octacity_server_factory::FactoryKey| matches!(key.as_str(), "priority" | "size");
-  if target_fields.is_empty() || !target_fields.keys().all(supported) {
+  if target_fields.is_empty() || !target_fields.keys().all(|key| supported.contains(key)) {
     return false;
   }
   match mapping {
@@ -174,7 +223,7 @@ fn valid_projection<'a>(
           let FlowValueMapping::Pointer { path } = mapping else {
             return None;
           };
-          (supported(key)
+          (supported.contains(key)
             && path == &format!("{alias}/{key}")
             && (original.is_required() || present.contains(&path.as_str())))
           .then(|| (key.clone(), FlowFieldSchema::required(original.value().clone())))
@@ -185,14 +234,14 @@ fn valid_projection<'a>(
     FlowValueMapping::IfPresent { path, then, otherwise } => {
       if !source_fields
         .keys()
-        .any(|key| supported(key) && path == &format!("{alias}/{key}"))
+        .any(|key| supported.contains(key) && path == &format!("{alias}/{key}"))
       {
         return false;
       }
       present.push(path);
-      let then_valid = valid_projection(then, alias, source, target, present);
+      let then_valid = valid_projection(then, alias, source, target, supported, present);
       present.pop();
-      then_valid && valid_projection(otherwise, alias, source, target, present)
+      then_valid && valid_projection(otherwise, alias, source, target, supported, present)
     }
     _ => false,
   }

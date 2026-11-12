@@ -2,7 +2,7 @@
 use crate::*;
 use octacity_server_domain::{IssueId, IssueVersion, ProjectId, Timestamp};
 use octacity_server_factory::FactoryTaskSubject;
-pub use octacity_server_store::IssueClassificationReview;
+pub use octacity_server_store::{IssueClassificationReview, MAX_ISSUE_CLASSIFICATION_REFERENCES};
 
 #[path = "issue_classification_evidence.rs"]
 mod evidence;

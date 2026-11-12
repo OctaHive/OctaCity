@@ -266,29 +266,38 @@ it.each([true, false])('publishes an example (reproduction required=%s)', async 
       task_digest: 'a'.repeat(64),
     },
   };
+  const legacyExample = {
+    reference: preset,
+    profile_aliases: [],
+    required_node_kinds: ['build_command' as const],
+    parameters: [{ path: '/commands/reproduction', kind: 'command' as const, required }],
+    editor: {
+      name: 'Ticket delivery',
+      budget: original.limits.budget,
+      max_active_nodes: 1,
+      steps: [
+        {
+          alias: 'reproduction',
+          kind: 'build_command' as const,
+          outcome: 'observed',
+          result: null,
+        },
+      ],
+    },
+  };
   const listPresets = vi.fn(async () => ({
     items: [
+      legacyExample,
       {
-        reference: preset,
-        profile_aliases: [],
-        required_node_kinds: ['build_command' as const],
-        parameters: [{ path: '/commands/reproduction', kind: 'command' as const, required }],
-        editor: {
-          name: 'Ticket delivery',
-          budget: original.limits.budget,
-          max_active_nodes: 1,
-          steps: [
-            {
-              alias: 'reproduction',
-              kind: 'build_command' as const,
-              outcome: 'observed',
-              result: null,
-            },
-          ],
-        },
+        ...legacyExample,
+        reference: { ...preset, version: 'v2' },
+        parameters: [
+          ...legacyExample.parameters,
+          { path: '/issue_snapshot', kind: 'issue_snapshot' as const, required: true },
+        ],
       },
     ],
-    total: 1,
+    total: 2,
     next_cursor: null,
   }));
   const resolvePreset = vi.fn<FactoryApi['resolvePreset']>(async () => ({
@@ -355,6 +364,17 @@ it.each([true, false])('publishes an example (reproduction required=%s)', async 
   );
   expect(listPresets).not.toHaveBeenCalled();
   await userEvent.click(await screen.findByText('Start from an example'));
+  await userEvent.click(await screen.findByRole('button', { name: 'Ticket delivery · v2' }));
+  expect(screen.getByRole('button', { name: 'Open example draft' })).toHaveProperty(
+    'disabled',
+    true,
+  );
+  expect(
+    screen.getByText(
+      'The required input settings for this version are not supported here. Choose another version.',
+    ),
+  ).toBeTruthy();
+  expect(resolvePreset).not.toHaveBeenCalled();
   await userEvent.click(await screen.findByRole('button', { name: 'Ticket delivery · v1' }));
   expect(screen.getByRole('button', { name: 'Open example draft' })).toHaveProperty(
     'disabled',

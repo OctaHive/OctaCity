@@ -1,0 +1,58 @@
+{
+  "schemas": {
+    "summary": {
+      "identity": "factory.ticket-delivery.issue-summary",
+      "version": "v2",
+      "shape": {
+        "type": "object",
+        "fields": {
+          "work_kind": {"required": true, "value": {"type": "string", "min_bytes": 1, "max_bytes": 64}},
+          "size": {"required": true, "value": {"type": "string", "min_bytes": 1, "max_bytes": 64}},
+          "risk": {"required": true, "value": {"type": "string", "min_bytes": 1, "max_bytes": 64}},
+          "recommended_route": {"required": true, "value": {"type": "string", "min_bytes": 1, "max_bytes": 64}},
+          "component": {"required": true, "value": {"type": "string", "min_bytes": 1, "max_bytes": 64}},
+          "severity": {"required": true, "value": {"type": "string", "min_bytes": 1, "max_bytes": 64}},
+          "priority": {"required": true, "value": {"type": "string", "min_bytes": 1, "max_bytes": 64}},
+          "reproducibility": {"required": true, "value": {"type": "string", "min_bytes": 1, "max_bytes": 64}},
+          "dependencies": {
+            "required": true,
+            "value": {
+              "type": "array",
+              "min_items": 0,
+              "max_items": 64,
+              "item": {
+                "type": "object",
+                "fields": {
+                  "run_id": {"required": true, "value": {"type": "string", "min_bytes": 36, "max_bytes": 36}},
+                  "work_id": {"required": true, "value": {"type": "string", "min_bytes": 36, "max_bytes": 36}},
+                  "work_digest": {"required": true, "value": {"type": "string", "min_bytes": 64, "max_bytes": 64}},
+                  "terminal": {"required": true, "value": {"type": "string", "min_bytes": 1, "max_bytes": 128}}
+                }
+              }
+            }
+          },
+          "specification": {"required": false, "value": {"type": "reference", "schema": "spec_result"}},
+          "requirements_defect": {
+            "required": false,
+            "value": {
+              "type": "object",
+              "fields": {
+                "reason": {"required": true, "value": {"type": "string", "min_bytes": 1, "max_bytes": 2048}},
+                "candidate_revision": {"required": true, "value": {"type": "string", "min_bytes": 1, "max_bytes": 256}},
+                "evidence": {
+                  "required": true,
+                  "value": {
+                    "type": "array",
+                    "min_items": 1,
+                    "max_items": 16,
+                    "item": {"type": "reference", "schema": "artifact_reference"}
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    }
+  }
+}
