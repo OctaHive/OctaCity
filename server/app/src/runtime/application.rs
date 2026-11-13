@@ -536,6 +536,7 @@ pub(super) fn management_application(
       &management_policy,
       executions.clone(),
     ))
+    .with_snapshot_queries(authorized_queries(&management_policy, executions.clone()))
     .with_legacy_work(authorized_queries(&management_policy, executions.clone()))
     .with_journal(
       authorized_queries(&management_policy, executions.clone()),

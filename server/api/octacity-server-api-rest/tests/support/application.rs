@@ -208,6 +208,7 @@ where
   ))
   .with_issue_executions(
     octacity_server_api_rest::v1::IssueExecutionManagementApplication::new(execution_queries.clone())
+      .with_snapshot_queries(execution_queries.clone())
       .with_legacy_work(execution_queries.clone())
       .with_journal(execution_queries.clone(), execution_queries)
       .with_publication(execution_commands.clone(), execution_commands, Duration::from_millis(5)),

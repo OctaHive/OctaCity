@@ -2,6 +2,62 @@ use super::{ManagementOperation, ParameterProfile};
 use octacity_server_application::{CreateIssueCommand, EditIssueCommand, GetIssueQuery};
 pub(super) const OPERATIONS: &[ManagementOperation] = &[
   operation!(
+    octacity_server_application::ReviewIssueExecutionQuery,
+    "POST",
+    "/api/v1/projects/{project_id}/issues/{issue_id}/executions/review",
+    "reviewIssueExecution",
+    "Issues",
+    "Review exact server-resolved input without reserving or publishing an execution",
+    Some("RequestIssueExecutionRequest"),
+    "IssueExecutionReview",
+    "200",
+    false,
+    true
+  )
+  .with_no_store_response(),
+  operation!(
+    octacity_server_application::GetIssueExecutionSnapshotQuery,
+    "GET",
+    "/api/v1/projects/{project_id}/issues/{issue_id}/executions/{request_id}/snapshot",
+    "getIssueExecutionSnapshot",
+    "Issues",
+    "Read original snapshot under current independent content authority without resuming execution",
+    None,
+    "IssueExecutionSnapshotObservation",
+    "200",
+    false,
+    false
+  )
+  .with_no_store_response(),
+  operation!(
+    octacity_server_application::ReviewIssueClassificationQuery,
+    "GET",
+    "/api/v1/projects/{project_id}/issues/{issue_id}/classification",
+    "reviewIssueClassification",
+    "Issues",
+    "Review current classification applicability without producer content or execution effects",
+    None,
+    "IssueClassificationReview",
+    "200",
+    false,
+    false
+  )
+  .with_no_store_response(),
+  operation!(
+    octacity_server_application::ReviewIssueClassificationQuery,
+    "GET",
+    "/api/v1/projects/{project_id}/issues/{issue_id}/revisions/{version}/classification",
+    "reviewIssueRevisionClassification",
+    "Issues",
+    "Review exact retained classification using its original requirements and definition pins",
+    None,
+    "IssueClassificationReview",
+    "200",
+    false,
+    false
+  )
+  .with_no_store_response(),
+  operation!(
     octacity_server_application::GetIssueOutcomesQuery,
     "GET",
     "/api/v1/projects/{project_id}/issues/{issue_id}/outcomes",

@@ -1,5 +1,31 @@
 use serde_json::Value;
 
+#[test]
+fn openapi_validator_requires_exactly_one_one_of_variant() {
+  let document = serde_json::json!({"components":{"schemas":{
+    "Exclusive":{"oneOf":[{"type":"string"},{"type":"string","minLength":1}]},
+    "Inclusive":{"anyOf":[{"type":"string"},{"type":"string","minLength":1}]}
+  }}});
+  assert_json_matches_component(&document, "Exclusive", &serde_json::json!(""));
+  assert_json_matches_component(&document, "Inclusive", &serde_json::json!("text"));
+  assert!(
+    std::panic::catch_unwind(|| {
+      assert_json_matches_component(&document, "Exclusive", &serde_json::json!("text"));
+    })
+    .is_err(),
+    "oneOf must reject two matching variants"
+  );
+  for component in ["Exclusive", "Inclusive"] {
+    assert!(
+      std::panic::catch_unwind(|| {
+        assert_json_matches_component(&document, component, &serde_json::json!(false));
+      })
+      .is_err(),
+      "a union must reject zero matching variants"
+    );
+  }
+}
+
 pub fn assert_component_exists(document: &Value, schema: &str) {
   assert!(
     document["components"]["schemas"].get(schema).is_some(),
@@ -35,18 +61,16 @@ fn validate(document: &Value, schema: &Value, value: &Value, path: &str) -> Resu
   {
     return Err(format!("{path}: expected constant {constant}, got {value}"));
   }
-  if let Some(variants) = schema
-    .get("anyOf")
-    .or_else(|| schema.get("oneOf"))
-    .and_then(Value::as_array)
-  {
-    if variants
-      .iter()
-      .any(|variant| validate(document, variant, value, path).is_ok())
-    {
-      return Ok(());
+  for keyword in ["anyOf", "oneOf"] {
+    if let Some(variants) = schema.get(keyword).and_then(Value::as_array) {
+      let matches = variants
+        .iter()
+        .filter(|variant| validate(document, variant, value, path).is_ok())
+        .count();
+      if matches == 0 || (keyword == "oneOf" && matches != 1) {
+        return Err(format!("{path}: {matches} matching variants for {keyword}"));
+      }
     }
-    return Err(format!("{path}: value matches no documented variant"));
   }
   if let Some(values) = schema.get("enum").and_then(Value::as_array)
     && !values.contains(value)

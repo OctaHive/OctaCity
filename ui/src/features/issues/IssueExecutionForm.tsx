@@ -76,7 +76,7 @@ export function IssueExecutionForm({
   );
   const predecessor = usePredecessor && predecessorOptions.has(selectedRun) ? selectedRun : '';
   const [priority, setPriority] = useState<number>(classification.priority.minimum);
-  const [risk, setRisk] = useState<IssueExecutionRequest['classification']['risk']>(
+  const [risk, setRisk] = useState<NonNullable<IssueExecutionRequest['classification']>['risk']>(
     classification.risk.enum[0],
   );
   const [review, setReview] = useState<{

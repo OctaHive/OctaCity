@@ -175,7 +175,7 @@ async fn issue_snapshot_incompatible_code_subject_waits_with_existing_run_withou
         project_id: issue.project_id,
         issue_id: issue.id,
         expected_version: issue.version,
-        classification: None,
+        classification: Some(f.profile.preparation.classification.clone()),
         target: IssueExecutionTarget {
           configuration_id: f.input.definition().target.id(),
           configuration_version: f.input.definition().target.version(),

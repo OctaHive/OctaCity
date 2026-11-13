@@ -572,6 +572,8 @@ and persistence ports; an Issue ID or display key never substitutes for it.
 | PATCH  | `/{issue_id}`                     | Replace editable content only                                      |
 | GET    | `/{issue_id}/revisions`           | Bounded immutable revision headers, without document bodies        |
 | GET    | `/{issue_id}/revisions/{version}` | Dedicated exact retained requirements                              |
+| GET    | `/{issue_id}/classification` | Read-only current field applicability and safe evidence diagnostics |
+| GET    | `/{issue_id}/revisions/{version}/classification` | Applicability of an exact retained revision |
 | GET    | `/{issue_id}/transitions`         | Current workflow/status/ownership review and direct manual choices |
 | POST   | `/{issue_id}/transitions`         | Apply one explicit reviewed direct edge                            |
 | GET    | `/{issue_id}/status-history`      | Bounded organizational events, distinct from execution history     |
@@ -761,12 +763,42 @@ references, reserved property IDs, invalid catalog versions, actor shapes and
 freshness intervals are rejected during decoding. Neither collection contains evidence bodies, arbitrary
 planning JSON or editable verification/acceptance flags.
 
-This is the storage-model foundation from snapshot task 1.2. Management create/edit
-intents cannot supply classification provenance. Manual provenance writers
-and public classification projections remain separate tasks; the
-guarded accepted-pipeline writer is described below. Decoding a
+Management create/edit intents cannot supply classification provenance. Ordinary
+content/planning edits derive manual attribution from the accepted management
+context; the guarded accepted-pipeline writer is described below. Decoding a
 reference does not qualify its source or grant access, verified reproduction or
 execution authority.
+
+Dedicated Issue detail, exact revision and mutation-receipt responses now expose
+this optional `classification` metadata. Scalar values remain in `content` and
+`planning`; revision lists and Issue summaries contain neither values nor
+classification metadata. An exact edit retry returns its original values and
+attribution after later edits. Accepted producer recommendations and their
+application/conflict receipts remain separate under `outcomes`; they are not
+promoted into effective Issue fields by reading them.
+
+`GET .../issues/{issue_id}/classification` and
+`GET .../issues/{issue_id}/revisions/{version}/classification` use the existing
+authorized read-only classification review. Both require Issue `View`, return
+the reviewed revision as an ETag, apply `Cache-Control: no-store` and recheck
+current visibility for historical reads. Per-field diagnostics distinguish
+missing values/assessments, changed requirements/materials and unavailable,
+expired or unsupported evidence. Review uses server time and accepts no query
+parameters or client subject/evidence claims. It selects no execution target,
+so code-dependent claims explicitly report an unresolved subject; target-specific
+execution review must resolve the exact repository separately. Historical review
+uses that revision's original requirements and definition pins, with evidence
+availability/freshness evaluated at read time.
+
+Safe origin, dependency and evidence pins do not require or grant access to a
+producer transcript, report body or protected Context. Project definitions stay
+discoverable through the existing authorized current/exact
+`issue-property-definitions` routes, separately from Issue value editing and
+Project administration. Closed generated OpenAPI contracts bound provenance,
+source pins and diagnostics using the shared Issue limits. Reads neither renew
+attribution nor publish a revision, Work, execution, gate response or provider
+intent. Document publication and material-selection HTTP commands are separate
+contracts.
 
 Task 1.3 qualifies the existing JSONB persistence without another schema migration
 or historical-document rewrite. PostgreSQL tests round-trip the full 64-item
@@ -1212,9 +1244,53 @@ Execution is optional and separate from manual Issue create/edit/discussion.
 `POST /api/v1/projects/{project_id}/issues/{issue_id}/executions` requires
 `Idempotency-Key`, the reviewed Issue revision in `If-Match`, and a closed body
 containing `target` (exact configuration/repository versions, source selection,
-versioned mapping) and ordinary Work `classification`. Issue execution rights,
+versioned mapping). An Issue snapshot target with a pinned admission policy can
+omit `classification` and needs no `predecessor_run`: the server seals the policy's
+Work scheduling result. Other targets retain their explicit ordinary Work
+`classification`; an exact producer-result target also retains its selected
+eligible `predecessor_run`. Missing scheduling without a policy rejects before
+request/audit/replay reservation. Issue execution rights,
 visible referenced resources and ordinary Project admission rights all apply.
 Saving a draft or reading an Issue never performs admission.
+
+`POST .../issues/{issue_id}/executions/review` accepts the same closed target body
+and exact `If-Match`, without requiring an idempotency key. It uses the same
+authorized preflight and snapshot builder, returns no-store with the reviewed
+revision ETag, and allocates no request, Work, Run, publication or replay receipt.
+The response contains the exact snapshot digest, selected values/definition pins,
+field attribution, optional omissions and policy result; explicit producer mode
+has no Issue snapshot. Review is input inspection, not admission or human
+acceptance. Repository resolution and final admission still enforce their own
+ordinary prerequisites.
+
+Both review and start expose bounded field-specific diagnostics, including
+`issue_snapshot_missing_value`, `issue_snapshot_inapplicable`, an incompatible
+`invalid_contract` and `issue_snapshot_evidence_unavailable`, with exact
+`/issue_snapshot/fields/{alias}` or `/issue_snapshot/evidence/{alias}` pointers.
+Required material availability/size diagnostics keep their corresponding
+`/issue_snapshot/materials/{alias}` scope. Clients cannot supply replacement
+snapshot values, bodies or attribution. Concurrent Issue changes require renewed
+review; retrying an existing request retains its original receipt.
+
+`GET .../issues/{issue_id}/executions/{request_id}/snapshot` is a dedicated no-store
+read of the original input, separate from the metadata-only request/history
+routes. Its closed availability variants are `available`, `unavailable` and
+`not_selected` (legacy/explicit producer input). Available detail retains the
+original digest, snapshot and resolved repository subject once preparation has
+frozen it. Later Issue edits do not replace its values, definitions, omissions or
+policy result. The existing scoped preparation owns private snapshot bytes; no
+new snapshot store or migration is introduced. Detail requires the original
+request's admission security scope; another authorized Issue viewer receives
+`unavailable` with the original digest while retaining access to execution metadata.
+
+Current Issue visibility and each selected material's independent body access
+still apply. A denied/expired selected body or retired private input makes detail
+unavailable under its original digest, never empty data or a reconstructed latest
+snapshot. A missing preparation in another security scope cannot establish that
+preparation never happened or bypass its retention deadline. Retained requests
+awaiting preparation in their original scope can resolve only their exact
+reviewed projection under the already sealed digest. Detail does not reserve,
+resume or publish execution, and read permission grants no execution authority.
 
 A first durably linked request returns 201; exact completed replay returns 200.
 A retained request whose publication cannot finish within the bounded request

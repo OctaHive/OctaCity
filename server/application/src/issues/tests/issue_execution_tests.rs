@@ -226,7 +226,14 @@ pub(super) fn request(
 ) -> RequestIssueExecutionCommand {
   RequestIssueExecutionCommand {
     intent: RequestIssueExecutionIntent {
-      classification: None,
+      classification: Some(
+        crate::factory::admission::tests::factory_admission_tests::command(
+          issue.project_id,
+          configuration_id,
+          repository_id,
+        )
+        .classification,
+      ),
       project_id: issue.project_id,
       issue_id: issue.id,
       expected_version: issue.version,

@@ -9,6 +9,63 @@ use octacity_server_factory::*;
 mod fixture;
 use fixture::*;
 
+#[test]
+fn snapshot_detail_obeys_private_input_retention_without_resurrecting_or_republishing_bytes() {
+  run_ready(async {
+    let (store, factory, issue, command) = snapshot_fixture().await;
+    let policy = Arc::new(TrustedNetworkManagementPolicy);
+    let owner = Arc::new(IssueExecutionHandlers::new(
+      store.clone(),
+      factory.clone(),
+      policy.clone(),
+    ));
+    let requests = AuthorizedCommandHandler::new(policy.clone(), owner.clone());
+    let request = requests.handle_command(&context(), command).await.unwrap().request;
+    publish_snapshot_request(store.clone(), factory.clone(), &request).await;
+    let preparation = factory
+      .project_text_preparation(
+        issue.project_id,
+        &context().security_scope().to_store(),
+        &request.admission_key(),
+      )
+      .await
+      .unwrap()
+      .unwrap();
+    let query = |checked_at| GetIssueExecutionSnapshotQuery {
+      execution: GetIssueExecutionQuery {
+        project_id: issue.project_id,
+        issue_id: issue.id,
+        request_id: request.id,
+      },
+      checked_at,
+    };
+    let queries = AuthorizedQueryHandler::new(policy, owner);
+    let before = (
+      store.mutation_evidence_counts().await,
+      factory.mutation_evidence_counts().await,
+    );
+    let original = queries
+      .handle_query(&context(), query(preparation.reserved_at))
+      .await
+      .unwrap();
+    assert!(matches!(original, IssueExecutionSnapshotObservation::Available { .. }));
+    let expired = queries
+      .handle_query(&context(), query(preparation.expires_at))
+      .await
+      .unwrap();
+    assert!(
+      matches!(expired, IssueExecutionSnapshotObservation::Unavailable { digest } if Some(digest) == request.snapshot_digest)
+    );
+    assert_eq!(
+      (
+        store.mutation_evidence_counts().await,
+        factory.mutation_evidence_counts().await
+      ),
+      before
+    );
+  });
+}
+
 #[path = "issue_execution_snapshot_semantics.rs"]
 mod semantics;
 

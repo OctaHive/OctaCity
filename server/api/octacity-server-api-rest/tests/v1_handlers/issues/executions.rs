@@ -1,6 +1,8 @@
 use super::*;
 #[path = "journal.rs"]
 mod journal;
+#[path = "execution_snapshots.rs"]
+mod snapshots;
 use octacity_server_api_rest::v1::IssueExecutionManagementApplication;
 use octacity_server_application::{
   GetIssueExecutionQuery, IssueExecutionHistoryPage, IssueExecutionOutcome, IssueExecutionRequest,
@@ -12,6 +14,24 @@ fn read_routes() -> axum::Router {
   execution_routes(IssueExecutionManagementApplication::new(Arc::new(
     AuthorizedQueryHandler::new(Arc::new(TrustedNetworkManagementPolicy), Arc::new(ExecutionRead(false))),
   )))
+}
+
+#[tokio::test]
+async fn issue_execution_http_review_requires_exact_revision_without_reserving_an_execution() {
+  let routes = read_routes();
+  let body = serde_json::json!({"target":serde_json::to_value(execution()).unwrap()["intent"]["target"]});
+  let response = routes
+    .clone()
+    .oneshot(json_request(
+      "POST",
+      &format!("{}/{ISSUE}/executions/review", root()),
+      "unused-read",
+      None,
+      &body.to_string(),
+    ))
+    .await
+    .unwrap();
+  assert_eq!(response.status(), StatusCode::PRECONDITION_REQUIRED);
 }
 fn execution_routes(services: IssueExecutionManagementApplication) -> axum::Router {
   let peer = Arc::new(RecordingApplication::default());
@@ -112,7 +132,9 @@ impl ManagementCommandUseCase<RequestIssueExecutionCommand> for ExecutionStart {
   ) -> Result<IssueExecutionOutcome, ApplicationError> {
     assert_eq!(command.intent.expected_version.get(), 2);
     assert_eq!(command.idempotency_key.as_str(), "start-reviewed");
-    assert!(command.intent.classification.is_some());
+    if command.intent.classification.is_none() {
+      return Err(ApplicationError::invalid());
+    }
     Ok(IssueExecutionOutcome {
       disposition: StoreMutationDisposition::Applied,
       request: IssueExecutionRequest {
@@ -137,6 +159,168 @@ impl ManagementCommandUseCase<PublishIssueExecutionCommand> for ExecutionStart {
 }
 fn execution_body() -> String {
   issue_execution_body()
+}
+
+struct SnapshotStart;
+fn snapshot_execution() -> IssueExecutionRequest {
+  let mut value = serde_json::to_value(execution()).unwrap();
+  value["snapshot_digest"] = serde_json::json!("55".repeat(32));
+  value["admission_classification"] = serde_json::json!({"priority":80,"risk":"low","metadata":{}});
+  serde_json::from_value(value).unwrap()
+}
+#[async_trait]
+impl ManagementCommandUseCase<RequestIssueExecutionCommand> for SnapshotStart {
+  type Error = ApplicationError;
+  async fn execute_management_command(
+    &self,
+    _: &ManagementRequestContext,
+    _: &ManagementAuthorizationGrant,
+    command: RequestIssueExecutionCommand,
+  ) -> Result<IssueExecutionOutcome, ApplicationError> {
+    assert!(
+      command.intent.classification.is_none(),
+      "snapshot policy owns scheduling"
+    );
+    assert!(command.intent.target.predecessor_run.is_none());
+    Ok(IssueExecutionOutcome {
+      disposition: StoreMutationDisposition::Applied,
+      request: IssueExecutionRequest {
+        intent: command.intent,
+        ..snapshot_execution()
+      },
+    })
+  }
+}
+#[async_trait]
+impl ManagementCommandUseCase<PublishIssueExecutionCommand> for SnapshotStart {
+  type Error = ApplicationError;
+  async fn execute_management_command(
+    &self,
+    _: &ManagementRequestContext,
+    _: &ManagementAuthorizationGrant,
+    command: PublishIssueExecutionCommand,
+  ) -> Result<IssueExecutionRequest, ApplicationError> {
+    assert_eq!(
+      serde_json::to_value(command.classification).unwrap(),
+      serde_json::json!({"priority":80,"risk":"low","metadata":{}})
+    );
+    let mut result = snapshot_execution();
+    result.association = admitted_execution().association;
+    Ok(result)
+  }
+}
+#[tokio::test]
+async fn issue_execution_http_snapshot_start_uses_sealed_policy_without_caller_classification_or_predecessor() {
+  let policy = Arc::new(TrustedNetworkManagementPolicy);
+  let routes = execution_routes(
+    IssueExecutionManagementApplication::new(Arc::new(AuthorizedQueryHandler::new(
+      policy.clone(),
+      Arc::new(ExecutionRead(false)),
+    )))
+    .with_publication(
+      Arc::new(AuthorizedCommandHandler::new(policy.clone(), Arc::new(SnapshotStart))),
+      Arc::new(AuthorizedCommandHandler::new(policy, Arc::new(SnapshotStart))),
+      std::time::Duration::from_secs(1),
+    ),
+  );
+  let response = routes
+    .oneshot(json_request(
+      "POST",
+      &format!("{}/{ISSUE}/executions", root()),
+      "start-reviewed",
+      Some("\"2\""),
+      &serde_json::json!({"target":serde_json::to_value(execution()).unwrap()["intent"]["target"]}).to_string(),
+    ))
+    .await
+    .unwrap();
+  let status = response.status();
+  let value = document(response).await;
+  assert_eq!(status, StatusCode::CREATED, "{value}");
+  assert_eq!(value["resource"]["snapshot_digest"], "55".repeat(32));
+  assert_eq!(value["resource"]["admission_classification"]["priority"], 80);
+  assert!(value["resource"]["intent"].get("classification").is_none());
+}
+
+struct ExactProducerStart;
+const PRODUCER: &str = "60000000-0000-4000-8000-000000000088";
+fn producer_execution() -> IssueExecutionRequest {
+  let mut request = admitted_execution();
+  request.intent.target.predecessor_run = Some(PRODUCER.parse().unwrap());
+  let body: serde_json::Value = serde_json::from_str(&execution_body()).unwrap();
+  request.intent.classification = serde_json::from_value(body["classification"].clone()).unwrap();
+  request
+}
+#[async_trait]
+impl ManagementCommandUseCase<RequestIssueExecutionCommand> for ExactProducerStart {
+  type Error = ApplicationError;
+  async fn execute_management_command(
+    &self,
+    _: &ManagementRequestContext,
+    _: &ManagementAuthorizationGrant,
+    command: RequestIssueExecutionCommand,
+  ) -> Result<IssueExecutionOutcome, ApplicationError> {
+    let mut original = producer_execution();
+    assert_eq!(
+      command.intent, original.intent,
+      "HTTP must retain the exact producer and explicit scheduling review"
+    );
+    original.association = None;
+    Ok(IssueExecutionOutcome {
+      disposition: StoreMutationDisposition::Applied,
+      request: original,
+    })
+  }
+}
+#[async_trait]
+impl ManagementCommandUseCase<PublishIssueExecutionCommand> for ExactProducerStart {
+  type Error = ApplicationError;
+  async fn execute_management_command(
+    &self,
+    _: &ManagementRequestContext,
+    _: &ManagementAuthorizationGrant,
+    command: PublishIssueExecutionCommand,
+  ) -> Result<IssueExecutionRequest, ApplicationError> {
+    assert_eq!(
+      Some(&command.classification),
+      producer_execution().effective_classification()
+    );
+    Ok(producer_execution())
+  }
+}
+#[tokio::test]
+async fn issue_execution_http_exact_producer_input_keeps_its_original_typed_contract() {
+  let policy = Arc::new(TrustedNetworkManagementPolicy);
+  let services = IssueExecutionManagementApplication::new(Arc::new(AuthorizedQueryHandler::new(
+    policy.clone(),
+    Arc::new(ExecutionRead(false)),
+  )))
+  .with_publication(
+    Arc::new(AuthorizedCommandHandler::new(
+      policy.clone(),
+      Arc::new(ExactProducerStart),
+    )),
+    Arc::new(AuthorizedCommandHandler::new(policy, Arc::new(ExactProducerStart))),
+    std::time::Duration::from_secs(1),
+  );
+  let mut body: serde_json::Value = serde_json::from_str(&execution_body()).unwrap();
+  body["target"]["predecessor_run"] = serde_json::json!(PRODUCER);
+  assert_json_matches_component(&openapi_document(), "RequestIssueExecutionRequest", &body);
+  let response = execution_routes(services)
+    .oneshot(json_request(
+      "POST",
+      &format!("{}/{ISSUE}/executions", root()),
+      "exact-producer",
+      Some("\"2\""),
+      &body.to_string(),
+    ))
+    .await
+    .unwrap();
+  assert_eq!(response.status(), StatusCode::CREATED);
+  let receipt = document(response).await;
+  assert_eq!(receipt["resource"]["intent"]["target"]["predecessor_run"], PRODUCER);
+  assert_eq!(receipt["resource"]["intent"]["classification"], body["classification"]);
+  assert!(receipt["resource"].get("snapshot_digest").is_none());
+  assert_json_matches_component(&openapi_document(), "IssueExecutionMutationResponse", &receipt);
 }
 #[tokio::test]
 async fn issue_execution_http_start_returns_durable_receipt_and_existing_run_url() {

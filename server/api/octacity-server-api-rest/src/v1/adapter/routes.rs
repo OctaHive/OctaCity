@@ -357,6 +357,14 @@ fn registered_routes() -> ManagementRoutes {
       "listIssueExecutions",
       super::issue_execution::list,
     )
+    .post::<octacity_server_application::ReviewIssueExecutionQuery, _, _>(
+      "reviewIssueExecution",
+      super::issue_execution::review,
+    )
+    .get::<octacity_server_application::GetIssueExecutionSnapshotQuery, _, _>(
+      "getIssueExecutionSnapshot",
+      super::issue_execution::snapshot,
+    )
     .post::<octacity_server_application::RequestIssueExecutionCommand, _, _>(
       "requestIssueExecution",
       super::issue_execution::start,
@@ -428,6 +436,14 @@ fn registered_routes() -> ManagementRoutes {
     .get::<octacity_server_application::ListProjectIssuesQuery, _, _>("listProjectIssues", super::issue::list)
     .patch::<octacity_server_application::EditIssueCommand, _, _>("editIssue", super::issue::edit)
     .get::<octacity_server_application::GetIssueQuery, _, _>("getIssueRevision", super::issue::get_revision)
+    .get::<octacity_server_application::ReviewIssueClassificationQuery, _, _>(
+      "reviewIssueClassification",
+      super::issue::classification::current,
+    )
+    .get::<octacity_server_application::ReviewIssueClassificationQuery, _, _>(
+      "reviewIssueRevisionClassification",
+      super::issue::classification::revision,
+    )
     .post::<octacity_server_application::CreateIssueCommand, _, _>("createIssue", super::issue::create)
     .get::<octacity_server_application::GetIssueQuery, _, _>("getIssue", super::issue::get)
     .get::<octacity_server_application::ListProjectIssueWorkflowsQuery, _, _>(

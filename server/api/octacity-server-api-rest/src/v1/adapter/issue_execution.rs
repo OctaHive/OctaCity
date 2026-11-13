@@ -19,6 +19,22 @@ struct Publication {
 }
 /// Optional execution services independent of manual Issue management.
 pub struct IssueExecutionManagementApplication {
+  review: Option<
+    Arc<
+      dyn AuthorizedManagementQueryHandler<
+          octacity_server_application::ReviewIssueExecutionQuery,
+          Error = ApplicationError,
+        >,
+    >,
+  >,
+  snapshot: Option<
+    Arc<
+      dyn AuthorizedManagementQueryHandler<
+          octacity_server_application::GetIssueExecutionSnapshotQuery,
+          Error = ApplicationError,
+        >,
+    >,
+  >,
   legacy: Option<Arc<dyn AuthorizedManagementQueryHandler<ListIssueLegacyWorkQuery, Error = ApplicationError>>>,
   work: Option<Arc<dyn AuthorizedManagementQueryHandler<GetIssueWorkExecutionQuery, Error = ApplicationError>>>,
   journal: Option<Arc<dyn AuthorizedManagementQueryHandler<ListIssueExecutionJournalQuery, Error = ApplicationError>>>,
@@ -39,6 +55,8 @@ impl IssueExecutionManagementApplication {
       + 'static,
   {
     Self {
+      review: None,
+      snapshot: None,
       legacy: None,
       work: None,
       journal: None,
@@ -51,6 +69,19 @@ impl IssueExecutionManagementApplication {
   }
 }
 impl IssueExecutionManagementApplication {
+  /// Installs read-only snapshot preview/detail using the existing Issue execution owner.
+  pub fn with_snapshot_queries<Q>(mut self, queries: Arc<Q>) -> Self
+  where
+    Q: AuthorizedManagementQueryHandler<octacity_server_application::ReviewIssueExecutionQuery, Error = ApplicationError>
+      + AuthorizedManagementQueryHandler<
+        octacity_server_application::GetIssueExecutionSnapshotQuery,
+        Error = ApplicationError,
+      > + 'static,
+  {
+    self.review = Some(queries.clone());
+    self.snapshot = Some(queries);
+    self
+  }
   /// Reuses the original Work reader and bounded association metadata without enabling admission.
   pub fn with_legacy_work<Q>(mut self, queries: Arc<Q>) -> Self
   where
@@ -145,7 +176,69 @@ pub(super) async fn get(
 #[serde(deny_unknown_fields)]
 pub(super) struct StartRequest {
   target: octacity_server_application::IssueExecutionTarget,
-  classification: Value,
+  #[serde(default)]
+  classification: Option<Value>,
+}
+pub(super) async fn review(
+  State(app): State<Arc<ManagementApplication>>,
+  Extension(crate::ManagementRequest(id, context)): Extension<crate::ManagementRequest>,
+  Path((project, issue)): Path<(String, String)>,
+  headers: HeaderMap,
+  payload: Result<Json<StartRequest>, JsonRejection>,
+) -> Result<axum::response::Response, ApiError> {
+  let expected = precondition(&headers, &id)?;
+  let body = body(payload, &id)?;
+  let intent = serde_json::from_value(
+    json!({"project_id":project,"issue_id":issue,"expected_version":expected.version(),
+    "target":body.target,"classification":body.classification}),
+  )
+  .map_err(|_| application_error(ApplicationFailure::Invalid, &id))?;
+  let result = endpoints(&app, &id)?
+    .review
+    .as_ref()
+    .ok_or_else(|| application_error(ApplicationFailure::Unavailable, &id))?
+    .handle_authorized_query(
+      &context,
+      octacity_server_application::ReviewIssueExecutionQuery { intent },
+    )
+    .await
+    .map_err(|e| authorized_handler_error(e, &id))?;
+  Ok(
+    (
+      [
+        ("cache-control", "no-store".to_owned()),
+        ("etag", format!("\"{}\"", result.version.get())),
+      ],
+      Json(encode(result, &id)?),
+    )
+      .into_response(),
+  )
+}
+pub(super) async fn snapshot(
+  State(app): State<Arc<ManagementApplication>>,
+  Extension(crate::ManagementRequest(id, context)): Extension<crate::ManagementRequest>,
+  Path((project, issue, request)): Path<(String, String, String)>,
+) -> Result<axum::response::Response, ApiError> {
+  let invalid = || application_error(ApplicationFailure::Invalid, &id);
+  let result = endpoints(&app, &id)?
+    .snapshot
+    .as_ref()
+    .ok_or_else(|| application_error(ApplicationFailure::Unavailable, &id))?
+    .handle_authorized_query(
+      &context,
+      octacity_server_application::GetIssueExecutionSnapshotQuery {
+        checked_at: octacity_server_application::Timestamp::from_unix_millis(now_unix_ms(&id)?)
+          .map_err(|_| invalid())?,
+        execution: GetIssueExecutionQuery {
+          project_id: project.parse().map_err(|_| invalid())?,
+          issue_id: issue.parse().map_err(|_| invalid())?,
+          request_id: request.parse().map_err(|_| invalid())?,
+        },
+      },
+    )
+    .await
+    .map_err(|e| authorized_handler_error(e, &id))?;
+  Ok(([("cache-control", "no-store")], Json(encode(result, &id)?)).into_response())
 }
 pub(super) async fn start(
   State(app): State<Arc<ManagementApplication>>,
@@ -163,7 +256,6 @@ pub(super) async fn start(
     "target":body.target,"classification":body.classification
   }))
   .map_err(|_| invalid())?;
-  let classification = intent.classification.clone().ok_or_else(invalid)?;
   let services = endpoints(&app, &id)?
     .publication
     .as_ref()
@@ -185,7 +277,11 @@ pub(super) async fn start(
     project_id: outcome.request.intent.project_id,
     issue_id: outcome.request.intent.issue_id,
     request_id: outcome.request.id,
-    classification,
+    classification: outcome
+      .request
+      .effective_classification()
+      .cloned()
+      .ok_or_else(invalid)?,
   };
   let publication = tokio::time::timeout(
     services.timeout,

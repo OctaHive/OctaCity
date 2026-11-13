@@ -28,9 +28,9 @@ pub(super) fn insert(schemas: &mut Map<String, Value>) {
     object(
       [
         ("target", schema_ref("IssueExecutionTarget")),
-        ("classification", schema_ref("FactoryWorkClassification")),
+        ("classification", nullable(schema_ref("FactoryWorkClassification"))),
       ],
-      &["target", "classification"],
+      &["target"],
     ),
   );
   schemas.insert(
@@ -103,6 +103,8 @@ pub(super) fn insert(schemas: &mut Map<String, Value>) {
     object(
       [
         ("id", identity()),
+        ("snapshot_digest", schema_ref("FactoryDigest")),
+        ("admission_classification", schema_ref("FactoryWorkClassification")),
         ("intent", schema_ref("IssueExecutionIntent")),
         ("task_digest", schema_ref("FactoryDigest")),
         ("task_size", positive_integer()),

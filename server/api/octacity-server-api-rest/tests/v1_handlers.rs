@@ -406,6 +406,18 @@ unavailable_query!(
 );
 unavailable_query!(octacity_server_application::GetIssueQuery, "get_issue");
 unavailable_query!(
+  octacity_server_application::ReviewIssueExecutionQuery,
+  "review_issue_execution"
+);
+unavailable_query!(
+  octacity_server_application::GetIssueExecutionSnapshotQuery,
+  "get_issue_execution_snapshot"
+);
+unavailable_query!(
+  octacity_server_application::ReviewIssueClassificationQuery,
+  "review_issue_classification"
+);
+unavailable_query!(
   octacity_server_application::ListIssueRevisionsQuery,
   "list_issue_revisions"
 );
@@ -1268,6 +1280,8 @@ fn management_contract_requests() -> Vec<Request<Body>> {
     empty_request("GET",&format!("{source_path}/results?work_id={repository_id}&collection=evidence&limit=1"),None),
     empty_request("GET",&format!("/api/v1/projects/{project_id}/issues/{pipeline_id}/executions?limit=1"),None),
     empty_request("GET",&format!("/api/v1/projects/{project_id}/issues/{pipeline_id}/executions/{repository_id}"),None),
+    json_request("POST",&format!("{source_path}/executions/review"),"unused-read",Some("\"1\""),&issue_execution_body()),
+    empty_request("GET",&format!("{source_path}/executions/{repository_id}/snapshot"),None),
     empty_request("GET",&format!("{source_path}/executions/{repository_id}/journal?collection=flow-runs&limit=1"),None),
     empty_request("GET",&format!("{source_path}/executions/{repository_id}/journal/events?build_execution={}&job_id={job_id}&limit=1","ab".repeat(32)),None),
     empty_request("GET",&format!("{source_path}/executions/{repository_id}/journal/events/1?build_execution={}&job_id={job_id}","ab".repeat(32)),None),
@@ -1283,6 +1297,8 @@ fn management_contract_requests() -> Vec<Request<Body>> {
     empty_request("GET",&format!("/api/v1/projects/{project_id}/issues?limit=1"),None),
     json_request("POST",&format!("/api/v1/projects/{project_id}/issues"),"draft",None,r#"{"title":"Draft","description":""}"#),
     empty_request("GET",&format!("/api/v1/projects/{project_id}/issues/{pipeline_id}"),None),
+    empty_request("GET",&format!("{source_path}/classification"),None),
+    empty_request("GET",&format!("{source_path}/revisions/1/classification"),None),
     json_request("PATCH",&format!("/api/v1/projects/{project_id}/issues/{pipeline_id}"),"edit",Some("\"1\""),r#"{"title":"Draft","description":"Edited"}"#),
     empty_request("GET",&format!("/api/v1/projects/{project_id}/issues/{pipeline_id}/revisions?limit=1"),None),
     empty_request("GET",&format!("/api/v1/projects/{project_id}/issues/{pipeline_id}/revisions/1"),None),
@@ -1743,6 +1759,8 @@ async fn every_management_operation_is_allowed_before_application_dispatch() {
       "list_issue_results",
       "list_issue_executions",
       "get_issue_execution",
+      "review_issue_execution",
+      "get_issue_execution_snapshot",
       "list_issue_execution_journal",
       "get_issue_execution",
       "get_issue_execution",
@@ -1758,6 +1776,8 @@ async fn every_management_operation_is_allowed_before_application_dispatch() {
       "list_issues",
       "create_issue",
       "get_issue",
+      "review_issue_classification",
+      "review_issue_classification",
       "edit_issue",
       "list_issue_revisions",
       "get_issue",

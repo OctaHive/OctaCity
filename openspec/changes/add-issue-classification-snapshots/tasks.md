@@ -44,8 +44,8 @@
 
 ## 6. Management API and Console
 
-- [ ] 6.1 Add Red/Green REST handler/authorization tests for classification values, exact history, field provenance and applicability; publish generated OpenAPI/client contracts and verify hidden producer content, spoofed origins and read-triggered mutations remain unavailable.
-- [ ] 6.2 Add Red/Green REST execution tests for snapshot review/detail and field-specific missing/stale/incompatible/evidence blockers without predecessor_run; preserve the explicit producer-result target's existing request contract and exact idempotent receipts.
+- [x] 6.1 Add Red/Green REST handler/authorization tests for classification values, exact history, field provenance and applicability; publish generated OpenAPI/client contracts and verify hidden producer content, spoofed origins and read-triggered mutations remain unavailable.
+- [x] 6.2 Add Red/Green REST execution tests for snapshot review/detail and field-specific missing/stale/incompatible/evidence blockers without predecessor_run; preserve the explicit producer-result target's existing request contract and exact idempotent receipts.
 - [ ] 6.3 Add Red/Green Issue Properties component/browser tests for Project-backed classification editing, current versus stale data and applied versus proposed/conflicting assessments; implement the controls with EN/RU, keyboard and narrow-layout coverage.
 - [ ] 6.4 Add Red/Green Factory editor tests for classification target-field reuse and Issue snapshot field/material input authoring; show required/optional fields, explicit material policy, per-step projections and effect/input/access review without duplicate vocabularies, and retain exact-producer mode as an authorable alternative.
 - [ ] 6.5 Add Red/Green Issue start/detail tests for a manually prepared Issue, exact field/comment/document preview, optional omissions, concurrent selection-edit re-review and current values/text differing from a Run snapshot; show earlier-Run selection for the selected producer-result target and preserve drafts safely on conflicts.

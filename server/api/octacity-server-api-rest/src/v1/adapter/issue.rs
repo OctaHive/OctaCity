@@ -9,6 +9,12 @@ use octacity_server_application::{
 
 /// Task services can be installed without Factory, providers or execution configuration.
 pub struct IssueManagementApplication {
+  classification: Arc<
+    dyn AuthorizedManagementQueryHandler<
+        octacity_server_application::ReviewIssueClassificationQuery,
+        Error = ApplicationError,
+      >,
+  >,
   retention: Option<retention::Endpoints>,
   children: Arc<
     dyn AuthorizedManagementQueryHandler<octacity_server_application::ListIssueChildrenQuery, Error = ApplicationError>,
@@ -69,9 +75,13 @@ impl IssueManagementApplication {
       + AuthorizedManagementQueryHandler<ListIssueRevisionsQuery, Error = ApplicationError>
       + AuthorizedManagementQueryHandler<GetIssueTransitionsQuery, Error = ApplicationError>
       + AuthorizedManagementQueryHandler<ListIssueStatusHistoryQuery, Error = ApplicationError>
-      + 'static,
+      + AuthorizedManagementQueryHandler<
+        octacity_server_application::ReviewIssueClassificationQuery,
+        Error = ApplicationError,
+      > + 'static,
   {
     Self {
+      classification: queries.clone(),
       retention: None,
       children: queries.clone(),
       edit_planning: commands.clone(),
@@ -110,6 +120,9 @@ fn representation(issue: &IssueRevision, id: &RequestId) -> Result<Value, ApiErr
     "status_id":issue.status_id.to_string(),"created_at_unix_ms":issue.created_at.unix_millis(),"updated_at_unix_ms":issue.updated_at.unix_millis()});
   if !issue.planning.is_empty() {
     value["planning"] = encode(&issue.planning, id)?;
+  }
+  if !issue.classification.is_empty() {
+    value["classification"] = encode(&issue.classification, id)?;
   }
   Ok(value)
 }
@@ -450,6 +463,9 @@ pub(super) async fn adopt(
 
 #[path = "issue/planning.rs"]
 pub(super) mod planning;
+
+#[path = "issue/classification.rs"]
+pub(super) mod classification;
 
 fn issue_page(
   page: octacity_server_application::IssuePage,

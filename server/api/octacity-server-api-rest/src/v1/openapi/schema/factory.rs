@@ -29,7 +29,7 @@ pub(super) fn bounded_array(items: Value, maximum: usize) -> Value {
   json!({"type":"array","items":items,"maxItems":maximum})
 }
 
-fn bounded_map(value: Value, maximum: usize) -> Value {
+pub(super) fn bounded_map(value: Value, maximum: usize) -> Value {
   json!({"type":"object","additionalProperties":value,"maxProperties":maximum,"propertyNames":key()})
 }
 

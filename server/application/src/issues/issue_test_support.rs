@@ -4,6 +4,9 @@ use octacity_server_domain::{ProjectId, ProjectName, Timestamp};
 pub use octacity_server_store::testing::InMemoryProjectStore;
 use octacity_server_store::{CreateProject, ProjectStore, testing::management_mutation};
 use std::sync::Arc;
+#[path = "issue_execution_transport_fixture.rs"]
+mod execution;
+pub use execution::issue_execution_factory;
 /// Prepares a visible ordinary Project without providers, repositories or Factory state.
 pub async fn manual_issue_store(project_id: ProjectId) -> Arc<InMemoryProjectStore> {
   let store = Arc::new(InMemoryProjectStore::new());

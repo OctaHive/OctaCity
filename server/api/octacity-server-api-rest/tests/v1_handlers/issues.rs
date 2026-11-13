@@ -1032,6 +1032,9 @@ async fn issue_http_reason_limits_are_explicit_utf8_bytes_in_openapi_and_runtime
 #[path = "issues/planning.rs"]
 mod planning;
 
+#[path = "issues/classification.rs"]
+mod classification;
+
 #[path = "issues/executions.rs"]
 mod executions;
 

@@ -90,33 +90,7 @@ impl<
     command: RequestIssueExecutionCommand,
   ) -> Result<IssueExecutionOutcome, ApplicationError> {
     crate::issues::issue::visible_issue(grant, command.intent.issue_id)?;
-    crate::factory::admission::factory_admission::authorize_project_admission(
-      self.policy.as_ref(),
-      context,
-      command.intent.project_id,
-    )
-    .await?;
-    crate::factory::authoring::factory_configuration_choices::require_visible_reference(
-      self.policy.as_ref(),
-      context,
-      ManagementResourceKind::Issue,
-      command.intent.issue_id,
-    )
-    .await?;
-    crate::factory::authoring::factory_configuration_choices::require_visible_reference(
-      self.policy.as_ref(),
-      context,
-      ManagementResourceKind::FactoryConfiguration,
-      command.intent.target.configuration_id,
-    )
-    .await?;
-    crate::factory::authoring::factory_configuration_choices::require_visible_reference(
-      self.policy.as_ref(),
-      context,
-      ManagementResourceKind::Repository,
-      command.intent.target.repository_id,
-    )
-    .await?;
+    self.authorize_intent(context, &command.intent).await?;
     let request = crate::management_security::audited_mutation(
       context,
       RequestIssueExecution {
@@ -131,7 +105,65 @@ impl<
     if let Some(replay) = self.store.replay_issue_execution(&request).await? {
       return Ok(replay);
     }
-    let intent = &request.mutation().intent;
+    let snapshot = self.select_input(context, &request.mutation().intent).await?;
+    let mutation = RequestIssueExecution {
+      admission_classification: snapshot.as_ref().and_then(|s| s.admission_classification.clone()),
+      snapshot_digest: snapshot.as_ref().map(|s| s.digest()).transpose()?,
+      ..request.mutation().clone()
+    };
+    Ok(
+      self
+        .store
+        .request_issue_execution(crate::management_security::audited_mutation(context, mutation)?)
+        .await?,
+    )
+  }
+}
+
+impl<
+  S: IssueExecutionStore + octacity_server_store::IssueStore + octacity_server_store::IssuePropertyStore,
+  F: FactoryAdmissionStore + FactoryRunStore,
+> IssueExecutionHandlers<S, F>
+{
+  async fn authorize_intent(
+    &self,
+    context: &ManagementRequestContext,
+    intent: &RequestIssueExecutionIntent,
+  ) -> Result<(), ApplicationError> {
+    crate::factory::admission::factory_admission::authorize_project_admission(
+      self.policy.as_ref(),
+      context,
+      intent.project_id,
+    )
+    .await?;
+    crate::factory::authoring::factory_configuration_choices::require_visible_reference(
+      self.policy.as_ref(),
+      context,
+      ManagementResourceKind::Issue,
+      intent.issue_id,
+    )
+    .await?;
+    crate::factory::authoring::factory_configuration_choices::require_visible_reference(
+      self.policy.as_ref(),
+      context,
+      ManagementResourceKind::FactoryConfiguration,
+      intent.target.configuration_id,
+    )
+    .await?;
+    crate::factory::authoring::factory_configuration_choices::require_visible_reference(
+      self.policy.as_ref(),
+      context,
+      ManagementResourceKind::Repository,
+      intent.target.repository_id,
+    )
+    .await?;
+    Ok(())
+  }
+  async fn select_input(
+    &self,
+    context: &ManagementRequestContext,
+    intent: &RequestIssueExecutionIntent,
+  ) -> Result<Option<octacity_server_store::IssueExecutionSnapshot>, ApplicationError> {
     let target = &intent.target;
     let selected = self
       .factory
@@ -216,19 +248,23 @@ impl<
       selected.repository.as_ref().ok_or_else(ApplicationError::invalid)?,
     )
     .map_err(|_| ApplicationError::InvalidInput)?;
-    let mutation = RequestIssueExecution {
-      admission_classification: snapshot.as_ref().and_then(|s| s.admission_classification.clone()),
-      snapshot_digest: snapshot.as_ref().map(|s| s.digest()).transpose()?,
-      ..request.mutation().clone()
-    };
-    Ok(
-      self
-        .store
-        .request_issue_execution(crate::management_security::audited_mutation(context, mutation)?)
-        .await?,
-    )
+    // Missing caller scheduling is supported only when the pinned Issue policy
+    // supplies it. Reject before reserving a request, audit or replay receipt.
+    if intent.classification.is_none()
+      && snapshot
+        .as_ref()
+        .and_then(|s| s.admission_classification.as_ref())
+        .is_none()
+    {
+      return Err(ApplicationError::invalid());
+    }
+    Ok(snapshot)
   }
 }
+
+#[path = "issue_execution_review.rs"]
+mod review;
+pub use review::*;
 
 pub(crate) async fn resolve_issue_predecessor(
   issues: &(impl IssueExecutionStore + octacity_server_store::IssueStore),
