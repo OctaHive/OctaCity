@@ -3,6 +3,10 @@ use crate::*;
 use octacity_server_factory::*;
 use octacity_server_store::FactoryConfigurationStore;
 
+#[path = "factory_issue_fields.rs"]
+mod issue_fields;
+pub use issue_fields::*;
+
 /// Normalizes an operator-owned finite program through the common evaluator contract.
 #[derive(Clone, Debug)]
 pub struct ValidateFactoryGateProgramQuery {
@@ -148,6 +152,9 @@ pub struct FactoryVerificationAuthorChoice {
 /// Technical installation facts only; Source/Reporter choices retain action authority.
 #[derive(Clone, Debug, serde::Serialize)]
 pub struct FactoryAuthoringCapabilities {
+  /// Readable Project contracts independent of an installed local classification writer.
+  #[serde(skip_serializing_if = "Option::is_none")]
+  pub issue_fields: Option<FactoryIssueFieldChoices>,
   /// Commands explicitly declared by visible installed compilers; an empty list grants nothing.
   pub commands: Vec<FactoryCommandAuthoringContract>,
   /// Visible installed authors that can freeze supplemental verification inputs.
@@ -164,7 +171,7 @@ pub struct FactoryAuthoringCapabilities {
   /// Visible installed publication targets, independent of previously published Flows.
   #[serde(skip_serializing_if = "Vec::is_empty")]
   pub candidate_publications: Vec<FactoryCandidatePublicationChoice>,
-  /// Present when the Project has an installed local writer and active mapped labels.
+  /// Installed local writer and readable Project catalog; typed fields need no size labels.
   #[serde(skip_serializing_if = "Option::is_none")]
   pub issue_classification: Option<FactoryIssueClassificationChoices>,
   /// Common deterministic interpreter, requiring no installed external policy adapter.
@@ -232,6 +239,13 @@ impl<S: FactoryConfigurationStore> ManagementQueryUseCase<GetFactoryAuthoringCap
   ) -> Result<FactoryAuthoringCapabilities, ApplicationError> {
     crate::factory::profiles::factory_role_profiles::require_project_visibility(grant, query.project_id)?;
     let invalid = |_| ApplicationError::invalid();
+    let catalog = crate::factory::issue_snapshot::current_catalog(
+      self.issue_properties.as_deref(),
+      self.policy.as_ref(),
+      context,
+      query.project_id,
+    )
+    .await?;
     let fallback = FactoryKey::new("fallback").map_err(invalid)?;
     let gate = FlowGateProgram::new(vec![], fallback.clone())
       .map_err(invalid)?
@@ -306,15 +320,14 @@ impl<S: FactoryConfigurationStore> ManagementQueryUseCase<GetFactoryAuthoringCap
           })
           .cloned()
           .collect();
-        let classification = crate::factory::reporting::factory_issue_classification_authoring::current_choices(
-          &choices,
-          self.issue_properties.as_deref(),
-          self.policy.as_ref(),
-          context,
-          query.project_id,
-        )
-        .await?
-        .map(|resolved| resolved.choices);
+        let classification = catalog
+          .as_ref()
+          .map(|catalog| {
+            crate::factory::reporting::factory_issue_classification_authoring::from_catalog(&choices, catalog.clone())
+          })
+          .transpose()?
+          .flatten()
+          .map(|resolved| resolved.choices);
         (
           command_contracts(&choices),
           verification_authors(&choices),
@@ -364,6 +377,7 @@ impl<S: FactoryConfigurationStore> ManagementQueryUseCase<GetFactoryAuthoringCap
       Err(error) => return Err(error),
     };
     Ok(FactoryAuthoringCapabilities {
+      issue_fields: catalog.as_ref().map(issue_fields::contracts),
       commands,
       verification_authors,
       scoped_validation_profiles,

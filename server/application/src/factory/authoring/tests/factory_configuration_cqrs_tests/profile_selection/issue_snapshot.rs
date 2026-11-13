@@ -10,6 +10,56 @@ mod fields;
 #[path = "issue_snapshot_projections.rs"]
 mod projections;
 
+#[test]
+fn authoring_offers_project_issue_field_contracts_without_a_classification_writer_or_body_reads() {
+  run_ready(async {
+    let project = ProjectId::generate();
+    let fixture = selected_fixture(project);
+    let properties = properties(project).await;
+    let before = properties.mutation_evidence_counts().await;
+    let policy = Arc::new(TrustedNetworkManagementPolicy);
+    let handlers = Arc::new(
+      crate::FactoryRoleProfileHandlers::with_policy(
+        Arc::new(PublicationChoices::for_publication(fixture.choices)),
+        policy.clone(),
+      )
+      .with_issue_properties(properties.clone()),
+    );
+    let result = AuthorizedQueryHandler::new(policy, handlers)
+      .handle_query(
+        &context(),
+        crate::GetFactoryAuthoringCapabilitiesQuery { project_id: project },
+      )
+      .await
+      .unwrap();
+    let wire = serde_json::to_value(result).unwrap();
+    assert_eq!(wire["issue_fields"]["definition_version"], 1);
+    assert_eq!(
+      wire["issue_fields"]["classification"]["properties"]["severity"],
+      "impact"
+    );
+    assert_eq!(wire["issue_fields"]["classification"]["component"], true);
+    let fields = wire["issue_fields"]["fields"]
+      .as_array()
+      .expect("bounded server-derived field contracts");
+    let visible = fields
+      .iter()
+      .find(|f| f["source"] == serde_json::json!({"kind":"property","id":"customer_visible"}))
+      .unwrap();
+    assert_eq!(visible["name"], "Customer visible");
+    assert_eq!(visible["shape"], serde_json::json!({"type":"boolean"}));
+    let severity = fields
+      .iter()
+      .find(|f| f["source"] == serde_json::json!({"kind":"classification","slot":"severity"}))
+      .unwrap();
+    assert_eq!(severity["property_id"], "impact");
+    assert_eq!(severity["shape"], serde_json::json!({"type":"enum","values":["major"]}));
+    assert!(fields.iter().any(|f| f["source"] == serde_json::json!({"kind":"size"})
+      && f["shape"] == serde_json::json!({"type":"enum","values":["small","medium","large"]})));
+    assert_eq!(properties.mutation_evidence_counts().await, before);
+  });
+}
+
 fn entry_index(wire: &serde_json::Value) -> usize {
   wire["root"]["nodes"]
     .as_array()

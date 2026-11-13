@@ -3,6 +3,29 @@ use super::*;
 
 pub(super) fn insert(schemas: &mut Map<String, Value>) {
   let b = octacity_server_application::factory_configuration_document_bounds();
+  schemas.insert("FactoryIssueFieldChoice".into(), object([
+    ("source", schema_ref("FactoryFlowIssueFieldSource")),
+    ("name", json!({"type":"string","minLength":1,"maxLength":octacity_server_application::MAX_ISSUE_TITLE_BYTES,"x-max-utf8-bytes":octacity_server_application::MAX_ISSUE_TITLE_BYTES})),
+    ("property_id", json!({"type":"string","minLength":1,"maxLength":octacity_server_application::MAX_ISSUE_PROPERTY_KEY_BYTES})),
+    ("required_supported", boolean()), ("shape", schema_ref("FactoryFlowValueSchema")),
+  ], &["source","name","required_supported","shape"]));
+  schemas.insert(
+    "FactoryIssueFieldChoices".into(),
+    object(
+      [
+        ("definition_version", non_negative_integer()),
+        ("classification", schema_ref("FactoryIssueClassificationFieldSelection")),
+        (
+          "fields",
+          bounded_array(
+            schema_ref("FactoryIssueFieldChoice"),
+            octacity_server_application::MAX_FACTORY_ISSUE_FIELD_CHOICES,
+          ),
+        ),
+      ],
+      &["definition_version", "fields"],
+    ),
+  );
   let uuid = || json!({"type":"string","format":"uuid"});
   let text = || json!({"type":"string","maxLength":b.text_bytes});
   let reference = || schema_ref("FactoryImmutableReferenceResource");
@@ -221,6 +244,7 @@ pub(super) fn insert(schemas: &mut Map<String, Value>) {
           bounded_array(schema_ref("FactoryCandidatePublicationChoice"), b.choice_entries),
         ),
         ("issue_classification", schema_ref("FactoryIssueClassificationChoices")),
+        ("issue_fields", schema_ref("FactoryIssueFieldChoices")),
         (
           "deterministic_gate",
           object(

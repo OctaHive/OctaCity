@@ -5,6 +5,36 @@ use octacity_server_domain::ProjectId;
 use octacity_server_factory::*;
 use octacity_server_store::*;
 
+/// One independently authorized current catalog for read-only authoring discovery.
+pub(crate) async fn current_catalog(
+  properties: Option<&dyn IssuePropertyStore>,
+  policy: &dyn ManagementAuthorizationPolicy,
+  context: &ManagementRequestContext,
+  project: ProjectId,
+) -> Result<Option<PublishedIssueProperties>, ApplicationError> {
+  let Some(properties) = properties else { return Ok(None) };
+  let query = GetIssuePropertiesQuery {
+    project_id: project,
+    version: None,
+  };
+  let grant = policy
+    .authorize(
+      context,
+      ManagementAction::View,
+      &query.management_resource().map_err(|_| ApplicationError::invalid())?,
+    )
+    .await;
+  let Ok(grant) = grant else { return Ok(None) };
+  if crate::factory::profiles::factory_role_profiles::require_project_visibility(&grant, project).is_err() {
+    return Ok(None);
+  }
+  properties
+    .issue_properties(project, None)
+    .await
+    .map(Some)
+    .map_err(Into::into)
+}
+
 /// Returns the exact validated catalog when the Flow declares an Issue input.
 pub(crate) async fn resolve(
   flow: &FactoryFlowConfiguration,

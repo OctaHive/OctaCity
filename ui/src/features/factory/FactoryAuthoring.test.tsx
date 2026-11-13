@@ -11,6 +11,86 @@ import { configurationFixture } from '../../../tests/fixtures/factory';
 import { projectDocumentsApi } from '../../api/projectDocuments';
 afterEach(cleanup);
 
+it('retains a published Issue snapshot contract when opening and validating its draft', async () => {
+  const configuration = configurationFixture().configuration;
+  const flow = structuredClone(configuration.flow);
+  const root = flow.closure.definitions[0]!;
+  const entry = root.nodes.find((node) => node.key === root.entry)!;
+  const boolean = flow.data_schemas[0]!.reference;
+  const source = { identity: 'issue-input', version: '1', digest: 'a'.repeat(64) };
+  flow.data_schemas.push({
+    reference: source,
+    shape: {
+      type: 'object',
+      fields: { component: { required: false, value: { type: 'enum', values: ['payments'] } } },
+    },
+  });
+  flow.issue_snapshot = {
+    version: 1,
+    definition_version: 7,
+    schema: source,
+    fields: { component: { source: { kind: 'component' }, required: false } },
+  };
+  entry.input_schema = boolean;
+  root.input_schema = boolean;
+  entry.input_binding = {
+    sources: { issue: { source: 'incoming', schema: source, path: '' } },
+    mapping: {
+      value: {
+        mapping: 'if_present',
+        path: '/issue/component',
+        then: { mapping: 'constant', value: true },
+        otherwise: { mapping: 'constant', value: false },
+      },
+    },
+  };
+  const api = {
+    ...factoryApi,
+    listChoices: vi.fn<FactoryApi['listChoices']>(async () => ({
+      items: [],
+      total: 0,
+      next_cursor: null,
+    })),
+    listFlows: vi.fn<FactoryApi['listFlows']>(async () => ({
+      items: [],
+      total: 0,
+      next_cursor: null,
+    })),
+    validateFlow: vi.fn<FactoryApi['validateFlow']>(async () => flow),
+  };
+  render(
+    <QueryClientProvider client={createConsoleQueryClient()}>
+      <RouterProvider
+        router={createMemoryRouter([
+          {
+            path: '*',
+            element: (
+              <FactoryAuthoring
+                api={api}
+                baseline={{
+                  flow,
+                  project_id: configuration.reference.project_id,
+                  published_at_unix_ms: 1,
+                }}
+                onDiscard={() => {}}
+              />
+            ),
+          },
+        ])}
+      />
+    </QueryClientProvider>,
+  );
+  expect(await screen.findByRole('button', { name: 'Remove Issue snapshot' })).toBeTruthy();
+  await userEvent.click(screen.getByRole('button', { name: 'Validate draft' }));
+  await screen.findByText('Authoritative validation passed.');
+  expect(api.validateFlow.mock.calls[0]![0].definition.issue_snapshot).toEqual(flow.issue_snapshot);
+  expect(
+    api.validateFlow.mock.calls[0]![0].definition.root.nodes.find(
+      (node) => node.key === root.entry,
+    )!.input_binding,
+  ).toEqual(entry.input_binding);
+});
+
 it('blocks Flow publication while process text is being edited and restores the unchanged draft after cancellation', async () => {
   const original = configurationFixture().configuration.flow;
   const acceptedPredecessor = {

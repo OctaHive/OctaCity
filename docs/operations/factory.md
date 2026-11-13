@@ -174,6 +174,25 @@ implementation, protected-test authoring or ordinary source reads.
 
 ### Explicit local Issue classification actions
 
+The Factory editor reuses the current Project field catalog. In a reasoning
+step's result, choose **Reuse Project classification fields**, select the
+targets and apply their contracts. Their types and choice IDs come from the
+server; required/optional flags remain editable in the ordinary result editor.
+Built-in priority/component/type/size and semantic classification bindings
+remain distinct from ordinary Project properties.
+
+Connect that accepted result to a trusted action and enable **Apply
+classification to Issue**. Choose the Project targets and **Use Project
+classification**. The action pins the catalog version and selected target mask,
+projects only those fields, and preserves declared `assessment_inputs` from the
+accepted result. It does not require size labels. Publication reviews the exact
+selected targets and their catalog version. Use **Review required access** to
+review the plugin permission separately; selecting fields grants no permissions.
+
+The label-based mapping below remains available as **Legacy priority and size
+labels** when the installed writer advertises labels. Existing legacy steps
+retain their selected mode.
+
 The private Factory catalogue accepts an optional `issue_classification_actions`
 array. Each entry uses the same exact `identity` and verified `principal` fields
 as a local status action. A Flow selects the installed capability and declares
@@ -219,6 +238,74 @@ The Issue Overview matches the recorded local result to the exact accepted
 triage outcome. A confirmed assignment shows the applied priority or size
 label and indicates if either value has since changed. A conflicting action
 leaves the accepted assessment visible as a recommendation.
+
+### Issue snapshot input authoring
+
+In the Flow editor, choose **Configure Issue snapshot**. Select built-in Issue
+fields, ordinary Project properties or classification bindings from the same
+server-owned catalog used by result authoring. Each selection has an editable
+input alias and an explicit **Required** flag; an absent optional value stays
+absent. Empty choice catalogs cannot supply a required field.
+
+Materials are off by default. **Include explicitly selected Issue materials**
+publishes a `selected` material policy with explicit entry and UTF-8 byte limits
+and optional/required status. It consumes the Issue's separately selected exact
+references at preparation, never the whole discussion or an inferred latest
+document. Posting or publishing content does not select it for input.
+
+In **Issue input for each step**, explicitly select each step's fields/materials.
+Other steps receive none of that snapshot through their ordinary input binding.
+The editor reuses equivalent registered schemas or normalizes new shapes through
+the existing API and blocks oversized optional subset mappings. A complete
+snapshot projection uses a direct Incoming input without expanding optional
+fields. Publication review lists the
+catalog version, required/optional aliases, material bounds and step projections;
+step access remains reviewed separately. Preview composes Incoming source paths
+with mapping pointers, including mappings that forward the whole source map.
+Conditions that only inspect field presence appear separately as **Presence
+checks**, without claiming the field value is forwarded. Opening a published
+Flow preserves its complete snapshot contract in the draft.
+
+If a selected property is retired or a classification binding disappears from
+the current Project catalog, its old input alias and source remain visible as
+unavailable. **Remove unavailable field** is an explicit local draft change: it
+removes that selection and its step projections. Apply remains blocked until all
+unavailable selections are reconciled. No field is silently omitted or rebound.
+
+Snapshot settings belong to the pipeline draft on which the form was opened.
+Changing that draft, including renaming, adding or removing a step, disables
+**Use Issue snapshot** and explains how to reopen the settings. Cancel only the
+snapshot form: the pipeline edits and existing bindings remain intact. Reopening
+restores projections for the current step names; old names cannot count as active
+consumers.
+
+**Incoming pipeline completion** in pipeline settings remains the exact
+producer-result alternative, including historical Flow versions. Competing
+contracts and advanced bindings require explicit resolution; the editor changes
+only inputs whose source, target shape and mapping it can round-trip. This also
+recognizes generated optional guards after server-side field-order normalization.
+**Remove Issue snapshot** removes only recognized exclusive snapshot inputs and
+retains unrelated record bindings and registered schemas. Replaced input schemas
+are retired only when no remaining root or reachable pinned-subflow contract
+references them. Definition identity, version and digest determine reachability,
+including nested closures. Missing exact child definitions or a partial explorer
+page cause conservative retention; schema cleanup does not infer non-use from
+unavailable metadata. Repeatedly
+applying unchanged settings does not grow the schema catalog. Advanced admission,
+evidence and exact-reference policies are preserved and can be maintained through
+the management API rather than being replaced by the selected-material form.
+
+Changing the producer, outcome or installed writer during classification schema
+normalization invalidates that attempt. The author must apply the current
+selection again; a late response cannot install the previously captured source.
+
+`GET /api/v1/projects/{project_id}/factory-authoring-capabilities` exposes optional
+`issue_fields`: an independently authorized catalog version, supported local
+classification mask and individual field shapes. Discovery reads no Issue body
+or producing Run and does not require an installed classification writer.
+Individual contracts remain selectable when their combined preview would exceed
+one Flow schema's size limit. OpenAPI owns mapping/input byte limits as well as
+field, depth and collection bounds.
 
 ### Project AI-agent compatibility declarations
 

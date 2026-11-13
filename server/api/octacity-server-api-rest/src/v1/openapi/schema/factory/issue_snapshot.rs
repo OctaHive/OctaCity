@@ -53,10 +53,14 @@ pub(super) fn insert(schemas: &mut Map<String, Value>) {
   .to_vec();
   sources.push(tagged("kind", "property", [("id", non_empty_string())], &["id"]));
   sources.push(tagged("kind", "classification", [("slot", key())], &["slot"]));
+  schemas.insert("FactoryFlowIssueFieldSource".into(), json!({"oneOf":sources}));
   schemas.insert(
     "FactoryFlowIssueFieldSelection".into(),
     object(
-      [("source", json!({"oneOf":sources})), ("required", boolean())],
+      [
+        ("source", schema_ref("FactoryFlowIssueFieldSource")),
+        ("required", boolean()),
+      ],
       &["source", "required"],
     ),
   );

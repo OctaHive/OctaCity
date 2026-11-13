@@ -12,6 +12,14 @@ export function issueConstraints(document) {
   const priority = unwrap(fields?.priority);
   const legacyPriority = priority?.oneOf?.find((item) => item.type === 'integer') ?? priority;
   const bound = boundsFor('Issue');
+  const catalog = document.components?.schemas?.IssuePropertyDefinitionSet?.properties;
+  const sizes = unwrap(document.components?.schemas?.IssuePlanning?.properties?.size)?.enum;
+  if (
+    !Array.isArray(catalog?.priorities?.default) ||
+    !Array.isArray(catalog?.types?.default) ||
+    !Array.isArray(sizes)
+  )
+    throw new Error('Missing Issue built-in choice contracts.');
   const limit = document.paths?.['/api/v1/projects/{project_id}/issues']?.get?.parameters?.find(
     (p) => p.name === 'limit',
   )?.schema;
@@ -22,6 +30,9 @@ export function issueConstraints(document) {
     labelsMaximumCount: bound(
       document.components?.schemas?.IssuePlanning?.properties?.labels?.maxItems,
     ),
+    defaultPriorities: catalog.priorities.default,
+    defaultTypes: catalog.types.default,
+    sizes,
     titleMaximumBytes: bound(fields?.title?.['x-max-utf8-bytes']),
     descriptionMaximumBytes: bound(fields?.description?.['x-max-utf8-bytes']),
     acceptanceMaximumBytes: bound(unwrap(fields?.acceptance)?.['x-max-utf8-bytes']),

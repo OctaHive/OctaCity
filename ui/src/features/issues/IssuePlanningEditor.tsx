@@ -5,6 +5,7 @@ import { IssueParentPicker } from './IssueParentPicker';
 import { IssuePropertyInput } from './IssuePropertyInput';
 import { IssueLabelCreator } from './IssueLabelCreator';
 import { propertyValue, propertyValueLabel } from './issuePlanningPresentation';
+import { builtinPlanningFields } from './issueBuiltinFields';
 import { queryKeys } from '../../app/query';
 import { usePresentation } from '../../app/presentation/PresentationProvider';
 import { SelectMenu } from '../../shared/SelectMenu';
@@ -18,6 +19,9 @@ const ownershipLabels = {
   due_date: 'planning.dueDate',
   properties: 'planning.custom',
   parent: 'planning.parent',
+  component: 'classification.component',
+  type: 'classification.type',
+  size: 'classification.size',
 } as const;
 
 /** A planning draft and its reviewed command exist only while this editor is mounted. */
@@ -154,6 +158,9 @@ export function IssuePlanningEditor({
               `${t('planning.labels')}: ${draft.labels.length ? draft.labels.map((id) => choices.definitions.definition.labels.find((l) => l.id === id)?.name ?? t('planning.unavailableValue')).join(', ') : t('issues.notSet')}`,
               `${t('planning.dueDate')}: ${draft.due_date ?? t('issues.notSet')}`,
               `${t('planning.parent')}: ${parentLabel}`,
+              ...builtinPlanningFields(draft, choices.definitions.definition, t).map(
+                (field) => `${field.label}: ${field.value}`,
+              ),
               ...choices.definitions.definition.properties.map(
                 (p) => `${p.name}: ${propertyValueLabel(propertyValue(draft.values, p.id), p, t)}`,
               ),
@@ -241,6 +248,31 @@ export function IssuePlanningEditor({
             onChange={(e) => setDraft({ ...draft, due_date: e.target.value || null })}
           />
         </label>
+        <fieldset>
+          <legend>{t('classification.builtins')}</legend>
+          {builtinPlanningFields(draft, choices.definitions.definition, t).map(
+            ({ field, label, options }) => (
+              <div key={field}>
+                <span>{label}</span>
+                <SelectMenu
+                  ariaLabel={label}
+                  value={draft[field] ?? ''}
+                  options={options}
+                  disabled={owned.includes(field)}
+                  onValueChange={(value) =>
+                    setDraft({
+                      ...draft,
+                      [field]:
+                        field === 'size'
+                          ? (bounds.sizes.find((size) => size === value) ?? null)
+                          : value || null,
+                    })
+                  }
+                />
+              </div>
+            ),
+          )}
+        </fieldset>
         {choices.definitions.definition.properties.map((p) => (
           <div key={p.id}>
             <IssuePropertyInput

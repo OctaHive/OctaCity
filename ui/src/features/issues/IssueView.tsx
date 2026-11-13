@@ -31,7 +31,6 @@ import type { IssuesApi } from './api';
 import type { IssueSourcesApi } from './sourceApi';
 import { IssueSource } from './IssueSource';
 import { IssueEditor } from './IssueEditor';
-import { formatIssuePriority } from './issuePriority';
 import { IssueRelationships } from './IssueRelationships';
 import { IssueProperties } from './IssueProperties';
 import { IssueProjectNav, type IssueProjectReader } from './IssueProjectNav';
@@ -130,6 +129,7 @@ function Card({
   const [params, setParams] = useSearchParams();
   const section = sections.find((s) => s === params.get('section')) ?? 'overview';
   const [editing, setEditing] = useState(false);
+  const [focusPriority, setFocusPriority] = useState(false);
   const [starting, setStarting] = useState<'requirements' | 'inputs' | null>(null);
   const selectedRevision = Number(params.get('revision'));
   const hasRevision = Number.isSafeInteger(selectedRevision) && selectedRevision > 0;
@@ -202,6 +202,9 @@ function Card({
     await Promise.all([
       choices.refetch(),
       queryClient.invalidateQueries({ queryKey: queryKeys.issueOutcomes(projectId, issueId) }),
+      queryClient.invalidateQueries({
+        queryKey: queryKeys.issueClassification(projectId, issueId),
+      }),
       queryClient.invalidateQueries({ queryKey: queryKeys.issueChildrenRoot(projectId, issueId) }),
       ...(issue?.planning?.parent_id
         ? [
@@ -339,12 +342,19 @@ function Card({
               {section === 'overview' ? (
                 <>
                   <section className={styles.panel}>
-                    <button disabled={!fresh} onClick={() => setEditing(!editing)}>
+                    <button
+                      disabled={!fresh}
+                      onClick={() => {
+                        setEditing(!editing);
+                        setFocusPriority(false);
+                      }}
+                    >
                       {t(editing ? 'command.abandon' : 'issues.edit')}
                     </button>
                     {editing ? (
                       <IssueEditor
                         api={api}
+                        focusPriority={focusPriority}
                         projectId={projectId}
                         issue={issue}
                         policy={choices.data!.field_policy}
@@ -458,8 +468,6 @@ function Card({
               <section className={styles.panel}>
                 <h2>{t('issues.properties')}</h2>
                 <dl>
-                  <dt>{t('issues.priority')}</dt>
-                  <dd>{formatIssuePriority(issue.content.priority, t)}</dd>
                   <dt>{t('issues.workflow')}</dt>
                   <dd>
                     {workflow.data?.definition.name ?? t('issues.unknownStatus')} ·{' '}
@@ -473,6 +481,11 @@ function Card({
                   policy={choices.data?.field_policy}
                   ready={fresh}
                   onRefresh={refresh}
+                  onEditPriority={() => {
+                    setParams(sectionSearch('overview'));
+                    setEditing(true);
+                    setFocusPriority(true);
+                  }}
                 />
               </section>
               <section className={styles.panel}>

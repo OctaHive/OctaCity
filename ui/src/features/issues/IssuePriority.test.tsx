@@ -1,8 +1,10 @@
 // @vitest-environment jsdom
-import { cleanup, screen, within, waitFor } from '@testing-library/react';
+import { act, cleanup, screen, within, waitFor } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { afterEach, expect, it } from 'vitest';
 import { issue, setup } from '../../../tests/fixtures/issueTestSupport';
+import { issuePropertyChoicesFixture } from '../../../tests/fixtures/issues';
+import { queryKeys } from '../../app/query';
 
 afterEach(() => {
   cleanup();
@@ -10,11 +12,76 @@ afterEach(() => {
   sessionStorage.clear();
 });
 
+it('blocks an open priority confirmation when the field becomes source-owned', async () => {
+  const user = userEvent.setup();
+  const { queryClient, api } = setup('/projects/delivery/issues/' + issue.id);
+  await user.click(await screen.findByRole('button', { name: 'Edit requirements' }));
+  await user.click(screen.getByRole('combobox', { name: 'Priority' }));
+  await user.click(screen.getByRole('option', { name: 'High' }));
+  await user.click(screen.getByRole('button', { name: 'Review task' }));
+  await act(async () =>
+    queryClient.setQueryData(queryKeys.issueTransitions('delivery', issue.id), {
+      issue_version: 1,
+      workflow_id: issue.workflow_id,
+      workflow_version: 3,
+      status_id: issue.status_id,
+      field_policy: { source_owned: ['priority'], status_mapping_workflow: null, push: null },
+      items: [],
+    }),
+  );
+  await waitFor(() =>
+    expect((screen.getByRole('combobox', { name: 'Priority' }) as HTMLButtonElement).disabled).toBe(
+      true,
+    ),
+  );
+  expect(
+    (
+      within(screen.getByRole('dialog')).getByRole('button', {
+        name: 'Save task',
+      }) as HTMLButtonElement
+    ).disabled,
+  ).toBe(true);
+  expect(api.edit).not.toHaveBeenCalled();
+});
+
+it('keeps the reviewed priority label frozen when a new Project catalog arrives', async () => {
+  const user = userEvent.setup();
+  const catalog = issuePropertyChoicesFixture();
+  catalog.definitions.definition.priorities = [
+    { id: 'urgent', name: 'Urgent incident', retired: false },
+  ];
+  const { queryClient, api } = setup('/projects/delivery/issues/' + issue.id, (api) =>
+    api.planningChoices.mockResolvedValue(catalog),
+  );
+  await user.click(await screen.findByRole('button', { name: 'Edit requirements' }));
+  await user.click(screen.getByRole('combobox', { name: 'Priority' }));
+  await user.click(screen.getByRole('option', { name: 'Urgent incident' }));
+  await user.click(screen.getByRole('button', { name: 'Review task' }));
+  const changed = structuredClone(catalog);
+  changed.definitions.version = 8;
+  changed.definitions.definition.priorities![0]!.name = 'Emergency';
+  await act(async () =>
+    queryClient.setQueryData(queryKeys.issuePropertyChoices('delivery'), changed),
+  );
+  const dialog = screen.getByRole('dialog');
+  await waitFor(() =>
+    expect(
+      (within(dialog).getByRole('button', { name: 'Save task' }) as HTMLButtonElement).disabled,
+    ).toBe(true),
+  );
+  expect(dialog.textContent).toContain('Priority: Urgent incident');
+  expect(dialog.textContent).not.toContain('Emergency');
+  expect(
+    (within(dialog).getByRole('button', { name: 'Save task' }) as HTMLButtonElement).disabled,
+  ).toBe(true);
+  expect(api.edit).not.toHaveBeenCalled();
+});
+
 it.each([
-  ['Blocker', 3],
-  ['High', 2],
-  ['Medium', 1],
-  ['Low', 0],
+  ['Blocker', 'blocker'],
+  ['High', 'high'],
+  ['Medium', 'medium'],
+  ['Low', 'low'],
 ] as const)(
   'creates a task with %s priority and displays the same name in its card',
   async (label, priority) => {
@@ -55,6 +122,34 @@ it.each([
     ).toBe(label);
   },
 );
+
+it('edits priority using the Project catalog rather than legacy numeric levels', async () => {
+  const user = userEvent.setup();
+  const choices = issuePropertyChoicesFixture();
+  choices.definitions.definition.priorities = [
+    { id: 'critical', name: 'Critical incident', retired: false },
+  ];
+  const { api } = setup('/projects/delivery/issues/' + issue.id, (api) => {
+    api.planningChoices.mockResolvedValue(choices);
+  });
+  await user.click(await screen.findByRole('button', { name: 'Edit requirements' }));
+  await user.click(screen.getByRole('combobox', { name: 'Priority' }));
+  expect(screen.getAllByRole('option').map((el) => el.textContent)).toEqual([
+    'Not set',
+    'Critical incident',
+  ]);
+  await user.click(screen.getByRole('option', { name: 'Critical incident' }));
+  await user.click(screen.getByRole('button', { name: 'Review task' }));
+  await user.click(within(screen.getByRole('dialog')).getByRole('button', { name: 'Save task' }));
+  await waitFor(() =>
+    expect(api.edit).toHaveBeenCalledWith(
+      'delivery',
+      issue.id,
+      { ...issue.content, priority: 'critical' },
+      expect.objectContaining({ 'If-Match': '"1"' }),
+    ),
+  );
+});
 
 it.each([8, 255])('preserves legacy priority %i through an unrelated edit', async (priority) => {
   const { api } = setup('/projects/delivery/issues/' + issue.id, (api) => {

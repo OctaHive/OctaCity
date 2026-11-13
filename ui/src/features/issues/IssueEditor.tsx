@@ -1,6 +1,6 @@
 import { queryKeys } from '../../app/query';
 import { useEffect, useRef, useState } from 'react';
-import { useQueryClient } from '@tanstack/react-query';
+import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { ISSUE_CONSTRAINTS as bounds } from '../../../.generated/api/constraints';
 import { Link } from 'react-router-dom';
 import { usePresentation } from '../../app/presentation/PresentationProvider';
@@ -9,6 +9,7 @@ import { requireVersionedMutationHeaders } from '../../shared/confirmedIntent';
 import { ConfirmedCommand } from '../../shared/ConfirmedCommand';
 import { SelectMenu } from '../../shared/SelectMenu';
 import { issuePriorityOptions, formatIssuePriority } from './issuePriority';
+import { issueBuiltinChoices } from './issueBuiltinFields';
 import type { Issue, IssueContent, IssuePolicy, IssuesApi } from './api';
 import styles from './Issues.module.css';
 
@@ -22,6 +23,7 @@ export function IssueEditor({
   policy,
   ready = true,
   onRefresh,
+  focusPriority = false,
 }: {
   api: IssuesApi;
   projectId: string;
@@ -29,9 +31,21 @@ export function IssueEditor({
   policy?: IssuePolicy;
   ready?: boolean;
   onRefresh?: () => Promise<unknown>;
+  focusPriority?: boolean;
 }) {
   const { t } = usePresentation();
   const queryClient = useQueryClient();
+  const catalog = useQuery({
+    queryKey: queryKeys.issuePropertyChoices(projectId),
+    gcTime: 0,
+    queryFn: ({ signal }) => api.planningChoices(projectId, signal),
+  });
+  const priorityChoices = issueBuiltinChoices(
+    catalog.data?.definitions.definition ?? { labels: [], properties: [] },
+  ).priority;
+  const catalogFingerprint = JSON.stringify(catalog.data?.definitions);
+  const [priorityBaseline, setPriorityBaseline] = useState<string | null>(null);
+  const priorityStale = priorityBaseline !== null && priorityBaseline !== catalogFingerprint;
   const formRef = useRef<HTMLFormElement>(null);
   const reviewButtonRef = useRef<HTMLButtonElement>(null);
   const [baseline, setBaseline] = useState(() =>
@@ -59,15 +73,28 @@ export function IssueEditor({
   const [error, setError] = useState<string | null>(null);
   const [review, setReview] = useState<{
     content: IssueContent;
+    priorityLabel: string;
     focus: HTMLElement;
     version?: number;
   } | null>(null);
-  const priorityOptions = issuePriorityOptions(draft.priority, t);
+  const priorityOptions = issuePriorityOptions(draft.priority, t, priorityChoices);
+  const priorityChanged = draft.priority !== (issue?.content.priority ?? null);
+  const catalogReady = !!catalog.data && !catalog.isFetching && !catalog.error;
+  const formReady = ready && (!priorityChanged || catalogReady) && !priorityStale;
+  const priorityFocusedRef = useRef(false);
+  useEffect(() => {
+    if (!focusPriority) priorityFocusedRef.current = false;
+    else if (catalogReady && !priorityFocusedRef.current) {
+      formRef.current?.querySelector<HTMLElement>('[role=combobox]:not(:disabled)')?.focus();
+      priorityFocusedRef.current = true;
+    }
+  }, [focusPriority, catalogReady]);
   return (
     <section className={styles.panel}>
       <h2>{t(issue ? 'issues.edit' : 'issues.create')}</h2>
       <p>{t('issues.memoryDraft')}</p>
       {baseline ? <p>{t('issues.editBaseline', { version: baseline.version })}</p> : null}
+      {priorityStale ? <p role="alert">{t('classification.priorityChanged')}</p> : null}
       {stale ? (
         <section role="alert">
           <p>{t('issues.draftChanged', { version: issue.version })}</p>
@@ -105,7 +132,7 @@ export function IssueEditor({
         ref={formRef}
         onSubmit={(event) => {
           event.preventDefault();
-          if (!ready) return;
+          if (!formReady) return;
           if (stale) {
             // Only explicit reconciliation can advance the draft baseline.
             const previousContent = baseline.content;
@@ -146,6 +173,7 @@ export function IssueEditor({
           setError(null);
           setReview({
             content: structuredClone(draft),
+            priorityLabel: formatIssuePriority(draft.priority, t, priorityChoices),
             ...(baseline ? { version: baseline.version } : {}),
             focus: reviewButtonRef.current!,
           });
@@ -180,27 +208,31 @@ export function IssueEditor({
           {t('issues.priority')}
           <SelectMenu
             ariaLabel={t('issues.priority')}
-            disabled={policy?.source_owned.includes('priority') === true}
+            disabled={policy?.source_owned.includes('priority') === true || !catalogReady}
             value={
               priorityOptions.find((option) => option.priority === draft.priority)?.value ?? ''
             }
             options={priorityOptions}
             onValueChange={(value) => {
               const option = priorityOptions.find((option) => option.value === value);
-              if (option) setDraft({ ...draft, priority: option.priority });
+              if (option) {
+                setDraft({ ...draft, priority: option.priority });
+                setPriorityBaseline(catalogFingerprint);
+              }
             }}
           />
         </label>
-        <button type="submit" ref={reviewButtonRef} disabled={!ready}>
+        <button type="submit" ref={reviewButtonRef} disabled={!formReady}>
           {t(stale ? 'issues.reconcileDraft' : 'issues.review')}
         </button>
       </form>
       {error ? <p role="alert">{error}</p> : null}
       {review ? (
         <ConfirmedCommand
+          ready={formReady && !stale}
           title={t('issues.review')}
           confirmLabel={t(issue ? 'issues.save' : 'issues.create')}
-          consequence={`${review.version ? t('issues.editBaseline', { version: review.version }) + '. ' : ''}${t('issues.title')}: ${review.content.title}. ${t('issues.description')}: ${review.content.description || t('issues.noDescription')} ${t('issues.acceptance')}: ${review.content.acceptance || t('issues.noAcceptance')} ${t('issues.priority')}: ${formatIssuePriority(review.content.priority, t)}. ${t('issues.saveConsequence')}`}
+          consequence={`${review.version ? t('issues.editBaseline', { version: review.version }) + '. ' : ''}${t('issues.title')}: ${review.content.title}. ${t('issues.description')}: ${review.content.description || t('issues.noDescription')} ${t('issues.acceptance')}: ${review.content.acceptance || t('issues.noAcceptance')} ${t('issues.priority')}: ${review.priorityLabel}. ${t('issues.saveConsequence')}`}
           request={review.content}
           {...(review.version === undefined ? {} : { version: review.version })}
           {...(onRefresh ? { onRefresh } : {})}

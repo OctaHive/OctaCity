@@ -16,7 +16,20 @@ function contract() {
         IssueOutcomeCard: {
           properties: { conclusion: { maxLength: 92, 'x-max-utf8-bytes': 73 } },
         },
-        IssuePlanning: { properties: { labels: { maxItems: 3 } } },
+        IssuePlanning: {
+          properties: {
+            labels: { maxItems: 3 },
+            size: {
+              anyOf: [{ type: 'string', enum: ['small', 'medium', 'large'] }, { type: 'null' }],
+            },
+          },
+        },
+        IssuePropertyDefinitionSet: {
+          properties: {
+            priorities: { default: [{ id: 'urgent', name: 'Urgent', retired: false }] },
+            types: { default: [{ id: 'request', name: 'Request', retired: false }] },
+          },
+        },
         IssueContent: {
           properties: {
             title: { 'x-max-utf8-bytes': 37 },
@@ -41,6 +54,9 @@ test('derives reason and outcome conclusion limits in UTF-8 bytes', () => {
   assert.deepEqual(issueConstraints(contract()), {
     commentMaximumBytes: 7,
     labelsMaximumCount: 3,
+    defaultPriorities: [{ id: 'urgent', name: 'Urgent', retired: false }],
+    defaultTypes: [{ id: 'request', name: 'Request', retired: false }],
+    sizes: ['small', 'medium', 'large'],
     titleMaximumBytes: 37,
     descriptionMaximumBytes: 1024,
     acceptanceMaximumBytes: 2048,
@@ -61,7 +77,7 @@ test('runs task constraint regression tests in both standard UI suites', async (
 
 test('derives the maximum selected labels from the planning schema', () => {
   const document = contract();
-  document.components.schemas.IssuePlanning = { properties: { labels: { maxItems: 2 } } };
+  document.components.schemas.IssuePlanning.properties.labels.maxItems = 2;
   assert.equal(issueConstraints(document).labelsMaximumCount, 2);
 });
 

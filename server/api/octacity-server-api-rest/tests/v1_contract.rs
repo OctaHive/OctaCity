@@ -118,6 +118,8 @@ fn factory_authoring_contract_exposes_schema_and_mapping_nesting_limits() {
   let schemas = &document["components"]["schemas"];
   assert_eq!(schemas["FactoryFlowValueSchema"]["x-max-depth"], 16);
   assert_eq!(schemas["FactoryFlowValueMapping"]["x-max-depth"], 16);
+  assert_eq!(schemas["FactoryFlowDataMapping"]["x-max-encoded-bytes"], 16384);
+  assert_eq!(schemas["FactoryFlowInputBinding"]["x-max-encoded-bytes"], 16384);
 }
 
 #[test]

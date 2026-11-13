@@ -22,25 +22,24 @@ pub(crate) async fn current_choices(
   context: &ManagementRequestContext,
   project: ProjectId,
 ) -> Result<Option<ClassificationAuthoring>, ApplicationError> {
-  let (Some((plugin, mapping)), Some(properties)) = (choices.issue_classification(), properties) else {
-    return Ok(None);
-  };
-  let query = GetIssuePropertiesQuery {
-    project_id: project,
-    version: None,
-  };
-  let grant = policy
-    .authorize(
-      context,
-      ManagementAction::View,
-      &query.management_resource().map_err(|_| ApplicationError::invalid())?,
-    )
-    .await;
-  let Ok(grant) = grant else { return Ok(None) };
-  if crate::factory::profiles::factory_role_profiles::require_project_visibility(&grant, project).is_err() {
+  if choices.issue_classification().is_none() {
     return Ok(None);
   }
-  let catalog = properties.issue_properties(project, None).await?;
+  let Some(catalog) = crate::factory::issue_snapshot::current_catalog(properties, policy, context, project).await?
+  else {
+    return Ok(None);
+  };
+  from_catalog(choices, catalog)
+}
+
+/// Reuses an already authorized catalog so capabilities cannot mix publication versions.
+pub(crate) fn from_catalog(
+  choices: &FactoryConfigurationChoices,
+  catalog: PublishedIssueProperties,
+) -> Result<Option<ClassificationAuthoring>, ApplicationError> {
+  let Some((plugin, mapping)) = choices.issue_classification() else {
+    return Ok(None);
+  };
   let size_labels = mapping
     .size_labels
     .iter()

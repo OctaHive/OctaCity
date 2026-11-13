@@ -1,6 +1,65 @@
 import type { MessageCatalog } from './messages.en';
 
 export const ruMessages = {
+  'factory.classificationMode': 'Режим применения классификации',
+  'factory.legacyClassification': 'Прежний приоритет и метки размера',
+  'factory.typedClassificationHelp':
+    'Применяются только выбранные поля задачи из точной принятой оценки. Изменения меток, внешние эффекты и запуск доставки не добавляются.',
+  'factory.classificationNeedsCompatibleFields':
+    'Выберите поля принятой оценки с совместимыми контрактами проекта. При необходимости используйте поля проекта в редакторе её результата.',
+  'factory.issuePropertyField': 'Поле проекта: {name}',
+  'factory.issueClassificationField': 'Классификация: {name}',
+  'factory.projectClassificationFields': 'Поля классификации проекта',
+  'factory.reuseProjectFields': 'Использовать поля классификации проекта',
+  'factory.issueFieldsUnavailable': 'Контракты полей задачи проекта недоступны.',
+  'factory.useSelectedFieldContracts': 'Использовать выбранные контракты полей',
+  'classification.changePriority': 'Изменить приоритет',
+  'classification.title': 'Классификация',
+  'classification.help':
+    'Это применённые значения задачи и их актуальность. Рекомендации и конфликты применения показаны в результатах работы. Этот раздел не подтверждает готовность к запуску.',
+  'classification.dependencies': 'Зависимости',
+  'classification.versionChanged':
+    'Актуальность относится к другой версии задачи. Обновите задачу.',
+  'classification.empty':
+    'Оценки полей ещё не записаны. Необязательные значения можно не задавать.',
+  'classification.unavailableField': 'Поле недоступно',
+  'classification.needsReview': 'Требует проверки',
+  'classification.current': 'Актуальная оценка',
+  'classification.notAssessed': 'Не оценено',
+  'classification.origin.manual': 'Ручное изменение',
+  'classification.origin.pipeline': 'Оценка пайплайна',
+  'classification.origin.source': 'Внешний источник',
+  'classification.assessmentRevision': 'Версия оценки {version}',
+  'classification.producingRun': 'Запуск оценки',
+  'classification.verified': 'Подтверждённые доказательства воспроизведения',
+  'classification.verificationRequired': 'Требуется проверка воспроизведения',
+  'classification.evidence': 'Доказательства ({count})',
+  'classification.applicableEvidence': 'Актуальное доказательство',
+  'classification.problem.missing_value': 'Значение не задано',
+  'classification.problem.missing_assessment': 'Оценка отсутствует',
+  'classification.problem.definition_unavailable': 'Определение поля недоступно',
+  'classification.problem.requirements_changed': 'Требования изменились',
+  'classification.problem.code_subject_changed': 'Версия кода изменилась',
+  'classification.problem.code_subject_unavailable':
+    'Для проверки актуальности выберите версию репозитория',
+  'classification.problem.evidence_missing': 'Обязательные доказательства отсутствуют',
+  'classification.problem.unsupported_reproduction': 'Заявление о воспроизведении не подтверждено',
+  'classification.problem.material_changed': 'Материалы оценки изменились',
+  'classification.problem.evidence_unavailable': 'Доказательство недоступно с текущими правами',
+  'classification.problem.evidence_expired': 'Срок действия доказательства истёк',
+  'classification.problem.evidence_subject_changed':
+    'Доказательство относится к другой версии кода',
+  'classification.problem.evidence_subject_unavailable':
+    'Версия кода для доказательства не определена',
+  'classification.problem.evidence_claim_conflict': 'Доказательство противоречит заявлению',
+  'classification.problem.evidence_inconclusive': 'Доказательство не даёт однозначного результата',
+  'classification.builtins': 'Встроенные поля',
+  'classification.priorityChanged':
+    'Варианты приоритета изменились. Выберите приоритет заново перед проверкой.',
+  'classification.component': 'Компонент задачи',
+  'classification.type': 'Тип задачи',
+  'classification.size': 'Размер задачи',
+  'classification.retiredChoice': '{name} (устарел)',
   'policy.manageLaunch': 'Просмотреть или изменить политику запуска',
   'policy.manageAccess': 'Просмотреть или изменить профиль доступа',
   'policy.adopt': 'Использовать {name} · v{version} в этом черновике',
@@ -170,6 +229,33 @@ export const ruMessages = {
   'factory.classificationNeedsEmptyStep':
     'Выберите шаг без привязки входа и конфликтующего результата.',
   'factory.useProjectClassification': 'Использовать классификацию проекта',
+  'factory.issueSnapshot': 'Снимок Issue',
+  'factory.bytes': 'байтов',
+  'factory.projectionTooLarge':
+    'Проекция превышает лимит входного mapping. Выберите меньше необязательных полей или используйте расширенный редактор входа.',
+  'factory.issueSnapshotHelp':
+    'Выбранные поля Issue фиксируются при запуске без привязки к Run триажа. В настройках pipeline можно выбрать точный результат другого pipeline.',
+  'factory.configureIssueSnapshot': 'Настроить снимок Issue',
+  'factory.useIssueSnapshot': 'Использовать снимок Issue',
+  'factory.removeIssueSnapshot': 'Удалить снимок Issue',
+  'factory.inputAlias': 'Имя входа: {name}',
+  'factory.requiredIssueField': 'Обязательное: {name}',
+  'factory.includeIssueMaterials': 'Включить явно выбранные материалы Issue',
+  'factory.issueMaterials': 'Материалы Issue',
+  'factory.selectedMaterialsHelp':
+    'Включаются только явно выбранные материалы Issue. Вся переписка и автоматически последний документ не читаются.',
+  'factory.maximumMaterialEntries': 'Максимум материалов',
+  'factory.maximumMaterialBytes': 'Максимум байтов материалов',
+  'factory.snapshotProjections': 'Данные Issue для каждого шага',
+  'factory.snapshotDraftChanged':
+    'Pipeline изменился, пока настройки снимка были открыты. Отмените изменения формы и откройте её снова, чтобы проверить текущие шаги и входные данные.',
+  'factory.snapshotPresenceChecks': 'Проверки наличия: {fields}',
+  'factory.unavailableSnapshotField': 'Недоступное поле: {alias}',
+  'factory.unavailableSnapshotFieldHelp':
+    'Источник недоступен в текущем каталоге Project. Явно удалите его из входа и, если нужно, выберите другой доступный источник.',
+  'factory.removeUnavailableSnapshotField': 'Удалить недоступное поле: {alias}',
+  'factory.snapshotInputConflict':
+    'Вход содержит контракт producer, смешанные bindings или расширенную политику снимка. Producer и bindings настраиваются в pipeline; admission, evidence и точные ссылки — через management API. Текущий вход сохранён.',
   'factory.classificationMappingChanged':
     'Соответствие меток проекта изменилось или отсутствует. Проверьте его в шаге перед публикацией.',
   'factory.classificationAccessHelp':

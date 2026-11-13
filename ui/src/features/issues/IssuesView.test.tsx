@@ -662,7 +662,7 @@ it('refreshes source-owned fields during explicit reconciliation while retaining
     title: 'Fresh source title',
     description: 'Fresh source description',
     acceptance: 'Keep my acceptance',
-    priority: 2,
+    priority: 'high',
   });
 });
 

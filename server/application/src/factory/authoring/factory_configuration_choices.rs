@@ -121,6 +121,10 @@ pub struct FactoryConfigurationDocumentBounds {
   pub schema_items: u16,
   /// Maximum configured data schema and mapping nesting depth.
   pub schema_depth: usize,
+  /// Maximum encoded data mapping bytes.
+  pub mapping_bytes: usize,
+  /// Maximum encoded input binding bytes, including its sources.
+  pub input_binding_bytes: usize,
   /// Maximum retained string value bytes.
   pub value_bytes: usize,
   /// Maximum stable key bytes.
@@ -192,6 +196,8 @@ pub const fn factory_configuration_document_bounds() -> FactoryConfigurationDocu
     schema_variant_name_bytes: factory::MAX_FLOW_VARIANT_NAME_BYTES,
     schema_items: factory::MAX_FLOW_SCHEMA_ITEMS,
     schema_depth: factory::MAX_FLOW_SCHEMA_DEPTH,
+    mapping_bytes: factory::MAX_FLOW_MAPPING_BYTES,
+    input_binding_bytes: factory::MAX_FLOW_INPUT_BINDING_BYTES,
     value_bytes: factory::MAX_FLOW_DATA_BYTES,
     key_bytes: factory::MAX_FACTORY_KEY_BYTES,
     depth: factory::MAX_FLOW_NESTING_DEPTH,

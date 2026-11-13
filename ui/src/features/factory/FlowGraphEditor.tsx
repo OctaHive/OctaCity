@@ -34,6 +34,8 @@ import { profileBudget, flowBudget, flatGraphLimits } from './flowRequirements';
 import { FlowDocuments, type FlowDocumentServices } from './FlowDocuments';
 import { FlowProcess } from './FlowProcess';
 import { classificationAction } from './issueClassification';
+import { FlowIssueSnapshot } from './FlowIssueSnapshot';
+import { registerFlowSchemas } from './flowSchemas';
 
 type Draft = components['schemas']['FactoryFlowDefinitionDraft'];
 type NodePatch = Partial<components['schemas']['FactoryFlowNodeDefinition']>;
@@ -115,14 +117,23 @@ export function FlowGraphEditor({
       if (automaticBounds) setAutomaticBounds(false);
       if (budgetCalculation.run) setBudgetCalculation((current) => ({ ...current, run: false }));
     }
-    commitDraft(next);
+    const replaced = value.root.nodes.flatMap((previous) => {
+      const current = next.root.nodes.find((node) => node.key === previous.key);
+      return previous.input_schema &&
+        !sameInputSchema(previous.input_schema, current?.input_schema ?? null)
+        ? [previous.input_schema]
+        : [];
+    });
+    commitDraft(registerFlowSchemas(next, [], replaced, subflows));
   };
   const [stepDrafts, setStepDrafts] = useState<Record<string, PrimitiveDraft>>({});
   const [inputPending, setInputPending] = useState(false);
+  const [snapshotEditing, setSnapshotEditing] = useState(false);
   const [verificationPending, setVerificationPending] = useState(false);
   const [resultDrafts, setResultDrafts] = useState<Record<string, ResultDraft>>({});
   const isEditing =
     inputPending ||
+    snapshotEditing ||
     verificationPending ||
     nodeKeys.some((key) => !!stepDrafts[key] || !!resultDrafts[key]);
   useEffect(() => {
@@ -154,24 +165,19 @@ export function FlowGraphEditor({
   latestValueRef.current = value;
   const patchNode = (patch: NodePatch, schemas: Draft['data_schemas'] = []): Draft => {
     const current = latestValueRef.current;
-    return {
-      ...current,
-      data_schemas: [
-        ...current.data_schemas,
-        ...schemas.filter(
-          (schema) =>
-            !current.data_schemas.some(
-              (existing) => existing.reference.digest === schema.reference.digest,
-            ),
-        ),
-      ],
-      root: {
-        ...current.root,
-        nodes: current.root.nodes.map((item, index) =>
-          index === selected ? { ...item, ...patch } : item,
-        ),
+    return registerFlowSchemas(
+      {
+        ...current,
+        root: {
+          ...current.root,
+          nodes: current.root.nodes.map((item, index) =>
+            index === selected ? { ...item, ...patch } : item,
+          ),
+        },
       },
-    };
+      schemas,
+      [],
+    );
   };
   const updateNode = (patch: NodePatch, schemas?: Draft['data_schemas']) =>
     onChange(patchNode(patch, schemas));
@@ -213,6 +219,15 @@ export function FlowGraphEditor({
   return (
     <section className={styles.editor} data-factory-field="/root" tabIndex={-1}>
       <h3>{t('factory.graphEditor')}</h3>
+      {authoring ? (
+        <FlowIssueSnapshot
+          value={value}
+          services={authoring}
+          subflows={subflows}
+          onChange={onChange}
+          onEditingChange={setSnapshotEditing}
+        />
+      ) : null}
       <label>
         {t('factory.pipelineName')}
         <input

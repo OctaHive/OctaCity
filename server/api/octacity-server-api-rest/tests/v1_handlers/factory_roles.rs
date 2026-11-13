@@ -12,7 +12,10 @@ async fn installed_command_compiler_facts_match_the_public_authoring_contract() 
   let choices = testing::installed_command_execution_choices(project);
   store.enable_project(project, choices).unwrap();
   let policy = Arc::new(TrustedNetworkManagementPolicy);
-  let handlers = Arc::new(FactoryRoleProfileHandlers::with_policy(store, policy.clone()));
+  let handlers = Arc::new(
+    FactoryRoleProfileHandlers::with_policy(store, policy.clone())
+      .with_issue_properties(testing::manual_issue_store(project).await),
+  );
   let peer = Arc::new(RecordingApplication::default());
   let app =
     recording_management_application(peer.clone(), peer).with_factory_roles(FactoryRoleManagementApplication::new(
@@ -31,6 +34,14 @@ async fn installed_command_compiler_facts_match_the_public_authoring_contract() 
   assert_eq!(response.status(), StatusCode::OK);
   let body = json_response(response).await;
   assert_eq!(body["commands"][0]["execution"]["task_digest"], "49".repeat(32));
+  assert_eq!(body["issue_fields"]["definition_version"], 0);
+  let fields = body["issue_fields"]["fields"].as_array().unwrap();
+  assert!(
+    fields
+      .iter()
+      .any(|field| field["source"] == serde_json::json!({"kind":"size"})
+        && field["shape"] == serde_json::json!({"type":"enum","values":["small","medium","large"]}))
+  );
   assert_json_matches_component(&openapi_document(), "FactoryAuthoringCapabilities", &body);
 }
 

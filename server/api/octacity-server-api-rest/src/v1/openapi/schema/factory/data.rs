@@ -70,4 +70,6 @@ pub(super) fn insert(schemas: &mut Map<String, Value>) {
       &["sources", "mapping"],
     ),
   );
+  schemas["FactoryFlowDataMapping"]["x-max-encoded-bytes"] = json!(bounds.mapping_bytes);
+  schemas["FactoryFlowInputBinding"]["x-max-encoded-bytes"] = json!(bounds.input_binding_bytes);
 }

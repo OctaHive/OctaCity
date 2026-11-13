@@ -11,6 +11,7 @@ import { publicationChoice, publishCandidateAction } from './PublicationStep';
 import { sourceReferenceKey } from '../../shared/sourceReferences';
 import type { FlowAuthoringServices } from './FlowPrimitives';
 import { FlowSchemaSelect } from './FlowSchemaSelect';
+import { ProjectIssueResultFields } from './IssueFieldContracts';
 import {
   canSaveIssuePresentation,
   issuePresentationTitle,
@@ -260,6 +261,13 @@ function ResultEditor({
                 onChange={(shape) => onDraftChange({ ...draft, shape })}
               />
             </details>
+            {services && node.kind !== 'trusted_action' ? (
+              <ProjectIssueResultFields
+                services={services}
+                shape={draft.shape}
+                onChange={(shape) => onDraftChange({ ...draft, shape })}
+              />
+            ) : null}
             <OutcomeIssuePresentationEditor
               shape={draft.shape}
               canShowPublication={canShowPublication}

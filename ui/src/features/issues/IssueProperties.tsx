@@ -9,6 +9,9 @@ import {
 } from '../../shared/QueryStateNotice';
 import { propertyValue, propertyValueLabel } from './issuePlanningPresentation';
 import { IssuePlanningEditor } from './IssuePlanningEditor';
+import { builtinPlanningFields, issueBuiltinChoices } from './issueBuiltinFields';
+import { formatIssuePriority } from './issuePriority';
+import { IssueClassification } from './IssueClassification';
 import type { IssuePolicy, Issue, IssuesApi } from './api';
 
 /** Current planning is independent of the selected historical execution/requirements. */
@@ -18,12 +21,14 @@ export function IssueProperties({
   policy,
   ready,
   onRefresh,
+  onEditPriority,
 }: {
   api: IssuesApi;
   issue: Issue;
   policy: IssuePolicy | undefined;
   ready: boolean;
   onRefresh: () => Promise<unknown>;
+  onEditPriority: () => void;
 }) {
   const { t } = usePresentation();
   const editButtonRef = useRef<HTMLButtonElement>(null);
@@ -42,17 +47,47 @@ export function IssueProperties({
     enabled: needsRetained,
     queryFn: ({ signal }) => api.propertyDefinitions(issue.project_id, savedVersion, signal),
   });
+  const definitions = needsRetained ? retained.data : choices.data?.definitions;
+  const classification = <IssueClassification api={api} issue={issue} definitions={definitions} />;
+  const priority = (
+    <>
+      <dl>
+        <dt>{t('issues.priority')}</dt>
+        <dd>
+          {formatIssuePriority(
+            issue.content.priority,
+            t,
+            issueBuiltinChoices(
+              choices.data?.definitions.definition ?? { labels: [], properties: [] },
+            ).priority,
+          )}
+        </dd>
+      </dl>
+      <button
+        type="button"
+        disabled={!ready || policy?.source_owned.includes('priority') === true}
+        onClick={onEditPriority}
+      >
+        {t('classification.changePriority')}
+      </button>
+    </>
+  );
   if (!choices.data)
-    return choices.isPending ? (
-      <QueryLoadingNotice label={t('issues.properties')} />
-    ) : (
-      <QueryFailureNotice
-        title={t('issues.properties')}
-        error={choices.error}
-        onRetry={choices.refetch}
-      />
+    return (
+      <>
+        {priority}
+        {classification}
+        {choices.isPending ? (
+          <QueryLoadingNotice label={t('issues.properties')} />
+        ) : (
+          <QueryFailureNotice
+            title={t('issues.properties')}
+            error={choices.error}
+            onRetry={choices.refetch}
+          />
+        )}
+      </>
     );
-  const definitions = needsRetained ? retained.data : choices.data.definitions;
   const { assignees } = choices.data;
   const plan = issue.planning;
   const planningReady =
@@ -62,6 +97,8 @@ export function IssueProperties({
     (!needsRetained || (!!retained.data && !retained.isFetching && !retained.error));
   return (
     <>
+      {priority}
+      {classification}
       <QueryBackgroundNotice
         label={t('issues.properties')}
         error={choices.error}
@@ -97,6 +134,12 @@ export function IssueProperties({
       {definitions ? (
         <>
           <dl>
+            {builtinPlanningFields(plan, definitions.definition, t).map((field) => (
+              <Fragment key={field.field}>
+                <dt>{field.label}</dt>
+                <dd>{field.value}</dd>
+              </Fragment>
+            ))}
             <dt>{t('planning.assignee')}</dt>
             <dd>
               {plan?.assignee

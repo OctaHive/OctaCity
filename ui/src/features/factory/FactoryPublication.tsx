@@ -22,6 +22,7 @@ import type { FactoryApi } from './api';
 import { OutcomeIssuePresentationReview } from './OutcomeIssuePresentation';
 import { ClassificationEffects } from './FlowIssueClassification';
 import { classificationAction, matchesClassification } from './issueClassification';
+import { IssueInputReview, TypedClassificationReview } from './IssueInputReview';
 
 type Subject =
   | { kind: 'flow'; request: components['schemas']['CreateFactoryFlowDefinitionRequest'] }
@@ -133,7 +134,9 @@ export function FactoryPublication({
     !!currentClassification &&
     !capabilities.isFetching &&
     !capabilities.isError &&
-    localWrites.every(({ action }) => matchesClassification(action, currentClassification));
+    localWrites.every(({ action }) =>
+      matchesClassification(action, currentClassification, capabilities.data?.issue_fields),
+    );
   const latestSignatureRef = useRef('');
   const signature = JSON.stringify(subject);
   const reviewCurrent = review?.signature === signature;
@@ -313,6 +316,7 @@ export function FactoryPublication({
             <>
               {!reviewCurrent ? <p role="alert">{t('factory.publicationReviewStale')}</p> : null}
               <OutcomeIssuePresentationReview flow={review.flow} />
+              <IssueInputReview flow={review.flow} />
               {localWrites.length ? (
                 <section aria-label={t('factory.localClassification')}>
                   <h3>{t('factory.applyIssueClassification')}</h3>
@@ -322,7 +326,25 @@ export function FactoryPublication({
                     ))}
                   </ul>
                   {classificationReviewed && currentClassification ? (
-                    <ClassificationEffects choices={currentClassification} />
+                    <>
+                      {localWrites.some(
+                        ({ action }) =>
+                          !!action.parameters &&
+                          typeof action.parameters === 'object' &&
+                          'size_labels' in action.parameters,
+                      ) ? (
+                        <ClassificationEffects choices={currentClassification} />
+                      ) : null}
+                      {capabilities.data?.issue_fields
+                        ? localWrites.map(({ key, action }) => (
+                            <TypedClassificationReview
+                              key={key}
+                              action={action}
+                              choices={capabilities.data!.issue_fields!}
+                            />
+                          ))
+                        : null}
+                    </>
                   ) : capabilities.isFetching ? (
                     <p role="status">{t('factory.loadingStepCapabilities')}</p>
                   ) : capabilities.error ? (

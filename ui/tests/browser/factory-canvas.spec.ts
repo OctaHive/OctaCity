@@ -4,8 +4,12 @@ import type { components } from '../../.generated/api/schema';
 import { factoryRoleFixture } from '../fixtures/factoryRoles';
 import { configurationFixture } from '../fixtures/factory';
 import { installOperatorFixture } from './operatorFixture';
+import { factoryIssueFieldsFixture } from '../fixtures/factoryIssueFields';
 
-async function openGraph(page: Page, options: { language?: 'en' | 'ru'; executor?: boolean } = {}) {
+async function openGraph(
+  page: Page,
+  options: { language?: 'en' | 'ru'; executor?: boolean; issueSnapshot?: boolean } = {},
+) {
   await installOperatorFixture(page);
   const configuration = configurationFixture().configuration;
   const flow = structuredClone(configuration.flow);
@@ -23,6 +27,35 @@ async function openGraph(page: Page, options: { language?: 'en' | 'ru'; executor
     permissions: root.execution.permissions,
     outcomes: [{ key: 'observed', kind: 'success', schema }],
   }));
+  if (options.issueSnapshot) {
+    const input = { identity: 'issue-input', version: '1', digest: 'a'.repeat(64) };
+    flow.data_schemas.push({
+      reference: input,
+      shape: {
+        type: 'object',
+        fields: { component: { required: false, value: { type: 'enum', values: ['payments'] } } },
+      },
+    });
+    flow.issue_snapshot = {
+      version: 1,
+      definition_version: 7,
+      schema: input,
+      fields: { component: { source: { kind: 'component' }, required: false } },
+    };
+    root.input_schema = schema;
+    root.nodes[0]!.input_schema = schema;
+    root.nodes[0]!.input_binding = {
+      sources: { issue: { source: 'incoming', schema: input, path: '' } },
+      mapping: {
+        value: {
+          mapping: 'if_present',
+          path: '/issue/component',
+          then: { mapping: 'constant', value: true },
+          otherwise: { mapping: 'constant', value: false },
+        },
+      },
+    };
+  }
   if (options.executor) {
     const { profile, role, choice, capability } = factoryRoleFixture();
     const node = root.nodes[0]!;
@@ -147,6 +180,9 @@ async function openGraph(page: Page, options: { language?: 'en' | 'ru'; executor
         },
         data_schemas: body.definition.data_schemas,
         limits: body.definition.limits,
+        ...(body.definition.issue_snapshot
+          ? { issue_snapshot: body.definition.issue_snapshot }
+          : {}),
       },
     });
   });
@@ -171,6 +207,272 @@ async function openGraph(page: Page, options: { language?: 'en' | 'ru'; executor
     page.getByRole('region', { name: options.language === 'ru' ? 'Граф шагов' : 'Step graph' }),
   ).toBeVisible();
   return { validations, mutations };
+}
+
+for (const language of ['en', 'ru'] as const) {
+  test(`${language}: preserves a renamed snapshot consumer after reopening stale settings`, async ({
+    page,
+  }) => {
+    await page.setViewportSize({ width: 390, height: 900 });
+    const { validations } = await openGraph(page, { language });
+    const t = (key: MessageKey) => translate(language, key);
+    await page.route('**/api/v1/projects/*/factory-authoring-capabilities', (route) =>
+      route.fulfill({ json: factoryIssueFieldsFixture() }),
+    );
+    let sequence = 0;
+    await page.route('**/api/v1/flow-data-schemas/validate', async (route) => {
+      const body: components['schemas']['ValidateFactoryFlowDataSchemaRequest'] = route
+        .request()
+        .postDataJSON();
+      await route.fulfill({
+        json: {
+          reference: {
+            identity: body.identity,
+            version: body.version,
+            digest: (++sequence).toString().repeat(64),
+          },
+          shape: body.shape,
+        },
+      });
+    });
+    const configure = page.getByRole('button', {
+      name: t('factory.configureIssueSnapshot'),
+      exact: true,
+    });
+    await configure.click();
+    await page.getByRole('checkbox', { name: t('classification.component'), exact: true }).check();
+    await page
+      .getByRole('checkbox', { name: `first: ${t('classification.component')}`, exact: true })
+      .check();
+    await page.getByRole('button', { name: t('factory.useIssueSnapshot'), exact: true }).click();
+    await expect(
+      page.getByRole('button', { name: t('factory.removeIssueSnapshot'), exact: true }),
+    ).toBeVisible();
+    await configure.click();
+    await page.getByRole('textbox', { name: t('factory.nodeName'), exact: true }).fill('renamed');
+    await expect(
+      page.getByRole('button', { name: t('factory.useIssueSnapshot'), exact: true }),
+    ).toBeDisabled();
+    await expect(
+      page.getByRole('alert').filter({ hasText: t('factory.snapshotDraftChanged') }),
+    ).toBeVisible();
+    await page.getByRole('button', { name: t('projectDocument.cancel'), exact: true }).focus();
+    await page.keyboard.press('Enter');
+    await configure.click();
+    await expect(
+      page.getByRole('checkbox', {
+        name: `renamed: ${t('classification.component')}`,
+        exact: true,
+      }),
+    ).toBeChecked();
+    await page.getByRole('button', { name: t('factory.useIssueSnapshot'), exact: true }).click();
+    await page.getByRole('button', { name: t('factory.validateDraft'), exact: true }).click();
+    await expect.poll(() => validations.length).toBe(1);
+    const draft = validations[0]!.definition;
+    const node = draft.root.nodes.find((node) => node.key === 'renamed')!;
+    expect(node.input_schema).toEqual(draft.issue_snapshot!.schema);
+    expect(node.input_binding).toEqual({
+      sources: { issue: { source: 'incoming', schema: draft.issue_snapshot!.schema, path: '' } },
+      mapping: { value: { mapping: 'pointer', path: '/issue' } },
+    });
+    expect(draft.root.entry).toBe('renamed');
+    expect(
+      await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth),
+    ).toBe(true);
+  });
+
+  test(`${language}: reconciles a retired snapshot field explicitly with the keyboard`, async ({
+    page,
+  }) => {
+    await page.setViewportSize({ width: 390, height: 900 });
+    const { validations } = await openGraph(page, { language });
+    const t = (key: MessageKey) => translate(language, key);
+    let capabilities = factoryIssueFieldsFixture();
+    await page.route('**/api/v1/projects/*/factory-authoring-capabilities', (route) =>
+      route.fulfill({ json: capabilities }),
+    );
+    let sequence = 0;
+    await page.route('**/api/v1/flow-data-schemas/validate', async (route) => {
+      const body: components['schemas']['ValidateFactoryFlowDataSchemaRequest'] = route
+        .request()
+        .postDataJSON();
+      await route.fulfill({
+        json: {
+          reference: {
+            identity: body.identity,
+            version: body.version,
+            digest: (++sequence).toString().repeat(64),
+          },
+          shape: body.shape,
+        },
+      });
+    });
+    const configure = page.getByRole('button', {
+      name: t('factory.configureIssueSnapshot'),
+      exact: true,
+    });
+    await configure.click();
+    await page.getByRole('checkbox', { name: t('classification.component'), exact: true }).check();
+    const environment = translate(language, 'factory.issuePropertyField', { name: 'Environment' });
+    await page.getByRole('checkbox', { name: environment, exact: true }).check();
+    await page
+      .getByRole('checkbox', { name: `first: ${t('classification.component')}`, exact: true })
+      .check();
+    await page.getByRole('checkbox', { name: `first: ${environment}`, exact: true }).check();
+    await page.getByRole('button', { name: t('factory.useIssueSnapshot'), exact: true }).click();
+    await expect(
+      page.getByRole('button', { name: t('factory.removeIssueSnapshot'), exact: true }),
+    ).toBeVisible();
+    capabilities = {
+      ...capabilities,
+      issue_fields: {
+        ...capabilities.issue_fields,
+        definition_version: 8,
+        classification: { ...capabilities.issue_fields.classification, definition_version: 8 },
+        fields: capabilities.issue_fields.fields.filter(
+          (field) => !(field.source.kind === 'property' && field.source.id === 'environment'),
+        ),
+      },
+    };
+    await configure.click();
+    await expect(
+      page.getByRole('alert').filter({
+        hasText: translate(language, 'factory.unavailableSnapshotField', {
+          alias: 'environment',
+        }),
+      }),
+    ).toBeVisible();
+    await expect(
+      page.getByRole('button', { name: t('factory.useIssueSnapshot'), exact: true }),
+    ).toBeDisabled();
+    await page
+      .getByRole('button', {
+        name: translate(language, 'factory.removeUnavailableSnapshotField', {
+          alias: 'environment',
+        }),
+        exact: true,
+      })
+      .focus();
+    await page.keyboard.press('Enter');
+    await page.getByRole('button', { name: t('factory.useIssueSnapshot'), exact: true }).click();
+    await page.getByRole('button', { name: t('factory.validateDraft'), exact: true }).click();
+    await expect.poll(() => validations.length).toBe(1);
+    expect(validations[0]!.definition.issue_snapshot).toMatchObject({
+      definition_version: 8,
+      fields: { component: { source: { kind: 'component' }, required: false } },
+    });
+    expect(validations[0]!.definition.issue_snapshot!.fields).not.toHaveProperty('environment');
+    expect(
+      await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth),
+    ).toBe(true);
+  });
+
+  test(`${language}: preserves a published snapshot and reviews its presence-only dependency`, async ({
+    page,
+  }) => {
+    await page.setViewportSize({ width: 390, height: 900 });
+    const { validations } = await openGraph(page, { language, issueSnapshot: true });
+    const t = (key: MessageKey) => translate(language, key);
+    await expect(
+      page.getByRole('button', { name: t('factory.removeIssueSnapshot'), exact: true }),
+    ).toBeVisible();
+    await page.getByRole('button', { name: t('factory.validateDraft'), exact: true }).click();
+    await expect.poll(() => validations.length).toBe(1);
+    expect(validations[0]!.definition.issue_snapshot).toBeDefined();
+    await page.getByRole('button', { name: t('factory.reviewPublication'), exact: true }).click();
+    await expect(
+      page
+        .getByRole('dialog')
+        .getByText(
+          `first · ${translate(language, 'factory.snapshotPresenceChecks', { fields: '/component' })}`,
+          { exact: true },
+        ),
+    ).toBeVisible();
+  });
+
+  test(`${language}: authors bounded Issue snapshot projections with the keyboard on a narrow layout`, async ({
+    page,
+  }, info) => {
+    await page.setViewportSize({ width: 390, height: 900 });
+    const { validations } = await openGraph(page, { language });
+    const t = (key: MessageKey) => translate(language, key);
+    await page.route('**/api/v1/projects/*/factory-authoring-capabilities', (route) =>
+      route.fulfill({ json: factoryIssueFieldsFixture() }),
+    );
+    let sequence = 0;
+    await page.route('**/api/v1/flow-data-schemas/validate', async (route) => {
+      const body: components['schemas']['ValidateFactoryFlowDataSchemaRequest'] = route
+        .request()
+        .postDataJSON();
+      await route.fulfill({
+        json: {
+          reference: {
+            identity: body.identity,
+            version: body.version,
+            digest: (++sequence).toString().repeat(64),
+          },
+          shape: body.shape,
+        },
+      });
+    });
+    const configure = page.getByRole('button', {
+      name: t('factory.configureIssueSnapshot'),
+      exact: true,
+    });
+    await configure.focus();
+    await page.keyboard.press('Enter');
+    const component = page.getByRole('checkbox', {
+      name: t('classification.component'),
+      exact: true,
+    });
+    await component.focus();
+    await page.keyboard.press('Space');
+    const required = page.getByRole('checkbox', {
+      name: translate(language, 'factory.requiredIssueField', {
+        name: t('classification.component'),
+      }),
+      exact: true,
+    });
+    await required.focus();
+    await page.keyboard.press('Space');
+    await page
+      .getByRole('checkbox', { name: t('factory.includeIssueMaterials'), exact: true })
+      .check();
+    await page
+      .getByRole('spinbutton', { name: t('factory.maximumMaterialEntries'), exact: true })
+      .fill('2');
+    await page
+      .getByRole('spinbutton', { name: t('factory.maximumMaterialBytes'), exact: true })
+      .fill('2048');
+    for (const name of [
+      `first: ${t('classification.component')}`,
+      `first: ${t('factory.issueMaterials')}`,
+      `second: ${t('classification.component')}`,
+    ])
+      await page.getByRole('checkbox', { name, exact: true }).check();
+    await page.screenshot({ path: info.outputPath('issue-snapshot.png'), fullPage: true });
+    await page.getByRole('button', { name: t('factory.useIssueSnapshot'), exact: true }).click();
+    await expect(
+      page.getByRole('button', { name: t('factory.removeIssueSnapshot'), exact: true }),
+    ).toBeVisible();
+    await page.getByRole('button', { name: t('factory.validateDraft'), exact: true }).click();
+    await expect.poll(() => validations.length).toBe(1);
+    const definition = validations[0]!.definition;
+    expect(definition.accepted_predecessor).toBeUndefined();
+    expect(definition.issue_snapshot).toMatchObject({
+      definition_version: 7,
+      fields: { component: { source: { kind: 'component' }, required: true } },
+      materials: { materials: { source: { kind: 'selected', max_entries: 2 }, max_bytes: 2048 } },
+    });
+    expect(definition.root.nodes[1]?.input_binding?.mapping.value).toEqual({
+      mapping: 'object',
+      fields: { component: { mapping: 'pointer', path: '/issue/component' } },
+    });
+    expect(definition.root.nodes[2]?.input_binding ?? null).toBeNull();
+    expect(
+      await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth),
+    ).toBe(true);
+  });
 }
 
 for (const language of ['en', 'ru'] as const) {

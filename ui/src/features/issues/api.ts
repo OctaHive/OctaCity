@@ -19,6 +19,25 @@ export type IssuePropertyValue = components['schemas']['IssuePropertyValue'];
 /** Project-owned task transport. Saving a task never invokes Factory or a provider. */
 export function createIssuesApi(client = managementApi) {
   return {
+    async classification(
+      project_id: string,
+      issue_id: string,
+      version: number,
+      signal?: AbortSignal,
+    ) {
+      return requireManagementResponse(
+        (
+          await client.GET(
+            '/api/v1/projects/{project_id}/issues/{issue_id}/revisions/{version}/classification',
+            {
+              params: { path: { project_id, issue_id, version } },
+              cache: 'no-store',
+              signal: signal ?? null,
+            },
+          )
+        ).data,
+      );
+    },
     async outcomes(project_id: string, issue_id: string, signal?: AbortSignal) {
       return requireManagementResponse(
         (

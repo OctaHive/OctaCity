@@ -12,7 +12,82 @@ import { factoryApi } from './api';
 import { FlowGraphEditor } from './FlowGraphEditor';
 import { FactoryPublication } from './FactoryPublication';
 import { configurationFixture } from '../../../tests/fixtures/factory';
+import { factoryIssueFieldsFixture } from '../../../tests/fixtures/factoryIssueFields';
+import type { components } from '../../../.generated/api/schema';
 afterEach(cleanup);
+it('reviews selected typed classification fields and snapshot step inputs without legacy vocabulary', async () => {
+  const { config, request } = setup();
+  const capabilities = factoryIssueFieldsFixture();
+  const node = request.definition.root.nodes.find((node) => node.action)!;
+  for (const permissions of [
+    node.permissions,
+    request.definition.root.execution.permissions,
+    request.definition.limits.permissions,
+  ])
+    permissions.plugins.push(capabilities.issue_classification.plugin);
+  node.action = {
+    action: 'apply_issue_classification',
+    plugin: capabilities.issue_classification.plugin,
+    parameters: {
+      source_node: 'triage',
+      source_outcome: 'accepted',
+      outcome: node.outcomes[0]!.key,
+      policy: capabilities.issue_classification.policy,
+      fields: {
+        definition_version: 7,
+        priority: false,
+        component: true,
+        kind: false,
+        size: false,
+        properties: { severity: 'impact' },
+      },
+    },
+  };
+  const input = config.flow.data_schemas[0]!.reference;
+  node.input_binding = {
+    sources: { issue: { source: 'incoming', schema: input, path: '' } },
+    mapping: {
+      value: {
+        mapping: 'object',
+        fields: { component: { mapping: 'pointer', path: '/issue/component' } },
+      },
+    },
+  };
+  request.definition.issue_snapshot = {
+    version: 1,
+    definition_version: 7,
+    schema: input,
+    fields: { component: { source: { kind: 'component' }, required: true } },
+    materials: {
+      context: { source: { kind: 'selected', max_entries: 2 }, required: false, max_bytes: 2048 },
+    },
+  };
+  config.flow.issue_snapshot = request.definition.issue_snapshot;
+  config.flow.closure.definitions[0]!.nodes = request.definition.root.nodes;
+  const api = {
+    ...factoryApi,
+    validateFlow: vi.fn(async () => config.flow),
+    getAuthoringCapabilities: vi.fn(async () => capabilities),
+    createFlow: vi.fn<FactoryApi['createFlow']>(),
+  };
+  render(
+    <QueryClientProvider client={createConsoleQueryClient()}>
+      <MemoryRouter>
+        <FactoryPublication api={api} subject={{ kind: 'flow', request }} />
+      </MemoryRouter>
+    </QueryClientProvider>,
+  );
+  await userEvent.click(screen.getByRole('button', { name: 'Validate draft' }));
+  await userEvent.click(await screen.findByRole('button', { name: 'Review publication' }));
+  const dialog = within(await screen.findByRole('dialog'));
+  expect(await dialog.findByText('Classification: Impact')).toBeTruthy();
+  expect(dialog.getByText('component · Required')).toBeTruthy();
+  expect(dialog.getByText('context · Optional · selected · 2 · 2048 bytes')).toBeTruthy();
+  expect(dialog.getByText(`${node.key} · component`)).toBeTruthy();
+  expect(dialog.queryByText('Priority · 0–100')).toBeNull();
+  expect(dialog.getByRole('button', { name: 'Confirm publish' })).toHaveProperty('disabled', false);
+  expect(api.createFlow).not.toHaveBeenCalled();
+});
 it.each(['rejection', 'diagnostics'] as const)(
   'does not present %s for an older draft as the current validation result',
   async (response) => {
@@ -155,7 +230,10 @@ it.each([
     );
   },
 );
-function setup() {
+function setup(): {
+  config: ReturnType<typeof configurationFixture>['configuration'];
+  request: components['schemas']['CreateFactoryFlowDefinitionRequest'];
+} {
   const config = configurationFixture().configuration;
   const root = config.flow.closure.definitions.find(
     (item) => item.reference.id === config.flow.closure.root.id,

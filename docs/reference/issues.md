@@ -1008,11 +1008,13 @@ and creation fingerprint.
 ## Console Properties and related tasks
 
 Open a Project task and use **Properties → Edit properties**. The panel shows
-organizational responsibility, Project labels, due date and installed scalar or
-choice definitions. Legacy type/component/size custom properties remain readable;
-the new separate built-in controls and Project choice-list editors are planned in
-snapshot tasks 6.3 and 6.6. These fields are not provider names, agent roles or execution settings. An unconfigured Project
-shows an empty-definition explanation. Without a person directory, Unassigned
+organizational responsibility, Project labels, due date, built-in Issue component,
+type and size, and installed scalar or choice definitions. Component/type selectors
+reuse the Project catalog; size uses the fixed server-supported choices. Legacy
+type/component/size custom properties remain separate and are never promoted into
+built-ins. Project choice-list administration remains scoped to task 6.6. These
+fields are not provider names, agent roles or execution settings. An unconfigured
+Project shows an empty custom-definition explanation. Without a person directory, Unassigned
 remains usable; a retained unavailable assignment is identified honestly and can
 be cleared. Source-owned controls explain their ownership and remain disabled.
 
@@ -1045,6 +1047,31 @@ changed values use current definition bounds. Failed catalog refresh retains the
 readable prior data, marks it stale and blocks a new confirmation. An optional
 planning/relationship read failure does not hide the task or its manual
 requirements editor.
+
+**Properties → Change priority** opens the existing reviewed requirements editor
+with keyboard focus on priority. It uses the Project's priority choices, including
+server-declared defaults when the wire list is omitted. An explicitly empty list
+stays empty. Retained numeric priorities remain readable and survive unrelated
+edits; the selector offers no new numeric levels. A selected retired choice may be
+preserved or cleared. Loading/denied catalog data does not hide requirements or
+prevent an unrelated requirements edit. Changes to observed priority definitions
+require selecting/reviewing priority again; an open confirmation retains its
+original label, request body, Issue version and retry key. If the reviewed draft
+becomes stale, including a newly source-owned edited field, its unsubmitted
+confirmation is blocked. An indeterminate submitted command keeps its original
+retry identity under the server's current authorization checks.
+
+The **Classification** section reads applicability for the exact current Issue
+revision through a dedicated no-store endpoint. It shows manual, pipeline or
+Source origin, assessment time, links to the reviewed revision/producing Run and
+localized missing/stale/evidence reasons. Producer links use ordinary independent
+Run authorization. Applied values remain the Issue's content/planning values;
+triage recommendations and application conflicts stay in **Outcomes**. A saved
+assessment alone does not establish verified reproduction or execution readiness.
+Missing/denied applicability never appears as current data. **Refresh task** also
+rechecks time-dependent evidence even when the Issue version has not changed.
+Project field names and choice labels stay authoritative catalog data in either
+language; Console labels, fixed size names and diagnostics support English/Russian.
 
 Parent and sub-issue links show visible human task keys and titles. Parent
 selection reuses bounded authorized Project task pages, excludes the task itself

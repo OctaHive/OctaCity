@@ -1,4 +1,7 @@
 import type { MessageKey } from '../../app/presentation/messages';
+import { ISSUE_CONSTRAINTS as bounds } from '../../../.generated/api/constraints';
+import type { components } from '../../../.generated/api/schema';
+type Choice = components['schemas']['IssuePropertyChoice'];
 
 /** Legacy numeric levels remain readable alongside exact Project choice IDs. */
 const ISSUE_PRIORITY_LEVELS = [
@@ -13,9 +16,10 @@ type Translate = (key: MessageKey, values?: Readonly<Record<string, string | num
 export function formatIssuePriority(
   priority: number | string | null | undefined,
   t: Translate,
+  choices: readonly Choice[] = bounds.defaultPriorities,
 ): string {
   if (priority == null) return t('issues.notSet');
-  if (typeof priority === 'string') return priority;
+  if (typeof priority === 'string') return choices.find((c) => c.id === priority)?.name ?? priority;
   return (
     ISSUE_PRIORITY_LEVELS.find((level) => level.value === priority)?.label ??
     t('issues.legacyPriority', { value: priority })
@@ -23,15 +27,23 @@ export function formatIssuePriority(
 }
 
 /** Include an existing non-preset value so editing never silently selects another level. */
-export function issuePriorityOptions(priority: number | string | null | undefined, t: Translate) {
+export function issuePriorityOptions(
+  priority: number | string | null | undefined,
+  t: Translate,
+  choices: readonly Choice[] = bounds.defaultPriorities,
+) {
   // Menu identity must distinguish Project choice "2" from legacy numeric 2.
   const options: { value: string; label: string; priority: number | string | null }[] = [
     { value: '', label: t('issues.notSet'), priority: null },
-    ...ISSUE_PRIORITY_LEVELS.map((level) => ({
-      value: `legacy:${level.value}`,
-      label: level.label,
-      priority: level.value,
-    })),
+    ...choices
+      .filter((choice) => !choice.retired || choice.id === priority)
+      .map((choice) => ({
+        value: `choice:${choice.id}`,
+        label: choice.retired
+          ? t('classification.retiredChoice', { name: choice.name })
+          : choice.name,
+        priority: choice.id,
+      })),
   ];
   if (priority != null && !options.some((option) => option.priority === priority)) {
     options.push({

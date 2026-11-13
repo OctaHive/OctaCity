@@ -78,6 +78,12 @@ export function fakeIssueSourcesApi() {
 export function fakeIssuesApi() {
   return {
     outcomes: vi.fn().mockResolvedValue({ items: [] }),
+    classification: vi
+      .fn()
+      .mockImplementation(async (_project: string, _issue: string, version: number) => ({
+        version,
+        fields: [],
+      })),
     publishProperties: vi.fn(),
     editPlanning: vi
       .fn()

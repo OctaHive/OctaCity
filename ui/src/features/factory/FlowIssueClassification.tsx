@@ -7,9 +7,13 @@ import { QueryFailureNotice } from '../../shared/QueryStateNotice';
 import { SelectMenu } from '../../shared/SelectMenu';
 import { sourceReferenceKey } from '../../shared/sourceReferences';
 import type { FlowAuthoringServices } from './FlowPrimitives';
+import { TypedIssueClassification } from './TypedIssueClassification';
 import {
   classificationAction,
+  assessmentMapping,
+  classificationParameters,
   matchesClassification,
+  sameClassificationProducer,
   withoutClassification,
   type ClassificationChoices,
 } from './issueClassification';
@@ -17,29 +21,7 @@ import {
 type S = components['schemas'];
 type Node = S['FactoryFlowNodeDefinition'];
 type Schema = S['FactoryFlowDataSchema'];
-type Fields = Extract<S['FactoryFlowValueSchema'], { type: 'object' }>['fields'];
-type Mapping = S['FactoryFlowValueMapping'];
 
-/** Keep optional observations absent when the accepted result omits them. */
-function assessmentMapping(fields: Fields): Mapping {
-  const selected = Object.entries(fields);
-  const build = (index: number, projection: Record<string, Mapping>): Mapping => {
-    const field = selected[index];
-    if (!field) return { mapping: 'object', fields: projection };
-    const [name, schema] = field;
-    const path = `/assessment/${name}`;
-    const present = build(index + 1, { ...projection, [name]: { mapping: 'pointer', path } });
-    return schema.required
-      ? present
-      : {
-          mapping: 'if_present',
-          path,
-          then: present,
-          otherwise: build(index + 1, projection),
-        };
-  };
-  return build(0, {});
-}
 export function ClassificationEffects({ choices }: { choices: ClassificationChoices }) {
   const { t } = usePresentation();
   return (
@@ -78,6 +60,9 @@ export function FlowIssueClassification({
   const { t } = usePresentation();
   const configured = node.action?.action === classificationAction;
   const [enabled, setEnabled] = useState(false);
+  const [mode, setMode] = useState(() =>
+    configured && !classificationParameters(node.action)?.fields ? 'legacy' : 'project',
+  );
   const [source, setSource] = useState('');
   const [pending, setPending] = useState(false);
   const [error, setError] = useState<Error | null>(null);
@@ -94,6 +79,8 @@ export function FlowIssueClassification({
   const capabilities = useFactoryAuthoringCapabilities(services, enabled || configured, 0);
   const offered = capabilities.data?.issue_classification;
   const choices = offered?.size_labels.length ? offered : undefined;
+  const issueFields = capabilities.data?.issue_fields;
+  const typed = mode === 'project' && !!offered && !!issueFields?.classification;
   const producers = root.transitions.flatMap((edge) => {
     if (
       edge.target.kind !== 'node' ||
@@ -200,8 +187,7 @@ export function FlowIssueClassification({
         current.node.input_schema !== node.input_schema ||
         current.receipt !== receipt ||
         current.choices !== choices ||
-        current.producer?.key !== producer.key ||
-        current.producer.outcome.schema.digest !== producer.outcome.schema.digest
+        !sameClassificationProducer(current.producer, producer)
       ) {
         throw new Error(t('factory.classificationDraftChanged'));
       }
@@ -280,53 +266,84 @@ export function FlowIssueClassification({
       ) : null}
       {enabled || configured ? (
         <>
-          <p>{t('factory.classificationHelp')}</p>
-          {failure ? (
-            <QueryFailureNotice
-              title={t('factory.localClassification')}
-              error={failure}
-              onRetry={() => (error ? void configure() : void capabilities.refetch())}
-            />
-          ) : null}
-          {capabilities.isFetching ? (
-            <p role="status">{t('factory.loadingStepCapabilities')}</p>
-          ) : null}
-          {capabilities.isSuccess && !choices ? (
-            <p role="status">{t('factory.classificationSetupNeeded')}</p>
-          ) : null}
-          {choices && (!configured || matches) ? <ClassificationEffects choices={choices} /> : null}
-          {configured && choices && !matches ? (
-            <p>{t('factory.classificationMappingChanged')}</p>
-          ) : null}
-          {!matches && !producers.length ? <p>{t('factory.classificationNeedsSource')}</p> : null}
-          {!matches && producers.length > 1 ? (
+          {offered && issueFields?.classification && choices ? (
             <SelectMenu
-              ariaLabel={t('factory.classificationSource')}
-              value={source}
+              ariaLabel={t('factory.classificationMode')}
+              value={mode}
               options={[
-                { value: '', label: t('factory.chooseInput') },
-                ...producers.map(({ key }) => ({ value: key, label: key })),
+                { value: 'project', label: t('factory.projectClassificationFields') },
+                { value: 'legacy', label: t('factory.legacyClassification') },
               ]}
-              onValueChange={setSource}
+              onValueChange={setMode}
             />
           ) : null}
-          {!matches && conflict ? <p>{t('factory.classificationNeedsEmptyStep')}</p> : null}
-          {!matches ? (
-            <button
-              type="button"
-              disabled={
-                !producer ||
-                !choices ||
-                !!conflict ||
-                pending ||
-                capabilities.isFetching ||
-                capabilities.isError
-              }
-              onClick={() => void configure()}
-            >
-              {t('factory.useProjectClassification')}
-            </button>
-          ) : null}
+          {typed && offered && issueFields ? (
+            <TypedIssueClassification
+              node={node}
+              root={root}
+              schemas={schemas}
+              services={services}
+              choices={offered}
+              fields={issueFields}
+              ready={!capabilities.isFetching && !capabilities.isError}
+              onChange={onChange}
+              onPendingChange={onPendingChange}
+            />
+          ) : (
+            <>
+              <p>{t('factory.classificationHelp')}</p>
+              {failure ? (
+                <QueryFailureNotice
+                  title={t('factory.localClassification')}
+                  error={failure}
+                  onRetry={() => (error ? void configure() : void capabilities.refetch())}
+                />
+              ) : null}
+              {capabilities.isFetching ? (
+                <p role="status">{t('factory.loadingStepCapabilities')}</p>
+              ) : null}
+              {capabilities.isSuccess && !choices ? (
+                <p role="status">{t('factory.classificationSetupNeeded')}</p>
+              ) : null}
+              {choices && (!configured || matches) ? (
+                <ClassificationEffects choices={choices} />
+              ) : null}
+              {configured && choices && !matches ? (
+                <p>{t('factory.classificationMappingChanged')}</p>
+              ) : null}
+              {!matches && !producers.length ? (
+                <p>{t('factory.classificationNeedsSource')}</p>
+              ) : null}
+              {!matches && producers.length > 1 ? (
+                <SelectMenu
+                  ariaLabel={t('factory.classificationSource')}
+                  value={source}
+                  options={[
+                    { value: '', label: t('factory.chooseInput') },
+                    ...producers.map(({ key }) => ({ value: key, label: key })),
+                  ]}
+                  onValueChange={setSource}
+                />
+              ) : null}
+              {!matches && conflict ? <p>{t('factory.classificationNeedsEmptyStep')}</p> : null}
+              {!matches ? (
+                <button
+                  type="button"
+                  disabled={
+                    !producer ||
+                    !choices ||
+                    !!conflict ||
+                    pending ||
+                    capabilities.isFetching ||
+                    capabilities.isError
+                  }
+                  onClick={() => void configure()}
+                >
+                  {t('factory.useProjectClassification')}
+                </button>
+              ) : null}
+            </>
+          )}
         </>
       ) : null}
     </fieldset>

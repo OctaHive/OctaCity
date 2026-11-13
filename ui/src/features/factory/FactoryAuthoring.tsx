@@ -72,6 +72,7 @@ export function FactoryAuthoring({
         limits: flow.limits,
         ...(flow.pools ? { pools: flow.pools } : {}),
         ...(flow.accepted_predecessor ? { accepted_predecessor: flow.accepted_predecessor } : {}),
+        ...(flow.issue_snapshot ? { issue_snapshot: flow.issue_snapshot } : {}),
       });
     },
   );

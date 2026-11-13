@@ -1,6 +1,14 @@
 import { QueryClient } from '@tanstack/react-query';
 
 export const queryKeys = {
+  issueClassification: (project: string, issue: string, version?: number) =>
+    [
+      'issues',
+      project,
+      issue,
+      'classification',
+      ...(version === undefined ? [] : [version]),
+    ] as const,
   factoryPolicies: (project: string) => ['factory', 'policies', project] as const,
   factoryDraftDefaults: (project: string, draft: string) =>
     ['factory', 'draft-defaults', project, draft] as const,
