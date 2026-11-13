@@ -152,6 +152,35 @@ root when no evidence directory is supplied) and its unique database for diagnos
 private test evidence. The caller owns cleanup of disposable services and failed
 databases/directories. Do not reuse or delete a personal stand as cleanup.
 
+Before asserting that an ordinary Build failed, the journey saves
+`om-*/failed-build-<build-id>/` beneath that private evidence directory. Collection
+also runs before accepting a terminal Factory Run state. The folder contains
+`build.json`, `attempt.json`, all pages of each Job's events merged into
+`job-<job-id>-events.json`, Artifact metadata in `artifacts.json`, and the exact
+`codex-run-result.json` and `codex-run-trace.ndjson` bodies downloaded through the
+ordinary Artifact API. Files have mode `0600` and the folder has mode `0700`.
+Existing CI evidence upload includes this folder before disposable services are
+removed; no separate workflow setting is required.
+
+Collection keeps available Codex outputs when Attempt/events or another output
+is unavailable. `collection-error.json` records unavailable sources with bounded
+error categories; the original Build assertion still fails. Each HTTP read has a
+five-second timeout and a 4 MiB response ceiling matching this journey's
+single-output limit. Private bodies and signed download URLs are not printed in
+the panic, and download URLs are not saved in the diagnostic error file.
+
+The collector can be checked without the native release prerequisites:
+
+```sh
+CARGO_INCREMENTAL=0 cargo test --locked -p octacity-release-harness \
+  --test factory_manual_authoring failed_build_diagnostics_
+```
+
+These HTTP/file regressions verify preservation before the original assertion,
+multi-page events, private file modes, exact output bytes, partial availability
+and an oversized output. They do not qualify or repair a native runtime failure;
+the retained diagnostics from the next qualified run identify that failure.
+
 The first case qualifies headless authoring and isolated execution. The packaged
 Console and recovery cases are described below. Additional compatibility matrices
 retain their separate tasks. A finite peer does not qualify real-model quality,

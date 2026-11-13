@@ -367,7 +367,31 @@ assert.deepEqual(issueConstraints({
   }}},
   components: {schemas: {
     IssueCommentBody: {type: 'string', maxLength: 31, 'x-max-utf8-bytes': 7},
-    IssuePlanning: {properties: {labels: {maxItems: 2}}},
+    IssuePlanning: {properties: {
+      labels: {maxItems: 2},
+      size: {anyOf: [{type: 'string', enum: ['small', 'medium', 'large']}, {type: 'null'}]},
+    }},
+    IssuePropertyDefinitionSet: {
+      'x-max-json-utf8-bytes': 4096,
+      properties: {
+        properties: {maxItems: 5},
+        components: {maxItems: 6},
+        priorities: {default: [{id: 'urgent', name: 'Urgent', retired: false}]},
+        types: {default: [{id: 'request', name: 'Request', retired: false}]},
+      },
+    },
+    IssuePropertyDefinition: {properties: {
+      id: {pattern: '^[a-z0-9_]+$', 'x-max-utf8-bytes': 31},
+      name: {'x-max-utf8-bytes': 48},
+    }},
+    IssuePropertyKind: {oneOf: [
+      {properties: {type: {const: 'text'}, max_bytes: {maximum: 256}}},
+      {properties: {type: {const: 'choice'}, choices: {maxItems: 6}}},
+      {properties: {type: {const: 'boolean'}}},
+      {properties: {type: {const: 'number'}, minimum: {minimum: -12}, maximum: {maximum: 12}}},
+      {properties: {type: {const: 'date'}}},
+    ]},
+    IssueClassificationBindings: {properties: {severity: {}, risk: {}}},
     IssueOutcomeCard: {properties: {conclusion: {'x-max-utf8-bytes': 96}}},
     IssueContent: {properties: {
       title: {'x-max-utf8-bytes': 64},
@@ -380,6 +404,15 @@ assert.deepEqual(issueConstraints({
     }},
   }},
 }), {
+  catalog: {
+    maximumBytes: 4096, maximumFields: 5, maximumChoices: 6,
+    keyMaximumBytes: 31, keyPattern: '^[a-z0-9_]+$', nameMaximumBytes: 48,
+    textMaximumBytes: 256, numberMinimum: -12, numberMaximum: 12,
+    kinds: ['text', 'choice', 'boolean', 'number', 'date'], classificationSlots: ['severity', 'risk'],
+  },
+  defaultPriorities: [{id: 'urgent', name: 'Urgent', retired: false}],
+  defaultTypes: [{id: 'request', name: 'Request', retired: false}],
+  sizes: ['small', 'medium', 'large'],
   commentMaximumBytes: 7, labelsMaximumCount: 2, titleMaximumBytes: 64, descriptionMaximumBytes: 1024, acceptanceMaximumBytes: 512,
   priorityMinimum: 0, priorityMaximum: 9, defaultPageSize: 3, outcomeConclusionMaximumBytes: 96, reasonMaximumBytes: 80,
 });

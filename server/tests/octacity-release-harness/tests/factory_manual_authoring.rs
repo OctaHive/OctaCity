@@ -34,6 +34,11 @@ mod browser_proxy;
 mod code;
 #[path = "factory_manual_authoring/console.rs"]
 mod console;
+#[path = "factory_manual_authoring/diagnostics.rs"]
+mod diagnostics;
+#[cfg(test)]
+#[path = "factory_manual_authoring/diagnostics_tests.rs"]
+mod diagnostics_tests;
 #[path = "release_vertical_slice/environment.rs"]
 mod environment;
 #[path = "factory_manual_authoring/installation.rs"]
@@ -435,24 +440,12 @@ async fn journey(scenario: Scenario<'_>) {
   let state = timeout(Duration::from_secs(240), async {
     loop {
       let state = get_json(&client, format!("{origin}/api/v1/factory-runs/{run}")).await;
+      diagnostics::assert_no_failed_builds(&client, &origin, &resources.project, &directory).await;
       if ["completed", "failed", "cancelled"].contains(&state["state"].as_str().unwrap_or("")) {
         break state;
       }
       if let Some(status) = worker.try_wait().unwrap() {
         panic!("Agent exited: {status}; private evidence: {}", directory.display());
-      }
-      let builds = get_json(
-        &client,
-        format!("{origin}/api/v1/projects/{}/builds?limit=100", resources.project),
-      )
-      .await;
-      for build in builds["items"].as_array().unwrap() {
-        assert_ne!(
-          build["state"],
-          "failed",
-          "ordinary Build failed: {build}; private evidence: {}",
-          directory.display()
-        );
       }
       sleep(Duration::from_millis(100)).await;
     }
