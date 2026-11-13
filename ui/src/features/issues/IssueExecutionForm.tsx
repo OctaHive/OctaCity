@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from 'react';
-import { useQueryClient } from '@tanstack/react-query';
+import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { Link } from 'react-router-dom';
 import { FACTORY_AUTHORING_SCHEMAS } from '../../../.generated/api/factory-authoring';
 import { usePresentation } from '../../app/presentation/PresentationProvider';
@@ -7,15 +7,19 @@ import { queryKeys } from '../../app/query';
 import { projectPath } from '../../app/routes';
 import { ConfirmedCommand } from '../../shared/ConfirmedCommand';
 import { requireVersionedMutationHeaders } from '../../shared/confirmedIntent';
-import {
-  PipelineTargetFields,
-  usePipelineTarget,
-  type PipelineTargetSources,
-} from '../../shared/PipelineTargetFields';
+import { PipelineTargetFields, usePipelineTarget } from '../../shared/PipelineTargetFields';
 import { SelectMenu } from '../../shared/SelectMenu';
 import { PagedExplorerBranch, useCursorPage } from '../../shared/PagedExplorerBranch';
 import type { Issue } from './api';
-import type { IssueExecutionsApi, IssueExecutionRequest } from './executionApi';
+import type {
+  IssueExecutionsApi,
+  IssueExecutionRequest,
+  IssueExecutionSources,
+} from './executionApi';
+import { sameExecutionTarget } from './issueExecutionTarget';
+import { IssueExecutionSnapshotView } from './IssueExecutionSnapshotView';
+import { IssueSnapshotProblems } from '../../shared/IssueSnapshotProblems';
+import { QueryContent, QueryLoadingNotice } from '../../shared/QueryStateNotice';
 import { ExecutionReceipt } from './IssueExecutionReceipt';
 import styles from './Issues.module.css';
 const classification = FACTORY_AUTHORING_SCHEMAS.FactoryWorkClassification.properties;
@@ -32,7 +36,7 @@ export function IssueExecutionForm({
 }: {
   issue: Issue;
   api: IssueExecutionsApi;
-  sources: PipelineTargetSources;
+  sources: IssueExecutionSources;
   ready: boolean;
   onRefresh: () => Promise<unknown>;
   onSelect: (id: string) => void;
@@ -51,10 +55,30 @@ export function IssueExecutionForm({
     };
   }, []);
   const selection = usePipelineTarget(issue.project_id, sources);
-  const [usePredecessor, setUsePredecessor] = useState(false);
+  const configuration = useQuery({
+    queryKey: queryKeys.factoryConfiguration(
+      selection.configuration?.id ?? null,
+      selection.configuration?.version ?? null,
+    ),
+    enabled: !!selection.configuration,
+    queryFn: ({ signal }) =>
+      sources.getConfiguration(
+        selection.configuration!.id,
+        selection.configuration!.version,
+        signal,
+      ),
+  });
+  const flow =
+    configuration.data?.configuration.reference.id === selection.configuration?.id &&
+    configuration.data?.configuration.reference.version === selection.configuration?.version &&
+    configuration.data?.configuration.reference.project_id === issue.project_id
+      ? configuration.data.configuration.flow
+      : undefined;
+  const snapshotInput = flow?.issue_snapshot;
+  const usePredecessor = !!flow?.accepted_predecessor;
   const [selectedRun, setSelectedRun] = useState('');
   const history = useCursorPage(
-    [...queryKeys.issueExecutionsRoot(issue.project_id, issue.id), 'predecessors'],
+    queryKeys.issueExecutionPredecessors(issue.project_id, issue.id),
     (cursor, signal) => api.list(issue.project_id, issue.id, cursor, signal),
     { enabled: usePredecessor },
   );
@@ -85,14 +109,44 @@ export function IssueExecutionForm({
     consequence: string;
     returnFocus: HTMLElement;
   } | null>(null);
+  const preview = useQuery({
+    queryKey: queryKeys.issueExecutionReview(
+      issue.project_id,
+      issue.id,
+      review?.version,
+      review?.request,
+    ),
+    enabled: review !== null,
+    gcTime: 0,
+    staleTime: Infinity,
+    refetchOnWindowFocus: false,
+    queryFn: ({ signal }) =>
+      api.review(issue.project_id, issue.id, review!.request, review!.version, signal),
+  });
+  const previewMatches = !!(
+    review &&
+    preview.data &&
+    preview.data.version === review.version &&
+    sameExecutionTarget(preview.data.target, review.request.target) &&
+    (!snapshotInput || (preview.data.snapshot && preview.data.snapshot_digest)) &&
+    (!preview.data.snapshot ||
+      (preview.data.snapshot.project_id === issue.project_id &&
+        preview.data.snapshot.issue_id === issue.id &&
+        preview.data.snapshot.version === review.version &&
+        sameExecutionTarget(preview.data.snapshot.target, review.request.target)))
+  );
   const valid =
     ready &&
     selection.target !== null &&
+    !!flow &&
+    !configuration.isFetching &&
+    !configuration.error &&
     (!usePredecessor || (!!predecessor && !history.isFetching && !history.error)) &&
     !!issue.content.acceptance?.trim() &&
-    Number.isSafeInteger(priority) &&
-    priority >= classification.priority.minimum &&
-    priority <= classification.priority.maximum;
+    (!!snapshotInput?.admission ||
+      (Number.isSafeInteger(priority) &&
+        priority >= classification.priority.minimum &&
+        priority <= classification.priority.maximum));
   return (
     <section className={styles.panel} aria-label={t('issues.start')}>
       <h2>{t('issues.start')}</h2>
@@ -108,17 +162,11 @@ export function IssueExecutionForm({
       </p>
       <fieldset disabled={review !== null}>
         <PipelineTargetFields selection={selection} />
-        <label>
-          <input
-            type="checkbox"
-            checked={usePredecessor}
-            onChange={(event) => {
-              setUsePredecessor(event.target.checked);
-              setSelectedRun('');
-            }}
-          />
-          {t('issues.usePredecessor')}
-        </label>
+        {selection.configuration ? (
+          <QueryContent query={configuration} label={t('factory.configurations')}>
+            {() => (flow ? null : <p role="alert">{t('issues.snapshotMismatch')}</p>)}
+          </QueryContent>
+        ) : null}
         {usePredecessor ? (
           <PagedExplorerBranch
             query={history}
@@ -147,22 +195,27 @@ export function IssueExecutionForm({
             )}
           </PagedExplorerBranch>
         ) : null}
-        <label>
-          {t('factory.workPriority')}
-          <input
-            type="number"
-            min={classification.priority.minimum}
-            max={classification.priority.maximum}
-            value={priority}
-            onChange={(event) => setPriority(event.currentTarget.valueAsNumber)}
-          />
-        </label>
-        <SelectMenu
-          ariaLabel={t('factory.workRisk')}
-          value={risk}
-          onValueChange={setRisk}
-          options={classification.risk.enum.map((value) => ({ value, label: value }))}
-        />
+        {!snapshotInput?.admission ? (
+          <>
+            {' '}
+            <label>
+              {t('factory.workPriority')}
+              <input
+                type="number"
+                min={classification.priority.minimum}
+                max={classification.priority.maximum}
+                value={priority}
+                onChange={(event) => setPriority(event.currentTarget.valueAsNumber)}
+              />
+            </label>
+            <SelectMenu
+              ariaLabel={t('factory.workRisk')}
+              value={risk}
+              onValueChange={setRisk}
+              options={classification.risk.enum.map((value) => ({ value, label: value }))}
+            />{' '}
+          </>
+        ) : null}
       </fieldset>
       <div className={styles.actions}>
         <button
@@ -177,11 +230,13 @@ export function IssueExecutionForm({
                   mapping: 'title_description_acceptance_v1',
                   ...(predecessor ? { predecessor_run: predecessor } : {}),
                 },
-                classification: { priority, risk, metadata: {} },
+                ...(!snapshotInput?.admission
+                  ? { classification: { priority, risk, metadata: {} } }
+                  : {}),
               },
               version: issue.version,
               returnFocus: event.currentTarget,
-              consequence: `${t('issues.executionReview', { version: issue.version })} ${selection.summary}; ${t('factory.workPriority')}: ${priority}; ${t('factory.workRisk')}: ${risk}${predecessor ? `\n${t('issues.predecessorRun')} · ${predecessor}` : ''}\n${issue.content.title}\n${issue.content.description}\n${issue.content.acceptance}`,
+              consequence: `${t('issues.executionReview', { version: issue.version })} ${selection.summary}; ${!snapshotInput?.admission ? `${t('factory.workPriority')}: ${priority}; ${t('factory.workRisk')}: ${risk}` : ''}${predecessor ? `\n${t('issues.predecessorRun')} · ${predecessor}` : ''}\n${issue.content.title}\n${issue.content.description}\n${issue.content.acceptance}`,
             });
           }}
         >
@@ -191,14 +246,54 @@ export function IssueExecutionForm({
           {t('command.abandon')}
         </button>
       </div>
-      {review ? (
+      {review && preview.isPending ? (
+        <>
+          <QueryLoadingNotice label={t('issues.snapshotPreview')} />
+          <button type="button" onClick={() => setReview(null)}>
+            {t('issues.snapshotCancelReview')}
+          </button>
+        </>
+      ) : null}
+      {review && !preview.isPending ? (
         <ConfirmedCommand
           title={t('issues.reviewExecution')}
           confirmLabel={t('issues.confirmExecution')}
           consequence={review.consequence}
-          request={review.request}
+          renderReview={
+            <>
+              {issue.version !== review.version ? (
+                <p role="alert">{t('issues.snapshotRevisionChanged')}</p>
+              ) : null}
+              <IssueSnapshotProblems error={preview.error} />
+              <QueryContent query={preview} label={t('issues.snapshotPreview')}>
+                {(data) =>
+                  previewMatches && !preview.error && !preview.isFetching && data.snapshot ? (
+                    <IssueExecutionSnapshotView
+                      snapshot={data.snapshot}
+                      digest={data.snapshot_digest}
+                    />
+                  ) : !previewMatches ? (
+                    <p role="alert">{t('issues.snapshotMismatch')}</p>
+                  ) : null
+                }
+              </QueryContent>
+            </>
+          }
+          renderFailure={(error) => <IssueSnapshotProblems error={error} />}
+          request={
+            preview.data?.snapshot_digest
+              ? { ...review.request, expected_snapshot_digest: preview.data.snapshot_digest }
+              : review.request
+          }
           version={review.version}
-          ready={valid && issue.version === review.version}
+          ready={
+            valid &&
+            issue.version === review.version &&
+            !!preview.data &&
+            !preview.isFetching &&
+            !preview.error &&
+            previewMatches
+          }
           returnFocus={review.returnFocus}
           queryClient={queryClient}
           invalidations={[{ queryKey: queryKeys.issueExecutionsRoot(issue.project_id, issue.id) }]}

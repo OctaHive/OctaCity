@@ -29,6 +29,7 @@ pub(super) fn insert(schemas: &mut Map<String, Value>) {
       [
         ("target", schema_ref("IssueExecutionTarget")),
         ("classification", nullable(schema_ref("FactoryWorkClassification"))),
+        ("expected_snapshot_digest", nullable(schema_ref("FactoryDigest"))),
       ],
       &["target"],
     ),
@@ -52,6 +53,7 @@ pub(super) fn insert(schemas: &mut Map<String, Value>) {
         ("expected_version", positive_integer()),
         ("target", schema_ref("IssueExecutionTarget")),
         ("classification", schema_ref("FactoryWorkClassification")),
+        ("expected_snapshot_digest", schema_ref("FactoryDigest")),
       ],
       &["project_id", "issue_id", "expected_version", "target"],
     ),

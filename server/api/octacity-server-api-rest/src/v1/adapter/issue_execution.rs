@@ -178,6 +178,8 @@ pub(super) struct StartRequest {
   target: octacity_server_application::IssueExecutionTarget,
   #[serde(default)]
   classification: Option<Value>,
+  #[serde(default)]
+  expected_snapshot_digest: Option<octacity_server_application::FactoryDigest>,
 }
 pub(super) async fn review(
   State(app): State<Arc<ManagementApplication>>,
@@ -190,7 +192,7 @@ pub(super) async fn review(
   let body = body(payload, &id)?;
   let intent = serde_json::from_value(
     json!({"project_id":project,"issue_id":issue,"expected_version":expected.version(),
-    "target":body.target,"classification":body.classification}),
+    "target":body.target,"classification":body.classification,"expected_snapshot_digest":body.expected_snapshot_digest}),
   )
   .map_err(|_| application_error(ApplicationFailure::Invalid, &id))?;
   let result = endpoints(&app, &id)?
@@ -253,7 +255,7 @@ pub(super) async fn start(
   let body = body(payload, &id)?;
   let intent: octacity_server_application::RequestIssueExecutionIntent = serde_json::from_value(json!({
     "project_id":project,"issue_id":issue,"expected_version":expected.version(),
-    "target":body.target,"classification":body.classification
+    "target":body.target,"classification":body.classification,"expected_snapshot_digest":body.expected_snapshot_digest
   }))
   .map_err(|_| invalid())?;
   let services = endpoints(&app, &id)?

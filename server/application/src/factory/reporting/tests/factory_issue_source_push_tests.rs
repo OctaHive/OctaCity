@@ -114,6 +114,7 @@ fn configured_issue_action_retains_exact_push_review_and_origin_without_provider
           snapshot_digest: None,
           id: IssueExecutionRequestId::generate(),
           intent: RequestIssueExecutionIntent {
+            expected_snapshot_digest: None,
             project_id: project,
             issue_id: issue.id,
             expected_version: issue.version,

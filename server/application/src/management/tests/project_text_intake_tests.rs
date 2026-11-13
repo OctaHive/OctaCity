@@ -784,6 +784,7 @@ fn project_text_intake_issue_publication_recovers_original_revision_and_associat
         &context(),
         RequestIssueExecutionCommand {
           intent: RequestIssueExecutionIntent {
+            expected_snapshot_digest: None,
             classification: Some(generic.intent.classification.clone()),
             project_id: project,
             issue_id: original.id,

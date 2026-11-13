@@ -257,7 +257,16 @@ function publicValidationIssues(value: unknown): readonly ManagementValidationIs
         issue.code !== 'budget_exceeds_ceiling' &&
         issue.code !== 'concurrency_exceeds_ceiling' &&
         issue.code !== 'ambiguous_issue_presentation_slot' &&
-        issue.code !== 'verification_retention_unavailable')
+        issue.code !== 'verification_retention_unavailable' &&
+        issue.code !== 'issue_snapshot_missing_value' &&
+        issue.code !== 'issue_snapshot_incompatible_value' &&
+        issue.code !== 'issue_snapshot_semantic_binding_changed' &&
+        issue.code !== 'issue_snapshot_inapplicable' &&
+        issue.code !== 'issue_snapshot_evidence_unavailable' &&
+        issue.code !== 'issue_snapshot_policy_ineligible' &&
+        issue.code !== 'issue_snapshot_encoding_limit_exceeded' &&
+        issue.code !== 'issue_snapshot_material_limit_exceeded' &&
+        issue.code !== 'issue_snapshot_material_unavailable')
     )
       return [];
     const ceiling =

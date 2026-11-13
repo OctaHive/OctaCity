@@ -226,6 +226,7 @@ pub(super) fn request(
 ) -> RequestIssueExecutionCommand {
   RequestIssueExecutionCommand {
     intent: RequestIssueExecutionIntent {
+      expected_snapshot_digest: None,
       classification: Some(
         crate::factory::admission::tests::factory_admission_tests::command(
           issue.project_id,

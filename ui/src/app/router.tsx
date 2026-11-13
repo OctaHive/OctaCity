@@ -115,6 +115,9 @@ const IssueView = lazy(async () => ({
 const WorkflowView = lazy(async () => ({
   default: (await import('../features/issueWorkflows/WorkflowView')).WorkflowView,
 }));
+const ProjectIssueFields = lazy(async () => ({
+  default: (await import('../features/issues/ProjectIssueFields')).ProjectIssueFields,
+}));
 const ProjectView = lazy(async () => {
   const module = await import('../features/projects/ProjectViews');
   return { default: module.ProjectView };
@@ -306,6 +309,7 @@ export function createConsoleRoutes(
               legacy={dependencies.issueLegacyWorkApi}
               executionSources={{
                 listConfigurations: dependencies.factoryApi.listConfigurations,
+                getConfiguration: dependencies.factoryApi.getConfiguration,
                 listRepositories: dependencies.projectsApi.listRepositories,
                 getRepository: dependencies.projectsApi.getRepository,
               }}
@@ -322,7 +326,13 @@ export function createConsoleRoutes(
         {
           path: childPath(CONSOLE_PATHS.project),
           element: defer(
-            <ProjectView api={dependencies.projectsApi} factorySettings={renderFactorySettings} />,
+            <ProjectView
+              api={dependencies.projectsApi}
+              factorySettings={renderFactorySettings}
+              issueFields={(projectId) => (
+                <ProjectIssueFields api={dependencies.issuesApi} projectId={projectId} />
+              )}
+            />,
           ),
         },
         {

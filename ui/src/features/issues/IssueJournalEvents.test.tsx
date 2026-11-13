@@ -26,6 +26,8 @@ function mount(activity: ReturnType<typeof fakeActivity>, selection = '') {
           issue_version: 1,
           observation: 'request-watermark-v1',
         }),
+        review: vi.fn(),
+        snapshot: vi.fn(),
         start: vi.fn(),
       },
       factoryApi: {

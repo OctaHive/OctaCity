@@ -25,11 +25,36 @@ function contract() {
           },
         },
         IssuePropertyDefinitionSet: {
+          'x-max-json-utf8-bytes': 10000,
           properties: {
+            properties: { maxItems: 12 },
+            components: { maxItems: 15 },
             priorities: { default: [{ id: 'urgent', name: 'Urgent', retired: false }] },
             types: { default: [{ id: 'request', name: 'Request', retired: false }] },
           },
         },
+        IssuePropertyDefinition: {
+          properties: {
+            id: { pattern: '^[a-z0-9_]+$', 'x-max-utf8-bytes': 31 },
+            name: { 'x-max-utf8-bytes': 99 },
+          },
+        },
+        IssuePropertyKind: {
+          oneOf: [
+            { properties: { type: { const: 'text' }, max_bytes: { maximum: 123 } } },
+            { properties: { type: { const: 'choice' }, choices: { maxItems: 15 } } },
+            { properties: { type: { const: 'boolean' } } },
+            {
+              properties: {
+                type: { const: 'number' },
+                minimum: { minimum: -77 },
+                maximum: { maximum: 77 },
+              },
+            },
+            { properties: { type: { const: 'date' } } },
+          ],
+        },
+        IssueClassificationBindings: { properties: { severity: {}, risk: {} } },
         IssueContent: {
           properties: {
             title: { 'x-max-utf8-bytes': 37 },
@@ -52,6 +77,19 @@ function contract() {
 
 test('derives reason and outcome conclusion limits in UTF-8 bytes', () => {
   assert.deepEqual(issueConstraints(contract()), {
+    catalog: {
+      maximumBytes: 10000,
+      maximumFields: 12,
+      maximumChoices: 15,
+      keyMaximumBytes: 31,
+      keyPattern: '^[a-z0-9_]+$',
+      nameMaximumBytes: 99,
+      textMaximumBytes: 123,
+      numberMinimum: -77,
+      numberMaximum: 77,
+      kinds: ['text', 'choice', 'boolean', 'number', 'date'],
+      classificationSlots: ['severity', 'risk'],
+    },
     commentMaximumBytes: 7,
     labelsMaximumCount: 3,
     defaultPriorities: [{ id: 'urgent', name: 'Urgent', retired: false }],
@@ -119,4 +157,20 @@ test('generated Issue catalogs keep default choice lists optional on the wire', 
   for (const field of ['labels', 'properties']) {
     assert.equal(property(catalog, field).questionToken, undefined, `${field} remains required`);
   }
+});
+
+test('exports Project field administration bounds and supported kinds from the authoritative catalog', () => {
+  assert.deepEqual(issueConstraints(contract()).catalog, {
+    maximumBytes: 10000,
+    maximumFields: 12,
+    maximumChoices: 15,
+    keyMaximumBytes: 31,
+    keyPattern: '^[a-z0-9_]+$',
+    nameMaximumBytes: 99,
+    textMaximumBytes: 123,
+    numberMinimum: -77,
+    numberMaximum: 77,
+    kinds: ['text', 'choice', 'boolean', 'number', 'date'],
+    classificationSlots: ['severity', 'risk'],
+  });
 });

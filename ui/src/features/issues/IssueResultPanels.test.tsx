@@ -31,6 +31,8 @@ it('opens exact historical Factory checks without turning a partial pass into ac
     issueExecutionsApi: {
       get: vi.fn().mockResolvedValue(execution),
       list: vi.fn(),
+      review: vi.fn(),
+      snapshot: vi.fn(),
       start: vi.fn(),
     },
   });
@@ -105,6 +107,8 @@ it.each(['candidate', 'changeset'] as const)(
       issueExecutionsApi: {
         get: vi.fn().mockResolvedValue(execution),
         list: vi.fn(),
+        review: vi.fn(),
+        snapshot: vi.fn(),
         start: vi.fn(),
       },
     });
@@ -150,6 +154,8 @@ it('groups authorized artifact metadata and leaves expired or unavailable conten
     issueExecutionsApi: {
       get: vi.fn().mockResolvedValue(execution),
       list: vi.fn(),
+      review: vi.fn(),
+      snapshot: vi.fn(),
       start: vi.fn(),
     },
   });
@@ -206,6 +212,8 @@ it('reads a plaintext preview only on demand and requires an explicit download r
     issueExecutionsApi: {
       get: vi.fn().mockResolvedValue(execution),
       list: vi.fn(),
+      review: vi.fn(),
+      snapshot: vi.fn(),
       start: vi.fn(),
     },
   });
@@ -348,6 +356,8 @@ it('clears candidate and artifact continuations when another execution is delibe
           issue_version: 1,
           observation: 'request-watermark-v1',
         }),
+        review: vi.fn(),
+        snapshot: vi.fn(),
         start: vi.fn(),
       },
     },
@@ -388,6 +398,8 @@ it('exposes exact Build, Attempt, Job and candidate provenance without rendering
     issueExecutionsApi: {
       get: vi.fn().mockResolvedValue(execution),
       list: vi.fn(),
+      review: vi.fn(),
+      snapshot: vi.fn(),
       start: vi.fn(),
     },
   });
@@ -417,6 +429,8 @@ it('retains stale artifact metadata but closes byte expansions when a refresh is
     issueExecutionsApi: {
       get: vi.fn().mockResolvedValue(execution),
       list: vi.fn(),
+      review: vi.fn(),
+      snapshot: vi.fn(),
       start: vi.fn(),
     },
   });
@@ -469,6 +483,8 @@ it.each(['text/html', 'image/svg+xml'])(
       issueExecutionsApi: {
         get: vi.fn().mockResolvedValue(execution),
         list: vi.fn(),
+        review: vi.fn(),
+        snapshot: vi.fn(),
         start: vi.fn(),
       },
     });
@@ -490,6 +506,8 @@ it.each(['stale', 'unavailable'] as const)(
       issueExecutionsApi: {
         get: vi.fn().mockResolvedValue(execution),
         list: vi.fn(),
+        review: vi.fn(),
+        snapshot: vi.fn(),
         start: vi.fn(),
       },
     });
@@ -520,6 +538,8 @@ it('announces a pending download independently from preview and aborts it on lea
     issueExecutionsApi: {
       get: vi.fn().mockResolvedValue(execution),
       list: vi.fn(),
+      review: vi.fn(),
+      snapshot: vi.fn(),
       start: vi.fn(),
     },
   });
@@ -550,6 +570,8 @@ it.each([
         issueExecutionsApi: {
           get: vi.fn().mockResolvedValue(execution),
           list: vi.fn(),
+          review: vi.fn(),
+          snapshot: vi.fn(),
           start: vi.fn(),
         },
       });

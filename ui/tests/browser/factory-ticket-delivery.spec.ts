@@ -296,7 +296,12 @@ test('submits the reviewed Flow, Project policies, and manual Issue start to the
   let validatedConfiguration: S['CreateFactoryConfigurationRequest'] | undefined;
   page.on('request', (request) => {
     const path = new URL(request.url()).pathname;
-    if (request.method() !== 'GET' && !path.endsWith('/validate') && !path.endsWith('/resolve'))
+    if (
+      request.method() !== 'GET' &&
+      !path.endsWith('/validate') &&
+      !path.endsWith('/resolve') &&
+      !path.endsWith('/review')
+    )
       writes.push(path);
   });
   await page.route(`${scope}/flow-definitions*`, (route) =>
@@ -953,11 +958,26 @@ test('submits the reviewed Flow, Project policies, and manual Issue start to the
       });
     },
   );
+  await page.route(
+    (url) =>
+      url.pathname ===
+      `/api/v1/factory-configurations/${configurations[0]!.id}/versions/${configurations[0]!.version}`,
+    (route) => route.fulfill({ json: configurationResource(validatedConfiguration!) }),
+  );
+  await page.route(
+    (url) => url.pathname === `/api/v1${issuePath}/executions/review`,
+    (route) =>
+      route.fulfill({
+        json: {
+          version: issue.version,
+          target: route.request().postDataJSON().target,
+          snapshot: null,
+          snapshot_digest: null,
+        },
+      }),
+  );
   await page.goto(issuePath);
   await page.getByRole('button', { name: 'Start pipeline', exact: true }).click();
-  await page
-    .getByRole('checkbox', { name: 'Use a result from an earlier run', exact: true })
-    .check();
   await page.getByRole('combobox', { name: 'Earlier Issue run', exact: true }).click();
   await page.getByRole('option', { name: /triage-request$/ }).click();
   await page.getByRole('button', { name: 'Review pipeline launch', exact: true }).click();

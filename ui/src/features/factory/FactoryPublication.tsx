@@ -1,3 +1,4 @@
+import { ISSUE_SNAPSHOT_PROBLEM_LABELS } from '../../shared/IssueSnapshotProblems';
 import { useFactoryAuthoringCapabilities } from './useFactoryAuthoringCapabilities';
 import { publishCandidateAction } from './PublicationStep';
 import { validationFieldLabel, LimitFailure } from './ValidationIssue';
@@ -41,6 +42,7 @@ export type FactoryPublicationProps = {
   onFlowPublished?: (version: number) => void;
 };
 const ISSUE_LABELS = {
+  ...ISSUE_SNAPSHOT_PROBLEM_LABELS,
   missing_input: 'factory.missingInputHelp',
   profile_permissions: 'factory.profilePermissionsHelp',
   execution_mode_permissions: 'factory.executionModePermissionsHelp',

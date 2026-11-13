@@ -319,6 +319,7 @@ async fn reviewed_request(
       snapshot_digest: None,
       id: IssueExecutionRequestId::generate(),
       intent: RequestIssueExecutionIntent {
+        expected_snapshot_digest: None,
         classification: None,
         project_id: issue.project_id,
         issue_id: issue.id,

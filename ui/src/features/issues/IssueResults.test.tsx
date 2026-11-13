@@ -42,6 +42,8 @@ it.each(['Runs', 'Activity'] as const)(
         issue_version: 1,
         observation: 'request-watermark-v1',
       }),
+      review: vi.fn(),
+      snapshot: vi.fn(),
       start: vi.fn<IssueExecutionsApi['start']>(),
     };
     const { router } = setup(path, undefined, {
@@ -143,6 +145,8 @@ it('retains historical result details and continuation when reselecting the same
       issue_version: 1,
       observation: 'request-watermark-v1',
     }),
+    review: vi.fn(),
+    snapshot: vi.fn(),
     start: vi.fn<IssueExecutionsApi['start']>(),
   };
   const { router } = setup(
@@ -206,6 +210,8 @@ it('offers a fresh result observation after a continuation becomes unreadable', 
     issueExecutionsApi: {
       get: vi.fn().mockResolvedValue(executionFixture('admitted', 'old-request')),
       list: vi.fn(),
+      review: vi.fn(),
+      snapshot: vi.fn(),
       start: vi.fn(),
     },
   });
@@ -231,6 +237,8 @@ it('reads the selected original Run triage result beside the current local statu
       .fn<IssueExecutionsApi['get']>()
       .mockResolvedValue(executionFixture('admitted', 'original-request')),
     list: vi.fn(),
+    review: vi.fn(),
+    snapshot: vi.fn(),
     start: vi.fn(),
   };
   setup(

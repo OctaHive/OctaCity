@@ -1,6 +1,7 @@
 import { expect, test } from '@playwright/test';
 import { installOperatorFixture, FIXTURE_IDS } from './operatorFixture';
 import { issueFixture } from '../fixtures/issues';
+import { journalFixture } from '../fixtures/issueJournal';
 import { executionFixture } from '../fixtures/issueExecutions';
 import { configurationFixture } from '../fixtures/factory';
 
@@ -126,8 +127,35 @@ for (const language of ['en', 'ru'] as const) {
       }),
     );
     await page.route(
+      (url) =>
+        url.pathname ===
+        `/api/v1/factory-configurations/${configuration.id}/versions/${configuration.version}`,
+      (route) =>
+        route.fulfill({
+          json: {
+            ...configurationFixture(),
+            configuration: { ...configurationFixture().configuration, reference: configuration },
+          },
+        }),
+    );
+    await page.route(
       (url) => url.pathname.startsWith(`${apiBase}/executions`),
       async (route) => {
+        if (new URL(route.request().url()).pathname.includes('/journal')) {
+          await route.fulfill({ json: journalFixture([], receipt()) });
+          return;
+        }
+        if (new URL(route.request().url()).pathname.endsWith('/review')) {
+          await route.fulfill({
+            json: {
+              version: issue.version,
+              target: route.request().postDataJSON().target,
+              snapshot: null,
+              snapshot_digest: null,
+            },
+          });
+          return;
+        }
         if (route.request().method() === 'POST') {
           const headers = route.request().headers();
           requests.push({

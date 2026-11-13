@@ -448,6 +448,7 @@ async fn explicit_content_expiry_keeps_identity_replay_quota_and_hold() {
       snapshot_digest: None,
       id: octacity_server_domain::IssueExecutionRequestId::generate(),
       intent: RequestIssueExecutionIntent {
+        expected_snapshot_digest: None,
         project_id: project.id,
         issue_id: issue.id,
         expected_version: issue.version,

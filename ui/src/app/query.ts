@@ -126,6 +126,16 @@ export const queryKeys = {
   issueProjections: (project: string, id: string, after: string | null) =>
     ['issues', project, id, 'projections', after] as const,
   issueRoot: (project: string, id: string) => ['issues', project, id] as const,
+  issueExecutionReview: (
+    project: string,
+    id: string,
+    version: number | undefined,
+    request: object | undefined,
+  ) => ['issues', project, id, 'executions', 'review', version, request] as const,
+  issueExecutionSnapshot: (project: string, id: string, request: string) =>
+    ['issues', project, id, 'executions', 'request', request, 'snapshot'] as const,
+  issueExecutionPredecessors: (project: string, id: string) =>
+    ['issues', project, id, 'executions', 'predecessors'] as const,
   issueExecutionsRoot: (project: string, id: string) =>
     ['issues', project, id, 'executions'] as const,
   issueExecutions: (project: string, id: string, after: string | null) =>

@@ -6,6 +6,7 @@ import { queryKeys } from '../../app/query';
 import { QueryContent, QueryEmptyNotice } from '../../shared/QueryStateNotice';
 import type { Issue } from './api';
 import type { IssueExecutionsApi } from './executionApi';
+import { IssueExecutionInput } from './IssueExecutionInput';
 import { ExecutionReceipt } from './IssueExecutionReceipt';
 import { useIssueExecution } from './useIssueExecution';
 import { IssueRunDetails } from './IssueRunDetails';
@@ -92,6 +93,9 @@ export function IssueExecutions({
             {(data) => (
               <>
                 <ExecutionReceipt execution={data} currentVersion={issue.version} />
+                {data.snapshot_digest ? (
+                  <IssueExecutionInput api={api} execution={data} issue={issue} />
+                ) : null}
                 {data.association ? (
                   <IssueRunDetails
                     key={data.id}

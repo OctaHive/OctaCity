@@ -172,6 +172,7 @@ async fn issue_snapshot_incompatible_code_subject_waits_with_existing_run_withou
     &context,
     RequestIssueExecutionCommand {
       intent: RequestIssueExecutionIntent {
+        expected_snapshot_digest: None,
         project_id: issue.project_id,
         issue_id: issue.id,
         expected_version: issue.version,

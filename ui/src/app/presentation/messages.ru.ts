@@ -1,6 +1,118 @@
 import type { MessageCatalog } from './messages.en';
 
 export const ruMessages = {
+  'issueFields.newOptionId': 'ID нового варианта (необязательно)',
+  'issueFields.invalidKey':
+    'ID варианта должен быть уникальным и соответствовать {pattern}, не более {maximum} байт.',
+
+  'issueFields.discard': 'Отбросить черновик полей',
+  'issueFields.resolveConflict': 'Разрешить конфликт каталога: {key}',
+  'issueFields.keepLocal': 'Оставить моё изменение',
+  'issueFields.useCurrent': 'Использовать текущее значение',
+  'issueFields.currentCatalog': 'Посмотреть текущий опубликованный каталог',
+
+  'issueFields.stale':
+    'Каталог Project изменился. Черновик сохранён; согласуйте его перед новой проверкой.',
+  'issueFields.reconcile': 'Согласовать с текущим каталогом',
+  'issueFields.conflicts': 'Оба черновика изменили эти идентификаторы: {fields}.',
+
+  'issueFields.invalid': 'Исправьте названия, границы или привязки перед проверкой: {fields}.',
+  'issueFields.retireField': 'Вывести поле из использования',
+
+  'issueFields.semantics': 'Необязательные привязки классификации',
+  'issueFields.semanticHelp':
+    'Связывайте только разные поля выбора. Встроенным priority, component, type и size не нужны пользовательские поля. Привязки не предоставляют полномочий свидетельства или запуска.',
+  'issueFields.active': 'Активен',
+  'issueFields.binding.kind': 'Прежнее поле вида',
+  'issueFields.binding.component': 'Прежнее поле компонента',
+  'issueFields.binding.size': 'Прежнее поле размера',
+  'issueFields.binding.severity': 'Поле серьёзности',
+  'issueFields.binding.risk': 'Поле риска',
+  'issueFields.binding.recommended_route': 'Поле рекомендуемого маршрута',
+  'issueFields.binding.reproducibility': 'Поле воспроизводимости',
+
+  'issueFields.custom': 'Пользовательские поля Issue',
+  'issueFields.fieldName': 'Название поля',
+  'issueFields.newFieldName': 'Название нового поля',
+  'issueFields.fieldType': 'Тип поля',
+  'issueFields.addField': 'Добавить поле',
+  'issueFields.textLimit': 'Максимум байт UTF-8',
+  'issueFields.minimum': 'Минимальное целое',
+  'issueFields.maximum': 'Максимальное целое',
+  'issueFields.options': 'Варианты поля',
+  'issueFields.text': 'Текст',
+  'issueFields.choice': 'Выбор',
+  'issueFields.boolean': 'Логическое',
+  'issueFields.number': 'Целое число',
+  'issueFields.date': 'Дата',
+
+  'issueFields.settings': 'Настройки полей Issue',
+  'issueFields.priorities': 'Приоритеты',
+  'issueFields.components': 'Компоненты',
+  'issueFields.types': 'Типы Issue',
+  'issueFields.fixedSize': 'Встроенный размер имеет фиксированные варианты: {values}.',
+  'issueFields.scope':
+    'Доступно всем Issue этого Project. Требуются права администратора Project отдельно от редактирования Issue. Значения существующих Issue и выполнений не переписываются.',
+  'issueFields.version': 'Версия каталога Project: {version}',
+  'issueFields.catalogMismatch': 'Полученный каталог полей принадлежит другому Project.',
+  'issueFields.review': 'Проверить определения полей',
+  'issueFields.publish': 'Опубликовать определения полей',
+  'issueFields.published': 'Определения полей опубликованы.',
+  'issueFields.optionName': 'Название варианта',
+  'issueFields.retired': 'Выведен из использования',
+  'issueFields.newOption': 'Название нового варианта',
+  'issueFields.addOption': 'Добавить вариант',
+
+  'issues.snapshotRevisionChanged':
+    'Issue изменился после проверки. Закройте предпросмотр и проверьте текущие входы заново.',
+  'issues.snapshotExactSources': 'Объявленные точные источники',
+  'issues.snapshotDefinitions': 'Определения полей Project: v{version}',
+  'issues.snapshotRequirements': 'Версия требований снимка: {version}',
+  'issues.snapshotAssessmentDefinitions': 'Определения полей оценки: v{version}',
+  'issues.snapshotAssessmentRequirements': 'Версия требований оценки: {version}',
+  'issues.snapshotAssessedBy': 'Автор оценки: {actor}',
+  'issues.snapshotEvidenceHelp':
+    'Зафиксированные ссылки на свидетельства; их текущая валидность здесь не проверяется.',
+  'issues.snapshotNoEvidence': 'В этой оценке нет ссылок на свидетельства.',
+  'issues.snapshotAssessmentMapping': 'Привязка источника: {identity} · {version} · {digest}',
+  'issues.snapshotAssessmentObservation': 'Запись наблюдения: {record}',
+  'issues.snapshotCancelReview': 'Отменить проверку входа',
+  'issues.snapshotProblem.missing': 'Заполните обязательное поле Issue.',
+  'issues.snapshotProblem.incompatible':
+    'Выбранное значение несовместимо с закреплённым контрактом поля.',
+  'issues.snapshotProblem.binding': 'Привязка классификации изменилась. Проверьте каталог Project.',
+  'issues.snapshotProblem.stale': 'Выбранная классификация больше не применима к этим требованиям.',
+  'issues.snapshotProblem.evidence': 'Обязательное свидетельство недоступно или неприменимо.',
+  'issues.snapshotProblem.policy':
+    'Выбранные значения не соответствуют опубликованной политике допуска.',
+  'issues.snapshotProblem.encoding': 'Снимок превышает лимит размера входа.',
+  'issues.snapshotProblem.materialLimit':
+    'Выбранный текст превышает лимит количества или байтов pipeline.',
+  'issues.snapshotProblem.material':
+    'Обязательный выбранный текст недоступен с текущими правами или сроком хранения.',
+
+  'issues.snapshotMismatch':
+    'Предпросмотр не соответствует проверенным Issue и pipeline. Закройте его и проверьте заново.',
+  'issues.snapshotRefresh': 'Обновить зафиксированный вход',
+  'issues.snapshotFrozen': 'Зафиксированный вход выполнения',
+  'issues.snapshotCurrentDifference':
+    'Текущая версия Issue: {version}. Выполнение сохраняет исходные поля и выбранные тексты.',
+  'issues.snapshotUnavailable':
+    'Исходный вход недоступен с текущими правами или сроком хранения. Текущие данные его не заменяют.',
+
+  'issues.snapshotDataHelp':
+    'Включаются только входы, выбранные этим pipeline. Обсуждение и новые публикации документов не добавляются автоматически. Текст является входными данными, а не одобрением или разрешением.',
+  'issues.snapshotRequired': 'Обязательно',
+  'issues.snapshotOptional': 'Необязательно',
+  'issues.snapshotMaterialLimits':
+    '{alias} · {required} · {count}/{maximum} записей · не более {bytes} байт',
+  'issues.snapshotSource.comment': 'Комментарий',
+  'issues.snapshotSource.issue_document': 'Документ Issue',
+  'issues.snapshotSource.project_document': 'Документ Project',
+  'issues.snapshotSelectedAt': 'Выбрано {at} · {actor}',
+
+  'issues.snapshotPreview': 'Проверенный вход Issue',
+  'issues.snapshotOmission': 'Необязательный вход пропущен: {alias} · {reason}',
   'factory.classificationMode': 'Режим применения классификации',
   'factory.legacyClassification': 'Прежний приоритет и метки размера',
   'factory.typedClassificationHelp':

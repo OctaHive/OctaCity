@@ -178,6 +178,7 @@ async fn admitted_issue(
     &f.context,
     RequestIssueExecutionCommand {
       intent: RequestIssueExecutionIntent {
+        expected_snapshot_digest: None,
         project_id: f.project,
         issue_id: issue.id,
         expected_version: issue.version,
@@ -676,6 +677,7 @@ fn issue_delivery_does_not_treat_unattributed_dependencies_as_an_empty_list() {
       &f.context,
       RequestIssueExecutionCommand {
         intent: RequestIssueExecutionIntent {
+          expected_snapshot_digest: None,
           project_id: f.project,
           issue_id: issue.id,
           expected_version: retained.version,

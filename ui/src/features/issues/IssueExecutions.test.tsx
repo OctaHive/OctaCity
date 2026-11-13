@@ -1,7 +1,7 @@
 // @vitest-environment jsdom
 import { cleanup, screen, within, waitFor, act } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
-import { afterEach, expect, it, vi } from 'vitest';
+import { afterEach, expect, it } from 'vitest';
 import { queryKeys } from '../../app/query';
 import { issue, setup } from '../../../tests/fixtures/issueTestSupport';
 
@@ -372,110 +372,10 @@ it('reviews pinned pipeline inputs and admits through the Issue HTTP command onl
 });
 
 import { ManagementApiError } from '../../api/client';
-import { factoryApi } from '../factory/api';
-import { fakeProjectsApi, project } from '../projects/ProjectTestSupport';
-import { configurationFixture, runFixture } from '../../../tests/fixtures/factory';
 import { executionFixture } from '../../../tests/fixtures/issueExecutions';
 import type { IssueExecutionsApi } from './executionApi';
-function setupExecution(path = card, version = 1) {
-  const configuration = {
-    ...configurationFixture().configuration.reference,
-    project_id: 'delivery',
-  };
-  const executions = {
-    start: vi
-      .fn<IssueExecutionsApi['start']>()
-      .mockResolvedValue({ disposition: 'applied', resource: executionFixture() }),
-    get: vi.fn<IssueExecutionsApi['get']>().mockResolvedValue(executionFixture()),
-    list: vi.fn<IssueExecutionsApi['list']>().mockResolvedValue({
-      items: [],
-      next_cursor: null,
-      observation: 'request-watermark-v1',
-      watermark: 0,
-      issue_version: 1,
-    }),
-  };
-  const run = runFixture();
-  const legacy = {
-    listLegacy: vi
-      .fn()
-      .mockResolvedValue({ items: [], next_cursor: null, observation: 'a'.repeat(64) }),
-    getWork: vi.fn().mockResolvedValue({
-      association: {
-        project_id: 'delivery',
-        issue_id: issue.id,
-        request_id: null,
-        requirements_version: null,
-        work_id: 'legacy-work',
-        run_id: 'retained-run',
-      },
-      run: {
-        availability: 'available',
-        resource: {
-          ...run,
-          id: 'retained-run',
-          work_id: 'legacy-work',
-          admitted_at: 1,
-          updated_at: 2,
-        },
-      },
-    }),
-  };
-  const projects = fakeProjectsApi();
-  projects.getProject.mockResolvedValue({
-    ancestors: [],
-    project: project('delivery', 'Delivery'),
-  });
-  projects.listRepositories.mockResolvedValue({
-    items: [
-      {
-        id: 'repo',
-        project_id: 'delivery',
-        name: 'Application source',
-        version: 2,
-        published_at_unix_ms: 1,
-      },
-    ],
-    next_cursor: null,
-  });
-  projects.getRepository.mockResolvedValue({
-    id: 'repo',
-    project_id: 'delivery',
-    name: 'Application source',
-    version: 2,
-    published_at_unix_ms: 1,
-    definition: {
-      repository_locator: 'hidden',
-      vcs_integration_id: 'vcs',
-      selection: {
-        default_reference: 'main',
-        allowed_references: ['main'],
-        allow_exact_revision: true,
-      },
-    },
-  });
-  const listConfigurations = vi.fn().mockResolvedValue({
-    items: [{ ...configuration, enabled: true, created_at_unix_ms: 1, published_at_unix_ms: 1 }],
-    next_cursor: null,
-    total: 1,
-  });
-  const result = setup(
-    path,
-    (api) =>
-      api.get.mockResolvedValue({
-        ...issue,
-        version,
-        content: { ...issue.content, acceptance: 'Check checkout works' },
-      }),
-    {
-      issueExecutionsApi: executions,
-      issueLegacyWorkApi: legacy,
-      projectsApi: projects,
-      factoryApi: { ...factoryApi, listConfigurations },
-    },
-  );
-  return { ...result, executions, legacy, configuration, projects, listConfigurations };
-}
+import { configurationFixture } from '../../../tests/fixtures/factory';
+import { setupExecution } from '../../../tests/fixtures/issueExecutionSupport';
 
 it('reads original Artifact execution lineage without inventing a reviewed request and preserves it across sections', async () => {
   const { executions, legacy, router } = setupExecution(`${card}?section=runs&work=legacy-work`);
@@ -556,7 +456,15 @@ it('does not open another task association returned for selected Work', async ()
 });
 
 it('pins an explicitly selected earlier Issue run in the confirmed manual launch', async () => {
-  const { executions } = setupExecution();
+  const { executions, getConfiguration } = setupExecution();
+  const details = configurationFixture();
+  details.configuration.reference.project_id = 'delivery';
+  details.configuration.flow.accepted_predecessor = {
+    definition: details.configuration.flow.closure.definitions[0]!.reference,
+    terminal: 'accepted',
+    outcomes: ['accepted'],
+  };
+  getConfiguration.mockResolvedValue(details);
   const earlier = executionFixture('admitted', 'triage-request');
   const pending = executionFixture('pending', 'pending-request');
   executions.list.mockResolvedValue({
@@ -567,7 +475,7 @@ it('pins an explicitly selected earlier Issue run in the confirmed manual launch
     issue_version: 1,
   });
   await userEvent.click(await screen.findByRole('button', { name: 'Start pipeline' }));
-  await userEvent.click(screen.getByText('Use a result from an earlier run', { exact: true }));
+  expect(screen.queryByRole('checkbox', { name: 'Use a result from an earlier run' })).toBeNull();
   await userEvent.click(await screen.findByRole('combobox', { name: 'Earlier Issue run' }));
   expect(screen.queryByRole('option', { name: /pending-request/ })).toBeNull();
   await userEvent.click(screen.getByRole('option', { name: /triage-request/ }));

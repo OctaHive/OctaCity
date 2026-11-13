@@ -58,6 +58,7 @@ async fn journal_runtime_reads_original_pending_request_after_restart_without_pr
       snapshot_digest: None,
       id: request_id,
       intent: RequestIssueExecutionIntent {
+        expected_snapshot_digest: None,
         classification: None,
         project_id,
         issue_id,

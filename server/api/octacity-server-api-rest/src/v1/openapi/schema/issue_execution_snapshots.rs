@@ -182,6 +182,6 @@ pub(super) fn insert(schemas: &mut Map<String, Value>) {
     tagged("availability","available",[("digest",schema_ref("FactoryDigest")),("snapshot",schema_ref("IssueExecutionSnapshot")),("subject",nullable(schema_ref("IssueClassificationSubject")))],&["digest","snapshot","subject"])
   ]}));
   schemas.get_mut("RequestIssueExecutionRequest").unwrap()["description"] = json!(
-    "Exact reviewed target; policy-driven Issue snapshots omit classification and predecessor_run. Legacy/exact producer-result targets still require their explicit classification and eligible producer Run where declared. The server validates the selected target mode."
+    "Exact reviewed target; policy-driven Issue snapshots omit classification and predecessor_run. Legacy/exact producer-result targets still require their explicit classification and eligible producer Run where declared. Optional expected_snapshot_digest is a review precondition, checked against server-resolved input before reservation and retained in command replay identity. Legacy callers may omit it. The server validates the selected target mode."
   );
 }

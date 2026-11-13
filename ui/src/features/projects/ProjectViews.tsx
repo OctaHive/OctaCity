@@ -22,6 +22,7 @@ import styles from './Projects.module.css';
 
 interface ProjectsViewProps {
   api: ProjectsApi;
+  issueFields?: ((projectId: string) => ReactNode) | undefined;
   factorySettings?: ((projectId: string) => ReactNode) | undefined;
 }
 
@@ -38,18 +39,26 @@ export function ProjectsLandingView() {
   );
 }
 
-export function ProjectView({ api, factorySettings }: ProjectsViewProps) {
+export function ProjectView({ api, factorySettings, issueFields }: ProjectsViewProps) {
   const { projectId } = useParams<'projectId'>();
   if (projectId === undefined) {
     return <ProjectNotFound />;
   }
-  return <SelectedProject api={api} projectId={projectId} factorySettings={factorySettings} />;
+  return (
+    <SelectedProject
+      api={api}
+      projectId={projectId}
+      factorySettings={factorySettings}
+      issueFields={issueFields}
+    />
+  );
 }
 
 function SelectedProject({
   api,
   projectId,
   factorySettings,
+  issueFields,
 }: ProjectsViewProps & { projectId: string }) {
   const { t } = usePresentation();
   const project = useQuery({
@@ -114,6 +123,7 @@ function SelectedProject({
           renderSettings={factorySettings}
         />
       ) : null}
+      {issueFields ? <div key={`issue-fields:${projectId}`}>{issueFields(projectId)}</div> : null}
       <ProjectDocuments key={`documents:${projectId}`} projectId={projectId} />
       <ProjectDefinitions key={projectId} api={api} projectId={projectId} />
       <ProjectBuilds key={`builds:${projectId}`} api={api} projectId={projectId} />

@@ -106,9 +106,23 @@ impl<
       return Ok(replay);
     }
     let snapshot = self.select_input(context, &request.mutation().intent).await?;
+    let snapshot_digest = snapshot.as_ref().map(|s| s.digest()).transpose()?;
+    if request
+      .mutation()
+      .intent
+      .expected_snapshot_digest
+      .is_some_and(|expected| Some(expected) != snapshot_digest)
+    {
+      return Err(
+        octacity_server_store::StoreError::Conflict {
+          entity: octacity_server_domain::EntityKind::Issue,
+        }
+        .into(),
+      );
+    }
     let mutation = RequestIssueExecution {
       admission_classification: snapshot.as_ref().and_then(|s| s.admission_classification.clone()),
-      snapshot_digest: snapshot.as_ref().map(|s| s.digest()).transpose()?,
+      snapshot_digest,
       ..request.mutation().clone()
     };
     Ok(

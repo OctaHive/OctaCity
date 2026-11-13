@@ -13,6 +13,14 @@ export function issueConstraints(document) {
   const legacyPriority = priority?.oneOf?.find((item) => item.type === 'integer') ?? priority;
   const bound = boundsFor('Issue');
   const catalog = document.components?.schemas?.IssuePropertyDefinitionSet?.properties;
+  const schemas = document.components?.schemas;
+  const field = schemas?.IssuePropertyDefinition?.properties;
+  const kinds = schemas?.IssuePropertyKind?.oneOf;
+  const text = kinds?.find((kind) => kind.properties?.type?.const === 'text')?.properties;
+  const number = kinds?.find((kind) => kind.properties?.type?.const === 'number')?.properties;
+  const slots = schemas?.IssueClassificationBindings?.properties;
+  if (!Array.isArray(kinds) || !slots || !field?.id?.pattern)
+    throw new Error('Missing Issue field administration contracts.');
   const sizes = unwrap(document.components?.schemas?.IssuePlanning?.properties?.size)?.enum;
   if (
     !Array.isArray(catalog?.priorities?.default) ||
@@ -30,6 +38,19 @@ export function issueConstraints(document) {
     labelsMaximumCount: bound(
       document.components?.schemas?.IssuePlanning?.properties?.labels?.maxItems,
     ),
+    catalog: {
+      maximumBytes: bound(schemas.IssuePropertyDefinitionSet['x-max-json-utf8-bytes']),
+      maximumFields: bound(catalog.properties?.maxItems),
+      maximumChoices: bound(catalog.components?.maxItems),
+      keyMaximumBytes: bound(field.id['x-max-utf8-bytes']),
+      keyPattern: field.id.pattern,
+      nameMaximumBytes: bound(field.name?.['x-max-utf8-bytes']),
+      textMaximumBytes: bound(text?.max_bytes?.maximum),
+      numberMinimum: -bound(-number?.minimum?.minimum),
+      numberMaximum: bound(number?.maximum?.maximum),
+      kinds: kinds.map((kind) => kind.properties.type.const),
+      classificationSlots: Object.keys(slots),
+    },
     defaultPriorities: catalog.priorities.default,
     defaultTypes: catalog.types.default,
     sizes,

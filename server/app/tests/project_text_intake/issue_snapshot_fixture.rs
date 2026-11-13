@@ -159,6 +159,7 @@ pub(super) async fn snapshot_request_with_materials(
       &context(),
       RequestIssueExecutionCommand {
         intent: RequestIssueExecutionIntent {
+          expected_snapshot_digest: None,
           project_id: issue.project_id,
           issue_id: issue.id,
           expected_version: issue.version,

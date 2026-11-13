@@ -18,7 +18,7 @@ import {
   QueryBackgroundNotice,
 } from '../../shared/QueryStateNotice';
 import type { IssueWorkflowsApi } from '../../api/issueWorkflows';
-import type { PipelineTargetSources } from '../../shared/PipelineTargetFields';
+import type { IssueExecutionSources } from './executionApi';
 import type { IssueExecutionsApi } from './executionApi';
 import type { IssueRunReader } from './activityApi';
 import { IssueResults } from './IssueResults';
@@ -67,7 +67,7 @@ export function IssueView({
   projects: IssueProjectReader;
   executions: IssueExecutionsApi;
   legacy: IssueLegacyWorkApi;
-  executionSources: PipelineTargetSources;
+  executionSources: IssueExecutionSources;
 }) {
   const { projectId, issueId } = useParams<'projectId' | 'issueId'>();
   return projectId && issueId ? (
@@ -120,7 +120,7 @@ function Card({
   projects: IssueProjectReader;
   executions: IssueExecutionsApi;
   legacy: IssueLegacyWorkApi;
-  executionSources: PipelineTargetSources;
+  executionSources: IssueExecutionSources;
   projectId: string;
   issueId: string;
 }) {

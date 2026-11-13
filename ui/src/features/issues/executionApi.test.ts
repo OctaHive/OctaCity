@@ -59,3 +59,91 @@ it('reads original legacy Work through generated no-store contracts without manu
     true,
   );
 });
+
+it('retains bounded snapshot-specific review diagnostics from the HTTP boundary', async () => {
+  vi.stubGlobal('location', { origin: 'https://console.example' });
+  const api = createIssueExecutionsApi(
+    createManagementApiClient(async () =>
+      Response.json(
+        {
+          code: 'invalid_request',
+          message: 'Snapshot prerequisites failed',
+          request_id: 'review-diagnostic',
+          diagnostics: {
+            errors: [
+              {
+                field: '/issue_snapshot/materials/context',
+                code: 'issue_snapshot_material_unavailable',
+              },
+            ],
+          },
+        },
+        { status: 400 },
+      ),
+    ),
+  );
+  await expect(
+    api.review(
+      'project',
+      'issue',
+      {
+        target: {
+          configuration_id: 'config',
+          configuration_version: 1,
+          repository_id: 'repo',
+          repository_version: 1,
+          source: { kind: 'default_reference' },
+          mapping: 'title_description_acceptance_v1',
+        },
+      },
+      1,
+    ),
+  ).rejects.toMatchObject({
+    validationIssues: [
+      { field: '/issue_snapshot/materials/context', code: 'issue_snapshot_material_unavailable' },
+    ],
+  });
+});
+
+it('reviews exact inputs without a mutation key and reads only the selected retained snapshot with no-store', async () => {
+  vi.stubGlobal('location', { origin: 'https://console.example' });
+  const calls: Request[] = [];
+  const api = createIssueExecutionsApi(
+    createManagementApiClient(async (request) => {
+      calls.push(request);
+      return Response.json({});
+    }),
+  );
+  const request: IssueExecutionRequest = {
+    target: {
+      configuration_id: 'config',
+      configuration_version: 2,
+      repository_id: 'repo',
+      repository_version: 1,
+      mapping: 'title_description_acceptance_v1',
+      source: { kind: 'reference', value: 'main' },
+    },
+  };
+  await api.review('project', 'issue', request, 7);
+  await api.snapshot('project', 'issue', 'exact-request');
+  expect(
+    calls.map((r) => [
+      r.method,
+      new URL(r.url).pathname,
+      r.cache,
+      r.headers.get('If-Match'),
+      r.headers.get('Idempotency-Key'),
+    ]),
+  ).toEqual([
+    ['POST', '/api/v1/projects/project/issues/issue/executions/review', 'no-store', '"7"', null],
+    [
+      'GET',
+      '/api/v1/projects/project/issues/issue/executions/exact-request/snapshot',
+      'no-store',
+      null,
+      null,
+    ],
+  ]);
+  expect(await calls[0]!.json()).toEqual(request);
+  expect(calls[1]!.body).toBeNull();
+});

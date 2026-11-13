@@ -728,6 +728,7 @@ async fn associate(
         snapshot_digest: None,
         id,
         intent: RequestIssueExecutionIntent {
+          expected_snapshot_digest: None,
           project_id: issue.project_id,
           issue_id: issue.id,
           expected_version: issue.version,

@@ -1,4 +1,116 @@
 export const enMessages = {
+  'issueFields.newOptionId': 'New option ID (optional)',
+  'issueFields.invalidKey': 'Option ID must be unique and match {pattern} within {maximum} bytes.',
+
+  'issueFields.discard': 'Discard field draft',
+  'issueFields.resolveConflict': 'Resolve catalog conflict: {key}',
+  'issueFields.keepLocal': 'Keep my change',
+  'issueFields.useCurrent': 'Use current value',
+  'issueFields.currentCatalog': 'Inspect current published catalog',
+
+  'issueFields.stale':
+    'The Project catalog changed. Your draft is retained; reconcile it before reviewing again.',
+  'issueFields.reconcile': 'Reconcile with current catalog',
+  'issueFields.conflicts': 'Both drafts changed these identities: {fields}.',
+
+  'issueFields.invalid': 'Correct names, bounds or bindings before review: {fields}.',
+  'issueFields.retireField': 'Retire field',
+
+  'issueFields.semantics': 'Optional classification bindings',
+  'issueFields.semanticHelp':
+    'Bind only distinct choice fields. Built-in priority, component, type and size need no custom property. Bindings grant no evidence or execution authority.',
+  'issueFields.active': 'Active',
+  'issueFields.binding.kind': 'Legacy kind field',
+  'issueFields.binding.component': 'Legacy component field',
+  'issueFields.binding.size': 'Legacy size field',
+  'issueFields.binding.severity': 'Severity field',
+  'issueFields.binding.risk': 'Risk field',
+  'issueFields.binding.recommended_route': 'Recommended route field',
+  'issueFields.binding.reproducibility': 'Reproducibility field',
+
+  'issueFields.custom': 'Custom Issue fields',
+  'issueFields.fieldName': 'Field name',
+  'issueFields.newFieldName': 'New field name',
+  'issueFields.fieldType': 'Field type',
+  'issueFields.addField': 'Add field',
+  'issueFields.textLimit': 'Maximum UTF-8 bytes',
+  'issueFields.minimum': 'Minimum integer',
+  'issueFields.maximum': 'Maximum integer',
+  'issueFields.options': 'Field options',
+  'issueFields.text': 'Text',
+  'issueFields.choice': 'Choice',
+  'issueFields.boolean': 'Boolean',
+  'issueFields.number': 'Integer',
+  'issueFields.date': 'Date',
+
+  'issueFields.settings': 'Issue field settings',
+  'issueFields.priorities': 'Priorities',
+  'issueFields.components': 'Components',
+  'issueFields.types': 'Issue types',
+  'issueFields.fixedSize': 'Built-in size has fixed choices: {values}.',
+  'issueFields.scope':
+    'Available to all Issues in this Project. Requires Project administration, separately from Issue editing. Existing Issue values and executions are not rewritten.',
+  'issueFields.version': 'Project catalog version {version}',
+  'issueFields.catalogMismatch': 'The returned field catalog belongs to another Project.',
+  'issueFields.review': 'Review field definitions',
+  'issueFields.publish': 'Publish field definitions',
+  'issueFields.published': 'Field definitions published.',
+  'issueFields.optionName': 'Option display name',
+  'issueFields.retired': 'Retired',
+  'issueFields.newOption': 'New option name',
+  'issueFields.addOption': 'Add option',
+
+  'issues.snapshotRevisionChanged':
+    'The Issue changed after this review. Close the preview and review the current inputs again.',
+  'issues.snapshotExactSources': 'Declared exact sources',
+  'issues.snapshotDefinitions': 'Project field definitions: v{version}',
+  'issues.snapshotRequirements': 'Snapshot requirements revision: {version}',
+  'issues.snapshotAssessmentDefinitions': 'Assessment field definitions: v{version}',
+  'issues.snapshotAssessmentRequirements': 'Assessment requirements revision: {version}',
+  'issues.snapshotAssessedBy': 'Assessed by {actor}',
+  'issues.snapshotEvidenceHelp':
+    'Frozen evidence references; current validity is not evaluated here.',
+  'issues.snapshotNoEvidence': 'No evidence references in this assessment.',
+  'issues.snapshotAssessmentMapping': 'Source mapping: {identity} · {version} · {digest}',
+  'issues.snapshotAssessmentObservation': 'Observation record: {record}',
+  'issues.snapshotCancelReview': 'Cancel input review',
+  'issues.snapshotProblem.missing': 'Fill the required Issue field.',
+  'issues.snapshotProblem.incompatible':
+    'The selected value is incompatible with the pinned field contract.',
+  'issues.snapshotProblem.binding':
+    'The classification field binding has changed. Review the Project catalog.',
+  'issues.snapshotProblem.stale':
+    'The selected classification is no longer applicable to these requirements.',
+  'issues.snapshotProblem.evidence': 'Required evidence is unavailable or inapplicable.',
+  'issues.snapshotProblem.policy':
+    'The selected values do not satisfy the published admission policy.',
+  'issues.snapshotProblem.encoding': 'The snapshot exceeds its encoded input limit.',
+  'issues.snapshotProblem.materialLimit': 'Selected text exceeds the pipeline count or byte limit.',
+  'issues.snapshotProblem.material':
+    'Required selected text is unavailable under current access or retention.',
+
+  'issues.snapshotMismatch':
+    'The preview does not match the reviewed Issue and target. Close it and review again.',
+  'issues.snapshotRefresh': 'Refresh frozen input',
+  'issues.snapshotFrozen': 'Frozen execution input',
+  'issues.snapshotCurrentDifference':
+    'Current Issue version: {version}. This execution retains its original fields and selected text.',
+  'issues.snapshotUnavailable':
+    'The original input is unavailable under current access or retention. Current data is not substituted.',
+
+  'issues.snapshotDataHelp':
+    'Only the inputs selected by this pipeline are included. Discussion and newer document publications are not added automatically. Text is input data, not approval or permission.',
+  'issues.snapshotRequired': 'Required',
+  'issues.snapshotOptional': 'Optional',
+  'issues.snapshotMaterialLimits':
+    '{alias} · {required} · {count}/{maximum} entries · {bytes} bytes maximum',
+  'issues.snapshotSource.comment': 'Comment',
+  'issues.snapshotSource.issue_document': 'Issue document',
+  'issues.snapshotSource.project_document': 'Project document',
+  'issues.snapshotSelectedAt': 'Selected at {at} · {actor}',
+
+  'issues.snapshotPreview': 'Reviewed Issue input',
+  'issues.snapshotOmission': 'Optional input omitted: {alias} · {reason}',
   'factory.classificationMode': 'Classification application mode',
   'factory.legacyClassification': 'Legacy priority and size labels',
   'factory.typedClassificationHelp':

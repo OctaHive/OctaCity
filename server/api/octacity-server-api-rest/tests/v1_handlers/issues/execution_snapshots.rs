@@ -620,3 +620,171 @@ async fn issue_snapshot_http_legacy_target_still_requires_classification_before_
   assert_eq!(replay["disposition"], "replayed");
   assert_eq!(replay["resource"], receipt["resource"]);
 }
+
+#[tokio::test]
+async fn issue_snapshot_http_review_digest_fences_optional_availability_without_an_issue_edit() {
+  let policy = Arc::new(SnapshotRights::default());
+  let mut contract = input();
+  let mut schema = shape();
+  contract["materials"] =
+    serde_json::json!({"notes":{"source":{"kind":"selected","max_entries":1},"required":false,"max_bytes":256}});
+  schema["fields"]["notes"] = serde_json::json!({"required":false,"value":{"type":"array","min_items":0,"max_items":1,"item":{"type":"string","min_bytes":0,"max_bytes":256}}});
+  let f = fixture_with_policy(contract, schema, policy.clone()).await;
+  let issue_id = f.path.rsplit('/').next().unwrap().parse().unwrap();
+  let mut issue = f.issues.issue(PROJECT.parse().unwrap(), issue_id, None).await.unwrap();
+  issue.version = issue.version.next().unwrap();
+  issue.materials = serde_json::from_value(serde_json::json!([{"reference":{"kind":"comment","project_id":PROJECT,"issue_id":issue_id,
+    "comment_id":COMMENT,"body_digest":BODY_DIGEST},"selected_by":{"kind":"unauthenticated_management","identity":null},"selected_at":1}])).unwrap();
+  f.issues.seed_retained_issue_revision(issue).unwrap();
+  let review_path = format!("{}/executions/review", f.path);
+  let start_path = format!("{}/executions", f.path);
+  let reviewed = document(
+    f.router
+      .clone()
+      .oneshot(json_request(
+        "POST",
+        &review_path,
+        "unused-review",
+        Some("\"2\""),
+        &f.body.to_string(),
+      ))
+      .await
+      .unwrap(),
+  )
+  .await;
+  assert_eq!(
+    reviewed["snapshot"]["values"]["notes"],
+    serde_json::json!(["Approved supplementary text"])
+  );
+  let mut body = f.body.clone();
+  body["expected_snapshot_digest"] = reviewed["snapshot_digest"].clone();
+  policy.deny_body.store(true, Ordering::SeqCst);
+  let before = (
+    f.issues.mutation_evidence_counts().await,
+    f.factory.mutation_evidence_counts().await,
+  );
+  let response = f
+    .router
+    .clone()
+    .oneshot(json_request(
+      "POST",
+      &start_path,
+      "reviewed-start",
+      Some("\"2\""),
+      &body.to_string(),
+    ))
+    .await
+    .unwrap();
+  let status = response.status();
+  let rejected = document(response).await;
+  assert_eq!(
+    status,
+    StatusCode::CONFLICT,
+    "reviewed text cannot become an unreviewed omission: {rejected}"
+  );
+  assert_eq!(
+    (
+      f.issues.mutation_evidence_counts().await,
+      f.factory.mutation_evidence_counts().await
+    ),
+    before,
+    "a failed preview precondition allocates no execution, replay or audit mutation"
+  );
+  let fresh = document(
+    f.router
+      .clone()
+      .oneshot(json_request(
+        "POST",
+        &review_path,
+        "unused-review",
+        Some("\"2\""),
+        &f.body.to_string(),
+      ))
+      .await
+      .unwrap(),
+  )
+  .await;
+  assert_eq!(fresh["snapshot"]["omissions"]["notes"], "unavailable");
+  body["expected_snapshot_digest"] = fresh["snapshot_digest"].clone();
+  let response = f
+    .router
+    .clone()
+    .oneshot(json_request(
+      "POST",
+      &start_path,
+      "reviewed-start",
+      Some("\"2\""),
+      &body.to_string(),
+    ))
+    .await
+    .unwrap();
+  let status = response.status();
+  let receipt = document(response).await;
+  assert_eq!(status, StatusCode::CREATED, "{receipt}");
+  assert_eq!(receipt["resource"]["snapshot_digest"], fresh["snapshot_digest"]);
+  assert_json_matches_component(&openapi_document(), "IssueExecutionMutationResponse", &receipt);
+  policy.deny_body.store(false, Ordering::SeqCst);
+  let replay = document(
+    f.router
+      .clone()
+      .oneshot(json_request(
+        "POST",
+        &start_path,
+        "reviewed-start",
+        Some("\"2\""),
+        &body.to_string(),
+      ))
+      .await
+      .unwrap(),
+  )
+  .await;
+  assert_eq!(replay["disposition"], "replayed");
+  assert_eq!(
+    replay["resource"], receipt["resource"],
+    "retry keeps the original reviewed omission after body access returns"
+  );
+  let before_new = (
+    f.issues.mutation_evidence_counts().await,
+    f.factory.mutation_evidence_counts().await,
+  );
+  assert_eq!(
+    f.router
+      .clone()
+      .oneshot(json_request(
+        "POST",
+        &start_path,
+        "stale-omission",
+        Some("\"2\""),
+        &body.to_string()
+      ))
+      .await
+      .unwrap()
+      .status(),
+    StatusCode::CONFLICT,
+    "newly available optional text also requires a new preview"
+  );
+  assert_eq!(
+    (
+      f.issues.mutation_evidence_counts().await,
+      f.factory.mutation_evidence_counts().await
+    ),
+    before_new
+  );
+  body["expected_snapshot_digest"] = reviewed["snapshot_digest"].clone();
+  assert_eq!(
+    f.router
+      .clone()
+      .oneshot(json_request(
+        "POST",
+        &start_path,
+        "reviewed-start",
+        Some("\"2\""),
+        &body.to_string()
+      ))
+      .await
+      .unwrap()
+      .status(),
+    StatusCode::CONFLICT,
+    "changing the precondition cannot reuse another confirmed request"
+  );
+}

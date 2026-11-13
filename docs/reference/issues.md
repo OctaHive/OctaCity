@@ -627,16 +627,14 @@ store dependency direction. Production builds do not expose the test fixture.
 ## Console manual task workspace
 
 Open a Project, choose **Tasks**, then **Create task**. Only a title is required.
-The legacy Console planning-priority list starts with Blocker (3), High (2), Medium (1)
-and Low (0), plus Not set (`null`). One shared presentation mapping supplies the
-create/edit selector, confirmation and card labels. The numeric REST range stays
-0–255; an existing non-preset value appears as `Existing priority (N)` and is
-preserved through unrelated edits until explicitly replaced or cleared. The four
-presets are not a closed server enum, so the shared list can be extended without
-migrating existing Issue values. New backend priorities use Project choice IDs;
-existing choice IDs remain intact through unrelated Console edits. Full Project-backed
-selectors and dedicated priority/component/type-list settings belong to snapshot
-tasks 6.3 and 6.6. Execution scheduling priority is separate.
+The Console uses the Project's published priority choices, initially `blocker`,
+`high`, `medium` and `low`, plus Not set. Existing numeric priorities remain
+labelled as legacy values and survive unrelated edits until explicitly replaced
+or cleared; their retained REST range is 0–255. The canonical content priority
+location supports both retained numbers and new choice IDs. Built-in component
+and type use separate Project lists, initially no components and types `defect`
+and `feature_request`; size keeps `small`, `medium` and `large`. Default choices
+do not fill Issue values. Execution scheduling priority remains separate.
 
 Description, acceptance criteria and priority can be completed later; no
 integration, repository, Factory setup or workflow-administration permission is
@@ -1290,6 +1288,17 @@ has no Issue snapshot. Review is input inspection, not admission or human
 acceptance. Repository resolution and final admission still enforce their own
 ordinary prerequisites.
 
+Snapshot clients bind confirmation to the preview by sending its digest as the
+optional `expected_snapshot_digest` start precondition. After ordinary access and
+readiness checks, the server compares it with the newly resolved snapshot before
+reserving a request. A mismatch returns 409 without request, audit or replay
+writes; the client must review again. This also detects optional material
+availability changes that do not edit the Issue revision. The digest supplies no
+input data or authority. It belongs to exact command replay identity: a successful
+retry returns the original receipt without selecting current input again, while
+changing the precondition under the same key conflicts. Legacy callers can omit
+the field; omitted values preserve retained replay encoding.
+
 Both review and start expose bounded field-specific diagnostics, including
 `issue_snapshot_missing_value`, `issue_snapshot_inapplicable`, an incompatible
 `invalid_contract` and `issue_snapshot_evidence_unavailable`, with exact
@@ -1363,13 +1372,51 @@ create/edit requires neither a provider nor Factory setup.
 
 The card reuses the Factory Work form's configuration/repository/source selector.
 It offers authorized visible versions and repository-supported default reference,
-allowed reference or exact revision. Priority bounds and risk choices come from
-the generated ordinary Work schema. Review shows the exact target, source
-choice, classification, Issue revision and requirements. New confirmation is
-blocked during a refresh or after a failed refresh; retained choices remain
-visibly stale. Execution authority is independent of Issue transition choices.
+allowed reference or exact revision. The selected exact Configuration is read before
+review to identify its input contract. An Issue-snapshot target needs no earlier
+Run. A target declaring an accepted producer result offers the earlier Issue Run
+selector and keeps that exact Run in the request; final eligibility remains a
+server check. A target without either declaration offers neither selector nor
+an inferred predecessor.
 
-Confirmation calls the existing reviewed execution POST. The shared in-memory
+**Review pipeline launch** calls the read-only, no-store execution review endpoint
+with the observed Issue version and exact target. It allocates no command key and
+publishes no input. The confirmation shows the server-resolved fields, frozen
+Project field definitions and choice names/IDs, required/optional status, exact
+comment/document identities, owners, digests, authorized text, count/byte bounds
+and explicit optional omissions. Exact declared sources remain identifiable even
+when their optional body is unavailable. Only the pipeline-selected material is
+included; new comments or publications are not added automatically, and text grants
+no approval or permission. Issue material creation and selection remain separate
+operations.
+
+Semantic classification sources resolve their property and choice names through
+the snapshot's frozen slot bindings, for both compact selected definitions and
+retained full catalogs. Display labels never require the current Project catalog.
+
+Preview and frozen detail also show each selected field's retained assessment
+origin/actor, time, assessed Issue revision, requirements revision and original
+field-definition version where applicable. The consumer's definition version and
+the snapshot's requirements applicability revision are shown separately. Revision
+and producing-Run links identify the original assessment; external origins retain
+their exact mapping and observation record. Assessment-revision links preserve
+the selected execution so returning to Runs retains its original frozen input.
+Evidence references are displayed as
+frozen references, without claiming current verification. Missing attribution is
+labelled **Not assessed**; no evidence references is stated explicitly. These
+views never substitute the current Issue's classification or query it to renew
+historical applicability.
+
+A policy-driven snapshot omits editable Work priority/risk and uses the reviewed
+server policy result. Other targets retain the generated ordinary Work scheduling
+controls. An incomplete, failed or mismatched preview cannot confirm a launch.
+Loading review can be cancelled without discarding the repository/source draft;
+modal focus starts only after preview finishes. New confirmation is blocked during
+a refresh or after a failed refresh. Execution authority is independent of Issue
+transition choices.
+
+Snapshot confirmation includes the preview's `expected_snapshot_digest` in the
+existing reviewed execution POST. The shared in-memory
 confirmed-intent mechanism freezes the body, `If-Match` and key. A lost response
 retries that same command. A 202 receipt retains the same continuation, releases
 modal focus and exposes **Resume preparation**, allowing requirements edits and
@@ -1387,6 +1434,15 @@ separate; execution against an earlier revision is explicitly labelled. Refresh
 is read-only and retains last loaded metadata with a stale notice on failure.
 Existing Run pages own progress, diagnostics and attempt controls.
 
+For a request retaining a snapshot digest, **Frozen execution input** reads only
+that exact request's no-store snapshot endpoint. It shows the original fields and
+selected text separately from the current Issue revision; later Issue edits and
+document publications do not replace them. Independent access/retention failure or
+a mismatched Issue, target, revision or digest leaves the input unavailable.
+Refreshing input hides previously loaded bodies while checking access and after a
+failure, rather than presenting cached text as currently authorized. Legacy
+requests keep their original execution details without a snapshot read.
+
 Unsubmitted inputs and confirmed continuation keys exist only in the mounted
 form. Leaving or reloading discards them; the server's retained request/history
 remains readable. Reload restores historical selection, not a mutation key or an
@@ -1396,6 +1452,59 @@ background admission worker or second Work journal is introduced.
 
 Console Red/Green, browser and bundle qualification is recorded in
 [task 3.5 verification](../../openspec/changes/archive/2026-10-22-add-factory-work-card/verification-3.5.md).
+Issue snapshot start/detail qualification is recorded in
+[task 6.5 verification](../../openspec/changes/add-issue-classification-snapshots/verification-6.5.md).
+
+## Console Project Issue field settings
+
+Open a Project and expand **Issue field settings**. Reads begin on demand;
+collapsing preserves the mounted in-memory draft. The controls use the existing
+Project choice/catalog read and `PublishIssuePropertiesCommand` publication
+contract, rather than Issue value mutation. Publication requires Project
+`Administer`; Issue `Update` does not supply that right. Denial retains the draft.
+
+Dedicated **Priorities**, **Components** and **Issue types** lists edit the
+Project's built-in choices independently of custom fields. Initial priorities
+remain `blocker`, `high`, `medium`, `low`, and initial types remain `defect` and
+`feature_request`. Size is shown as the fixed `small`, `medium`, `large` set and
+has no Project list editor. These defaults describe options, not new Issue values.
+
+**Custom Issue fields** supports text with a UTF-8 byte bound, choice, boolean,
+bounded integer and date. New fields and options receive stable IDs once added.
+An optional new-option ID supports an existing semantic key such as `unknown`
+independently of its display name; IDs must satisfy the advertised key bounds
+and be unique within that list. Existing IDs and field kinds have no conversion
+controls. Rename display names or retire entries instead of removing identities.
+Optional classification selectors accept distinct choice-field IDs. Legacy
+component/kind/size bindings remain explicit custom references; they do not
+promote properties into built-in attributes or establish reproduction evidence.
+
+Review shows the current baseline version, Project-wide scope, full proposed
+lists, stable IDs, active/retired states, field kinds/bounds, option identities
+and semantic references. Supported kinds and count/UTF-8/integer/catalog bounds
+come from generated OpenAPI contracts. Invalid definitions cannot be reviewed;
+server publication validation and authorization remain authoritative.
+
+A definitive version conflict refreshes current metadata without discarding the
+local draft. **Reconcile with current catalog** applies unchanged current entries
+and retains local additions/edits. Concurrent edits to the same scoped identity
+require an explicit **Keep my change** or **Use current value** decision. New
+choice IDs in a current field remain retained even when its local display edit
+is chosen. The current published catalog can be inspected before resolution.
+Decisions are bound to that exact current version and draft. Reconciliation
+requires another review and a new command key; lost-response retry retains the
+original body and key. **Discard field draft** explicitly resets added changes
+and unadded input buffers to the current catalog. Leaving/reloading discards
+unsubmitted in-memory state.
+
+Publishing definitions changes no existing Issue values, source ownership,
+Work/Run or input snapshot. Retained revisions keep their original definitions;
+new Issue editing and pipeline field selection consume the published catalog.
+Existing labels survive full-catalog publication and current labels are retained
+when resolving a concurrent update. No provider or execution operation is implied.
+
+EN/RU, keyboard, 390px, conflict, replay and immutable-ID qualification is recorded
+in [task 6.6 verification](../../openspec/changes/add-issue-classification-snapshots/verification-6.6.md).
 
 ## Explicit accepted pipeline status actions
 

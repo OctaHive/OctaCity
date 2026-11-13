@@ -45,6 +45,10 @@ pub struct RequestIssueExecutionIntent {
   pub expected_version: IssueVersion,
   /// Frozen target, source policy and text selection.
   pub target: IssueExecutionTarget,
+  /// Optional snapshot-review precondition; not input data or admission authority.
+  /// Omitted by retained legacy callers; included in exact command replay identity.
+  #[serde(default, skip_serializing_if = "Option::is_none")]
+  pub expected_snapshot_digest: Option<FactoryDigest>,
   /// Explicit classification for contracts without an Issue admission mapping.
   /// Policy-driven snapshot requests use the server-derived result instead.
   #[serde(default, skip_serializing_if = "Option::is_none")]

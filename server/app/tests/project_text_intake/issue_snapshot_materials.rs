@@ -153,6 +153,7 @@ async fn material_snapshot_recovers_frozen_sources_after_restart_and_content_ret
       &context(),
       RequestIssueExecutionCommand {
         intent: RequestIssueExecutionIntent {
+          expected_snapshot_digest: None,
           project_id: issue.project_id,
           issue_id: issue.id,
           expected_version: issue.version,

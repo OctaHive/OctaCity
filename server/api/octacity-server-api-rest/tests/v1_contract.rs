@@ -835,3 +835,22 @@ fn source_diagnostics_document_launch_denial_separately_from_provider_failures()
     "a policy block must survive closed client generation: {classes}"
   );
 }
+
+#[test]
+fn issue_snapshot_blockers_are_part_of_the_public_validation_contract() {
+  let document = octacity_server_api_rest::v1::openapi_document();
+  let codes = document["components"]["schemas"]["FactoryValidationDiagnostics"]["properties"]["errors"]["items"]["properties"]["code"]["enum"].as_array().unwrap();
+  for code in [
+    "issue_snapshot_missing_value",
+    "issue_snapshot_incompatible_value",
+    "issue_snapshot_semantic_binding_changed",
+    "issue_snapshot_inapplicable",
+    "issue_snapshot_evidence_unavailable",
+    "issue_snapshot_policy_ineligible",
+    "issue_snapshot_encoding_limit_exceeded",
+    "issue_snapshot_material_limit_exceeded",
+    "issue_snapshot_material_unavailable",
+  ] {
+    assert!(codes.contains(&json!(code)), "missing public blocker {code}");
+  }
+}
