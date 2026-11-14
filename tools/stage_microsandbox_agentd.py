@@ -21,7 +21,7 @@ from urllib.request import Request, urlopen
 from pinned_source_archive import SourceArchiveError, download, extract_source
 
 
-VERSION = "0.7.6"
+VERSION = "0.7.15"
 RELEASE_URL = (
     "https://github.com/superradcompany/microsandbox/releases/download/"
     f"v{VERSION}"
@@ -124,13 +124,13 @@ class Asset(NamedTuple):
 ASSETS = {
     "aarch64": Asset(
         "agentd-aarch64",
-        "f858a7b227308b40e06387b99c5f9a99f5fb9f1aeaa70f47080a8998b87dd2ba",
-        603564489,
+        "04fe96ce2103d17ba88e22c3c90642a1071f5e75bec16525e84c9d53fb5c1008",
+        740507469,
     ),
     "x86_64": Asset(
         "agentd-x86_64",
-        "78bb21c3bf16f195068c946ce72419d242fa2b3f1bebd2c339cc8e58dd79847d",
-        603564491,
+        "c9b9cc8bf660ed49db0ce5732adc74fadd53ceb4a3f16a1575101610f8e2a1fd",
+        740507473,
     ),
 }
 

@@ -1,8 +1,8 @@
 $ErrorActionPreference = "Stop"
 Set-StrictMode -Version Latest
 
-$MicrosandboxVersion = "0.7.6"
-$MicrosandboxArchiveSha256 = "78fe36cf700d9c888e041373e2826bca7d553da2374b4d8172d12edae333ef4c"
+$MicrosandboxVersion = "0.7.15"
+$MicrosandboxArchiveSha256 = "be3f6c9cfff0f79fc32c2a6eb1bf3e6de7225dfc8a5d616a5578d02d4d1ff6e9"
 $WorkspaceBytes = 1073741824
 $Image = "quay.io/fedora/fedora@sha256:63773f454664cd77e239f8e0b13ae7f18effe9e3d6612a325b5646eb3bda11f1"
 

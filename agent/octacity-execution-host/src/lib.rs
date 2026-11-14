@@ -154,6 +154,8 @@ impl ExecutionBackend for HostBackend {
       ));
     }
     runner.validate()?;
+    let mut system =
+      System::new().map_err(|error| unavailable(format!("initialize host process accounting: {error}")))?;
 
     let mut command = Command::new(&runner.executable);
     command
@@ -185,7 +187,6 @@ impl ExecutionBackend for HostBackend {
       }
     };
     let disk_usage = WorkspaceDiskUsage::new(workspace.clone(), self.max_accounted_workspace_entries);
-    let mut system = System::new();
     system.refresh_processes(ProcessesToUpdate::All, true);
     let root_started_at = system.process(Pid::from_u32(pid)).map(sysinfo::Process::start_time);
     let initial_process = sample_process_tree(&system, Pid::from_u32(pid), root_started_at);

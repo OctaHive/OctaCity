@@ -66,16 +66,16 @@
   "native": {
     "microsandbox": {
       "asset": "microsandbox-darwin-aarch64.tar.gz",
-      "asset_id": 603564615,
+      "asset_id": 740507717,
       "firmware": "libkrunfw.5.dylib",
       "guest_image": "quay.io/fedora/fedora@sha256:83205934094144b56f645f86c42b84f81083f423b0bea9cb233f91c21bab0919",
       "platform": "darwin-arm64",
-      "release_url": "https://github.com/superradcompany/microsandbox/releases/download/v0.7.6/microsandbox-darwin-aarch64.tar.gz",
+      "release_url": "https://github.com/superradcompany/microsandbox/releases/download/v0.7.15/microsandbox-darwin-aarch64.tar.gz",
       "repository": "https://github.com/superradcompany/microsandbox",
-      "sha256": "a4f1722fee6460d4e2813e62b60dae4c092021d8120b7aaa9c2f4b5679d97d89",
-      "source_revision": "09df3d4b9d832adaede1fb9a198cfc660bfab8cd",
-      "tag": "v0.7.6",
-      "version": "0.7.6"
+      "sha256": "99b1b0e1d5a30a30e12b4371a339e1683e57f7d12a57be32e63198c8809e1f3d",
+      "source_revision": "f9ae8e23df767929d513348b3543210322a9723f",
+      "tag": "v0.7.15",
+      "version": "0.7.15"
     },
     "octa": {
       "asset": "octa-Linux-arm64.tar.gz",

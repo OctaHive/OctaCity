@@ -74,7 +74,7 @@ class NativeStandStagingTests(unittest.TestCase):
             "validity": 900,
         }
 
-    def create_inputs(self, root: Path):
+    def create_inputs(self, root: Path, *, microsandbox_version: str = "0.7.15"):
         document = deepcopy(self.document)
         agent_root = root / "agent-root"
         agent_root.mkdir()
@@ -177,7 +177,7 @@ class NativeStandStagingTests(unittest.TestCase):
 
         msb_root = root / "msb-root"
         msb_root.mkdir()
-        write_executable(msb_root / "msb", "#!/bin/sh\necho 'msb 0.7.6'\n")
+        write_executable(msb_root / "msb", f"#!/bin/sh\necho 'msb {microsandbox_version}'\n")
         (msb_root / "libkrunfw.5.dylib").write_bytes(b"firmware")
         msb_archive = root / self.entries["microsandbox"]["filename"]
         archive(msb_root, msb_archive)
@@ -196,7 +196,10 @@ class NativeStandStagingTests(unittest.TestCase):
             directory.rmdir()
         return document
 
-    def native_processes(self, *, validation_succeeds: bool = True, policy_succeeds: bool = True):
+    def native_processes(
+        self, *, validation_succeeds: bool = True, policy_succeeds: bool = True,
+        microsandbox_version: str = "0.7.15",
+    ):
         """Replace macOS binaries with their observable process contract."""
 
         def run(command, **kwargs):
@@ -210,7 +213,7 @@ class NativeStandStagingTests(unittest.TestCase):
                     command, 0, stdout="octacity-agent 0.1.0\n"
                 )
             if arguments == ["--version"] and executable == "msb":
-                return subprocess.CompletedProcess(command, 0, stdout="msb 0.7.6\n")
+                return subprocess.CompletedProcess(command, 0, stdout=f"msb {microsandbox_version}\n")
             if arguments == ["--version"] and executable.startswith(
                 "octacity-release-harness-"
             ):
@@ -244,11 +247,11 @@ class NativeStandStagingTests(unittest.TestCase):
         name = STAGER.input_set_name(self.document, REVISION)
         self.assertEqual(
             name,
-            "inputs-agent-0.1.0-aaaaaaaaaaaa-octa-0.9.0-msb-0.7.6",
+            "inputs-agent-0.1.0-aaaaaaaaaaaa-octa-0.9.0-msb-0.7.15",
         )
         self.assertEqual(
             STAGER.installation_name(self.document, REVISION),
-            "agent-0.1.0-aaaaaaaaaaaa-octa-0.9.0-msb-0.7.6",
+            "agent-0.1.0-aaaaaaaaaaaa-octa-0.9.0-msb-0.7.15",
         )
 
     def test_octa_bundle_requires_native_capture_even_with_valid_checksums(self):
@@ -332,6 +335,22 @@ class NativeStandStagingTests(unittest.TestCase):
                 verified["asset_id"],
                 self.document["native"]["microsandbox"]["asset_id"],
             )
+
+    def test_rejects_legacy_runtime_before_publishing_an_sdk_incompatible_installation(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            inputs = root / "inputs"
+            inputs.mkdir()
+            document = self.create_inputs(inputs, microsandbox_version="0.7.6")
+            destination = root / "installed"
+            with self.native_processes(microsandbox_version="0.7.6"):
+                with self.assertRaisesRegex(STAGER.NativeStageError, "staged Microsandbox version differs"):
+                    STAGER.install_native_bundle(
+                        inputs, destination, document, self.entries, REVISION,
+                        REPOSITORY / "deployment/local-stand/fixtures/agent.toml.in",
+                    )
+            self.assertFalse(destination.exists())
+            self.assertEqual(sorted(path.name for path in root.iterdir()), ["inputs"])
 
     def test_offline_install_is_atomic_verified_and_reusable(self):
         with tempfile.TemporaryDirectory() as temporary:

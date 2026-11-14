@@ -26,6 +26,9 @@ use thiserror::Error;
 /// Failure to inspect host resources or construct a valid inventory.
 #[derive(Debug, Error)]
 pub enum InventoryError {
+  /// Host resource inspection is unavailable on the current system.
+  #[error("failed to initialize host resource inspection: {0}")]
+  System(#[from] sysinfo::Error),
   /// Logical CPU capacity could not be inspected.
   #[error("failed to inspect available parallelism: {0}")]
   Cpu(#[source] std::io::Error),
@@ -136,8 +139,8 @@ impl HostMonitor {
   pub fn new(work_root: PathBuf, state_root: PathBuf, virtualization_available: bool) -> Result<Self, InventoryError> {
     let logical_cpu_count = u32::try_from(std::thread::available_parallelism().map_err(InventoryError::Cpu)?.get())
       .map_err(|_| InventoryError::Capacity("logical CPU count exceeds u32".to_owned()))?;
-    let system = System::new_all();
-    let disks = Disks::new_with_refreshed_list();
+    let system = System::new_all()?;
+    let disks = Disks::new_with_refreshed_list()?;
     let capacity = HostCapacity {
       logical_cpu_count,
       total_memory_bytes: system.total_memory(),
@@ -342,10 +345,12 @@ pub fn build_inventory(
 }
 
 fn host_details() -> octacity_protocol::AgentHostDetails {
-  let hostname = System::host_name();
+  let hostname = System::host_name().ok();
   let fqdn = hostname.as_ref().filter(|name| name.contains('.')).cloned();
-  let ip_addresses = sysinfo::Networks::new_with_refreshed_list()
-    .values()
+  let networks = sysinfo::Networks::new_with_refreshed_list().ok();
+  let ip_addresses = networks
+    .iter()
+    .flat_map(|networks| networks.values())
     .flat_map(|network| network.ip_networks().iter().map(|ip| ip.addr))
     .filter(|ip| !ip.is_loopback() && !ip.is_unspecified() && !ip.is_multicast())
     .collect::<std::collections::BTreeSet<_>>()
@@ -355,7 +360,7 @@ fn host_details() -> octacity_protocol::AgentHostDetails {
   octacity_protocol::AgentHostDetails {
     hostname,
     fqdn,
-    os_version: System::long_os_version(),
+    os_version: System::long_os_version().ok(),
     ip_addresses,
   }
 }
@@ -393,8 +398,7 @@ fn filesystem_values(disks: &Disks, path: &Path) -> Result<(u64, u64), Inventory
 
 fn filesystem_disk<'a>(disks: &'a Disks, path: &Path) -> Result<&'a sysinfo::Disk, InventoryError> {
   disks
-    .list()
-    .iter()
+    .into_iter()
     .filter_map(|disk| mount_depth(path, disk.mount_point()).map(|depth| (depth, disk)))
     .max_by_key(|(depth, _)| *depth)
     .map(|(_, disk)| disk)

@@ -51,7 +51,7 @@ git --version
 
 The Docker server result must end in `linux/arm64`. Start the OrbStack app if
 the Docker API is unavailable. The launcher stages and verifies the pinned
-Microsandbox 0.7.6 binary and firmware itself; a separate global `msb`
+Microsandbox 0.7.15 binary and firmware itself; a separate global `msb`
 installation is neither required nor used.
 
 ## State and source revision

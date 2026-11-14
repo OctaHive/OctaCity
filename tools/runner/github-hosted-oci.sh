@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-MICROSANDBOX_VERSION=0.7.6
+MICROSANDBOX_VERSION=0.7.15
 CONTAINERD_VERSION=2.4.1
 WORKSPACE_BYTES=1073741824
 
@@ -183,8 +183,8 @@ setup_containerd() {
 
 microsandbox_asset() {
   case "$(uname -m)" in
-    x86_64) printf '%s %s\n' microsandbox-linux-x86_64.tar.gz daa69c6a644289bbb7ef889bd862ffba7acddf934d45e724fa160edcd9a540e0 ;;
-    aarch64|arm64) printf '%s %s\n' microsandbox-linux-aarch64.tar.gz 47e4787423b12f56f24119f657c54974b1869c0853b3d7a0873157668d29aa03 ;;
+    x86_64) printf '%s %s\n' microsandbox-linux-x86_64.tar.gz 37ffc7bf7b2b977ab004f620f47ae4466f021a9b880c94f46f697c56cf6932b7 ;;
+    aarch64|arm64) printf '%s %s\n' microsandbox-linux-aarch64.tar.gz 1ace5e63bb5793034f0e8afe7d73c6af3e4a2b05cb5b9287cb2da42520a293d5 ;;
     *) fail "unsupported Linux architecture: $(uname -m)" ;;
   esac
 }

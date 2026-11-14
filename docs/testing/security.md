@@ -35,6 +35,81 @@ and detected-secret findings fail the job. Informational RustSec warnings
 remain visible and must be evaluated rather than silently ignored or converted
 into permanent blanket exceptions.
 
+### Workspace crate refresh (2026-11-14–15)
+
+The workspace and GitHub adapter manifests now require the latest stable direct
+crate versions available for the pinned Rust 1.99 toolchain, including
+Microsandbox SDK `0.7.15`, sysinfo `0.40.3`, Tokio `1.54.1` and AWS S3 SDK
+`1.159.0`. Both production and independent fuzz lockfiles were refreshed. Exact
+pins remain exact, default-feature restrictions are preserved, and local Octa
+protocol dependencies still use the reviewed sibling checkout.
+
+The sysinfo migration preserves mandatory capacity/process accounting and
+best-effort host diagnostics. Fallible sampler initialization propagates an
+error; the Host backend initializes it before spawning the runner. Existing
+behavioral tests characterize these boundaries before and after the migration,
+preserving the capacity and diagnostic wire contracts.
+
+The SDK requires the runtime's protected sandbox state capability for every
+start. Update the paired `msb` runtime to `0.7.15`; the old `0.7.6` executable
+is refused before Job execution. Local-stand and Linux/Windows runner pins now
+select checksum-verified `0.7.15` assets. Existing installations must be updated
+explicitly; refreshing Cargo dependencies alone does not replace an installed
+runtime. The separately qualified file-mount guest repair remains pinned to its
+original source and digest. On macOS ARM64, the updated SDK/runtime pair with
+that guest passed ordinary source-free Job execution, retry and cancellation,
+plus four readonly/writable selected-source projection contracts. This is native
+macOS ARM64 qualification; Linux/Windows runtime execution was not repeated here.
+
+The installer regression
+`test_rejects_legacy_runtime_before_publishing_an_sdk_incompatible_installation`
+first failed because a checksum-valid old runtime was accepted (Red). After the
+runtime pins changed, it passed, proving rejection before publication and no
+leftover staging directory (Green). The source-free native Job independently
+failed with SDK `0.7.15` / runtime `0.7.6`, then passed with runtime `0.7.15`.
+The qualified guest's original source/checksum policy is preserved.
+
+Verification: the pre-update unit/integration binaries passed 3,558 cases;
+the later doctest phase overlapped the source update and is not claimed as a
+clean full baseline. The final graph passed 3,571 tests including
+doctests (609 environment-dependent cases ignored), strict Clippy, Rust
+formatting, architecture checks and all 679 tools cases (39 skipped). The fuzz
+targets pass type checking. The local macOS C++ toolchain needed its installed
+SDK's `usr/include/c++/v1` added to `CXXFLAGS` for libFuzzer; no repository build
+flags were changed. Initial sandbox socket/TLS restrictions and disk exhaustion
+were environment failures, repaired before the successful final checks.
+
+```shell
+# From the repository root; reduce build-cache use.
+export CARGO_INCREMENTAL=0 CARGO_PROFILE_DEV_DEBUG=0 CARGO_PROFILE_TEST_DEBUG=0
+export CARGO_BUILD_JOBS=4
+cargo test --locked --workspace --all-features
+cargo clippy --locked --workspace --all-targets --all-features -- -D warnings
+cargo check --locked --manifest-path fuzz/Cargo.toml --bins
+python3 -m unittest discover -s tools/tests
+python3 -m unittest tools.tests.test_stage_local_stand_native.NativeStandStagingTests.test_rejects_legacy_runtime_before_publishing_an_sdk_incompatible_installation
+```
+
+The native qualification uses the existing `backend_contract` source-free and
+selected-source tests with the environment described in
+[backend contracts](backend-contracts.md). The installed runtime's
+`msb __launch-protocol` advertised protocol 2 and `protected_guest_state: true`.
+
+The production RustSec audit decreased from four vulnerabilities to one. The
+patched zstd branches also remove the previous unsoundness warnings. The
+remaining [RUSTSEC-2026-0459](https://rustsec.org/advisories/RUSTSEC-2026-0459.html)
+is `libsqlite3-sys 0.37.0`, used by Microsandbox through SQLx `0.9.0`.
+`sqlx-sqlite 0.9.0` requires `>=0.30.1, <0.38.0`, excluding the patched
+`libsqlite3-sys >=0.39.0`. It concerns opening an attacker-controlled database
+and sibling WAL file; keep Microsandbox state private and do not import
+untrusted database/WAL pairs. No advisory ignore or dependency fork is added:
+the production security gate still fails on this finding. Recheck the upstream
+SQLx constraint by 2026-11-21 or when a patched release becomes available.
+Three unmaintained-package warnings remain visible. The fuzz audit has no
+vulnerabilities and retains its existing unmaintained-package warning. Both
+license/source policies pass without changes. The following older zstd report
+records its original qualification and deferral, rather than current audit state.
+
 ### zstd advisory follow-up (2026-10-27)
 
 The direct workspace dependency now requires `zstd >=0.14.3`; the production

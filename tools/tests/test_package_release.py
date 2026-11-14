@@ -770,8 +770,8 @@ class PackageReleaseTests(unittest.TestCase):
         self.assertIn("if: always()", preview)
 
         provisioner = (REPOSITORY / "tools/runner/self-hosted-microsandbox-whp.ps1").read_text(encoding="utf-8")
-        self.assertIn('$MicrosandboxVersion = "0.7.6"', provisioner)
-        self.assertIn("78fe36cf700d9c888e041373e2826bca7d553da2374b4d8172d12edae333ef4c", provisioner)
+        self.assertIn('$MicrosandboxVersion = "0.7.15"', provisioner)
+        self.assertIn("be3f6c9cfff0f79fc32c2a6eb1bf3e6de7225dfc8a5d616a5578d02d4d1ff6e9", provisioner)
         self.assertIn("msb.FullName doctor", provisioner)
         self.assertIn("--platform linux-amd64", provisioner)
         self.assertIn("OCTACITY_CONTRACT_MICROSANDBOX_ENVIRONMENT_IDENTITY", provisioner)

@@ -1023,7 +1023,7 @@ export OCTACITY_CONTRACT_MICROSANDBOX_WORK_ROOT=/absolute/path/to/micro-work
 export OCTACITY_CONTRACT_MICROSANDBOX_STATE_ROOT=/absolute/path/to/micro-state
 export OCTACITY_CONTRACT_MICROSANDBOX_EXECUTABLE=/opt/microsandbox/bin/msb
 export OCTACITY_CONTRACT_MICROSANDBOX_LIBKRUNFW=/opt/microsandbox/lib/libkrunfw.so
-export OCTACITY_CONTRACT_MICROSANDBOX_ENVIRONMENT_IDENTITY=microsandbox-0.7.6-linux-amd64
+export OCTACITY_CONTRACT_MICROSANDBOX_ENVIRONMENT_IDENTITY=microsandbox-0.7.15-linux-amd64
 export OCTACITY_CONTRACT_MICROSANDBOX_IMAGE='registry.example/build@sha256:<64-lowercase-hex>'
 export OCTACITY_CONTRACT_MICROSANDBOX_ALLOWED_HOST=allowed.contract.example
 export OCTACITY_CONTRACT_MICROSANDBOX_DENIED_HOST=denied.contract.example
@@ -1031,7 +1031,7 @@ cargo test -p octacity-job --test backend_contract \
   microsandbox_backend_satisfies_the_real_runner_contract -- --ignored --exact --nocapture
 ```
 
-The Windows preview workflow downloads the pinned `0.7.6` x86_64 ZIP, verifies
+The Windows preview workflow downloads the pinned `0.7.15` x86_64 ZIP, verifies
 its hard-coded SHA-256, requires `msb doctor` to accept WHP, and runs only on a
 self-hosted runner labelled `Windows`, `X64`, and
 `octacity-microsandbox-whp`. Merely compiling the adapter or seeing upstream
