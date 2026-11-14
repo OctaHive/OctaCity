@@ -14,6 +14,7 @@ pub(super) enum Case {
   Small,
   IssueSnapshot,
   ManualSnapshot,
+  MaterialSnapshot,
   Medium,
   Large,
   Rework,
@@ -21,11 +22,19 @@ pub(super) enum Case {
 }
 impl Case {
   pub(super) fn issue_snapshot(self) -> bool {
-    matches!(self, Self::IssueSnapshot | Self::ManualSnapshot)
+    matches!(
+      self,
+      Self::IssueSnapshot | Self::ManualSnapshot | Self::MaterialSnapshot
+    )
   }
   fn as_str(self) -> &'static str {
     match self {
-      Self::Small | Self::IssueSnapshot | Self::ManualSnapshot | Self::Rework | Self::NonReproducingDefect => "small",
+      Self::Small
+      | Self::IssueSnapshot
+      | Self::ManualSnapshot
+      | Self::MaterialSnapshot
+      | Self::Rework
+      | Self::NonReproducingDefect => "small",
       Self::Medium => "medium",
       Self::Large => "large",
     }
@@ -76,11 +85,32 @@ impl Ticket {
     entry: &str,
   ) -> Self {
     let project = &scenario.resources.project;
+    if scenario.ticket_case == Some(Case::MaterialSnapshot) {
+      workflow_issue_materials::browser(client, origin, project, scenario.directory, "fields", "", "").await;
+    }
     let contract = if scenario.ticket_case.is_some_and(Case::issue_snapshot) {
-      Some(workflow_issue_snapshot::contract(client, origin, project).await)
+      Some(if scenario.ticket_case == Some(Case::MaterialSnapshot) {
+        workflow_issue_snapshot::read_contract(client, origin, project).await
+      } else {
+        workflow_issue_snapshot::contract(client, origin, project).await
+      })
     } else {
       None
     };
+    if scenario.ticket_case == Some(Case::MaterialSnapshot) {
+      let catalog = get_json(
+        client,
+        format!("{origin}/api/v1/projects/{project}/issue-property-definitions"),
+      )
+      .await;
+      let properties = catalog["definition"]["properties"].as_array().unwrap();
+      for name in ["Material environment", "Assessment severity"] {
+        assert!(
+          properties.iter().any(|field| field["name"] == name),
+          "Project settings must publish the ordinary/classification field {name}"
+        );
+      }
+    }
     let path = format!("/api/v1/projects/{project}/issues");
     let defect = scenario.ticket_case == Some(Case::NonReproducingDefect);
     let (description, acceptance) = if defect {
@@ -102,6 +132,15 @@ impl Ticket {
         "component":"api","type":"feature_request","size":"small"});
     }
     let issue = resource_id(&post_management(client, origin, &path, "delivery-test-issue", content).await);
+    if scenario.ticket_case == Some(Case::MaterialSnapshot) {
+      workflow_issue_materials::browser(client, origin, project, scenario.directory, "materials", &issue, "").await;
+      let current = get_json(client, format!("{origin}{path}/{issue}")).await;
+      assert_eq!(
+        current["materials"].as_array().map_or(0, Vec::len),
+        3,
+        "the Console must select each material owner explicitly"
+      );
+    }
     let summary = FlowDataSchema::new(
       key("pilot.ticket-summary"),
       key("v1"),
@@ -149,11 +188,17 @@ impl Ticket {
       ]),
     )
     .unwrap();
-    let schema = contract.as_ref().map_or_else(
+    let mut schema = contract.as_ref().map_or_else(
       || envelope.clone(),
       |choice| serde_json::from_value(choice["field_contract"]["schema"].clone()).unwrap(),
     );
-    if scenario.ticket_case == Some(Case::ManualSnapshot) {
+    if scenario.ticket_case == Some(Case::MaterialSnapshot) {
+      schema = workflow_issue_materials::schema(&schema);
+    }
+    if matches!(
+      scenario.ticket_case,
+      Some(Case::ManualSnapshot | Case::MaterialSnapshot)
+    ) {
       let ticket = Self::for_issue(project, issue);
       let executions = get_json(client, format!("{origin}{}", ticket.path)).await;
       assert!(
@@ -161,6 +206,9 @@ impl Ticket {
         "a manually classified Issue must need no triage Run"
       );
       bind_delivery(draft, entry, &schema, &envelope, &summary, None);
+      if scenario.ticket_case == Some(Case::MaterialSnapshot) {
+        workflow_issue_materials::extend(client, origin, project, draft, &schema, profile).await;
+      }
       return ticket;
     }
     let p = &profile.profile;
@@ -302,6 +350,17 @@ impl Ticket {
       let status = response.status();
       let review: Value = response.json().await.unwrap();
       assert!(status.is_success(), "snapshot review failed: {status} {review}");
+      if scenario.ticket_case == Some(Case::MaterialSnapshot) {
+        assert_eq!(
+          review["snapshot"]["values"]["context"],
+          json!([
+            "ISSUE_TEXT_SELECTED_v1",
+            "PROJECT_TEXT_SELECTED_v1",
+            "COMMENT_TEXT_SELECTED_v1"
+          ]),
+          "the consumer must explicitly freeze the three selected texts"
+        );
+      }
       assert_eq!(review["snapshot"]["admission_classification"]["priority"], 80);
       body["expected_snapshot_digest"] = review["snapshot_digest"].clone();
       Some(review)
@@ -309,6 +368,33 @@ impl Ticket {
       body["classification"] = json!({"priority":40,"risk":"low","metadata":{}});
       None
     };
+    if scenario.ticket_case == Some(Case::MaterialSnapshot) {
+      workflow_issue_materials::browser(
+        client,
+        origin,
+        &scenario.resources.project,
+        scenario.directory,
+        "launch",
+        &self.issue,
+        scenario.revision,
+      )
+      .await;
+      let executions = get_json(client, format!("{origin}{}", self.path)).await;
+      assert_eq!(
+        executions["items"].as_array().unwrap().len(),
+        1,
+        "one explicit Console confirmation admits one execution"
+      );
+      let request = &executions["items"][0];
+      let reviewed = reviewed.unwrap();
+      assert_eq!(request["snapshot_digest"], reviewed["snapshot_digest"]);
+      assert_eq!(request["intent"]["target"], target);
+      self.snapshot = Some(workflow_issue_snapshot::Retained {
+        execution: string(request, "id"),
+        reviewed,
+      });
+      return string(&request["association"], "run_id");
+    }
     let response = client
       .post(format!("{origin}{}", self.path))
       .header(
@@ -346,6 +432,13 @@ impl Ticket {
   }
 
   pub(super) async fn verify_snapshot(&self, client: &Client, origin: &str, case: Option<Case>, run: &Value) {
+    if case == Some(Case::MaterialSnapshot) {
+      let probes = workflow_issue_materials::verify_probes(client, origin, run["id"].as_str().unwrap()).await;
+      let (request, snapshot) =
+        workflow_issue_materials::verify_retained(client, origin, &self.path, self.snapshot.as_ref().unwrap(), run)
+          .await;
+      workflow_issue_materials::save_native_evidence(run, &request, &snapshot, &probes);
+    }
     if matches!(case, Some(Case::IssueSnapshot | Case::ManualSnapshot)) {
       self
         .verify_retained(client, origin, run, if self.triage.is_empty() { 1 } else { 2 })

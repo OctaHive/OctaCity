@@ -396,6 +396,44 @@ qualification is described below.
 
 ## Ticket delivery qualification
 
+For new Issue-based consumers, use the
+[snapshot stand checklist](../operations/local-stand.md#qualify-issue-snapshot-delivery)
+and the [current authoring walkthrough](../operations/factory-pipeline-authoring.md#author-ticket-delivery).
+Tasks [7.1](../../openspec/changes/add-issue-classification-snapshots/verification-7.1.md)
+and [7.2](../../openspec/changes/add-issue-classification-snapshots/verification-7.2.md)
+qualified triage application, independent snapshot delivery, manual classification
+and replacement triage through real packaged Jobs and a disposable HTTPS/Git
+peer. They reuse one delivery Configuration without a predecessor selector and
+retain exact source attribution across publication/restart. The complete
+selected Issue-/Project-document/comment packaged journey, scoped native Jobs,
+owner guards and fresh producer-result control passed in
+[7.5](../../openspec/changes/add-issue-classification-snapshots/verification-7.5.md).
+Its environment/commands are documented in
+[packaged material snapshots](backend-contracts.md#packaged-issue-material-snapshots).
+The broader API/Console regressions and actual limits are recorded in
+[7.3](../../openspec/changes/add-issue-classification-snapshots/verification-7.3.md).
+
+With those journeys' qualified packaged installation, distinct pinned CLI
+executables and disposable PostgreSQL/MinIO (`octacity-artifacts` provisioned), run:
+
+```sh
+CARGO_PROFILE_DEV_DEBUG=0 CARGO_PROFILE_TEST_DEBUG=0 CARGO_INCREMENTAL=0 \
+  cargo test --locked -p octacity-release-harness --test factory_pilot \
+  packaged_issue_classification_delivers_from_its_snapshot_without_a_predecessor \
+  -- --ignored --exact --nocapture
+CARGO_PROFILE_DEV_DEBUG=0 CARGO_PROFILE_TEST_DEBUG=0 CARGO_INCREMENTAL=0 \
+  cargo test --locked -p octacity-release-harness --test factory_pilot \
+  packaged_delivery_reuses_one_configuration_for_manual_and_replacement_triage \
+  -- --ignored --exact --nocapture
+```
+
+Required environment and retained proof details are in
+[packaged classified Issue delivery](backend-contracts.md#packaged-classified-issue-delivery)
+and [reuse qualification](backend-contracts.md#packaged-reuse-of-one-issue-snapshot-delivery).
+Do not count an ignored default run or a resolved draft as native execution.
+
+The rest of this section records historical producer-result and protected-test
+qualification. Those published Runs keep their original input mode and bytes.
 Use the [operator walkthrough](../operations/factory-pipeline-authoring.md#author-ticket-delivery)
 to publish a Flow assembled from an empty graph. On the disposable macOS ARM64
 stand, the published Configuration admitted a manual Issue with its exact

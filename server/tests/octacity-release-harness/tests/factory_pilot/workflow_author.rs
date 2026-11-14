@@ -482,8 +482,11 @@ pub(super) async fn run(mut s: AuthorScenario<'_>) {
   } else {
     None
   };
-  let prelude = (s.prelude || s.ticket_case.is_some())
+  let mut prelude = (s.prelude || s.ticket_case.is_some())
     .then(|| workflow_prelude::Prelude::new(s.directory, s.release, s.resources, s.backend));
+  if s.ticket_case == Some(workflow_ticket::Case::MaterialSnapshot) {
+    workflow_issue_materials::configure_model(&mut prelude.as_mut().unwrap().model);
+  }
   let shadow = if s.prelude && deployment.is_some() {
     Some(workflow_shadow::Shadow::new(s.directory, s.release, s.resources, s.backend).await)
   } else {
@@ -828,7 +831,12 @@ pub(super) async fn run(mut s: AuthorScenario<'_>) {
     None
   };
   let budget = BudgetLimit::new(
-    if s.prelude || s.ticket_case == Some(workflow_ticket::Case::Rework) {
+    if s.prelude
+      || matches!(
+        s.ticket_case,
+        Some(workflow_ticket::Case::Rework | workflow_ticket::Case::MaterialSnapshot)
+      )
+    {
       32
     } else if s.review || deployment.is_some() || s.ticket_case.is_some() {
       12
@@ -1213,13 +1221,15 @@ pub(super) async fn run(mut s: AuthorScenario<'_>) {
   }
   let mut delivery_restarted = false;
   let completed = timeout(
-    Duration::from_secs(if s.review || deployment.is_some() {
-      budget.max_elapsed_millis().div_ceil(1000)
-    } else if delivery.is_some() {
-      240
-    } else {
-      180
-    }),
+    Duration::from_secs(
+      if s.review || deployment.is_some() || s.ticket_case == Some(workflow_ticket::Case::MaterialSnapshot) {
+        budget.max_elapsed_millis().div_ceil(1000)
+      } else if delivery.is_some() {
+        240
+      } else {
+        180
+      },
+    ),
     async {
       loop {
         if let Some(delivery) = &delivery
@@ -1245,7 +1255,7 @@ pub(super) async fn run(mut s: AuthorScenario<'_>) {
           break state;
         }
         assert!(
-          !["failed", "cancelled"].contains(&state["state"].as_str().unwrap_or("")),
+          !["failed", "cancelled", "stopped"].contains(&state["state"].as_str().unwrap_or("")),
           "author Flow stopped; private evidence: {}",
           s.directory.display()
         );
@@ -1344,6 +1354,7 @@ pub(super) async fn run(mut s: AuthorScenario<'_>) {
       terminal["key"] == "delivered_for_review" && terminal["schema"] == published["record"]["output_schema"]
     }));
   }
+  let material_probes = 2 * usize::from(s.ticket_case == Some(workflow_ticket::Case::MaterialSnapshot));
   assert_eq!(
     completions["items"].as_array().unwrap().len(),
     (if s.prelude {
@@ -1366,6 +1377,7 @@ pub(super) async fn run(mut s: AuthorScenario<'_>) {
       2
     }) + shadow.as_ref().map_or(0, |_| 3)
       + usize::from(specification.is_some())
+      + material_probes
   );
   let builds = workflow::diagnostic(&client, &origin, &run, "builds").await;
   assert_eq!(
@@ -1383,7 +1395,8 @@ pub(super) async fn run(mut s: AuthorScenario<'_>) {
     } else {
       1
     }) + 2 * usize::from(shadow.is_some())
-      + usize::from(specification.is_some()),
+      + usize::from(specification.is_some())
+      + material_probes,
     "each installed role executes through its actual ordinary Build"
   );
   let pool = sqlx::PgPool::connect(s.postgres).await.unwrap();
@@ -1581,6 +1594,13 @@ pub(super) async fn run(mut s: AuthorScenario<'_>) {
   if let Some(replacement) = &mut replacement {
     replacement.deliver(&client, &origin, &s, &configuration).await;
   }
+  if s.ticket_case == Some(workflow_ticket::Case::MaterialSnapshot) {
+    let ticket = ticket.as_ref().unwrap();
+    workflow_issue_materials::publish_later(&client, &origin, &s.resources.project, &ticket.issue).await;
+    ticket
+      .verify_snapshot(&client, &origin, s.ticket_case, &completed)
+      .await;
+  }
   if let Some(verifier) = verifier_worker.as_mut() {
     verifier.worker.kill().await.unwrap();
     verifier.worker.wait().await.unwrap();
@@ -1613,6 +1633,13 @@ pub(super) async fn run(mut s: AuthorScenario<'_>) {
     completions
   );
   assert_eq!(workflow::diagnostic(&client, &origin, &run, "builds").await, builds);
+  if s.ticket_case == Some(workflow_ticket::Case::MaterialSnapshot) {
+    ticket
+      .as_ref()
+      .unwrap()
+      .verify_snapshot(&client, &origin, s.ticket_case, &completed)
+      .await;
+  }
   if let Some(replacement) = &replacement {
     replacement
       .verify_finished(

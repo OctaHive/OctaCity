@@ -523,8 +523,9 @@ Reuse the same `--root` when updating an existing stand to retain its published
 pipelines, tickets, Runs, integrations, and storage volumes.
 
 Delivery is the Flow you build in Console to implement a ticket, verify the
-candidate, and optionally open a draft pull request. Start with an eligible
-ticket from triage. Coder prepares the change, protected commands compare the
+candidate, and optionally open a draft pull request. Start with an Issue whose
+applied fields and evidence satisfy the consumer, whether prepared manually or
+by triage. Coder prepares the change, protected commands compare the
 base and candidate with the same checked tests, and Reviewer assesses the
 candidate. DevOps prepares the PR text when the Flow includes publication.
 Tester writes acceptance checks in a separate AI step with read-only access to
@@ -583,7 +584,71 @@ of the installer-owned profile; a conflicting operator-owned profile requires
 explicit review. Each step still selects its own inputs and access within that
 ceiling. The bundled triage example independently selects MCP evidence
 verification for its eligibility result; classification consumes that accepted
-handoff using its ordinary classification result contract.
+handoff using its ordinary classification result contract. Applying that result
+to the Issue is a separately configured local action, not an implied side effect.
+
+#### Qualify Issue-snapshot delivery
+
+Use an isolated stand and an explicitly reviewed test repository/publication
+target. Updating an existing stand reuses its root and matching installation
+arguments; it does not require a reset. The launcher installs runtime/profile
+capabilities, not a completed Issue-snapshot delivery Flow or permission to
+activate intake. **Triage** / **Delivery** access profiles remain distinct, with
+the shared **Standard** launch policy; each step requests its own narrower scope.
+
+1. In Project **Issue field settings**, publish the intended component and
+   priority/type choices and supported custom fields. Retain stable IDs and the
+   catalog version. Size remains `small`, `medium`, `large`. For the complete
+   `ticket-delivery/v2` example, also publish its required semantic fields from
+   the [resolver prerequisites](../../config/factory/presets/ticket-delivery/README.md#current-v2-issue-snapshot-example).
+2. Prepare requirements/acceptance and classification in Issue **Properties**,
+   or explicitly install/configure
+   [Apply classification to Issue](factory.md#explicit-local-issue-classification-actions)
+   on triage's accepted result. If the capability is unavailable, install its
+   reviewed principal/action rather than assume the bundled triage writes data.
+   Confirm applied values, exact origin and freshness on the Issue.
+3. Publish an independent consumer with an Issue snapshot, reviewed admission
+   mapping, required/optional fields and explicit per-step projections. Use the
+   [operator walkthrough](factory-pipeline-authoring.md#author-ticket-delivery)
+   and [headless sequence](../reference/issues.md#headless-issue-snapshot-sequence).
+   The generic editor handles simple field/material selection; resolving the
+   complete `v2` preset still needs the API. Keep automatic Source input and
+   Reporter effects disabled for this manual trial.
+4. In **Documents**, create an Issue-owned publication and a new immutable
+   version. Verify they are absent from Project documents/step selectors and
+   unreadable through another Issue. Separately link an exact shared Project
+   publication, then post a comment/reply in **Activity**. Publication and append
+   must leave the material selection and execution history unchanged. Explicitly
+   review/select the intended document versions and comment as Issue materials.
+5. To qualify text consumption, the consumer must declare those materials with
+   count/UTF-8 bounds and recipient steps; the default `v2` consumes no text.
+   Review exact owner/publication/digest, values, omissions and body availability.
+   Start with the reviewed Issue version/digest and no triage Run selector.
+   Confirm only declared steps receive that frozen subset. An unavailable
+   required body must block admission; an optional omission must be explicit.
+6. Publish newer text, append an unselected comment and edit the Issue after
+   admission. Inspect the original execution in **Runs**, then restart and retry
+   its original request. Its snapshot, digests, Work/Run and selected bytes must
+   remain unchanged; sibling stages must receive no undeclared text. A stale
+   classification before a new admission must require fresh review/reassessment.
+7. Reuse the exact delivery Configuration for an independently manually prepared
+   Issue and one classified by another triage Flow. Retain the original protected
+   test handoff, candidate review, mandatory validation and confirmed test PR
+   checks. Separately verify that a newly published exact producer-result
+   consumer still accepts its selected upstream result under its own contract.
+
+Record revision/component/image/CLI identities, Configuration and Issue versions,
+safe provenance, request/snapshot digests, ordinary Build results, publication
+receipt and negative-case diagnostics. UI visibility alone is not execution
+evidence. The packaged classification/manual/replacement journeys were observed
+in [tasks 7.1–7.2](../../openspec/changes/add-issue-classification-snapshots/verification-7.1-7.2-review-fixes.md);
+broader regressions are in [7.3](../../openspec/changes/add-issue-classification-snapshots/verification-7.3.md).
+The packaged document/comment journey and a fresh exact producer-result control
+passed in [task 7.5](../../openspec/changes/add-issue-classification-snapshots/verification-7.5.md).
+Run the [packaged material qualification](../testing/backend-contracts.md#packaged-issue-material-snapshots)
+to reproduce its Console, native Job, owner-isolation and restart checks.
+Do not enable real provider effects merely to reproduce a documentation check. For an upgrade or rollback,
+follow [the version/retention procedure](../reference/factory-pipeline-authoring-migration.md#issue-snapshot-cutover-and-spec-order).
 
 To add reviewed checks, open **Additional verification** on the Tester
 step. Upload files or a folder, or select a Project repository and give an

@@ -46,10 +46,12 @@ disabled Configuration draft; publish and select exact versions explicitly.
 Source intake and Reporter effects remain separate opt-ins. The default snapshot
 selects no comment or document text. Add any required ordinary fields, explicit
 materials/evidence and per-step projections through the generic Flow contract;
-prose grants no evidence or approval authority. Visual Project-field selection
-is not yet available; use API authoring for this preset's Issue input. Console
-explains this required-input limitation and disables opening `v2`; choose `v1`
-there to use the existing producer-result controls.
+prose grants no evidence or approval authority. The generic Flow editor supports
+simple Issue field/material selection, but its **Start from an example** form
+does not yet collect this preset's required snapshot/admission parameters and
+disables opening `v2`. Use API resolution/publication for this preset; see the
+[operator walkthrough](../../../../docs/operations/factory-pipeline-authoring.md#author-ticket-delivery).
+Choose `v1` only when the intended input is an exact producer result.
 
 ## Retained v1 producer-result example
 

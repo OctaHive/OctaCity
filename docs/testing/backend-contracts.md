@@ -2261,6 +2261,62 @@ The earlier exact-producer case
 `packaged_delivery_recovers_the_accepted_real_review_after_server_restart`
 retains its predecessor selection and remains independently runnable.
 
+## Packaged Issue material snapshots
+
+The material qualification extends the existing packaged delivery pilot with the
+real Console and owner-aware Issue document/comment APIs. It requires the same
+native environment and distinct finite CLI executables as classified Issue
+delivery, plus `OCTACITY_RELEASE_CONSOLE_ROOT`, `OCTACITY_RELEASE_UI_ROOT`,
+`OCTACITY_RELEASE_NGINX` and optionally `OCTACITY_RELEASE_NGINX_MIME`. Put the
+repository-pinned Node and pnpm on `PATH`. Server/Console bundles must share a
+verified installation parent, version and source revision; the ordinary
+Server/Agent/Octa package validation still applies.
+
+```shell
+CARGO_PROFILE_DEV_DEBUG=0 CARGO_PROFILE_TEST_DEBUG=0 CARGO_INCREMENTAL=0 \
+  cargo test --locked -p octacity-release-harness --test factory_pilot \
+  packaged_issue_materials_remain_owned_frozen_and_scoped \
+  -- --ignored --exact --test-threads=1 --nocapture
+CARGO_PROFILE_DEV_DEBUG=0 CARGO_PROFILE_TEST_DEBUG=0 CARGO_INCREMENTAL=0 \
+  cargo test --locked -p octacity-release-harness --test factory_pilot \
+  packaged_delivery_recovers_the_accepted_real_review_after_server_restart \
+  -- --ignored --exact --test-threads=1 --nocapture
+```
+
+The first journey uses Project settings to create ordinary/classification fields,
+fills an Issue, publishes two Issue document versions and explicitly selects the
+first, links an exact shared Project document and selects an appended comment.
+It checks Project catalog and step-selector isolation, rejects another Issue's
+attempt to read/select the owned publication, then launches the reviewed
+snapshot consumer through the Console. It uses real HTTP without browser routes
+or saved Flow responses.
+
+Two ordinary read-only Jobs use different projections: one receives the selected
+fields/texts; the next receives only the component. Finite model `data_checks`
+verify text presence/absence in frozen input and independently selected immutable
+Context, excluding the installed program. Each check has a bounded nonempty
+`text` and a Boolean `present` (literal or `$input` projection); contradictions
+reject before file/tool operations. The public `codex-run-result` artifacts must
+independently match the declared projections. The remaining protected author,
+coder, original validation, isolated verifier and confirmed PR checks are retained.
+
+Later document versions and an unselected comment must preserve the original
+Issue selection, execution count and snapshot bytes across Server/Agent restart.
+The second command independently authors a fresh exact producer-result pipeline
+and verifies its accepted upstream result, candidate and confirmed publication.
+Run both commands to qualify the two input modes.
+
+Set `OCTACITY_RELEASE_EVIDENCE_DIR` to an existing absolute private directory to
+retain mode-0600 browser phase logs and `issue-materials-<run-id>.json` with the
+execution, frozen snapshot and ordinary probe Build/report references. These
+contain synthetic private text, not reusable production inputs. The observed
+Red/Green results and platform identities are recorded in
+[task 7.5](../../openspec/changes/add-issue-classification-snapshots/verification-7.5.md).
+Material HTTP mutation controls only check observed data: they do not write
+qualification proof, even when this release environment variable is set. Native
+proof persistence is an explicit step of the packaged journey after its ordinary
+Jobs have been independently verified.
+
 ## Packaged reuse of one Issue-snapshot delivery
 
 Using the same packaged environment and distinct pinned CLI executables, run:

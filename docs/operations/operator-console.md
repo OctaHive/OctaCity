@@ -645,6 +645,30 @@ coverage; **Search not verified** means no search observation was retained by th
 gate. Readable resource links use the task reader’s existing permissions. This
 display neither changes the task’s fields nor posts to an external provider.
 
+## Prepare an Issue for independent delivery
+
+The [end-to-end authoring procedure](factory-pipeline-authoring.md#prepare-canonical-issue-inputs)
+starts with Project **Issue field settings**, then Issue **Properties** and
+explicit document/comment material selection. Project `Administer` manages
+choice catalogs and custom fields; Issue `Update` edits task values. Separate
+discussion and Artifact body rights govern text preview and execution selection.
+Changing a display name or creating a document grants none of these rights.
+
+A configured triage action can apply accepted classification to the Issue;
+manual preparation is also supported. Check applied values, source and freshness
+in Properties, then review the consumer's exact fields/materials and optional
+omissions before **Start pipeline**. A snapshot target needs no earlier triage
+Run. An explicit producer-result target keeps its earlier-Run selector. The
+target's input mode determines which review is valid; switching targets requires
+reviewing the new input rather than carrying over a producer selection.
+
+After start, use the selected execution in **Runs** to inspect its original
+snapshot and compare it with current Issue data. Preserve the selected execution
+when navigating to the assessment revision and back. A new comment, document
+publication, planning edit or triage completion does not restart that Run.
+See [execution review/history](../reference/issues.md#console-execution-review-and-history)
+and the [stand qualification checklist](local-stand.md#qualify-issue-snapshot-delivery).
+
 ## Issue documents and exact material selection
 
 Open an Issue's **Documents** section to create task-specific text, preview its

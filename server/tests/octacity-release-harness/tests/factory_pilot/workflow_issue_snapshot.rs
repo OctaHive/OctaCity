@@ -64,6 +64,10 @@ pub(super) async fn contract(client: &Client, origin: &str, project: &str) -> Va
     }}),
   )
   .await;
+  read_contract(client, origin, project).await
+}
+
+pub(super) async fn read_contract(client: &Client, origin: &str, project: &str) -> Value {
   let capabilities = get_json(
     client,
     format!("{origin}/api/v1/projects/{project}/factory-authoring-capabilities"),

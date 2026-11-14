@@ -172,7 +172,10 @@ async fn configured_manual_intake_and_unknown_node_recover_the_same_journal_and_
   database.cleanup().await;
 }
 
-async fn admit(pool: &sqlx::PgPool, admission: &PublishedFactoryAdmission) -> Arc<PostgresStore> {
+async fn admission_request(
+  pool: &sqlx::PgPool,
+  admission: &PublishedFactoryAdmission,
+) -> (Arc<PostgresStore>, AdmitFactoryWork) {
   let work = &admission.work;
   let project = work.subject().project_id();
   let repository = work.subject().repository().unwrap().repository_id();
@@ -241,6 +244,11 @@ async fn admit(pool: &sqlx::PgPool, admission: &PublishedFactoryAdmission) -> Ar
     flow: admission.flow.clone(),
     admitted_at: at(1),
   };
+  (store, request)
+}
+
+async fn admit(pool: &sqlx::PgPool, admission: &PublishedFactoryAdmission) -> Arc<PostgresStore> {
+  let (store, request) = admission_request(pool, admission).await;
   store
     .admit_factory_work(octacity_server_store::testing::management_mutation_with_request(
       request.clone(),
@@ -293,7 +301,8 @@ async fn the_unreleased_factory_schema_accepts_only_technical_execution_states()
     .await
     .unwrap();
   let (admission, _) = flow_contract::configured_fixture();
-  let store = admit(&database.pool, &admission).await;
+  let (store, request) = admission_request(&database.pool, &admission).await;
+  postgres_support::legacy_factory_admission::seed(&database.pool, request).await;
   // The state constraint originates in schema 51. Upgrade the seeded Run before
   // using today's complete reader, which also reads later outbox provenance.
   octacity_server_store_postgres::migrate(&database.pool).await.unwrap();

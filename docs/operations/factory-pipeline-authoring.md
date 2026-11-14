@@ -47,6 +47,48 @@ Project document navigation preserves the mounted pipeline draft; reloading or
 leaving that editor discards unpublished changes. Private drafts are not saved
 in browser storage.
 
+## Prepare canonical Issue inputs
+
+In Project settings, open **Issue field settings**. Administer the Project's
+**Priorities**, **Components** and **Issue types** independently of **Custom
+Issue fields**. Initial priorities are `blocker`, `high`, `medium`, `low`; types
+are `defect`, `feature_request`. Size stays `small`, `medium`, `large`. Add the
+Project's components and any ordinary text/choice/boolean/integer/date fields.
+Review stable IDs, bounds and the catalog version before publishing. Rename or
+retire existing choices instead of changing their identities. Project
+administration and Issue editing require separate rights; publication supplies
+choices without filling or changing existing Issues.
+
+Create or edit an Issue with explicit requirements and acceptance, then select
+its priority, component, type, size and any custom values in **Properties**.
+A human can prepare it without a triage Run. Alternatively configure the
+[local classification action](#apply-triage-classification-to-the-issue), run
+triage and verify that the Issue shows applied values and their origin. An
+accepted assessment card alone is not an applied classification. Resolve stale
+or conflicting required fields before starting delivery.
+
+For task-specific text, use the Issue's **Documents** view to create or publish
+an immutable version. These documents remain owned by this Issue and are absent
+from Project document catalogs and step document selectors. Use **Link existing
+Project document** separately to choose an authorized exact shared publication;
+it keeps its Project owner. In **Activity**, post or reply through the ordinary
+comment form, then explicitly include the retained comment as Issue material.
+Document publication and comment append neither select pipeline input nor start
+execution. Review document/comment material selection separately and preserve
+the exact version, owner and digest. See the
+[document and comment controls](operator-console.md#issue-documents-and-exact-material-selection).
+
+For a simple consumer, open **Issue snapshot → Configure Issue snapshot** in
+the ordinary Flow editor. Select Project-backed fields with required/optional
+handling. If supplementary text is needed, enable **Include explicitly selected
+Issue materials**, set count/UTF-8 bounds and choose the fields/materials each
+step receives under **Issue input for each step**. Confirm **Use Issue snapshot**.
+This selects no producer and does not give sibling steps access to undeclared
+text. The shared ceiling is 32 references / 1 MiB; narrower consumer and source
+limits still apply. Publishing newer documents or comments does not replace
+admitted inputs. Advanced admission/evidence or mixed mappings require API
+authoring; the simple editor preserves them rather than flattening their policy.
+
 ## Add and configure steps
 
 Add reasoning steps, gates, commands or trusted actions from installed choices.
@@ -339,11 +381,14 @@ outcome, repository and current Issue requirements.
 
 ### Author ticket delivery
 
-From **Add pipeline**, start with an empty graph and bind **Incoming pipeline
-completion** to the published triage Flow, terminal and accepted outcome.
-Connect the triage fields used by the graph, including kind, size, component,
-priority and applicable reproduction evidence. Put the expected implementation
-behavior in the Issue's acceptance criteria before starting Delivery.
+Prepare the [canonical Issue inputs](#prepare-canonical-issue-inputs), then
+publish a consumer with an explicit Issue snapshot contract selecting its
+required kind, size, component, priority and applicable evidence. It consumes
+the applied Issue values, not a chosen assessment Run. Put the expected
+implementation behavior in the Issue's acceptance before starting Delivery.
+Use ordinary Flow authoring for a custom graph or resolve the released `v2`
+example through the API as described below. Keep **Incoming pipeline completion**
+for an intentionally authored exact producer-result consumer or retained `v1`.
 
 Build the routes in this order:
 
@@ -375,21 +420,35 @@ Build the routes in this order:
    failures.
 
 Publish the Flow and a Configuration pinned to that version and the reviewed
-Project policies. Qualify one Issue manually with automatic intake and external
-Reporter effects disabled. Use a test publication target, then inspect the
-original triage handoff, operator decisions, Builds and publication receipt in
-the Run. Check the corresponding cards in the Issue's **Overview**. For a
+Project policies. A resolved Configuration draft starts disabled: review its
+readiness and explicitly enable the manual target after validation. This does
+not start a Run or enable Source intake. Qualify one Issue manually with automatic
+intake and external Reporter effects disabled. Use a test publication target, then inspect the
+reviewed Issue snapshot and its attribution, operator decisions, Builds and
+publication receipt in the Run. Check the corresponding cards in the Issue's **Overview**. For a
 reproducible test environment, see [ticket delivery qualification](../testing/manual-factory-authoring.md#ticket-delivery-qualification).
 
 The optional `ticket-delivery/v2` example resolves through the preset
 API using an exact Project field-definition version and an explicit
 `issue_snapshot.admission` policy. It produces an editable Issue-snapshot Flow
 and, when requested, a disabled launch Configuration. It needs no triage Flow or
-Run selector. The Issue input currently requires API authoring; visual controls
-for selecting Project fields are not yet available. The catalog offers both
-`v1` and `v2`; Console can open `v1` and explains the unsupported required input
-when `v2` is selected. See the
+Run selector. The generic editor supports simple Issue field/material selection,
+but **Start from an example** does not yet collect the `v2` resolver's required
+snapshot/admission parameters and therefore blocks opening that example. Resolve
+and publish `v2` through the ordinary API; do not substitute `v1` while claiming
+Issue-snapshot behavior. Both versions remain in the catalog. See the
 [example's prerequisites and request shape](../../config/factory/presets/ticket-delivery/README.md#current-v2-issue-snapshot-example).
+
+Review/start the Issue against its current revision and returned snapshot
+digest. The normal snapshot path asks for no earlier Run and can serve a
+manually classified Issue and one prepared by a replacement triage Flow without
+republishing delivery. Inspect **Runs** to compare the admitted snapshot with
+current Properties; later edits do not reroute that execution. Re-review after
+a conflict instead of resubmitting changed input under the old request key.
+The [headless sequence](../reference/issues.md#headless-issue-snapshot-sequence)
+documents exact request/precondition handling. Enable Source intake and external
+Reporter effects only through their separate reviewed configuration; completing
+triage or selecting material enables neither.
 
 An empty dependency list is valid without a dependency assessment. Nonempty
 dependency claims still require applicable provenance. Admission freezes the

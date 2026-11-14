@@ -122,6 +122,55 @@ Do not delete migration rows, edit checksums, rewrite Work subjects/digests or
 reset a stand. An authoring UI rollback alone does not make old workers/readers
 capable of processing new admitted subject or execution forms.
 
+## Issue-snapshot cutover and spec order
+
+Provision Project field definitions and independently authorized text readers
+before enabling a new consumer. Publish explicit new triage application and
+Issue-snapshot delivery Flow/Configuration versions; old accepted-result
+publications, numeric priority receipts, requests and Runs retain their original
+encoding and policy. The local classification action remains opt-in. Do not
+promote every historical assessment card into current Issue values or ingest
+all discussion on upgrade. New Issue documents stay Issue-owned and never become
+Project publications through backfill or catalog discovery.
+
+For each new target, review its required fields/materials, admission mapping,
+code subject, step projections and launch/access pins. Qualify manual admission
+before separately enabling automatic Source input/material policy or Reporter
+effects. An intake edit/restart retains an already admitted input identity;
+changing classification must not create another processing cycle.
+
+For a definition rollback, publish a new Configuration version selecting the
+prior compatible Flow and review Source targeting explicitly. A producer-result target still needs its
+eligible exact producer; a manually prepared Issue is not a fabricated Run.
+Keep current readers and retention owners for snapshots already admitted under
+the newer target. Disable new intake separately from cancellation, and preserve
+document/Issue history and publication receipts. A binary/schema rollback still
+uses the matched snapshot-restore procedure above, not deletion of new Issue
+fields, migrations or admitted bytes.
+
+OpenSpec synchronization is ordered independently of deployment:
+
+1. The completed
+   [`add-factory-ticket-delivery-pipeline`](../../openspec/changes/archive/2026-11-10-add-factory-ticket-delivery-pipeline/proposal.md)
+   was archived on 10 November 2026. Its capability is already present in
+   [main delivery specs](../../openspec/specs/server/factory-ticket-delivery-preset/spec.md),
+   with **Development consumes an accepted triage handoff** and **Triage size
+   selects conditional OpenSpec authoring** as the predecessor baseline.
+2. Only after that baseline is present, synchronize the completed
+   [`add-issue-classification-snapshots` delta](../../openspec/changes/add-issue-classification-snapshots/specs/server/factory-ticket-delivery-preset/spec.md).
+   Apply its `RENAMED` requirements before their `MODIFIED` definitions:
+   **Development consumes a frozen Issue snapshot** and **Issue size selects
+   conditional OpenSpec authoring**. Synchronize its related Issue/Factory/REST/
+   triage/Console deltas coherently after implementation/qualification completes.
+3. Preserve both changes' historical proposals, plans, verification evidence and
+   immutable publications. Do not rewrite the archived predecessor to pretend it
+   originally required snapshots, or copy new requirements into old Run data.
+
+This procedure documents the required order; it does not synchronize main specs
+or archive the unfinished snapshot change. See the
+[stand checklist](../operations/local-stand.md#qualify-issue-snapshot-delivery)
+and [headless API sequence](issues.md#headless-issue-snapshot-sequence).
+
 ## Shared-contract handoff to planned workflows
 
 This handoff records reusable boundaries for
@@ -137,7 +186,7 @@ owned by those changes; none is implemented or marked complete here.
 | Project input publication and `ProjectTextIntake` | Reuse the [existing shared-input handoff](../../openspec/changes/add-factory-bugfix-quickstart/shared-project-inputs.md), original bytes, fenced preparation, deadlines and replay receipts. Support selected Project/input subjects explicitly rather than fabricate a Repository. The quickstart's stricter ingress bounds remain its own contract. |
 | `context_binding.work_task`, Project documents and Flow process inputs | Explicitly select original task, reference/instruction documents and process recipients per step. Implementation acceptance remains ticket-authored data; triage completion is not evidence that requirements or a fix are accepted. |
 | Flow `code_sources`, node `code` and ordinary Build/JobSpec | Select no code or a declared exact resource for each step. Check candidate/evidence repository identity, qualified path enforcement and v4 source-free support; preserve legacy byte/signature fixtures. Do not infer authority from Work correlation or a role name. |
-| Accepted results and projections | Downstream delivery admission must explicitly consume the accepted triage result through its owned intake. Completing triage alone starts no development. Project only selected fields; protected tests, private investigations and transcripts remain inaccessible unless explicitly authorized. |
+| Issue snapshots, accepted results and projections | A snapshot consumer freezes the canonical Issue fields and explicitly selected materials through its owned intake. An intentionally authored producer-result consumer still pins its exact accepted result. Completing triage alone starts no development. Project only declared inputs; protected tests, private investigations and transcripts remain inaccessible unless explicitly authorized. |
 | Trusted actions, Reporter and Delivery | Configure effects separately, with accepted-result predicates, allowed literals and explicit fallback. Retain one logical operation, current write authority, original deadlines and truthful pending/failed/delivered receipts. PR publication is not merge or deployment authority. |
 | Readiness and recovery | Reuse common bounded prerequisite facts, dispatch revalidation and retained owners. Do not add repeated readiness gates as a replacement for enforcement, a second input journal or a second workflow engine. Finite-peer qualification does not qualify live model/provider credentials. |
 

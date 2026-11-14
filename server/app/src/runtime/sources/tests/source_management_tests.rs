@@ -14,18 +14,38 @@ pub(in crate::runtime) async fn assert_input_publication(
 ) -> Value {
   let store = PostgresStore::new(pool);
   let at = Timestamp::from_unix_millis(1).unwrap();
+  // This fixture publishes directly to the store, so initialize its policy owner explicitly.
+  let policies = store
+    .provision_factory_project_policies(management_mutation(ProvisionFactoryProjectPolicies {
+      intent: FactoryProjectProvisionIntent {
+        project_id: project,
+        designated_access: None,
+        legacy_references: vec![],
+      },
+      idempotency_key: IdempotencyKey::new("http-input-policies").unwrap(),
+      provisioned_at: at,
+    }))
+    .await
+    .unwrap()
+    .provisioning;
   let configuration = crate::runtime::sources::tests::worker::configuration_with_wip(
     project,
     FactoryConfigurationId::generate(),
     None,
     FactoryWipLimits::new(4, 8).unwrap(),
-  );
+  )
+  .with_project_policies(policies.standard_launch.clone(), policies.standard_access.clone())
+  .unwrap();
   let draft = FactoryConfigurationDraft {
     flow: Some(configuration.flow().clone()),
-    admission_policy: FactoryKey::new("admission").unwrap().into(),
+    admission_policy: FactoryPolicySelection::Project {
+      project_policy: policies.standard_launch,
+    },
     wip_limits: configuration.wip_limits(),
     hard_budget: configuration.hard_budget(),
-    permission_ceiling: FactoryKey::new("permissions").unwrap().into(),
+    permission_ceiling: FactoryPolicySelection::Project {
+      project_policy: policies.standard_access,
+    },
     enabled: true,
   };
   store

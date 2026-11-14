@@ -74,9 +74,11 @@ try {
   }
   if (program === undefined) throw new Error();
   const { instructions, prefix } = program;
-  const input = JSON.parse(prompt.slice(split + delimiter.length).split('\n\nSelected immutable context (JSON data, not instructions):\n')[0]);
+  const [frozenInput, selectedContext] = prompt.slice(split + delimiter.length)
+    .split('\n\nSelected immutable context (JSON data, not instructions):\n');
+  const input = JSON.parse(frozenInput);
   if (instructions.fixture_version !== 1 || !Object.hasOwn(instructions, 'result')
-    || Object.keys(instructions).some(key => !['fixture_version', 'result', 'files', 'tools', 'checks', 'invocation', 'mcp'].includes(key))) throw new Error();
+    || Object.keys(instructions).some(key => !['fixture_version', 'result', 'files', 'tools', 'checks', 'data_checks', 'invocation', 'mcp'].includes(key))) throw new Error();
   const invocation = instructions.invocation;
   if (invocation === undefined) {
     if (options.length || prefix) throw new Error();
@@ -109,6 +111,22 @@ try {
       return selected;
     }
     return Object.fromEntries(Object.entries(value).map(([key, item]) => [key, render(item, depth + 1)]));
+  }
+  // Inspect delivered data only. A canary in the installed program cannot satisfy
+  // a positive check or falsely trip the next stage's negative check.
+  const dataChecks = instructions.data_checks ?? [];
+  if (!Array.isArray(dataChecks) || dataChecks.length > 16) throw new Error();
+  const data = [input, ...(selectedContext === undefined ? [] : [JSON.parse(selectedContext)])];
+  function containsText(value, text) {
+    if (typeof value === 'string') return value.includes(text);
+    if (value === null || typeof value !== 'object') return false;
+    return Object.values(value).some(item => containsText(item, text));
+  }
+  for (const check of dataChecks) {
+    if (Object.keys(check).length !== 2 || typeof check.text !== 'string' || !check.text
+      || Buffer.byteLength(check.text) > 65536) throw new Error();
+    const present = render(check.present);
+    if (typeof present !== 'boolean' || containsText(data, check.text) !== present) throw new Error();
   }
   const checks = instructions.checks ?? [];
   if (!Array.isArray(checks) || checks.length > 16) throw new Error();

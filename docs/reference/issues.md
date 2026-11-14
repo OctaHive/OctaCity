@@ -1365,6 +1365,163 @@ HTTP Red/Green and native restart qualification are recorded in
 [task 3.4 verification](../../openspec/changes/archive/2026-10-22-add-factory-work-card/verification-3.4.md).
 
 
+### Headless Issue snapshot sequence
+
+Use the served OpenAPI for exact schemas and authorized target choices. The
+following request bodies describe a fresh manual Issue in a Project with an
+empty catalog. For an existing Project, first read its current definitions and
+publish a reviewed compatible update; do not replace its catalog with this
+minimal example. All sample UUIDs/digests are illustrative. Use actual returned
+IDs, publication references, sizes, catalog versions and snapshot digests.
+
+1. With Project `Administer`, POST to
+   `/api/v1/projects/{project_id}/issue-property-definitions`, using a fresh
+   `Idempotency-Key`. The body is `PublishIssuePropertiesRequest`:
+
+```json
+{
+  "expected_version": 0,
+  "definition": {
+    "labels": [],
+    "properties": [
+      {"id": "environment", "name": "Environment", "retired": false,
+       "kind": {"type": "text", "max_bytes": 64}}
+    ],
+    "components": [{"id": "api", "name": "API", "retired": false}]
+  }
+}
+```
+
+Omitted priority/type lists use the advertised initial choices; custom lists
+belong to this same catalog, separately from `properties`. Size is fixed. The
+response supplies catalog version 1 in this fresh example.
+
+2. With Issue creation rights, POST to `/api/v1/projects/{project_id}/issues`
+   with a new key. `CreateIssueRequest` can prepare values manually, without a
+   triage Run or caller-authored attribution:
+
+```json
+{
+  "title": "Add the API readiness header",
+  "description": "Expose readiness in a response header.",
+  "acceptance": "The response includes X-Readiness with the value ready.",
+  "priority": "high",
+  "planning": {
+    "definition_version": 1,
+    "assignee": null, "due_date": null, "parent_id": null,
+    "labels": [], "values": {"environment": {"type": "text", "value": "staging"}},
+    "component": "api", "type": "feature_request", "size": "small"
+  }
+}
+```
+
+Retain `resource.id` and its Issue ETag. If triage prepares the Issue instead,
+configure the [classification action](../operations/factory-pipeline-authoring.md#apply-triage-classification-to-the-issue),
+execute it, verify applied fields on the Issue and reread its revision. Do not
+copy an assessment's proposed values or Run ID into an execution request.
+
+3. Publish task-only text with Issue update authority at
+   `POST .../issues/{issue_id}/input-documents`. `PublishIssueDocumentRequest`
+   takes a fresh key for each immutable version and no Issue `If-Match`:
+
+```json
+{"name": "Investigation", "content": "Task-specific observations for the reviewed change."}
+```
+
+Retain the returned `artifact`, `project_id`, `issue_id` and expiry. A second
+publication, even with the same name, gets a new key and exact Artifact. It does
+not edit the Issue revision or select input. Separately read an authorized exact
+shared Project publication through its Project owner if it is needed; copying
+an Issue document ID into that catalog is not linking a shared document.
+
+4. Post through `POST .../issues/{issue_id}/comments` with another key and no
+   Issue `If-Match`. `AppendIssueCommentRequest` remains ordinary discussion:
+
+```json
+{"body": "Supplementary operator context; this is not an approval."}
+```
+
+Use the returned comment metadata's ID/digest and its dedicated body read.
+Issue visibility does not grant discussion-body or Artifact-download authority.
+Do not fetch bodies into a log or reusable request history.
+
+5. Read current Issue state and independently authorized source metadata/bodies,
+   then PATCH its complete desired [material selection](#explicit-issue-material-selections)
+   with a new key and the exact strong Issue `If-Match`. Use `comment`,
+   `issue_document` and, only for an explicitly linked shared publication,
+   `project_document` references. There is no separate Project-document copy or
+   owner-promotion endpoint. Preserve other entries when adding/removing one.
+   In this example creation was revision 1; publication/append leave it unchanged,
+   and a first material edit produces revision 2. Always use the real response
+   version rather than deriving it from this example.
+
+6. Select an independently published, validated and explicitly enabled consumer
+   Configuration with an Issue snapshot contract and admission mapping, then POST
+   `.../issues/{issue_id}/executions/review` with `If-Match: "2"` and this
+   `RequestIssueExecutionRequest` body. Review has no idempotency key or effects:
+
+```json
+{
+  "target": {
+    "configuration_id": "66666666-6666-4666-8666-666666666666",
+    "configuration_version": 1,
+    "repository_id": "77777777-7777-4777-8777-777777777777",
+    "repository_version": 1,
+    "source": {"kind": "exact_revision", "value": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"},
+    "mapping": "title_description_acceptance_v1"
+  }
+}
+```
+
+The consumer must explicitly select the intended fields/material subset and each
+step's projections. A default `ticket-delivery/v2` selects no supplementary text
+and also requires its full declared classification/evidence contract; this
+minimal Issue is not proof of that example's readiness. Add required fields and
+bounded material aliases through ordinary Flow publication before requesting
+them. The [v2 resolver example](../../config/factory/presets/ticket-delivery/README.md#current-v2-issue-snapshot-example)
+documents the pinned admission mapping. A policy-driven snapshot target needs
+neither caller `classification` nor `predecessor_run`.
+
+7. Review the returned values, owner/publication pins, attribution, omissions,
+   availability, byte/count bounds and policy decisions. POST to
+   `.../issues/{issue_id}/executions` using a fresh `Idempotency-Key`, the same
+   reviewed `If-Match` and exactly the target above, adding only
+   `expected_snapshot_digest` from the review response. Never manufacture or
+   submit snapshot values/bytes/origins. On 409, reread and review a new intent;
+   a transport retry keeps its original body/key/digest unchanged. A 202 is
+   pending: inspect `Location` and retry the original POST to resume publication,
+   preserving its body/key; status GETs do not publish or resume execution.
+   After association, read `.../executions/{request_id}/snapshot` to inspect the
+   frozen input. Later Issue edits, comments and document versions do not replace
+   it; unavailable retained text is not restored from current source bodies.
+
+For explicit producer-result input, choose a Configuration published for that
+mode and an actual eligible earlier Run for the same Issue. The manual sequence
+above creates no such producer; do not invent one or reuse its snapshot target.
+For that separately prepared request, `RequestIssueExecutionRequest` retains
+the original ordinary scheduling classification and exact selector:
+
+```json
+{
+  "target": {
+    "configuration_id": "99999999-9999-4999-8999-999999999999",
+    "configuration_version": 1,
+    "repository_id": "77777777-7777-4777-8777-777777777777",
+    "repository_version": 1,
+    "source": {"kind": "exact_revision", "value": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"},
+    "mapping": "title_description_acceptance_v1",
+    "predecessor_run": "88888888-8888-4888-8888-888888888888"
+  },
+  "classification": {"priority": 40, "risk": "low", "metadata": {}}
+}
+```
+
+Publishable new pipelines and retained ones can both use this exact-result mode
+without copying the result into Issue fields. Its selected Run/schema/subject
+checks and transport replay still apply. Automatic Source intake and
+external reporting are [separate opt-ins](factory-work-sources-setup.md#versions-repeats-and-optional-task-cards);
+none of the commands above enables them.
+
 ## Console execution review and history
 
 The card's **Start pipeline** action is separate from saving an Issue. Missing
@@ -2049,13 +2206,34 @@ Issue version, and accepts the complete desired selection:
       "issue_id": "22222222-2222-4222-8222-222222222222",
       "comment_id": "33333333-3333-4333-8333-333333333333",
       "body_digest": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+    },
+    {
+      "kind": "issue_document",
+      "project_id": "11111111-1111-4111-8111-111111111111",
+      "issue_id": "22222222-2222-4222-8222-222222222222",
+      "artifact": {
+        "artifact_id": "44444444-4444-4444-8444-444444444444",
+        "content_digest": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+        "encoded_size": 48
+      }
+    },
+    {
+      "kind": "project_document",
+      "project_id": "11111111-1111-4111-8111-111111111111",
+      "artifact": {
+        "artifact_id": "55555555-5555-4555-8555-555555555555",
+        "content_digest": "cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc",
+        "encoded_size": 80
+      }
     }
   ]
 }
 ```
 
-Use exact pins returned by the authorized source contracts; the illustrative IDs
-above are not resolvable source data. The closed reference variants are:
+Use exact pins returned by the authorized source contracts; the illustrative IDs,
+digests and sizes above are not resolvable source data. See the
+[headless sequence](#headless-issue-snapshot-sequence) for creation, publication,
+append, selection and review/start as separate commands. The closed variants are:
 
 | Kind               | Required source pin                                           | Owner                                                 |
 | ------------------ | ------------------------------------------------------------- | ----------------------------------------------------- |

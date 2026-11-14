@@ -24,6 +24,8 @@ mod agent;
 #[allow(dead_code)]
 #[path = "release_vertical_slice/backend.rs"]
 mod backend;
+#[path = "release_vertical_slice/browser_proxy.rs"]
+mod browser_proxy;
 #[allow(dead_code)]
 #[path = "factory_pilot/delivery_target.rs"]
 mod delivery_target;
@@ -60,6 +62,8 @@ mod workflow_author;
 mod workflow_delivery;
 #[path = "factory_pilot/workflow_deployment.rs"]
 mod workflow_deployment;
+#[path = "factory_pilot/workflow_issue_materials.rs"]
+mod workflow_issue_materials;
 #[path = "factory_pilot/workflow_issue_reuse.rs"]
 mod workflow_issue_reuse;
 #[path = "factory_pilot/workflow_issue_snapshot.rs"]
@@ -159,6 +163,12 @@ async fn packaged_issue_classification_delivers_from_its_snapshot_without_a_pred
 #[ignore = "requires packaged roles, manual Issue classification, retained snapshots and isolated HTTPS/Git target"]
 async fn packaged_delivery_reuses_one_configuration_for_manual_and_replacement_triage() {
   run_pilot(Scenario::DeliveredCandidate(workflow_ticket::Case::ManualSnapshot)).await;
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+#[ignore = "requires packaged Console, Issue materials, ordinary Jobs and isolated HTTPS/Git target"]
+async fn packaged_issue_materials_remain_owned_frozen_and_scoped() {
+  run_pilot(Scenario::DeliveredCandidate(workflow_ticket::Case::MaterialSnapshot)).await;
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
