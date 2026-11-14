@@ -622,7 +622,10 @@ text/collection limits, no-store and replay responses. The Console client is
 generated from that document through `ui/scripts/generate-api.mjs`; it does not
 implement another task-policy or provider model. Transport tests use the
 application's opt-in `test-support` fixture, preserving the API → application →
-store dependency direction. Production builds do not expose the test fixture.
+store dependency direction. Composed server integration tests enable this feature
+through a dev-dependency and import the same public fixture module, rather than
+including its source under another crate root. Production builds do not expose
+the test fixture.
 
 ## Console manual task workspace
 

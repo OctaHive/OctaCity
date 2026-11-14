@@ -1,7 +1,7 @@
 //! Same public configured-owner contract under PostgreSQL persistence and restart.
 use async_trait::async_trait;
 use octacity_server_application::*;
-use octacity_server_application::{ManagementSecurityScope, MutationDisposition};
+use octacity_server_application::{ManagementSecurityScope, MutationDisposition, issue_test_support};
 use octacity_server_domain::*;
 use octacity_server_factory::*;
 use octacity_server_store::*;
@@ -23,8 +23,6 @@ mod factory_signal_lease_guard;
 #[allow(dead_code)]
 #[path = "../../application/src/factory/execution/tests/factory_flow_control_tests.rs"]
 mod human_contract;
-#[path = "../../application/src/issues/issue_test_support.rs"]
-mod issue_test_support;
 #[allow(dead_code)]
 #[path = "../../infrastructure/octacity-server-store-postgres/tests/support/mod.rs"]
 mod postgres_support;

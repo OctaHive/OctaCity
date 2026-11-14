@@ -41,7 +41,7 @@ async fn issue_materials_http_select_remove_history_and_original_replay() {
   let path = issue_path(&issue);
   let before = get(&router, &path).await;
   assert!(before.get("materials").is_none(), "posting never selects input");
-  let body = selection(&[reference.clone()]);
+  let body = selection(std::slice::from_ref(&reference));
   let response = router
     .clone()
     .oneshot(json_request(
