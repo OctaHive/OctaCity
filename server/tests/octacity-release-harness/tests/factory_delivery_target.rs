@@ -160,6 +160,68 @@ async fn assert_review_contract(mode: ForgeResponseMode) {
 }
 
 #[tokio::test]
+async fn reused_https_target_retains_two_distinct_reviews_across_restart() {
+  let root = tempfile::tempdir().unwrap();
+  let source = root.path().join("source");
+  let remote = root.path().join("remote.git");
+  let state = root.path().join("forge");
+  fs::create_dir(&source).unwrap();
+  fs::create_dir(&state).unwrap();
+  git(&source, &["init", "--quiet", "--initial-branch=main", "--template="]);
+  fs::write(source.join("facts.txt"), "candidate\n").unwrap();
+  git(&source, &["add", "facts.txt"]);
+  git(&source, &["commit", "--quiet", "-m", "candidate"]);
+  git(&source, &["branch", "review/manual"]);
+  git(&source, &["branch", "review/replacement"]);
+  git(&source, &["clone", "--bare", "--quiet", ".", remote.to_str().unwrap()]);
+  let forge = GithubForge::start(&state, &remote, ForgeResponseMode::Respond).await;
+  let client = reqwest::Client::builder()
+    .tls_certs_merge([reqwest::Certificate::from_pem(forge.root_certificate_pem().as_bytes()).unwrap()])
+    .timeout(std::time::Duration::from_secs(5))
+    .build()
+    .unwrap();
+  for (number, branch) in [(1, "review/manual"), (2, "review/replacement")] {
+    let response = client
+      .post(format!("{}repos/owner/repository/pulls", forge.endpoint()))
+      .bearer_auth("private-delivery-token")
+      .json(&json!({"title":"Independent Issue","body":"Retained input", "head":branch,"base":"main","draft":true}))
+      .send()
+      .await
+      .unwrap();
+    assert_eq!(
+      response.status(),
+      reqwest::StatusCode::CREATED,
+      "a reused delivery target accepts a distinct candidate"
+    );
+    assert_eq!(response.json::<Value>().await.unwrap()["number"], number);
+  }
+  assert_eq!(forge.review_posts(), 2);
+  forge.stop().await;
+  let restarted = GithubForge::start(&state, &remote, ForgeResponseMode::Respond).await;
+  let client = reqwest::Client::builder()
+    .tls_certs_merge([reqwest::Certificate::from_pem(restarted.root_certificate_pem().as_bytes()).unwrap()])
+    .timeout(std::time::Duration::from_secs(5))
+    .build()
+    .unwrap();
+  for (number, branch) in [(1, "review/manual"), (2, "review/replacement")] {
+    let response = client
+      .get(format!("{}repos/owner/repository/pulls", restarted.endpoint()))
+      .bearer_auth("private-delivery-token")
+      .query(&[("head", format!("owner:{branch}")), ("base", "main".into())])
+      .send()
+      .await
+      .unwrap();
+    assert_eq!(response.status(), reqwest::StatusCode::OK);
+    let reviews: Value = response.json().await.unwrap();
+    assert_eq!(reviews.as_array().unwrap().len(), 1);
+    assert_eq!(reviews[0]["number"], number);
+    assert_eq!(reviews[0]["head"]["ref"], branch);
+  }
+  assert_eq!(restarted.review_posts(), 0);
+  restarted.stop().await;
+}
+
+#[tokio::test]
 #[ignore = "requires the explicitly built native Github provider executable"]
 async fn installed_github_process_observes_actual_https_git_absence() {
   use sha2::{Digest as _, Sha256};

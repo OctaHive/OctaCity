@@ -347,6 +347,16 @@ impl InstalledDelivery {
       .extend([json!(self.input), json!(self.receipt)]);
   }
   pub(super) fn verify(&self, rows: &[(Vec<u8>, Vec<u8>)], name: &str, coder: &str, base: &str) {
+    self.verify_with_posts(rows, name, coder, base, 1);
+  }
+  pub(super) fn verify_with_posts(
+    &self,
+    rows: &[(Vec<u8>, Vec<u8>)],
+    name: &str,
+    coder: &str,
+    base: &str,
+    posts: usize,
+  ) {
     let records = rows
       .iter()
       .map(|(_, bytes)| serde_json::from_slice::<Value>(bytes).unwrap())
@@ -372,7 +382,7 @@ impl InstalledDelivery {
     );
     assert_eq!(
       self.target_peer.forge.review_posts(),
-      1,
+      posts,
       "accepted unknown POST is observed, never repeated"
     );
     let git = required_path("OCTACITY_CONTRACT_GIT_EXECUTABLE", true);
@@ -406,6 +416,56 @@ impl InstalledDelivery {
     ] {
       assert!(!public.contains(canary));
     }
+  }
+  pub(super) async fn verify_reused_review(&self, candidate: &Value, base: &str) -> Value {
+    let client = Client::builder()
+      .tls_certs_merge([
+        reqwest::Certificate::from_pem(self.target_peer.forge.root_certificate_pem().as_bytes()).unwrap(),
+      ])
+      .timeout(Duration::from_secs(5))
+      .build()
+      .unwrap();
+    let reviews: Value = client
+      .get(format!(
+        "{}repos/owner/repository/pulls",
+        self.target_peer.forge.endpoint()
+      ))
+      .bearer_auth("private-delivery-token")
+      .send()
+      .await
+      .unwrap()
+      .error_for_status()
+      .unwrap()
+      .json()
+      .await
+      .unwrap();
+    assert_eq!(reviews.as_array().unwrap().len(), 2);
+    assert_eq!(
+      self.target_peer.forge.review_posts(),
+      2,
+      "one accepted POST per independently admitted candidate"
+    );
+    let review = reviews
+      .as_array()
+      .unwrap()
+      .iter()
+      .find(|review| review["number"] == 2)
+      .unwrap();
+    assert_eq!(review["state"], "open");
+    assert_eq!(review["head"]["sha"], candidate["candidate_revision"]);
+    assert_eq!(review["base"]["sha"], base);
+    assert_eq!(candidate["candidate_digest"].as_str().unwrap().len(), 64);
+    let branch = string(&review["head"], "ref");
+    assert!(branch.starts_with("pilot/"));
+    let output = std::process::Command::new(required_path("OCTACITY_CONTRACT_GIT_EXECUTABLE", true))
+      .arg("--git-dir")
+      .arg(&self.target_peer.bare)
+      .args(["show", &format!("refs/heads/{branch}:public/facts.txt")])
+      .output()
+      .unwrap();
+    assert!(output.status.success());
+    assert_eq!(output.stdout, b"facts");
+    reviews
   }
   pub(super) async fn stop(self) {
     self.target_peer.forge.stop().await;

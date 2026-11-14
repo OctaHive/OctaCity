@@ -164,7 +164,7 @@ impl GithubForge {
   }
   pub fn has_review(&self) -> bool {
     let _serial = self.state.serial.lock().unwrap();
-    self.state.retained().is_some()
+    !self.state.retained().is_empty()
   }
   pub async fn wait_for_review(&self) {
     while !self.has_review() {
@@ -233,19 +233,19 @@ impl State {
     let revision = String::from_utf8(result.stdout).ok()?.trim().to_owned();
     (revision.len() == 40 && revision.bytes().all(|ch| ch.is_ascii_hexdigit())).then_some(revision)
   }
-  fn retained(&self) -> Option<Review> {
+  fn retained(&self) -> Vec<Review> {
     match fs::metadata(&self.reviews) {
-      Err(error) if error.kind() == std::io::ErrorKind::NotFound => None,
+      Err(error) if error.kind() == std::io::ErrorKind::NotFound => Vec::new(),
       Ok(meta) => {
         assert!(meta.is_file() && meta.len() <= 65536);
-        Some(serde_json::from_slice(&fs::read(&self.reviews).unwrap()).unwrap())
+        serde_json::from_slice(&fs::read(&self.reviews).unwrap()).unwrap()
       }
       Err(_) => panic!("test-owned review state unavailable"),
     }
   }
-  fn view(&self, review: &Review) -> Option<Value> {
+  fn view(&self, review: &Review, number: usize) -> Option<Value> {
     Some(
-      json!({"number":1,"state":"open","merged_at":null,"title":review.title,"body":review.body,"draft":review.draft,
+      json!({"number":number,"state":"open","merged_at":null,"title":review.title,"body":review.body,"draft":review.draft,
       "head":{"sha":self.revision(&review.head)?,"ref":review.head,"repo":{"full_name":"owner/repository"}},
       "base":{"sha":self.revision(&review.base)?,"ref":review.base,"repo":{"full_name":"owner/repository"}}}),
     )
@@ -276,19 +276,21 @@ impl State {
         );
       }
       if route == "pulls" {
-        if matches!(mode, ForgeResponseMode::HoldReviewResponse) && !*self.release.borrow() && self.retained().is_some()
+        if matches!(mode, ForgeResponseMode::HoldReviewResponse)
+          && !*self.release.borrow()
+          && !self.retained().is_empty()
         {
           self.held_observation.notify_one();
           return Response::Hold;
         }
         let mut selected = Vec::new();
-        if let Some(review) = self.retained() {
+        for (index, review) in self.retained().iter().enumerate() {
           let query: BTreeMap<_, _> = url.query_pairs().collect();
           if query
             .get("head")
             .is_none_or(|head| head == &format!("owner:{}", review.head))
             && query.get("base").is_none_or(|base| base == &review.base)
-            && let Some(value) = self.view(&review)
+            && let Some(value) = self.view(review, index + 1)
           {
             selected.push(value);
           }
@@ -301,18 +303,27 @@ impl State {
       let Ok(review) = serde_json::from_value::<Review>(request.body) else {
         return reply(422, json!({}));
       };
-      if self.retained().is_some() {
+      let mut retained = self.retained();
+      if retained
+        .iter()
+        .any(|prior| prior.head == review.head && prior.base == review.base)
+      {
         return reply(409, json!({}));
       }
-      let Some(view) = self.view(&review) else {
+      let Some(view) = self.view(&review, retained.len() + 1) else {
         return reply(422, json!({}));
       };
+      retained.push(review);
+      let encoded = serde_json::to_vec(&retained).unwrap();
+      if encoded.len() > 65536 {
+        return reply(422, json!({}));
+      }
       let parent = self.reviews.parent().unwrap();
       let mut temporary = tempfile::NamedTempFile::new_in(parent).unwrap();
-      serde_json::to_writer(&mut temporary, &review).unwrap();
+      temporary.write_all(&encoded).unwrap();
       temporary.flush().unwrap();
       temporary.as_file().sync_all().unwrap();
-      temporary.persist_noclobber(&self.reviews).unwrap();
+      temporary.persist(&self.reviews).unwrap();
       fs::File::open(parent).unwrap().sync_all().unwrap();
       self.accepted.notify_one();
       return match mode {

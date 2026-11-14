@@ -1,4 +1,4 @@
-//! Manual Issue admission with an exact result produced by an ordinary triage Build.
+//! Manual Issue admission with an exact producer result or independent classified Issue snapshot.
 use super::*;
 use octacity_server_factory::{
   BudgetLimit, EvidenceOutputKind, FactoryKey, FactoryPermissionSet, FlowBuildBinding, FlowDataSchema, FlowFieldSchema,
@@ -12,15 +12,20 @@ pub(super) const REQUIREMENTS_APPROVED: &str = "requirements_approved";
 #[derive(Clone, Copy, Eq, PartialEq)]
 pub(super) enum Case {
   Small,
+  IssueSnapshot,
+  ManualSnapshot,
   Medium,
   Large,
   Rework,
   NonReproducingDefect,
 }
 impl Case {
+  pub(super) fn issue_snapshot(self) -> bool {
+    matches!(self, Self::IssueSnapshot | Self::ManualSnapshot)
+  }
   fn as_str(self) -> &'static str {
     match self {
-      Self::Small | Self::Rework | Self::NonReproducingDefect => "small",
+      Self::Small | Self::IssueSnapshot | Self::ManualSnapshot | Self::Rework | Self::NonReproducingDefect => "small",
       Self::Medium => "medium",
       Self::Large => "large",
     }
@@ -48,9 +53,19 @@ pub(super) struct Ticket {
   path: String,
   pub(super) issue: String,
   pub(super) triage: String,
+  snapshot: Option<workflow_issue_snapshot::Retained>,
 }
 
 impl Ticket {
+  pub(super) fn for_issue(project: &str, issue: String) -> Self {
+    Self {
+      path: format!("/api/v1/projects/{project}/issues/{issue}/executions"),
+      issue,
+      triage: String::new(),
+      snapshot: None,
+    }
+  }
+
   pub(super) async fn prepare(
     client: &Client,
     origin: &str,
@@ -61,6 +76,11 @@ impl Ticket {
     entry: &str,
   ) -> Self {
     let project = &scenario.resources.project;
+    let contract = if scenario.ticket_case.is_some_and(Case::issue_snapshot) {
+      Some(workflow_issue_snapshot::contract(client, origin, project).await)
+    } else {
+      None
+    };
     let path = format!("/api/v1/projects/{project}/issues");
     let defect = scenario.ticket_case == Some(Case::NonReproducingDefect);
     let (description, acceptance) = if defect {
@@ -74,16 +94,14 @@ impl Ticket {
         "The public file contains exactly facts and the original tests pass.",
       )
     };
-    let issue = resource_id(
-      &post_management(
-        client,
-        origin,
-        &path,
-        "delivery-test-issue",
-        json!({"title":"Correct the public facts output","description":description,"acceptance":acceptance}),
-      )
-      .await,
-    );
+    let mut content =
+      json!({"title":"Correct the public facts output","description":description,"acceptance":acceptance});
+    if scenario.ticket_case == Some(Case::ManualSnapshot) {
+      content["priority"] = json!("high");
+      content["planning"] = json!({"definition_version":1,"labels":[],"values":{},
+        "component":"api","type":"feature_request","size":"small"});
+    }
+    let issue = resource_id(&post_management(client, origin, &path, "delivery-test-issue", content).await);
     let summary = FlowDataSchema::new(
       key("pilot.ticket-summary"),
       key("v1"),
@@ -116,7 +134,7 @@ impl Ticket {
       ]),
     )
     .unwrap();
-    let schema = FlowDataSchema::new(
+    let envelope = FlowDataSchema::new(
       key("pilot.ticket-triage"),
       key("v1"),
       object([
@@ -131,6 +149,20 @@ impl Ticket {
       ]),
     )
     .unwrap();
+    let schema = contract.as_ref().map_or_else(
+      || envelope.clone(),
+      |choice| serde_json::from_value(choice["field_contract"]["schema"].clone()).unwrap(),
+    );
+    if scenario.ticket_case == Some(Case::ManualSnapshot) {
+      let ticket = Self::for_issue(project, issue);
+      let executions = get_json(client, format!("{origin}{}", ticket.path)).await;
+      assert!(
+        executions["items"].as_array().unwrap().is_empty(),
+        "a manually classified Issue must need no triage Run"
+      );
+      bind_delivery(draft, entry, &schema, &envelope, &summary, None);
+      return ticket;
+    }
     let p = &profile.profile;
     let budget = BudgetLimit::new(1, 120_000, 100, 100, 8 * 1024 * 1024).unwrap();
     let mut assess = workflow::node(
@@ -146,6 +178,11 @@ impl Ticket {
         "work_kind":if defect {"defect"} else {"feature_request"},
         "reproducibility":if defect {"not_reproduced"} else {"not_applicable"}},"priority_assessment":80
     }});
+    if contract.is_some() {
+      assess["input_binding"]["mapping"]["value"] = json!({"mapping":"constant","value":{
+        "priority":"high","component":"api","kind":"feature_request","size":"small"
+      }});
+    }
     assess["context_binding"] = json!({"work_task":"task","entries":{}});
     assess["build"] = json!(FlowBuildBinding {
       execution_permissions: None,
@@ -162,7 +199,7 @@ impl Ticket {
       result_outcome: key("eligible"),
       evidence: vec![],
     });
-    let triage_draft = workflow::draft(
+    let mut triage_draft = workflow::draft(
       "assess",
       vec![assess],
       vec![workflow::edge("assess", "eligible", "terminal", "triaged")],
@@ -171,6 +208,9 @@ impl Ticket {
       budget,
       &p.project_permissions,
     );
+    if let Some(choice) = &contract {
+      workflow_issue_snapshot::classify(&mut triage_draft, choice, budget, &p.project_permissions);
+    }
     let triage = post_management(
       client,
       origin,
@@ -190,11 +230,7 @@ impl Ticket {
       json!({"id":Uuid::new_v4(),"project_id":project,"definition":configuration}),
     )
     .await;
-    let mut ticket = Self {
-      path: format!("{path}/{issue}/executions"),
-      issue,
-      triage: String::new(),
-    };
+    let mut ticket = Self::for_issue(project, issue);
     ticket.triage = ticket.start(client, origin, scenario, &triage, None).await;
     timeout(Duration::from_secs(120), async {
       loop {
@@ -210,28 +246,30 @@ impl Ticket {
     .expect("the ordinary triage Build did not settle");
     let builds = workflow::diagnostic(client, origin, &ticket.triage, "builds").await;
     assert_eq!(builds["items"].as_array().unwrap().len(), 1);
-    draft["accepted_predecessor"] =
-      json!({"definition":triage_flow["closure"]["root"],"terminal":"triaged","outcomes":["eligible"]});
-    draft["root"]["input_schema"] = json!(schema.reference());
-    draft["root"]["entry"] = json!(REQUIREMENTS_POLICY);
-    let step = draft["root"]["nodes"]
-      .as_array_mut()
-      .unwrap()
-      .iter_mut()
-      .find(|node| node["key"] == entry)
-      .unwrap();
-    step["input_binding"] = json!({"sources":{"eligible":{"source":"predecessor","view":"payload","path":"/eligible"}},
-      "mapping":{"value":{"mapping":"pointer","path":"/eligible"}}});
-    add_requirements_review(draft, entry, &schema, &summary);
-    draft["data_schemas"]
-      .as_array_mut()
-      .unwrap()
-      .extend([json!(schema), json!(summary)]);
+    if scenario.ticket_case == Some(Case::IssueSnapshot) {
+      let classified = get_json(client, format!("{origin}{path}/{}", ticket.issue)).await;
+      assert_eq!(
+        classified["content"]["priority"], "high",
+        "triage must apply its assessment to the Issue"
+      );
+      assert_eq!(classified["planning"]["component"], "api");
+      assert_eq!(classified["planning"]["size"], "small");
+      assert_eq!(classified["planning"]["type"], "feature_request");
+      assert_eq!(classified["classification"]["fields"].as_array().unwrap().len(), 4);
+    }
+    bind_delivery(
+      draft,
+      entry,
+      &schema,
+      &envelope,
+      &summary,
+      contract.is_none().then_some(triage_flow),
+    );
     ticket
   }
 
   pub(super) async fn start(
-    &self,
+    &mut self,
     client: &Client,
     origin: &str,
     scenario: &workflow_author::AuthorScenario<'_>,
@@ -245,14 +283,44 @@ impl Ticket {
     if let Some(predecessor) = predecessor {
       target["predecessor_run"] = json!(predecessor);
     }
+    let snapshot = configuration["resource"]["configuration"]["flow"]["issue_snapshot"].is_object();
+    let mut body = json!({"target":target});
+    let issue = get_json(
+      client,
+      format!("{origin}{}", self.path.strip_suffix("/executions").unwrap()),
+    )
+    .await;
+    let version = issue["version"].clone();
+    let reviewed = if snapshot {
+      let response = client
+        .post(format!("{origin}{}/review", self.path))
+        .header("if-match", format!("\"{version}\""))
+        .json(&body)
+        .send()
+        .await
+        .unwrap();
+      let status = response.status();
+      let review: Value = response.json().await.unwrap();
+      assert!(status.is_success(), "snapshot review failed: {status} {review}");
+      assert_eq!(review["snapshot"]["admission_classification"]["priority"], 80);
+      body["expected_snapshot_digest"] = review["snapshot_digest"].clone();
+      Some(review)
+    } else {
+      body["classification"] = json!({"priority":40,"risk":"low","metadata":{}});
+      None
+    };
     let response = client
       .post(format!("{origin}{}", self.path))
       .header(
         "idempotency-key",
-        format!("delivery-test-start-{}", reference["id"].as_str().unwrap()),
+        format!(
+          "delivery-test-start-{}-{}-{version}",
+          self.issue,
+          reference["id"].as_str().unwrap()
+        ),
       )
-      .header("if-match", "\"1\"")
-      .json(&json!({"target":target,"classification":{"priority":40,"risk":"low","metadata":{}}}))
+      .header("if-match", format!("\"{version}\""))
+      .json(&body)
       .send()
       .await
       .unwrap();
@@ -262,8 +330,78 @@ impl Ticket {
     if let Some(predecessor) = predecessor {
       assert_eq!(response["resource"]["intent"]["target"]["predecessor_run"], predecessor);
     }
+    if let Some(reviewed) = reviewed {
+      assert_eq!(response["resource"]["snapshot_digest"], reviewed["snapshot_digest"]);
+      assert!(
+        response["resource"]["intent"]["target"]
+          .get("predecessor_run")
+          .is_none_or(Value::is_null)
+      );
+      self.snapshot = Some(workflow_issue_snapshot::Retained {
+        execution: string(&response["resource"], "id"),
+        reviewed,
+      });
+    }
     string(&response["resource"]["association"], "run_id")
   }
+
+  pub(super) async fn verify_snapshot(&self, client: &Client, origin: &str, case: Option<Case>, run: &Value) {
+    if matches!(case, Some(Case::IssueSnapshot | Case::ManualSnapshot)) {
+      self
+        .verify_retained(client, origin, run, if self.triage.is_empty() { 1 } else { 2 })
+        .await;
+    }
+  }
+
+  pub(super) async fn verify_retained(&self, client: &Client, origin: &str, run: &Value, expected_version: u64) {
+    let retained = self
+      .snapshot
+      .as_ref()
+      .expect("Delivery starts from a reviewed Issue snapshot");
+    assert_eq!(retained.reviewed["snapshot"]["version"], expected_version);
+    retained
+      .verify(
+        client,
+        origin,
+        &self.path,
+        (!self.triage.is_empty()).then_some(self.triage.as_str()),
+        run,
+      )
+      .await;
+  }
+}
+
+fn bind_delivery(
+  draft: &mut Value,
+  entry: &str,
+  schema: &FlowDataSchema,
+  envelope: &FlowDataSchema,
+  summary: &FlowDataSchema,
+  producer: Option<&Value>,
+) {
+  if let Some(triage_flow) = producer {
+    draft["accepted_predecessor"] =
+      json!({"definition":triage_flow["closure"]["root"],"terminal":"triaged","outcomes":["eligible"]});
+  }
+  draft["root"]["input_schema"] = json!(envelope.reference());
+  draft["root"]["entry"] = json!(REQUIREMENTS_POLICY);
+  let step = draft["root"]["nodes"]
+    .as_array_mut()
+    .unwrap()
+    .iter_mut()
+    .find(|node| node["key"] == entry)
+    .unwrap();
+  step["input_binding"] = json!({"sources":{"eligible":{"source":"predecessor","view":"payload","path":"/eligible"}},
+      "mapping":{"value":{"mapping":"pointer","path":"/eligible"}}});
+  add_requirements_review(draft, entry, envelope, summary);
+  if producer.is_none() {
+    workflow_issue_snapshot::consume(draft, schema);
+    draft["data_schemas"].as_array_mut().unwrap().push(json!(envelope));
+  }
+  draft["data_schemas"]
+    .as_array_mut()
+    .unwrap()
+    .extend([json!(schema), json!(summary)]);
 }
 
 fn add_requirements_review(draft: &mut Value, next: &str, triage: &FlowDataSchema, summary: &FlowDataSchema) {

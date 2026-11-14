@@ -606,6 +606,9 @@ pub(super) async fn run(mut s: AuthorScenario<'_>) {
   if let Some(delivery) = &delivery {
     delivery.install(&mut catalog, &mut ceiling);
   }
+  if s.ticket_case.is_some_and(workflow_ticket::Case::issue_snapshot) {
+    workflow_issue_snapshot::install(&mut catalog, &mut ceiling);
+  }
   let references = catalog["projects"][0]["references"].as_array_mut().unwrap();
   references.push(json!({
     "kind":"permission_ceiling","alias":"pilot-ceiling","reference":reference("pilot.ceiling"),
@@ -637,6 +640,9 @@ pub(super) async fn run(mut s: AuthorScenario<'_>) {
       connectors: &connectors,
     },
   );
+  if s.ticket_case.is_some_and(workflow_ticket::Case::issue_snapshot) {
+    workflow_issue_snapshot::configure(&config);
+  }
   private_file(
     s.directory,
     "object-access-key",
@@ -1083,7 +1089,7 @@ pub(super) async fn run(mut s: AuthorScenario<'_>) {
     "permission_ceiling":{"project_policy":access_policy["policy"]["policy"]["reference"]},
     "hard_budget":budget,"wip_limits":{"max_active_runs":4,"max_active_nodes":4},"enabled":true
   });
-  let ticket = if s.ticket_case.is_some() {
+  let mut ticket = if s.ticket_case.is_some() {
     Some(
       workflow_ticket::Ticket::prepare(
         &client,
@@ -1117,6 +1123,9 @@ pub(super) async fn run(mut s: AuthorScenario<'_>) {
   }
   let _: octacity_server_application::FactoryFlowDefinitionDraft =
     serde_json::from_value(draft.clone()).expect("typed author parent draft");
+  if s.ticket_case.is_some_and(workflow_ticket::Case::issue_snapshot) {
+    private_file(s.directory, "issue-snapshot-delivery-draft.json", &draft.to_string());
+  }
   let flow = post_management(
     &client,
     &origin,
@@ -1143,9 +1152,29 @@ pub(super) async fn run(mut s: AuthorScenario<'_>) {
       .unwrap();
     json!({"artifact_id":value["id"],"content_digest":value["sha256"],"encoded_size":value["size_bytes"]})
   };
-  let run = if let Some(ticket) = &ticket {
+  let mut replacement = if s.ticket_case == Some(workflow_ticket::Case::ManualSnapshot) {
+    let prepared = workflow_issue_reuse::Replacement::prepare(
+      &client,
+      &origin,
+      &s,
+      &definition,
+      &configuration,
+      &ticket.as_ref().unwrap().issue,
+    )
+    .await;
+    let observed =
+      workflow_issue_reuse::assert_prepared(&client, &origin, &s.resources.project, &ticket.as_ref().unwrap().issue)
+        .await;
+    assert_eq!(observed, prepared.issue());
+    Some(prepared)
+  } else {
+    None
+  };
+  let run = if let Some(ticket) = &mut ticket {
+    let predecessor =
+      (!s.ticket_case.is_some_and(workflow_ticket::Case::issue_snapshot)).then(|| ticket.triage.clone());
     ticket
-      .start(&client, &origin, &s, &configuration, Some(&ticket.triage))
+      .start(&client, &origin, &s, &configuration, predecessor.as_deref())
       .await
   } else {
     let admitted = post_management(&client,&origin,&format!("/api/v1/projects/{}/factory-work",s.resources.project),&format!("author-work-{identity}"),json!({
@@ -1253,6 +1282,9 @@ pub(super) async fn run(mut s: AuthorScenario<'_>) {
   .unwrap_or_else(|_| panic!("Flow {run} did not settle; private evidence: {}", s.directory.display()));
   let completions = workflow::diagnostic(&client, &origin, &run, "node-completions").await;
   if let Some(ticket) = &ticket {
+    ticket
+      .verify_snapshot(&client, &origin, s.ticket_case, &completed)
+      .await;
     assert_eq!(completed["issue_association"]["issue_id"], ticket.issue);
     let rows = completions["items"].as_array().unwrap();
     let has = |node: &str, outcome: &str| {
@@ -1546,6 +1578,9 @@ pub(super) async fn run(mut s: AuthorScenario<'_>) {
   } else {
     None
   };
+  if let Some(replacement) = &mut replacement {
+    replacement.deliver(&client, &origin, &s, &configuration).await;
+  }
   if let Some(verifier) = verifier_worker.as_mut() {
     verifier.worker.kill().await.unwrap();
     verifier.worker.wait().await.unwrap();
@@ -1578,6 +1613,18 @@ pub(super) async fn run(mut s: AuthorScenario<'_>) {
     completions
   );
   assert_eq!(workflow::diagnostic(&client, &origin, &run, "builds").await, builds);
+  if let Some(replacement) = &replacement {
+    replacement
+      .verify_finished(
+        &client,
+        &origin,
+        &s,
+        &configuration,
+        &completions,
+        delivery.as_ref().unwrap(),
+      )
+      .await;
+  }
   let after: Vec<(Vec<u8>, Vec<u8>)> =
     sqlx::query_as("SELECT id,document FROM factory_flow_records WHERE run_id=$1 ORDER BY node_attempt_id")
       .bind(run.parse::<Uuid>().unwrap())
@@ -1608,7 +1655,13 @@ pub(super) async fn run(mut s: AuthorScenario<'_>) {
   );
   pool.close().await;
   if let Some(delivery) = &delivery {
-    delivery.verify(&after, &delivering, &coding, s.revision);
+    delivery.verify_with_posts(
+      &after,
+      &delivering,
+      &coding,
+      s.revision,
+      if replacement.is_some() { 2 } else { 1 },
+    );
   }
   if let Some(deployment) = &deployment {
     deployment.verify(&client, &origin, &after).await;

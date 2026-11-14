@@ -1317,6 +1317,11 @@ embeds `pilot-cli.mjs` and executes the qualified image's `/usr/local/bin/node`.
 The fixture accepts a bounded installed JSON program. It does not dispatch on
 Flow names, node names or model roles. Changes to the embedded program require
 rebuilding the executable; its actual SHA-256 is pinned in the installed profile.
+The finite CLI accepts the compiler's UTF-8/path guidance between the installed
+JSON program and the frozen input. Pinned Octa's absolute `--cd` and `--add-dir`
+arguments select existing directories separately from the profile's runtime
+options; relative writes use the selected working directory. The process
+regressions live in `tools/tests/test_factory_pilot_cli.py`.
 
 The composed role/profile slice also requires `OCTACITY_MODEL_DISCOVERY_PLUGIN`
 (the native host's Codex plugin from the pinned Octa release) and
@@ -2198,3 +2203,112 @@ This qualifies the configured finite pilot with real packaged execution and
 hermetic Git/HTTPS/stage effects. Model responses and external provider endpoints
 are explicit finite fixtures. It does not qualify remote Git TLS, production
 rollout, arbitrary providers or a different backend/image/toolchain installation.
+
+## Packaged classified Issue delivery
+
+With the same packaged Server/Agent, disposable PostgreSQL/object storage,
+qualified Microsandbox image and distinct pinned coder/verifier CLI executables,
+run:
+
+```shell
+CARGO_PROFILE_DEV_DEBUG=0 CARGO_PROFILE_TEST_DEBUG=0 CARGO_INCREMENTAL=0 \
+  cargo test --locked -p octacity-release-harness --test factory_pilot \
+  packaged_issue_classification_delivers_from_its_snapshot_without_a_predecessor \
+  -- --ignored --exact --nocapture
+```
+
+This case publishes Project components and reuses the server-derived field
+contract. An ordinary triage Build produces an accepted typed assessment; an
+explicitly installed local action commits priority, component, type and size to
+the Issue with the original producer attribution. A separately published delivery
+Flow selects canonical Issue fields, reviews their snapshot and starts with the
+current Issue ETag and exact reviewed digest. Its request contains neither a
+predecessor Run nor operator-supplied scheduling classification.
+
+The existing private-test author, coder, original-test validation, isolated
+verifier, review and trusted publisher still execute. The local HTTPS/Git peer
+confirms the candidate PR; publication recovery restarts the Server and must
+retain the reviewed snapshot, Project definition pin and field attribution.
+All external effects target this disposable peer.
+
+The finite CLI identifies its installed program by the version-tagged JSON line
+before the frozen-input boundary, independently of compiler guidance prose.
+Earlier program examples may appear in the declared prefix; the last tagged
+line is the installed program and its exact invocation prefix is still checked.
+If a tagged line has invalid JSON, it invalidates the earlier candidate rather
+than falling back to a prefix example. The CLI rejects it before emitting a
+result or performing the example's file/tool operations.
+Process regressions cover repeated guidance text, changed guidance, embedded
+program examples, a mismatched prefix after an example and a malformed program
+with either its opening or closing brace missing.
+
+For pipeline-authored fields, the qualification observer independently reads the
+producer Run and its accepted `assess`/`eligible` completion through management
+HTTP. Every retained field must reference that exact Run, Work and output record
+digest. Regression controls reject the classification receipt's digest and an
+unrelated Work even when the reviewed and retained snapshots agree. These reads
+are observer assertions; they add no producer binding or transcript input to
+delivery. Both this journey and the replacement-triage journey below share this
+check.
+
+The launch policy permits manual admission only. The local management principal
+installs the Issue writer without an integration catalog: Source intake and
+external Issue reporting require their own separate configuration. This journey
+does not qualify those consumers, replacement triage, manual classification or
+selected discussion/document text; those have separate qualification tasks.
+
+The earlier exact-producer case
+`packaged_delivery_recovers_the_accepted_real_review_after_server_restart`
+retains its predecessor selection and remains independently runnable.
+
+## Packaged reuse of one Issue-snapshot delivery
+
+Using the same packaged environment and distinct pinned CLI executables, run:
+
+```shell
+CARGO_PROFILE_DEV_DEBUG=0 CARGO_PROFILE_TEST_DEBUG=0 CARGO_INCREMENTAL=0 \
+  cargo test --locked -p octacity-release-harness --test factory_pilot \
+  packaged_delivery_reuses_one_configuration_for_manual_and_replacement_triage \
+  -- --ignored --exact --nocapture
+```
+
+The first Issue is created through the ordinary API with manual priority,
+component, type and size. It has no triage execution. The same Project then
+publishes an independent triage Flow using a deterministic policy and the local
+classification action, rather than the reasoning Build used by the original
+triage fixture. Both consumers use the exact same published delivery
+Configuration ID/version without a predecessor selector or republication.
+
+Changing the second Issue's acceptance invalidates its classification. Restoring
+the original text does not renew that assessment. Both review and execution
+start must reject it without a new request or Run. The rejection is checked again
+after the first delivery's accepted-PR Server crash/recovery. Explicitly rerunning
+the replacement triage then prepares revision 5 for the second delivery.
+
+Both admitted deliveries execute the protected-test author, coder, original-test
+validation and isolated verifier, then publish a confirmed PR to the same local
+HTTPS/Git peer. That peer retains two independent review identities atomically.
+A later manual size edit advances the second Issue to revision 6, while a further
+Server restart must retain the admitted revision-5 snapshot and `small` route.
+The second candidate is checked through ordinary Artifact reads and the actual
+remote Git content; its mandatory completion outcomes match the first Run.
+
+Set `OCTACITY_RELEASE_EVIDENCE_DIR` to an existing absolute test-owned directory
+to retain `issue-snapshot-reuse-<run-id>.json` with mode 0600. The proof includes
+the original Configuration reference, execution/snapshot, replacement provenance,
+ordinary Build/completion references, captured candidate, both confirmed reviews
+and the stale rejection diagnostics before/after restart. It contains synthetic
+qualification data; it is separate from the disposable service database.
+
+Temporal evidence expiry, independently denied body reads and exact retained
+command/environment/criterion checks use the existing authorized application
+boundary:
+
+```shell
+CARGO_PROFILE_DEV_DEBUG=0 CARGO_PROFILE_TEST_DEBUG=0 CARGO_INCREMENTAL=0 \
+  cargo test --locked -p octacity-server-application --lib issue_classification
+```
+
+Those evidence-reader regressions use the existing in-memory ports. The packaged
+positive cases above are feature requests; their native stale negatives concern
+requirements applicability, not a new native verified-reproduction evidence path.

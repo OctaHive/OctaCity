@@ -60,6 +60,10 @@ mod workflow_author;
 mod workflow_delivery;
 #[path = "factory_pilot/workflow_deployment.rs"]
 mod workflow_deployment;
+#[path = "factory_pilot/workflow_issue_reuse.rs"]
+mod workflow_issue_reuse;
+#[path = "factory_pilot/workflow_issue_snapshot.rs"]
+mod workflow_issue_snapshot;
 #[path = "factory_pilot/workflow_prelude.rs"]
 mod workflow_prelude;
 #[path = "factory_pilot/workflow_reproduction.rs"]
@@ -143,6 +147,18 @@ async fn packaged_original_evidence_plan_reviewer_and_decision_retain_exact_type
 #[ignore = "requires actual packaged candidate roles, pinned Github provider and real HTTPS/Git target"]
 async fn packaged_delivery_recovers_the_accepted_real_review_after_server_restart() {
   run_pilot(Scenario::DeliveredCandidate(workflow_ticket::Case::Small)).await;
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+#[ignore = "requires packaged roles, local Issue classification, retained snapshots and isolated HTTPS/Git target"]
+async fn packaged_issue_classification_delivers_from_its_snapshot_without_a_predecessor() {
+  run_pilot(Scenario::DeliveredCandidate(workflow_ticket::Case::IssueSnapshot)).await;
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+#[ignore = "requires packaged roles, manual Issue classification, retained snapshots and isolated HTTPS/Git target"]
+async fn packaged_delivery_reuses_one_configuration_for_manual_and_replacement_triage() {
+  run_pilot(Scenario::DeliveredCandidate(workflow_ticket::Case::ManualSnapshot)).await;
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]

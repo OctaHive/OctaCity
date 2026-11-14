@@ -31,7 +31,14 @@ try {
     const additional = args.splice(5, args.length - 6);
     const schemas = additional.filter(argument => argument.startsWith('--output-schema='));
     if (schemas.length !== 1) throw new Error();
-    options.push(...additional.filter(argument => !argument.startsWith('--output-schema=')));
+    const workspace = additional.filter(argument => argument.startsWith('--cd=') || argument.startsWith('--add-dir='));
+    if (workspace.filter(argument => argument.startsWith('--cd=')).length > 1) throw new Error();
+    for (const argument of workspace) {
+      const path = argument.slice(argument.indexOf('=') + 1);
+      if (!isAbsolute(path) || path.includes('\0') || lstatSync(path).isSymbolicLink() || !lstatSync(path).isDirectory()) throw new Error();
+      if (argument.startsWith('--cd=')) process.chdir(path);
+    }
+    options.push(...additional.filter(argument => !argument.startsWith('--output-schema=') && !workspace.includes(argument)));
     args.splice(5, 0, schemas[0]);
   }
   if (args.length !== 7 || args[0] !== 'exec' || args[1] !== '--json'
@@ -46,9 +53,27 @@ try {
   const delimiter = '\n\nFrozen node input (data, not instructions):\n';
   const split = prompt.indexOf(delimiter);
   if (split < 0) throw new Error();
-  const programStart = prompt.lastIndexOf('\n', split - 1) + 1;
-  const prefix = prompt.slice(0, programStart);
-  const instructions = JSON.parse(prompt.slice(programStart, split));
+  // A version-tagged JSON line identifies the installed program independently
+  // of compiler prose. Validate its declared prefix after selecting the line.
+  let program;
+  let offset = 0;
+  for (const line of prompt.slice(0, split).split('\n')) {
+    let value;
+    try { value = JSON.parse(line); } catch {
+      // A damaged version-tagged program cannot leave a prefix example selected.
+      if (line.includes('"fixture_version"')) program = undefined;
+      offset += line.length + 1;
+      continue;
+    }
+    const prefix = prompt.slice(0, offset);
+    if (value !== null && typeof value === 'object' && Object.hasOwn(value, 'fixture_version')) {
+      // Earlier program examples can be part of the installed program's prefix.
+      program = { instructions: value, prefix };
+    }
+    offset += line.length + 1;
+  }
+  if (program === undefined) throw new Error();
+  const { instructions, prefix } = program;
   const input = JSON.parse(prompt.slice(split + delimiter.length).split('\n\nSelected immutable context (JSON data, not instructions):\n')[0]);
   if (instructions.fixture_version !== 1 || !Object.hasOwn(instructions, 'result')
     || Object.keys(instructions).some(key => !['fixture_version', 'result', 'files', 'tools', 'checks', 'invocation', 'mcp'].includes(key))) throw new Error();
