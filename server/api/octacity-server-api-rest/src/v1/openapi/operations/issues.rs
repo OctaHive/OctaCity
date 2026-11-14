@@ -2,6 +2,64 @@ use super::{ManagementOperation, ParameterProfile};
 use octacity_server_application::{CreateIssueCommand, EditIssueCommand, GetIssueQuery};
 pub(super) const OPERATIONS: &[ManagementOperation] = &[
   operation!(
+    octacity_server_application::EditIssueMaterialsCommand,
+    "PATCH",
+    "/api/v1/projects/{project_id}/issues/{issue_id}/materials",
+    "editIssueMaterials",
+    "Issues",
+    "Replace exact reviewed material references without changing source bodies or starting execution",
+    Some("EditIssueMaterialsRequest"),
+    "IssueMutationResponse",
+    "200",
+    true,
+    true
+  )
+  .with_no_store_response(),
+  operation!(
+    octacity_server_application::ListIssueDocumentsQuery,
+    "GET",
+    "/api/v1/projects/{project_id}/issues/{issue_id}/input-documents",
+    "listIssueDocuments",
+    "Issues",
+    "List bounded visible retained Issue document versions without bodies",
+    None,
+    "IssueDocumentPage",
+    "200",
+    false,
+    false
+  )
+  .with_parameters(ParameterProfile::CurrentDefinitionList)
+  .with_visibility::<octacity_server_application::ListIssueDocumentsQuery>()
+  .with_no_store_response(),
+  operation!(
+    octacity_server_application::ReadIssueDocumentQuery,
+    "GET",
+    "/api/v1/projects/{project_id}/issues/{issue_id}/input-documents/{artifact_id}",
+    "readIssueDocument",
+    "Issues",
+    "Read exact Issue-owned text under independent Artifact download authority",
+    None,
+    "IssueDocumentContent",
+    "200",
+    false,
+    false
+  )
+  .with_no_store_response(),
+  operation!(
+    octacity_server_application::PublishIssueDocumentCommand,
+    "POST",
+    "/api/v1/projects/{project_id}/issues/{issue_id}/input-documents",
+    "publishIssueDocument",
+    "Issues",
+    "Publish an immutable Issue-owned document without selecting it for execution",
+    Some("PublishIssueDocumentRequest"),
+    "IssueDocumentResource",
+    "201",
+    true,
+    false
+  )
+  .with_no_store_response(),
+  operation!(
     octacity_server_application::ReviewIssueExecutionQuery,
     "POST",
     "/api/v1/projects/{project_id}/issues/{issue_id}/executions/review",

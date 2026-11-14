@@ -491,6 +491,32 @@ fn registered_routes() -> ManagementRoutes {
       "listProjectInputDocuments",
       super::project_documents::list,
     )
+    .post::<octacity_server_application::PublishIssueDocumentCommand, _, _>(
+      "publishIssueDocument",
+      super::issue_documents::publish,
+    )
+    .get::<octacity_server_application::ListIssueDocumentsQuery, _, _>(
+      "listIssueDocuments",
+      super::issue_documents::list,
+    )
+    .register::<octacity_server_application::ReadIssueDocumentQuery>(
+      "GET",
+      "readIssueDocument",
+      // Wrap the route so both application and extractor errors retain the content cache policy.
+      get(super::issue_documents::read).layer(axum::middleware::map_response(
+        |mut response: axum::response::Response| async move {
+          response.headers_mut().insert(
+            axum::http::header::CACHE_CONTROL,
+            axum::http::HeaderValue::from_static("no-store"),
+          );
+          response
+        },
+      )),
+    )
+    .patch::<octacity_server_application::EditIssueMaterialsCommand, _, _>(
+      "editIssueMaterials",
+      super::issue::materials::edit,
+    )
     .get::<GetProjectQuery, _, _>("getProject", get_project)
     .get::<octacity_server_application::ReadProjectInputDocumentQuery, _, _>(
       "readProjectInputDocument",

@@ -322,6 +322,12 @@ pub(super) fn management_application(
     store.clone(),
     management_policy.clone(),
   ));
+  let issue_materials = Arc::new(octacity_server_application::IssueMaterialHandlers::new(
+    store.clone(),
+    store.clone(),
+    management_policy.clone(),
+    Arc::new(octacity_server_application::SystemFactoryExecutionClock),
+  ));
   let issue_commands = authorized_commands(&management_policy, issues.clone());
   let issue_queries = authorized_queries(&management_policy, issues);
   let discussion = Arc::new(octacity_server_application::IssueDiscussionHandlers::new(
@@ -489,6 +495,10 @@ pub(super) fn management_application(
   .map_err(|_| ServerRuntimeError::InvalidManagementPolicy)?
   .with_project_documents(
     authorized_commands(&management_policy, project_documents.clone()),
+    authorized_queries(&management_policy, project_documents.clone()),
+  )
+  .with_issue_documents(
+    authorized_commands(&management_policy, project_documents.clone()),
     authorized_queries(&management_policy, project_documents),
   )
   .with_factory_readiness(
@@ -593,6 +603,7 @@ pub(super) fn management_application(
   )
   .with_issues(
     octacity_server_api_rest::v1::IssueManagementApplication::new(issue_commands.clone(), issue_queries.clone())
+      .with_materials(authorized_commands(&management_policy, issue_materials))
       .with_retention(issue_commands, issue_queries),
   );
   let application = match integrations {

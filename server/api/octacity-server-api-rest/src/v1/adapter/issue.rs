@@ -9,6 +9,14 @@ use octacity_server_application::{
 
 /// Task services can be installed without Factory, providers or execution configuration.
 pub struct IssueManagementApplication {
+  materials: Option<
+    Arc<
+      dyn AuthorizedManagementCommandHandler<
+          octacity_server_application::EditIssueMaterialsCommand,
+          Error = ApplicationError,
+        >,
+    >,
+  >,
   classification: Arc<
     dyn AuthorizedManagementQueryHandler<
         octacity_server_application::ReviewIssueClassificationQuery,
@@ -81,6 +89,7 @@ impl IssueManagementApplication {
       > + 'static,
   {
     Self {
+      materials: None,
       classification: queries.clone(),
       retention: None,
       children: queries.clone(),
@@ -120,6 +129,9 @@ fn representation(issue: &IssueRevision, id: &RequestId) -> Result<Value, ApiErr
     "status_id":issue.status_id.to_string(),"created_at_unix_ms":issue.created_at.unix_millis(),"updated_at_unix_ms":issue.updated_at.unix_millis()});
   if !issue.planning.is_empty() {
     value["planning"] = encode(&issue.planning, id)?;
+  }
+  if !issue.materials.is_empty() {
+    value["materials"] = encode(&issue.materials, id)?;
   }
   if !issue.classification.is_empty() {
     value["classification"] = encode(&issue.classification, id)?;
@@ -482,3 +494,6 @@ fn issue_page(
 
 #[path = "issue_retention.rs"]
 pub(super) mod retention;
+
+#[path = "issue/materials.rs"]
+pub(super) mod materials;

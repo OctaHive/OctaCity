@@ -107,6 +107,11 @@ pub fn request_examples() -> Vec<(&'static str, serde_json::Value)> {
       "PublishProjectDocumentRequest",
       serde_json::json!({"name":"Reviewed Project goals", "content":"Private goals"}),
     ),
+    ("EditIssueMaterialsRequest", serde_json::json!({"references":[]})),
+    (
+      "PublishIssueDocumentRequest",
+      serde_json::json!({"name":"Reviewed Issue notes", "content":"Private notes"}),
+    ),
     (
       "RequestIssueExecutionRequest",
       serde_json::from_str(&issue_execution_body()).unwrap(),

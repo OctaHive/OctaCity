@@ -70,21 +70,6 @@ pub(super) fn insert(schemas: &mut Map<String, Value>) {
     json!({"oneOf":[object([("selected_v1",selected)],&["selected_v1"]),legacy]}),
   );
   schemas.insert(
-    "IssueMaterialSelection".into(),
-    object(
-      [
-        ("reference", schema_ref("IssueMaterialReference")),
-        ("selected_by", schema_ref("AuditActor")),
-        ("selected_at", non_negative_integer()),
-      ],
-      &["reference", "selected_by", "selected_at"],
-    ),
-  );
-  schemas.insert("IssueDocumentResource".into(),object([
-    ("project_id",id()),("issue_id",id()),("name",json!({"type":"string","minLength":1,"maxLength":octacity_server_application::MAX_PROJECT_DOCUMENT_NAME_BYTES})),
-    ("artifact",schema_ref("FactoryArtifactReference")),("actor",schema_ref("AuditActor")),("published_at",non_negative_integer()),("expires_at",non_negative_integer())
-  ],&["project_id","issue_id","name","artifact","actor","published_at","expires_at"]));
-  schemas.insert(
     "IssueSnapshotMaterial".into(),
     object(
       [

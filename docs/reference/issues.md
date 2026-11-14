@@ -1751,8 +1751,40 @@ Snapshot task 1.4 adds the authorized application contracts
 `PublishIssueDocumentCommand`, `ListIssueDocumentsQuery` and
 `ReadIssueDocumentQuery`. `ProjectTextIntake::with_issue_documents` installs the
 existing Issue reader for current parent checks. The in-memory and PostgreSQL
-adapters implement the owner-aware document read port; HTTP/Console exposure
-remains tasks 6.7–6.9.
+adapters implement the owner-aware document read port. Task 6.7 exposes the
+HTTP contracts below; Console exposure remains task 6.9.
+
+The HTTP base is `/api/v1/projects/{project_id}/issues/{issue_id}/input-documents`:
+
+| Method | Suffix           | Contract                                                                                             |
+| ------ | ---------------- | ---------------------------------------------------------------------------------------------------- |
+| POST   | empty            | `PublishIssueDocumentRequest` → `IssueDocumentResource`, `201` for both publication and exact replay |
+| GET    | empty            | `IssueDocumentPage`: content-free retained immutable publication history                             |
+| GET    | `/{artifact_id}` | `IssueDocumentContent`: exact metadata plus independently authorized text                            |
+
+POST requires `Idempotency-Key` and accepts only `name` and `content`. The
+Project and Issue come from the route; actor/time come from trusted server
+context. No `If-Match` is required because publication does not edit Issue
+state. The name shares the Artifact-name bound and content must be nonblank,
+at most 1 MiB in UTF-8. A newer version uses a new idempotency key and creates
+a new Artifact; names do not act as mutable document identities or “latest”
+selectors. Exact replay retains the original actor, Artifact and deadlines;
+changed content under the same key conflicts with `409`. Keys are partitioned
+by Issue and management security scope.
+
+GET history accepts `limit` (default 50, range 1–200) and an exclusive exact
+Artifact UUID `after`. The page contains `items` and nullable `next_cursor`,
+without bodies. Artifact visibility is applied before pagination. Successful
+publication, history and exact-body responses all use `Cache-Control: no-store`.
+The exact-body route also applies this policy to error responses, including
+access denial, expired/unavailable content and rejected path parameters.
+Current parent visibility and action permissions are checked before replay or
+body access; denied hidden parent references use the existing generic invalid
+reference response, while direct authorization denial returns `403`. Expired or
+wrong-owner exact publications return `404` without choosing a replacement.
+The closed OpenAPI operations `publishIssueDocument`, `listIssueDocuments` and
+`readIssueDocument` generate the typed client paths; Issue metadata explicitly
+includes `issue_id`, while existing Project publication contracts are unchanged.
 
 Creating or revising task text uses the shared immutable input journal, byte
 publisher, digest/size validation, lease recovery and retention. Retained metadata
@@ -2001,6 +2033,54 @@ document or start execution. Source text stays behind its existing dedicated
 reader and retention rules; selection metadata contains no copied body. New
 comments or document versions never select themselves or retarget old entries.
 
+The HTTP command is `PATCH /api/v1/projects/{project_id}/issues/{issue_id}/materials`
+(`editIssueMaterials`). It requires `Idempotency-Key` and a strong `If-Match`
+Issue version, and accepts the complete desired selection:
+
+```json
+{
+  "references": [
+    {
+      "kind": "comment",
+      "project_id": "11111111-1111-4111-8111-111111111111",
+      "issue_id": "22222222-2222-4222-8222-222222222222",
+      "comment_id": "33333333-3333-4333-8333-333333333333",
+      "body_digest": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+    }
+  ]
+}
+```
+
+Use exact pins returned by the authorized source contracts; the illustrative IDs
+above are not resolvable source data. The closed reference variants are:
+
+| Kind               | Required source pin                                           | Owner                                                 |
+| ------------------ | ------------------------------------------------------------- | ----------------------------------------------------- |
+| `comment`          | `comment_id`, `body_digest`, `project_id`, `issue_id`         | This Issue's existing discussion                      |
+| `issue_document`   | `artifact` (ID/digest/encoded size), `project_id`, `issue_id` | This Issue's exact immutable publication              |
+| `project_document` | `artifact` (ID/digest/encoded size), `project_id`             | An explicitly linked exact shared Project publication |
+
+`references: []` removes all selections. Omitting `references`, sending a copied
+body, claimed selection actor/time or overriding the route owner is invalid.
+Both initial application and replay return `200`, an `IssueMutationResponse`,
+the resulting original Issue revision ETag and `Cache-Control: no-store`.
+Missing `If-Match` returns `428`; malformed preconditions or invalid references
+return `400`; a stale review or changed intent under the same scoped key returns
+`409`. Cross-Issue document substitution is invalid even within one Project.
+
+Current Issue detail and exact `GET .../issues/{issue_id}/revisions/{version}`
+expose the optional bounded `materials` array. Each entry has `reference`,
+server-assigned `selected_by` and `selected_at`. Absent/empty selections keep the
+legacy omitted wire encoding; summary and revision-header lists do not acquire
+source bodies. These metadata reads use existing Issue View authority. Dedicated
+comment/Issue-document/Project-document readers retain their independent current
+content permissions and no-store/retention behavior. Metadata or receipt replay
+never grants body access or replaces expired text. Removing a reference needs no
+source-body access; a new selection validates source permissions and retention.
+Snapshot execution review/detail continue to use the existing independent
+owner-aware readers and report required unavailable sources through their
+existing material blockers.
+
 The in-memory and PostgreSQL adapters implement this contract. PostgreSQL task
 1.7 reuses the existing JSONB Issue revision and scoped idempotency journal;
 it needs no additional table, body store or DDL migration. The original reviewed
@@ -2018,8 +2098,8 @@ document bodies. Current application authorization remains mandatory.
 
 Public-store qualification covers schema-120 databases and physical restored
 copies, exact historical reads through a new pool, concurrent version/key contests,
-independent security scopes and rollback after an outbox failure. HTTP and Console
-selection operations remain tasks 6.7–6.9. Consumer snapshot byte limits and
+independent security scopes and rollback after an outbox failure. Task 6.8 exposes
+HTTP selection; Console controls remain tasks 6.9–6.10. Consumer snapshot byte limits and
 per-step projections belong to section 3 of the change, including the shared
 1 MiB combined selected-text ceiling.
 

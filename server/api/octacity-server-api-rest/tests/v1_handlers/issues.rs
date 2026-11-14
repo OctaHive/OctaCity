@@ -1101,3 +1101,12 @@ fn issue_work_http_contract_declares_the_original_work_path_identity() {
       .any(|p| p["name"] == "work_id" && p["in"] == "path" && p["required"] == true && p["schema"]["format"] == "uuid")
   );
 }
+
+#[path = "issues/documents.rs"]
+mod documents;
+
+#[path = "issues/materials.rs"]
+mod materials;
+
+#[path = "issues/collaboration.rs"]
+mod collaboration;

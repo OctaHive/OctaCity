@@ -105,6 +105,9 @@ impl<S, B> ProjectTextIntake<S, B> {
       require_authorized_reference, require_visible_reference,
     };
     require_visible_reference(self.policy.as_ref(), context, ManagementResourceKind::Project, project).await?;
+    if action != ManagementAction::View {
+      require_visible_reference(self.policy.as_ref(), context, ManagementResourceKind::Issue, issue).await?;
+    }
     require_authorized_reference(
       self.policy.as_ref(),
       context,

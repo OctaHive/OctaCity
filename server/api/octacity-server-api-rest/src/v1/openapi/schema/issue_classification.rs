@@ -37,12 +37,6 @@ pub(super) fn insert(schemas: &mut Map<String, Value>) {
       ("observation",schema_ref("FactoryDigest")),("native_correlation",schema_ref("FactoryDigest"))
     ],&["actor","mapping","observation","native_correlation"])
   ]}));
-  // Only retained source pins are exposed here; source bodies keep independent readers.
-  schemas.insert("IssueMaterialReference".into(),json!({"oneOf":[
-    tagged("kind","comment",[("project_id",id()),("issue_id",id()),("comment_id",id()),("body_digest",schema_ref("FactoryDigest"))],&["project_id","issue_id","comment_id","body_digest"]),
-    tagged("kind","issue_document",[("project_id",id()),("issue_id",id()),("artifact",schema_ref("FactoryArtifactReference"))],&["project_id","issue_id","artifact"]),
-    tagged("kind","project_document",[("project_id",id()),("artifact",schema_ref("FactoryArtifactReference"))],&["project_id","artifact"])
-  ]}));
   schemas.insert(
     "IssueClassificationSubject".into(),
     json!({"oneOf":[

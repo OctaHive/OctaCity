@@ -182,6 +182,7 @@ where
   )
   .unwrap()
   .with_project_documents(workflow_commands.clone(), workflow_queries.clone())
+  .with_issue_documents(workflow_commands.clone(), workflow_queries.clone())
   .with_factory_policies(octacity_server_api_rest::v1::FactoryPolicyManagementApplication::new(
     role_commands.clone(),
     role_queries.clone(),
@@ -240,6 +241,7 @@ where
   ))
   .with_issues(
     octacity_server_api_rest::v1::IssueManagementApplication::new(issue_commands.clone(), issue_queries.clone())
+      .with_materials(issue_commands.clone())
       .with_retention(issue_commands, issue_queries),
   )
 }

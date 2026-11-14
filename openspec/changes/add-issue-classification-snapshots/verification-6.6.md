@@ -151,3 +151,53 @@ verification links, OpenSpec validation and whitespace were checked. No native
 executor, packaged release or real provider effect was performed or claimed;
 those remain later end-to-end tasks. No commit was requested. Pre-existing task
 6.5 changes are retained, and `github.token` remains untouched and untracked.
+
+## Visual baseline follow-up
+
+The full-page Project snapshots still represented the page before task 6.6 added
+the collapsed Issue field settings entry. The new control and its gap add exactly
+56 px; the retained content below it moves down without changing its layout.
+The settings entry is intentional and already has EN/RU, keyboard and narrow
+browser coverage.
+
+Existing visual tests reproduced the failure before any baseline update:
+
+```sh
+pnpm exec playwright test tests/browser/visual.spec.ts --grep 'project-desktop' --workers=1
+```
+
+Both locales failed on macOS at **1440×1107 → 1440×1163**. An isolated Linux x64
+run using Node **24.21.0**, Playwright **1.63.0** and its pinned noble image
+reproduced the exact CI failure: **1440×1101 → 1440×1157** for both locales.
+The Linux runner used the frozen UI lockfile with lifecycle scripts disabled,
+the existing generated API and read-only canonical REST fixtures. Screenshots
+were inspected before accepting the added settings entry.
+
+Only the EN/RU desktop Project PNG baselines were regenerated on their actual
+platforms:
+
+```sh
+pnpm exec playwright test tests/browser/visual.spec.ts --grep 'project-desktop' --workers=1 --update-snapshots
+```
+
+The macOS regression command, without snapshot updating, passed **19 tests**:
+all 17 visual cases plus both Project field settings browser scenarios.
+
+```sh
+pnpm exec playwright test tests/browser/visual.spec.ts tests/browser/project-issue-fields.spec.ts --workers=2
+```
+
+No application, CSS, fixture or comparison-threshold change was needed. The
+existing failing visual tests provide the Red/Green regression boundary; no
+redundant test or platform-independent screenshot replacement was added.
+
+The final Linux command also passed all **17 visual tests** in 43 seconds,
+without `--update-snapshots`:
+
+```sh
+pnpm exec playwright test tests/browser/visual.spec.ts --workers=2
+```
+
+The only screenshot changes are the four Project EN/RU baselines (Linux and
+macOS); unrelated baselines and the visual test's tolerance are preserved.
+The temporary Linux dependency/source copy was removed after qualification.

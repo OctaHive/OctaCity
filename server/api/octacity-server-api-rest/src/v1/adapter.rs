@@ -109,6 +109,7 @@ mod issue_source;
 pub use issue_source::IssueSourceManagementApplication;
 mod issue_workflow;
 pub use issue_workflow::IssueWorkflowManagementApplication;
+mod issue_documents;
 mod job_event;
 mod log_search;
 mod manual_trigger;
@@ -227,6 +228,7 @@ pub struct ManagementApplication {
   >,
   issue_result_panels: Option<IssueResultPanelManagementApplication>,
   issue_discussion: Option<IssueDiscussionManagementApplication>,
+  issue_documents: Option<issue_documents::Endpoints>,
   factory_actions: Option<FactoryActionManagementApplication>,
   factory_roles: Option<FactoryRoleManagementApplication>,
   factory_policies: Option<FactoryPolicyManagementApplication>,
@@ -335,6 +337,7 @@ impl ManagementApplication {
       issues: None,
       issue_executions: None,
       issue_discussion: None,
+      issue_documents: None,
       factory_actions: None,
       factory_roles: None,
       factory_policies: None,

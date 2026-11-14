@@ -431,6 +431,10 @@ unavailable_query!(
 );
 unavailable_command!(octacity_server_application::CreateIssueCommand, "create_issue");
 unavailable_command!(octacity_server_application::EditIssueCommand, "edit_issue");
+unavailable_command!(
+  octacity_server_application::EditIssueMaterialsCommand,
+  "edit_issue_materials"
+);
 unavailable_command!(octacity_server_application::TransitionIssueCommand, "transition_issue");
 unavailable_command!(
   octacity_server_application::AdoptIssueWorkflowCommand,
@@ -473,6 +477,18 @@ unavailable_query!(
 unavailable_query!(
   octacity_server_application::ReadProjectInputDocumentQuery,
   "read_project_input_document"
+);
+unavailable_command!(
+  octacity_server_application::PublishIssueDocumentCommand,
+  "publish_issue_document"
+);
+unavailable_query!(
+  octacity_server_application::ListIssueDocumentsQuery,
+  "list_issue_documents"
+);
+unavailable_query!(
+  octacity_server_application::ReadIssueDocumentQuery,
+  "read_issue_document"
 );
 unavailable_command!(PublishPipelineVersionCommand, "publish_pipeline");
 unavailable_query!(GetPipelineQuery, "get_pipeline");
@@ -1293,6 +1309,7 @@ fn management_contract_requests() -> Vec<Request<Body>> {
     empty_request("GET",&format!("/api/v1/projects/{project_id}/issue-property-definitions/0"),None),
     json_request("POST",&format!("/api/v1/projects/{project_id}/issue-property-definitions"),"catalog",None,r#"{"expected_version":0,"definition":{"labels":[],"properties":[]}}"#),
     json_request("PATCH",&format!("/api/v1/projects/{project_id}/issues/{pipeline_id}/planning"),"planning",Some("\"1\""),r#"{"definition_version":0,"assignee":null,"labels":[],"due_date":null,"parent_id":null,"values":{}}"#),
+    json_request("PATCH",&format!("/api/v1/projects/{project_id}/issues/{pipeline_id}/materials"),"materials",Some("\"1\""),r#"{"references":[]}"#),
     empty_request("GET",&format!("/api/v1/projects/{project_id}/issues/{pipeline_id}/children?limit=1"),None),
     empty_request("GET",&format!("/api/v1/projects/{project_id}/issues?limit=1"),None),
     json_request("POST",&format!("/api/v1/projects/{project_id}/issues"),"draft",None,r#"{"title":"Draft","description":""}"#),
@@ -1364,6 +1381,9 @@ fn management_contract_requests() -> Vec<Request<Body>> {
     json_request("POST", &format!("/api/v1/projects/{project_id}/input-documents"), "project-document", None, r#"{"name":"Goals","content":"Reviewed goals"}"#),
     empty_request("GET", &format!("/api/v1/projects/{project_id}/input-documents?limit=10"), None),
     empty_request("GET", &format!("/api/v1/projects/{project_id}/input-documents/{job_id}"), None),
+    json_request("POST", &format!("{source_path}/input-documents"), "issue-document", None, r#"{"name":"Notes","content":"Reviewed notes"}"#),
+    empty_request("GET", &format!("{source_path}/input-documents?limit=10"), None),
+    empty_request("GET", &format!("{source_path}/input-documents/{job_id}"), None),
     empty_request(
       "GET",
       &format!("/api/v1/projects/{project_id}/pipelines?limit=10"),
@@ -1772,6 +1792,7 @@ async fn every_management_operation_is_allowed_before_application_dispatch() {
       "get_issue_properties",
       "publish_issue_properties",
       "edit_issue_planning",
+      "edit_issue_materials",
       "list_issue_children",
       "list_issues",
       "create_issue",
@@ -1807,6 +1828,9 @@ async fn every_management_operation_is_allowed_before_application_dispatch() {
       "publish_project_document",
       "list_project_input_documents",
       "read_project_input_document",
+      "publish_issue_document",
+      "list_issue_documents",
+      "read_issue_document",
       "list_project_pipelines",
       "list_project_repositories",
       "list_project_build_configurations",
