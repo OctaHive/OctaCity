@@ -58,7 +58,12 @@ for (const language of ['en', 'ru'] as const) {
         return route.fulfill({
           json: path.endsWith('/input-documents')
             ? { items: [resource], next_cursor: null }
-            : { project_id: resource.project_id, artifact: resource.artifact, content: original },
+            : {
+                project_id: resource.project_id,
+                artifact: resource.artifact,
+                expires_at: resource.expires_at,
+                content: original,
+              },
         });
       });
       await page.goto(`/projects/${resource.project_id}`);

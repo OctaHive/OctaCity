@@ -31,6 +31,7 @@ it('opens a document as formatted read-only content before explicitly editing it
   const read = vi.spyOn(projectDocumentsApi, 'read').mockResolvedValue({
     project_id: document.project_id,
     artifact: document.artifact,
+    expires_at: document.expires_at,
     content: '# Project components\n\n- **Console** for operators\n- Storage\n',
   });
   const publish = vi.spyOn(projectDocumentsApi, 'publish');
@@ -69,6 +70,7 @@ it('views exact content and publishes an edit as a new document without repinnin
   const read = vi.spyOn(projectDocumentsApi, 'read').mockResolvedValue({
     project_id: original.project_id,
     artifact: original.artifact,
+    expires_at: original.expires_at,
     content: 'Console and storage\n',
   });
   const publish = vi.spyOn(projectDocumentsApi, 'publish').mockResolvedValue({
@@ -122,6 +124,7 @@ it('rejects substituted content with the same artifact id but a different retain
   vi.spyOn(projectDocumentsApi, 'read').mockResolvedValue({
     project_id: document.project_id,
     artifact: { ...document.artifact, content_digest: 'e'.repeat(64) },
+    expires_at: document.expires_at,
     content: 'Substituted private content',
   });
   await openRetainedDocument();
@@ -135,6 +138,7 @@ it('keeps Markdown links inert for data and script URLs while preserving web and
   vi.spyOn(projectDocumentsApi, 'read').mockResolvedValue({
     project_id: document.project_id,
     artifact: document.artifact,
+    expires_at: document.expires_at,
     content:
       '[SVG](data:image/svg+xml;base64,PHN2Zy8+)\n\n[Script](javascript:alert(1))\n\n[Web](https://example.org/goals)\n\n[Local](./components)',
   });

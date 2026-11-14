@@ -2831,6 +2831,51 @@ current Issue visibility; null means unavailable or pending, without proving tha
 no hidden association exists. The **Open task** link selects the original reviewed
 `execution`, or legacy `work` when no request exists.
 
+## Console document workspace
+
+The Issue **Documents** section uses the dedicated Issue document routes and the
+material command above. It lists immutable publication history and independently
+reads exact source bodies on explicit preview. **New Issue document** and
+**Publish new Issue version** create Issue-owned publications; **Link existing
+Project document** discovers shared Project publications separately. Neither
+creation nor publication selects pipeline input. A reviewed material replacement
+uses the current Issue ETag and preserves complete exact references and source
+ownership. Removal changes only the selection. A replacement target removed by a
+concurrent edit requires canceling/reviewing a new choice rather than saving an
+unchanged set. Shared preview rereads clear the previous body/link receipt before
+fetching; a failed read cannot leave stale linking controls enabled.
+
+Exact owner/ID/digest metadata remains inspectable in selected materials, command
+review and historical revision views. Historical source reads do not depend on
+current catalog membership. Source permissions and retention remain authoritative;
+missing/forbidden/expired text never falls back to a newer publication. The exact
+Project document content response includes the publication's `expires_at` deadline;
+selected previews retain it and stop presenting text at that deadline independently
+of catalog membership. A body response without a valid deadline is rejected. Deploy
+the updated API contract with the Console; no catalog lookup or guessed lifetime
+substitutes for this owner-provided deadline. The UI
+retains unpublished text only in mounted memory and discards it when leaving the
+Issue. Historical navigation within that Issue preserves document editing and
+frozen confirmation/retry identity; it disables fresh historical commands while
+keeping independently authorized historical preview usable. Removing a selected
+reference does not prevent completion/cleanup of its in-flight body read. Shared
+publication body reads are serialized; a catalog row disappearing during a read
+cannot leave the discovery picker permanently busy. See the
+[operator workflow](../operations/operator-console.md#issue-documents-and-exact-material-selection)
+for conflict/retry behavior and the distinction between publication, selection
+and execution.
+
+Activity reuses the existing comment/reply form and dedicated authorized body
+reader. Its explicit **Include comment … as Issue material** and **Remove comment
+… from Issue materials** actions use the same complete selection command and
+strong Issue precondition; posting and thread membership never imply selection.
+Review carries only the exact reference/owner/digest metadata. Existing documents
+and other comments remain selected, and removal neither reads nor deletes source
+text. The plain-text preview rejects substituted owner/ID/digest/size metadata and hides
+previously opened text after a failed body refresh. A discussion draft survives selection-conflict refresh and is discarded on
+section leave or reload. No execution, gate response or provider effect follows
+from append, preview or selection.
+
 ## Collaboration content lifetime
 
 Requirements and discussion have separate explicit plans; no plan means no

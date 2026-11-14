@@ -32,6 +32,7 @@ export function manualFlowEditorFixture(
   const read = vi.spyOn(projectDocumentsApi, 'read').mockImplementation(async (_, id) => ({
     project_id: 'delivery',
     artifact: documents.find((item) => item.artifact.artifact_id === id)!.artifact,
+    expires_at: documents.find((item) => item.artifact.artifact_id === id)!.expires_at,
     content: `Exact ${id} content`,
   }));
   let observed = emptyFlowDraft();

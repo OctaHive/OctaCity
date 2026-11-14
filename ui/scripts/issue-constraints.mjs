@@ -89,3 +89,17 @@ export function issueSourceConstraints(document) {
     ),
   };
 }
+
+/** Same publication and selection ceilings as the Issue REST owner, with explicit byte units. */
+export function issueDocumentConstraints(document) {
+  const schemas = document.components?.schemas;
+  const fields = schemas?.PublishIssueDocumentRequest?.properties;
+  const bound = boundsFor('Issue document');
+  return {
+    nameMaximumBytes: bound(fields?.name?.['x-max-utf8-bytes']),
+    contentMaximumBytes: bound(fields?.content?.['x-max-utf8-bytes']),
+    materialsMaximumCount: bound(
+      schemas?.EditIssueMaterialsRequest?.properties?.references?.maxItems,
+    ),
+  };
+}

@@ -23,6 +23,7 @@ impl ManagementQueryUseCase<ReadProjectInputDocumentQuery> for Documents {
     Ok(ProjectDocumentContent {
       project_id: document.project_id,
       artifact: document.artifact,
+      expires_at: document.expires_at,
       content: "Private goals\r\nexactly\n".into(),
     })
   }
@@ -51,7 +52,16 @@ async fn project_document_content_is_explicitly_read_through_the_project_owner_w
   let body: serde_json::Value =
     serde_json::from_slice(&to_bytes(response.into_body(), usize::MAX).await.unwrap()).unwrap();
   assert_eq!(body["content"], "Private goals\r\nexactly\n");
-  assert_json_matches_component(&openapi_document(), "ProjectDocumentContent", &body);
+  assert_eq!(body["expires_at"], 2000);
+  let schema = openapi_document();
+  assert!(
+    schema["components"]["schemas"]["ProjectDocumentContent"]["required"]
+      .as_array()
+      .unwrap()
+      .contains(&serde_json::json!("expires_at")),
+    "the body deadline must be part of the generated client contract"
+  );
+  assert_json_matches_component(&schema, "ProjectDocumentContent", &body);
   assert_eq!(documents.reads.lock().unwrap().len(), 1);
   assert!(documents.publications.lock().unwrap().is_empty());
   assert!(documents.pages.lock().unwrap().is_empty());

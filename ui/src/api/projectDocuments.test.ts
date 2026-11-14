@@ -13,7 +13,14 @@ it('rejects a mismatched document identity at the document read boundary', async
   };
   const api = createProjectDocumentsApi(
     createManagementApiClient(
-      vi.fn(async () => Response.json({ project_id: 'project', artifact, content: 'private' })),
+      vi.fn(async () =>
+        Response.json({
+          project_id: 'project',
+          artifact,
+          expires_at: 4102444800000,
+          content: 'private',
+        }),
+      ),
     ),
   );
   await expect(api.read('project', 'expected-document')).rejects.toThrow(
@@ -22,4 +29,21 @@ it('rejects a mismatched document identity at the document read boundary', async
   await expect(
     readExactProjectDocument(api, 'project', { ...artifact, encoded_size: 8 }),
   ).rejects.toThrow('Project document response is invalid');
+});
+
+it('rejects an exact preview response without an authoritative retention deadline', async () => {
+  vi.stubGlobal('location', { origin: 'https://console.example' });
+  const artifact = {
+    artifact_id: 'retained-document',
+    content_digest: 'a'.repeat(64),
+    encoded_size: 7,
+  };
+  const api = createProjectDocumentsApi(
+    createManagementApiClient(
+      vi.fn(async () => Response.json({ project_id: 'project', artifact, content: 'private' })),
+    ),
+  );
+  await expect(readExactProjectDocument(api, 'project', artifact)).rejects.toThrow(
+    'Project document response is invalid',
+  );
 });

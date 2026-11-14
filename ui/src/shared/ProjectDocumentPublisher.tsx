@@ -1,3 +1,4 @@
+import { TextDocumentEditor } from './TextDocumentEditor';
 import { useState } from 'react';
 import type { components } from '../../.generated/api/schema';
 import type { ProjectDocumentsApi } from '../api/projectDocuments';
@@ -99,56 +100,15 @@ function DocumentDraft({
 }) {
   const { t } = usePresentation();
   const [draft, setDraft] = useState<Request>(initial ?? { name: '', content: '' });
-  const [preview, setPreview] = useState(false);
   const [published, setPublished] = useState<LoadedDocument | null>(null);
   const [review, setReview] = useState<{ request: Request; returnFocus: HTMLElement } | null>(null);
   return (
-    <fieldset className={`${styles.panel} ${styles.editor}`}>
-      <legend>{t(initial ? 'projectDocument.edit' : 'projectDocument.new')}</legend>
-      <label className={styles.field}>
-        {t('projectDocument.name')}
-        <input
-          className={styles.input}
-          ref={focusOnMount}
-          value={draft.name}
-          required
-          onChange={(event) => setDraft({ ...draft, name: event.target.value })}
-        />
-      </label>
-      <div className={styles.toolbar}>
-        <button
-          className={styles.button}
-          type="button"
-          aria-pressed={!preview}
-          onClick={() => setPreview(false)}
-        >
-          {t('projectDocument.write')}
-        </button>
-        <button
-          className={styles.button}
-          type="button"
-          aria-pressed={preview}
-          onClick={() => setPreview(true)}
-        >
-          {t('projectDocument.preview')}
-        </button>
-      </div>
-      {preview ? (
-        <section role="region" aria-label={t('projectDocument.previewTitle')}>
-          <DocumentMarkdown content={draft.content} />
-        </section>
-      ) : (
-        <label className={styles.field}>
-          {t('projectDocument.content')}
-          <textarea
-            className={styles.input}
-            value={draft.content}
-            required
-            onChange={(event) => setDraft({ ...draft, content: event.target.value })}
-          />
-        </label>
-      )}
-      <p className={styles.metadata}>{t('projectDocument.help')}</p>
+    <TextDocumentEditor
+      title={t(initial ? 'projectDocument.edit' : 'projectDocument.new')}
+      draft={draft}
+      onChange={setDraft}
+      help={t('projectDocument.help')}
+    >
       <div className={styles.toolbar}>
         <button
           className={`${styles.button} ${styles.primary}`}
@@ -174,6 +134,6 @@ function DocumentDraft({
           onClose={() => (published ? onSaved(published) : setReview(null))}
         />
       ) : null}
-    </fieldset>
+    </TextDocumentEditor>
   );
 }

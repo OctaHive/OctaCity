@@ -1087,6 +1087,11 @@ fn project_goals_can_be_read_and_revised_without_changing_an_accepted_version() 
       .await
       .unwrap();
     assert_eq!(read.artifact, first.artifact);
+    assert_eq!(
+      serde_json::to_value(&read).unwrap()["expires_at"],
+      serde_json::to_value(first.expires_at).unwrap(),
+      "an exact read must carry its publication's authoritative retention deadline"
+    );
     assert_eq!(read.content, "Original private goals\r\nIsolated agents.\n");
     assert!(!format!("{read:?}").contains("Original private goals"));
     let revised = commands

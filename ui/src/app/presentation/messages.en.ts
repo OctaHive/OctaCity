@@ -1,4 +1,47 @@
 export const enMessages = {
+  'issueDocuments.replacementMissing':
+    'The material to replace is no longer selected. Cancel replacement and choose again.',
+  'issues.commentMaterialHelp':
+    'Posting does not select input. Include only the exact comments a separately reviewed pipeline input needs.',
+  'issues.includeCommentMaterial': 'Include comment {sequence} as Issue material',
+  'issues.removeCommentMaterial': 'Remove comment {sequence} from Issue materials',
+  'issueDocuments.historical': 'Historical document selection · revision {version}',
+
+  'issueDocuments.version': 'Publish new Issue version',
+
+  'issueDocuments.link': 'Link existing Project document',
+  'issueDocuments.linkExact': 'Link this exact Project publication',
+
+  'issueDocuments.selected': 'Selected materials',
+  'issueDocuments.select': 'Select {name} as material',
+  'issueDocuments.remove': 'Remove {id}',
+  'issueDocuments.replace': 'Replace {id}',
+  'issueDocuments.replaceWith': 'Replace with {name}',
+  'issueDocuments.chooseReplacement': 'Choose an exact publication to replace {id}.',
+  'issueDocuments.shared': 'Linked Project document',
+  'issueDocuments.comment': 'Issue comment',
+  'issueDocuments.isSelected': 'Selected exact publication',
+  'issueDocuments.saveSelection': 'Save material selection',
+  'issueDocuments.reviewSelection': 'Review material selection',
+  'issueDocuments.selectionSaved': 'Material selection saved. No execution was started.',
+  'issueDocuments.selectionHelp':
+    'Only these exact references are offered to a separately reviewed pipeline input. Source bodies, ownership and admitted executions are unchanged.',
+
+  'issueDocuments.new': 'New Issue document',
+  'issueDocuments.reviewPublication': 'Review Issue publication',
+  'issueDocuments.publish': 'Publish Issue document',
+  'issueDocuments.published':
+    'Issue document published. Material selection and execution are separate.',
+  'issueDocuments.help':
+    'Owned by this Issue. Publishing creates an immutable version, without adding a Project document, selecting material or starting execution.',
+
+  'issues.documents': 'Documents',
+  'issueDocuments.title': 'Issue documents',
+  'issueDocuments.owned': 'Issue-owned document',
+  'issueDocuments.empty': 'No Issue documents.',
+  'issueDocuments.more': 'Load more document versions',
+  'issueDocuments.preview': 'Preview {name}',
+
   'issueFields.newOptionId': 'New option ID (optional)',
   'issueFields.invalidKey': 'Option ID must be unique and match {pattern} within {maximum} bytes.',
 

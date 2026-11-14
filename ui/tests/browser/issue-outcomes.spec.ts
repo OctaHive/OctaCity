@@ -185,6 +185,7 @@ for (const language of ['en', 'ru'] as const) {
           json: {
             project_id: issue.project_id,
             artifact: { artifact_id: documentId, content_digest: 'd'.repeat(64), encoded_size: 32 },
+            expires_at: 4102444800000,
             content: 'Exact retained checkout contract',
           },
         });

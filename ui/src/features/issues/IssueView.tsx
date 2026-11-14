@@ -1,3 +1,5 @@
+import { IssueDocuments } from './IssueDocuments';
+import type { IssueDocumentsApi } from './documentsApi';
 import { IssueLegacyExecutions } from './IssueLegacyExecutions';
 import type { IssueLegacyWorkApi } from './executionApi';
 import { IssueOutcomes } from './IssueOutcomes';
@@ -39,7 +41,7 @@ import { IssueAdoption } from './IssueAdoption';
 import { IssueMoves } from './IssueMoves';
 import { IssueHistory } from './IssueHistory';
 import styles from './Issues.module.css';
-const sections = ['overview', 'activity', 'runs', 'results', 'actions'] as const;
+const sections = ['overview', 'documents', 'activity', 'runs', 'results', 'actions'] as const;
 export function IssueView({
   factory,
   actions,
@@ -54,6 +56,7 @@ export function IssueView({
   executions,
   legacy,
   executionSources,
+  documents,
 }: {
   factory: IssueRunReader;
   actions?: FactoryActionsApi | undefined;
@@ -68,6 +71,7 @@ export function IssueView({
   executions: IssueExecutionsApi;
   legacy: IssueLegacyWorkApi;
   executionSources: IssueExecutionSources;
+  documents: IssueDocumentsApi;
 }) {
   const { projectId, issueId } = useParams<'projectId' | 'issueId'>();
   return projectId && issueId ? (
@@ -80,6 +84,7 @@ export function IssueView({
       reviews={reviews}
       reviewConnections={reviewConnections}
       key={projectId + issueId}
+      documents={documents}
       executions={executions}
       legacy={legacy}
       executionSources={executionSources}
@@ -105,6 +110,7 @@ function Card({
   executions,
   legacy,
   executionSources,
+  documents,
   projectId,
   issueId,
 }: {
@@ -121,6 +127,7 @@ function Card({
   executions: IssueExecutionsApi;
   legacy: IssueLegacyWorkApi;
   executionSources: IssueExecutionSources;
+  documents: IssueDocumentsApi;
   projectId: string;
   issueId: string;
 }) {
@@ -171,6 +178,12 @@ function Card({
     queryFn: ({ signal }) => api.get(projectId, issueId, signal),
   });
   const issue = current.data;
+  const documentHistory = useQuery({
+    queryKey: queryKeys.issueRevision(projectId, issueId, hasRevision ? selectedRevision : null),
+    gcTime: 0,
+    enabled: section === 'documents' && hasRevision,
+    queryFn: ({ signal }) => api.revision(projectId, issueId, selectedRevision, signal),
+  });
   const workflow = useQuery({
     queryKey: queryKeys.issueWorkflow(
       projectId,
@@ -339,6 +352,31 @@ function Card({
           </button>
           <div className={styles.columns}>
             <div className={styles.main}>
+              {section === 'documents' && hasRevision && documentHistory.isPending ? (
+                <QueryLoadingNotice label={t('issues.documents')} />
+              ) : null}
+              {section === 'documents' && hasRevision && documentHistory.error ? (
+                <QueryFailureNotice
+                  title={t('issues.documents')}
+                  error={documentHistory.error}
+                  onRetry={documentHistory.refetch}
+                />
+              ) : null}
+              <div
+                hidden={
+                  section !== 'documents' ||
+                  (hasRevision && (!documentHistory.data || documentHistory.error !== null))
+                }
+              >
+                <IssueDocuments
+                  issue={hasRevision ? (documentHistory.data ?? issue) : issue}
+                  api={documents}
+                  active={section === 'documents'}
+                  readOnly={hasRevision}
+                  ready={current.error === null && !current.isFetching}
+                  onRefresh={refresh}
+                />
+              </div>
               {section === 'overview' ? (
                 <>
                   <section className={styles.panel}>
@@ -369,9 +407,15 @@ function Card({
                   <IssueActivity api={activity} issue={issue} preview />
                   <IssueHistory api={api} workflows={workflows} issue={issue} preview />
                 </>
-              ) : section === 'activity' ? (
+              ) : section === 'documents' ? null : section === 'activity' ? (
                 <>
-                  <IssueActivity api={activity} issue={issue} />
+                  <IssueActivity
+                    api={activity}
+                    issue={issue}
+                    materials={documents}
+                    ready={current.error === null && !current.isFetching}
+                    onRefresh={refresh}
+                  />
                   <IssueHistory api={api} workflows={workflows} issue={issue} />
                   <IssueRevisions api={api} issue={issue} />
                 </>

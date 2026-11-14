@@ -27,6 +27,7 @@ import {
   type IssueExecutionsApi,
   type IssueLegacyWorkApi,
 } from '../features/issues/executionApi';
+import { issueDocumentsApi, type IssueDocumentsApi } from '../features/issues/documentsApi';
 import { issuesApi, type IssuesApi } from '../features/issues/api';
 import { issueSourcesApi, type IssueSourcesApi } from '../features/issues/sourceApi';
 import { issueWorkflowsApi, type IssueWorkflowsApi } from '../api/issueWorkflows';
@@ -162,6 +163,7 @@ export interface ConsoleRouteDependencies {
   readonly issueExecutionsApi: IssueExecutionsApi;
   readonly issueLegacyWorkApi: IssueLegacyWorkApi;
   readonly issuesApi: IssuesApi;
+  readonly issueDocumentsApi: IssueDocumentsApi;
   readonly issueSourcesApi: IssueSourcesApi;
   readonly issueCodeReviewsApi: IssueCodeReviewsApi;
   readonly issueReviewConnections: IssueReviewConnections;
@@ -184,6 +186,7 @@ const DEFAULT_ROUTE_DEPENDENCIES: ConsoleRouteDependencies = {
   projectsApi,
   issueWorkflowsApi,
   issuesApi,
+  issueDocumentsApi,
   issueSourcesApi,
   issueCodeReviewsApi,
   issueReviewConnections: integrationsApi,
@@ -298,6 +301,7 @@ export function createConsoleRoutes(
           path: childPath(CONSOLE_PATHS.issue),
           element: defer(
             <IssueView
+              documents={dependencies.issueDocumentsApi}
               factory={dependencies.factoryApi}
               actions={dependencies.factoryActionsApi}
               panels={dependencies.issueResultPanelsApi}

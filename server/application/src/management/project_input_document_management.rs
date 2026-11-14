@@ -11,6 +11,8 @@ pub struct ProjectDocumentContent {
   pub project_id: octacity_server_domain::ProjectId,
   /// Immutable content identity; a revision is a separate ordinary publication.
   pub artifact: octacity_server_factory::FactoryArtifactReference,
+  /// Exact publication retention deadline; preview clients must stop presenting text at this time.
+  pub expires_at: octacity_server_domain::Timestamp,
   /// Original bounded UTF-8 bytes; never included in diagnostics.
   pub content: String,
 }
@@ -200,6 +202,7 @@ impl<S: ProjectInputQueryStore + 'static, B: ArtifactByteReader + 'static>
     Ok(ProjectDocumentContent {
       project_id: query.project_id,
       artifact,
+      expires_at,
       content,
     })
   }

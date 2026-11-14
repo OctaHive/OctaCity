@@ -174,3 +174,24 @@ test('exports Project field administration bounds and supported kinds from the a
     classificationSlots: ['severity', 'risk'],
   });
 });
+
+test('derives Issue document UTF-8 and selection ceilings without copying server constants', async () => {
+  const { issueDocumentConstraints } = await import('./issue-constraints.mjs');
+  const doc = {
+    components: {
+      schemas: {
+        PublishIssueDocumentRequest: {
+          properties: { name: { 'x-max-utf8-bytes': 37 }, content: { 'x-max-utf8-bytes': 1025 } },
+        },
+        EditIssueMaterialsRequest: { properties: { references: { maxItems: 9 } } },
+      },
+    },
+  };
+  assert.deepEqual(issueDocumentConstraints(doc), {
+    nameMaximumBytes: 37,
+    contentMaximumBytes: 1025,
+    materialsMaximumCount: 9,
+  });
+  doc.components.schemas.EditIssueMaterialsRequest.properties.references.maxItems = 0;
+  assert.throws(() => issueDocumentConstraints(doc), /Missing Issue document form bound/);
+});

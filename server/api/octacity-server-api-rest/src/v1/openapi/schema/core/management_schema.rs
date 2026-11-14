@@ -51,12 +51,13 @@ pub(super) fn insert_project_schemas(schemas: &mut Map<String, Value>) {
       [
         ("project_id", non_empty_string()),
         ("artifact", schema_ref("FactoryArtifactReference")),
+        ("expires_at", integer()),
         (
           "content",
           json!({"type":"string", "minLength":1, "maxLength":octacity_server_application::MAX_PROJECT_DOCUMENT_BYTES}),
         ),
       ],
-      &["project_id", "artifact", "content"],
+      &["project_id", "artifact", "expires_at", "content"],
     ),
   );
   schemas.insert("PublishProjectDocumentRequest".into(), object([

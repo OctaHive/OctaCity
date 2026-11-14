@@ -1,6 +1,8 @@
 import { QueryClient } from '@tanstack/react-query';
 
 export const queryKeys = {
+  issueDocuments: (project: string, issue: string) =>
+    ['issues', project, issue, 'documents'] as const,
   issueClassification: (project: string, issue: string, version?: number) =>
     [
       'issues',

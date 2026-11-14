@@ -1,9 +1,12 @@
+import { ISSUE_DOCUMENT_CONSTRAINTS as bounds } from '../../../.generated/api/constraints';
+import { IssueMaterialReview, type MaterialReview } from './IssueMaterialReview';
+import type { IssueDocumentsApi } from './documentsApi';
 import { useState } from 'react';
 import { useQuery } from '@tanstack/react-query';
 import { Link, useSearchParams } from 'react-router-dom';
 import { queryKeys } from '../../app/query';
 import { usePresentation } from '../../app/presentation/PresentationProvider';
-import { QueryContent, QueryEmptyNotice } from '../../shared/QueryStateNotice';
+import { QueryContent, QueryEmptyNotice, QueryFailureNotice } from '../../shared/QueryStateNotice';
 import type { Issue } from './api';
 import type {
   IssueActivityApi,
@@ -14,31 +17,71 @@ import type {
 import { IssueCommentForm } from './IssueCommentForm';
 import { selectIssueExecution } from './issueExecutionSelection';
 import styles from './Issues.module.css';
+type MaterialControls = {
+  ready: boolean;
+  onToggle: (comment: IssueComment, trigger: HTMLElement) => void;
+};
 /** Bounded safe references; body reads are explicit and operator text conveys no gate authority. */
 export function IssueActivity({
   api,
   issue,
   preview = false,
+  materials,
+  ready = true,
+  onRefresh = async () => {},
 }: {
   api: IssueActivityApi;
   issue: Issue;
   preview?: boolean;
+  materials?: Pick<IssueDocumentsApi, 'editMaterials'>;
+  ready?: boolean;
+  onRefresh?: () => Promise<void>;
 }) {
   const { t } = usePresentation();
   const [params] = useSearchParams();
   const [after, setAfter] = useState<string | null>(null);
+  const [review, setReview] = useState<MaterialReview | null>(null);
   const [parent, setParent] = useState<IssueComment | null>(null);
   const query = useQuery({
     queryKey: queryKeys.issueTimeline(issue.project_id, issue.id, after),
     gcTime: 0,
     queryFn: ({ signal }) => api.timeline(issue.project_id, issue.id, after, signal),
   });
+  const controls: MaterialControls | undefined =
+    materials && !preview
+      ? {
+          ready: ready && query.data !== undefined && query.error === null && !query.isFetching,
+          onToggle: (comment, returnFocus) => {
+            const references = (issue.materials ?? []).map((entry) => entry.reference);
+            const selected = references.some(
+              (r) => r.kind === 'comment' && r.comment_id === comment.id,
+            );
+            setReview({
+              version: issue.version,
+              returnFocus,
+              references: selected
+                ? references.filter((r) => r.kind !== 'comment' || r.comment_id !== comment.id)
+                : [
+                    ...references,
+                    {
+                      kind: 'comment',
+                      project_id: issue.project_id,
+                      issue_id: issue.id,
+                      comment_id: comment.id,
+                      body_digest: comment.body_digest,
+                    },
+                  ],
+            });
+          },
+        }
+      : undefined;
   const activity = new URLSearchParams(params);
   activity.set('section', 'activity');
   return (
     <section className={styles.panel} aria-label={t('issues.taskActivity')}>
       <h2>{t('issues.taskActivity')}</h2>
       {!preview ? <p>{t('issues.discussionHelp')}</p> : null}
+      {controls ? <p>{t('issues.commentMaterialHelp')}</p> : null}
       <QueryContent query={query} label={t('issues.taskActivity')}>
         {(data) => (
           <>
@@ -61,6 +104,7 @@ export function IssueActivity({
                     issue={issue}
                     preview={preview}
                     onReply={setParent}
+                    materialControls={controls}
                   />
                 ))}
               </ol>
@@ -93,6 +137,16 @@ export function IssueActivity({
           onParent={setParent}
           onPosted={() => setAfter(null)}
           ready={query.data !== undefined && query.error === null && !query.isFetching}
+        />
+      ) : null}
+      {review && materials ? (
+        <IssueMaterialReview
+          api={materials}
+          issue={issue}
+          review={review}
+          ready={controls?.ready ?? false}
+          onRefresh={onRefresh}
+          onClose={() => setReview(null)}
         />
       ) : null}
       {preview ? (
@@ -136,12 +190,14 @@ function ActivityRow({
   issue,
   preview,
   onReply,
+  materialControls,
 }: {
   entry: IssueTimelineEntry;
   api: IssueActivityApi;
   issue: Issue;
   preview: boolean;
   onReply: (parent: IssueComment) => void;
+  materialControls: MaterialControls | undefined;
 }) {
   const { t, locale } = usePresentation();
   const [params] = useSearchParams();
@@ -160,6 +216,7 @@ function ActivityRow({
           comment={entry.comment}
           preview={preview}
           onReply={onReply}
+          materialControls={materialControls}
         />
       ) : (
         <>
@@ -188,15 +245,20 @@ function CommentReference({
   comment,
   preview,
   onReply,
+  materialControls,
 }: {
   api: IssueActivityApi;
   issue: Issue;
   comment: IssueComment;
   preview: boolean;
   onReply: (parent: IssueComment) => void;
+  materialControls: MaterialControls | undefined;
 }) {
   const { t, locale } = usePresentation();
   const [open, setOpen] = useState(false);
+  const selected = (issue.materials ?? []).some(
+    (entry) => entry.reference.kind === 'comment' && entry.reference.comment_id === comment.id,
+  );
   return (
     <>
       <p>
@@ -225,6 +287,22 @@ function CommentReference({
           {comment.parent_id === null ? (
             <button onClick={() => onReply(comment)}>{t('issues.replyComment')}</button>
           ) : null}
+          {materialControls &&
+          comment.project_id === issue.project_id &&
+          comment.issue_id === issue.id ? (
+            <button
+              type="button"
+              disabled={
+                !materialControls.ready ||
+                (!selected && (issue.materials ?? []).length >= bounds.materialsMaximumCount)
+              }
+              onClick={(e) => materialControls.onToggle(comment, e.currentTarget)}
+            >
+              {t(selected ? 'issues.removeCommentMaterial' : 'issues.includeCommentMaterial', {
+                sequence: comment.sequence,
+              })}
+            </button>
+          ) : null}
           {open ? <CommentBody api={api} issue={issue} comment={comment} /> : null}
         </>
       ) : null}
@@ -244,8 +322,29 @@ function CommentBody({
   const query = useQuery({
     queryKey: queryKeys.issueComment(issue.project_id, issue.id, comment.id),
     gcTime: 0,
-    queryFn: ({ signal }) => api.comment(issue.project_id, issue.id, comment.id, signal),
+    queryFn: async ({ signal }) => {
+      const result = await api.comment(issue.project_id, issue.id, comment.id, signal);
+      const source = result.comment;
+      if (
+        source.project_id !== issue.project_id ||
+        source.issue_id !== issue.id ||
+        source.id !== comment.id ||
+        source.body_digest !== comment.body_digest ||
+        source.body_bytes !== comment.body_bytes
+      )
+        throw new Error('Issue comment response is invalid');
+      return result;
+    },
   });
+  // A failed private-body refresh must not render previously authorized text as current.
+  if (query.error)
+    return (
+      <QueryFailureNotice
+        title={t('issues.commentContent')}
+        error={query.error}
+        onRetry={query.refetch}
+      />
+    );
   return (
     <QueryContent query={query} label={t('issues.commentContent')}>
       {(data) => <p className={styles.prose}>{data.body}</p>}

@@ -22,11 +22,13 @@ export function ProjectDocumentReader({
   projectId,
   onLoad,
   onLoading,
+  disabled = false,
 }: {
   api: ProjectDocumentsApi;
   projectId: string;
   onLoad: (document: components['schemas']['ProjectDocumentResource'], content: string) => void;
   onLoading: (loading: boolean) => void;
+  disabled?: boolean;
 }) {
   const { t, locale } = usePresentation();
   const catalog = useCursorPage(
@@ -69,7 +71,7 @@ export function ProjectDocumentReader({
                     api={api}
                     projectId={projectId}
                     document={document}
-                    disabled={catalog.isError}
+                    disabled={disabled || catalog.isError}
                     onLoad={(loaded) => onLoad(document, loaded.content)}
                     onLoading={onLoading}
                     label={t('projectDocument.view', { name: document.name })}
@@ -106,10 +108,12 @@ export function ProjectDocumentRead({
   const expired = useDeadline(document?.expires_at ?? null);
   const read = useMutation({
     gcTime: 0,
+    // Release the caller's busy state even if this catalog row disappears mid-read.
+    onSettled: () => onLoading(false),
     mutationFn: async (selected: NonNullable<typeof document>) => {
       return {
         name: selected.name,
-        content: await readExactProjectDocument(api, projectId, selected.artifact),
+        content: (await readExactProjectDocument(api, projectId, selected.artifact)).content,
       };
     },
   });
@@ -122,7 +126,7 @@ export function ProjectDocumentRead({
     )
       return;
     onLoading(true);
-    read.mutate(document, { onSuccess: onLoad, onSettled: () => onLoading(false) });
+    read.mutate(document, { onSuccess: onLoad });
   };
   return (
     <>

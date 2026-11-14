@@ -645,6 +645,86 @@ coverage; **Search not verified** means no search observation was retained by th
 gate. Readable resource links use the task reader’s existing permissions. This
 display neither changes the task’s fields nor posts to an external provider.
 
+## Issue documents and exact material selection
+
+Open an Issue's **Documents** section to create task-specific text, preview its
+retained publications or publish an edited copy as another immutable version.
+These publications belong to that Issue and remain absent from Project catalogs
+and Factory step document selectors. **Link existing Project document** is a
+separate action: it previews an authorized shared publication and preserves its
+Project owner without copying or editing it.
+
+Publishing lists the new version without selecting an input or starting a Run.
+Use **Select as material**, **Replace** or **Remove** to review the complete exact
+selection against the current Issue version. Review includes source kind, owner,
+Artifact/comment ID and digest; the selected list retains the server's actor and
+time. Existing comment selections are preserved when editing document references.
+Only a separately configured pipeline input can consume these materials. Later
+publications do not move existing Issue selections or admitted Run inputs.
+
+Historical revision URLs show the original selection with writes disabled.
+Explicit preview reads the pinned publication through its original owner even
+when its metadata is absent from the current catalog. Missing, forbidden and
+expired content remains unavailable; the Console neither substitutes a newer
+publication nor creates an empty editor. Retention deadlines also disable an
+expired preview's version/link action. Selected Project previews also hide text
+at the source publication's deadline, including in historical Issue revisions and
+when that publication is absent from the current Project catalog.
+
+Document text stays in mounted memory, outside query-cache data, browser storage
+and URLs. Document drafts survive Issue section changes and selection conflicts; leaving
+the Issue or reloading discards them. Canceling publication review retains the
+editor. Visiting a historical revision keeps the current document draft and
+existing publication/material confirmation mounted. Historical presentation still
+permits authorized document preview while the current editor is hidden, and blocks
+a fresh command; returning to current data restores editing, and a pending safe
+retry retains its original request/key/version. After a transport failure,
+**Retry same command** keeps the original request and idempotency key. A selection conflict requires refresh and another
+review using the new Issue revision. Publication byte limits and the material
+count ceiling come from generated OpenAPI constraints.
+
+A new explicit shared-document read clears its previous preview/link receipt
+before fetching text. If that read fails, linking stays unavailable until another
+successful explicit read. Shared publication reads run one at a time; the picker
+cannot switch or collapse until its active read succeeds or fails. Removing a
+selected reference during its preview does not block later document previews.
+If another edit removes the material being replaced,
+replacement is blocked with an explanation. Cancel replacement and review a new
+selection against current data; the Console does not silently save an unchanged
+reference set as a successful replacement.
+
+The shared editor reuses Project document Markdown rendering and keyboard
+controls. The aggregate JavaScript/static budgets gain 8 KiB for this workspace, reaching
+1,576/1,664 KiB respectively; the 450 KiB entry, CSS and file-count ceilings are unchanged. Boundary tests reject
+an additional KiB near the aggregate ceilings. EN/RU and 390/1280 px qualification,
+Red/Green evidence and environment limits are recorded in
+[task 6.9 verification](../../openspec/changes/add-issue-classification-snapshots/verification-6.9.md).
+
+### Comment materials in Activity
+
+Use **Include comment … as Issue material** or **Remove comment … from Issue
+materials** next to the exact root comment or reply. This opens the same complete
+material-selection review with source owner/ID/digest and the current Issue
+version. Other comment/document selections are preserved. Posting a comment,
+mentioning an agent or writing approval-like text does not select input, include a
+thread, start execution or answer a gate. A pipeline still declares which
+materials and per-step projections it consumes.
+
+**Read comment** remains a separate authorized plain-text read. Preview checks
+its returned owner/ID/digest/size against the opened source. A failed body refresh
+hides previously opened text. Missing or forbidden text stays unavailable;
+removing an existing reference does not require reading
+that text and does not delete it. The generated 32-entry selection ceiling blocks
+an extra inclusion while leaving removal available.
+
+A selection conflict requires refresh and another review; the unposted discussion
+draft is retained during that refresh. Transport retry keeps the frozen reference
+set, original Issue version and idempotency key. Discussion drafts are discarded
+when changing sections, leaving the Issue or reloading, under the existing
+comment-form lifecycle. Neither selection review nor generic notifications copy
+the comment body. EN/RU keyboard and 390/1280 px checks are recorded in
+[task 6.10 verification](../../openspec/changes/add-issue-classification-snapshots/verification-6.10.md).
+
 ## Legacy tasks and unavailable requirements
 
 A migrated task keeps its human key and original execution identity. **Runs**

@@ -25,15 +25,16 @@ export async function readExactProjectDocument(
   api: ProjectDocumentsApi,
   projectId: string,
   artifact: components['schemas']['FactoryArtifactReference'],
-): Promise<string> {
+): Promise<components['schemas']['ProjectDocumentContent']> {
   const result = await api.read(projectId, artifact.artifact_id);
   requireDocumentIdentity(result, projectId, artifact.artifact_id);
   if (
+    !Number.isSafeInteger(result.expires_at) ||
     result.artifact.content_digest !== artifact.content_digest ||
     result.artifact.encoded_size !== artifact.encoded_size
   )
     throw new Error('Project document response is invalid');
-  return result.content;
+  return result;
 }
 function requireDocumentIdentity(
   result: components['schemas']['ProjectDocumentContent'],

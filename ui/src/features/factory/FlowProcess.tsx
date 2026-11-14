@@ -51,7 +51,7 @@ export function FlowProcess({
     setEditor({ kind, content: '', loading: !!document });
     if (!document) return;
     try {
-      const content = await readExactProjectDocument(
+      const { content } = await readExactProjectDocument(
         services.api,
         services.projectId,
         document.artifact,

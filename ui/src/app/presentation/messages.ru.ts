@@ -1,6 +1,49 @@
 import type { MessageCatalog } from './messages.en';
 
 export const ruMessages = {
+  'issueDocuments.replacementMissing':
+    'Заменяемый материал больше не выбран. Отмените замену и выберите материал заново.',
+  'issues.commentMaterialHelp':
+    'Публикация не выбирает вход. Включайте только точные комментарии, нужные отдельно проверяемому входу pipeline.',
+  'issues.includeCommentMaterial': 'Включить комментарий {sequence} в материалы Issue',
+  'issues.removeCommentMaterial': 'Убрать комментарий {sequence} из материалов Issue',
+  'issueDocuments.historical': 'Исторический выбор документов · версия {version}',
+
+  'issueDocuments.version': 'Опубликовать новую версию Issue',
+
+  'issueDocuments.link': 'Связать существующий документ Project',
+  'issueDocuments.linkExact': 'Связать эту точную публикацию Project',
+
+  'issueDocuments.selected': 'Выбранные материалы',
+  'issueDocuments.select': 'Выбрать {name} как материал',
+  'issueDocuments.remove': 'Убрать {id}',
+  'issueDocuments.replace': 'Заменить {id}',
+  'issueDocuments.replaceWith': 'Заменить на {name}',
+  'issueDocuments.chooseReplacement': 'Выберите точную публикацию для замены {id}.',
+  'issueDocuments.shared': 'Связанный документ Project',
+  'issueDocuments.comment': 'Комментарий Issue',
+  'issueDocuments.isSelected': 'Выбрана точная публикация',
+  'issueDocuments.saveSelection': 'Сохранить выбор материалов',
+  'issueDocuments.reviewSelection': 'Проверить выбор материалов',
+  'issueDocuments.selectionSaved': 'Выбор материалов сохранён. Выполнение не запущено.',
+  'issueDocuments.selectionHelp':
+    'Только эти точные ссылки предлагаются входу pipeline при отдельной проверке. Исходные тексты, владельцы и допущенные выполнения не меняются.',
+
+  'issueDocuments.new': 'Новый документ Issue',
+  'issueDocuments.reviewPublication': 'Проверить публикацию Issue',
+  'issueDocuments.publish': 'Опубликовать документ Issue',
+  'issueDocuments.published':
+    'Документ Issue опубликован. Выбор материалов и запуск выполняются отдельно.',
+  'issueDocuments.help':
+    'Принадлежит этому Issue. Публикация создаёт неизменяемую версию, без добавления документа Project, выбора материалов или запуска.',
+
+  'issues.documents': 'Документы',
+  'issueDocuments.title': 'Документы Issue',
+  'issueDocuments.owned': 'Документ Issue',
+  'issueDocuments.empty': 'Документов Issue нет.',
+  'issueDocuments.more': 'Загрузить ещё версии документов',
+  'issueDocuments.preview': 'Просмотреть {name}',
+
   'issueFields.newOptionId': 'ID нового варианта (необязательно)',
   'issueFields.invalidKey':
     'ID варианта должен быть уникальным и соответствовать {pattern}, не более {maximum} байт.',
