@@ -13,6 +13,8 @@ use std::collections::BTreeMap;
 
 #[path = "issue_delivery_tests.rs"]
 mod issue_delivery;
+#[path = "selected_field_tests.rs"]
+mod selected_fields;
 
 struct DeliveryFixture {
   project: ProjectId,
@@ -37,7 +39,7 @@ async fn delivery_fixture() -> DeliveryFixture {
   let delivery = release::TICKET_DELIVERY;
   let triage = release::TRIAGE;
   let (template, preset) = delivery.load().unwrap();
-  let (mut triage, _) = triage.load().unwrap();
+  let mut triage = triage.predecessor_fixture().unwrap();
   // Successful triage reaches this completion only after a bounded repeat.
   for outcome in triage.nodes.iter_mut().flat_map(|node| &mut node.outcomes) {
     outcome.issue_presentation = None;
@@ -254,6 +256,7 @@ async fn delivery_fixture() -> DeliveryFixture {
   .unwrap();
   let flow_id = FlowDefinitionId::generate();
   let selection = FactoryPresetResolutionRequest {
+    issue_fields: Default::default(),
     issue_snapshot: None,
     preset,
     flow_only: false,
@@ -1222,7 +1225,7 @@ fn delivery_discovery_offers_issue_snapshot_v2_without_a_required_producer() {
     );
     assert_eq!(
       editor["issue_snapshot_fields"]["risk"],
-      serde_json::json!({"kind":"classification","slot":"risk"})
+      serde_json::json!({"kind":"property","id":"risk"})
     );
   });
 }
@@ -1271,7 +1274,7 @@ fn preset_discovery_retains_versions_with_lossless_pagination() {
       [
         ("ticket-delivery".into(), "v1".into()),
         ("ticket-delivery".into(), "v2".into()),
-        ("triage".into(), "v3".into())
+        ("triage".into(), "v4".into())
       ]
     );
     let legacy = queries

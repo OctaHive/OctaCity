@@ -6,7 +6,7 @@ import { afterEach, expect, it, vi } from 'vitest';
 import { useState } from 'react';
 import type { components } from '../../../.generated/api/schema';
 import { createConsoleQueryClient } from '../../app/query';
-import { configurationFixture } from '../../../tests/fixtures/factory';
+import { authoredSchemaShape, configurationFixture } from '../../../tests/fixtures/factory';
 import { factoryIssueFieldsFixture } from '../../../tests/fixtures/factoryIssueFields';
 import { factoryApi, type FactoryApi } from './api';
 import { StepResults, type ResultDraft } from './StepResults';
@@ -188,7 +188,7 @@ it('rejects an oversized optional snapshot projection before schema normalizatio
     ),
     normalizeSchema: vi.fn<FactoryApi['normalizeSchema']>(async (body) => ({
       reference: { identity: body.identity, version: body.version, digest: 'c'.repeat(64) },
-      shape: body.shape,
+      shape: authoredSchemaShape(body),
     })),
   };
   render(
@@ -210,7 +210,7 @@ it('rejects an oversized optional snapshot projection before schema normalizatio
     'Issue type',
     'Issue size',
     'Project field: Environment',
-    'Classification: Impact',
+    'Project field: Impact',
   ]) {
     await user.click(screen.getByRole('checkbox', { name }));
     await user.click(screen.getByRole('checkbox', { name: `coder: ${name}` }));
@@ -246,7 +246,7 @@ it('accepts the complete optional snapshot input without expanding missing field
     ),
     normalizeSchema: vi.fn<FactoryApi['normalizeSchema']>(async (body) => ({
       reference: { identity: body.identity, version: body.version, digest: 'c'.repeat(64) },
-      shape: body.shape,
+      shape: authoredSchemaShape(body),
     })),
   };
   const onChange = vi.fn();
@@ -269,7 +269,7 @@ it('accepts the complete optional snapshot input without expanding missing field
     'Issue type',
     'Issue size',
     'Project field: Environment',
-    'Classification: Impact',
+    'Project field: Impact',
   ]) {
     await user.click(screen.getByRole('checkbox', { name }));
     await user.click(screen.getByRole('checkbox', { name: `coder: ${name}` }));
@@ -412,7 +412,7 @@ it('authors a versioned Issue snapshot with optional Project fields, bounded sel
       version: body.version,
       digest: String.fromCharCode(97 + ++schemaSequence).repeat(64),
     },
-    shape: body.shape,
+    shape: authoredSchemaShape(body),
   }));
   const api = {
     ...factoryApi,
@@ -519,7 +519,10 @@ it('applies selected Project fields without legacy labels and retains declared a
       type: 'object' as const,
       fields: {
         component: { required: true, value: { type: 'enum' as const, values: ['payments'] } },
-        severity: { required: false, value: { type: 'enum' as const, values: ['major', 'minor'] } },
+        'property.impact': {
+          required: false,
+          value: { type: 'enum' as const, values: ['major', 'minor'] },
+        },
         private_notes: {
           required: true,
           value: { type: 'string' as const, min_bytes: 0, max_bytes: 1024 },
@@ -563,7 +566,7 @@ it('applies selected Project fields without legacy labels and retains declared a
     ),
     normalizeSchema: vi.fn<FactoryApi['normalizeSchema']>(async (body) => ({
       reference: { identity: body.identity, version: body.version, digest: 'c'.repeat(64) },
-      shape: body.shape,
+      shape: authoredSchemaShape(body),
     })),
   };
   let selected = node;
@@ -589,7 +592,7 @@ it('applies selected Project fields without legacy labels and retains declared a
   );
   await user.click(screen.getByRole('checkbox', { name: 'Apply classification to Issue' }));
   await user.click(await screen.findByRole('checkbox', { name: 'Issue component' }));
-  await user.click(screen.getByRole('checkbox', { name: 'Classification: Impact' }));
+  await user.click(screen.getByRole('checkbox', { name: 'Project field: Impact' }));
   await user.click(screen.getByRole('button', { name: 'Use Project classification' }));
   await waitFor(() => expect(api.normalizeSchema).toHaveBeenCalledTimes(1));
   expect(selected.action?.parameters).toEqual({
@@ -598,23 +601,23 @@ it('applies selected Project fields without legacy labels and retains declared a
     outcome: 'applied',
     policy: 'project-triage',
     fields: {
+      project_id: 'delivery',
       definition_version: 7,
-      priority: false,
-      component: true,
-      kind: false,
-      size: false,
-      properties: { severity: 'impact' },
+      fields: [
+        { field: { kind: 'component' }, required: true },
+        { field: { kind: 'property', id: 'impact' }, required: false },
+      ],
     },
   });
-  expect(api.normalizeSchema.mock.calls[0]![0].shape).toEqual({
+  expect(authoredSchemaShape(api.normalizeSchema.mock.calls[0]![0])).toEqual({
     type: 'object',
     fields: {
       component: { required: true, value: { type: 'enum', values: ['payments'] } },
-      severity: { required: false, value: { type: 'enum', values: ['major', 'minor'] } },
+      'property.impact': { required: false, value: { type: 'enum', values: ['major', 'minor'] } },
       assessment_inputs: { required: true, value: dependency },
     },
   });
-  await user.click(screen.getByRole('checkbox', { name: 'Classification: Impact' }));
+  await user.click(screen.getByRole('checkbox', { name: 'Project field: Impact' }));
   expect(screen.getByRole('button', { name: 'Use Project classification' })).toHaveProperty(
     'disabled',
     false,
@@ -622,7 +625,11 @@ it('applies selected Project fields without legacy labels and retains declared a
   await user.click(screen.getByRole('button', { name: 'Use Project classification' }));
   await waitFor(() => expect(api.normalizeSchema).toHaveBeenCalledTimes(2));
   expect(selected.action?.parameters).toMatchObject({
-    fields: { component: true, properties: {} },
+    fields: {
+      project_id: 'delivery',
+      definition_version: 7,
+      fields: [{ field: { kind: 'component' }, required: true }],
+    },
   });
 });
 
@@ -637,7 +644,7 @@ it('reuses selected Project classification field contracts in an assessment resu
     ),
     normalizeSchema: vi.fn<FactoryApi['normalizeSchema']>(async (body) => ({
       reference: { identity: body.identity, version: body.version, digest: 'c'.repeat(64) },
-      shape: body.shape,
+      shape: authoredSchemaShape(body),
     })),
   };
   function Harness() {
@@ -661,15 +668,15 @@ it('reuses selected Project classification field contracts in an assessment resu
   await user.click(screen.getByRole('button', { name: 'Add result' }));
   await user.click(screen.getByRole('button', { name: 'Reuse Project classification fields' }));
   await user.click(await screen.findByRole('checkbox', { name: 'Issue component' }));
-  await user.click(screen.getByRole('checkbox', { name: 'Classification: Impact' }));
+  await user.click(screen.getByRole('checkbox', { name: 'Project field: Impact' }));
   await user.click(screen.getByRole('button', { name: 'Use selected field contracts' }));
   await user.click(screen.getByRole('button', { name: 'Save result' }));
   await waitFor(() => expect(api.normalizeSchema).toHaveBeenCalledTimes(1));
-  expect(api.normalizeSchema.mock.calls[0]![0].shape).toEqual({
+  expect(authoredSchemaShape(api.normalizeSchema.mock.calls[0]![0])).toEqual({
     type: 'object',
     fields: {
       component: { required: false, value: { type: 'enum', values: ['payments'] } },
-      severity: { required: false, value: { type: 'enum', values: ['major', 'minor'] } },
+      'property.impact': { required: false, value: { type: 'enum', values: ['major', 'minor'] } },
     },
   });
 });
@@ -680,6 +687,9 @@ it.each(['classification', 'property'] as const)(
     const user = userEvent.setup();
     const capabilities = factoryIssueFieldsFixture();
     if (source === 'property') {
+      capabilities.issue_fields.fields = capabilities.issue_fields.fields.filter(
+        (field) => field.source.kind !== 'property' || field.source.id !== 'impact',
+      );
       capabilities.issue_fields.fields.push({
         source: { kind: 'property', id: 'impact' },
         property_id: 'impact',
@@ -708,7 +718,7 @@ it.each(['classification', 'property'] as const)(
       ),
       normalizeSchema: vi.fn<FactoryApi['normalizeSchema']>(async (body) => ({
         reference: { identity: body.identity, version: body.version, digest: 'a'.repeat(64) },
-        shape: body.shape,
+        shape: authoredSchemaShape(body),
       })),
     };
     function Harness() {

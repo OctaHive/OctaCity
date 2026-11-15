@@ -7,7 +7,7 @@ import { issueFieldLabel, type IssueFieldChoice } from './IssueFieldContracts';
 type S = components['schemas'];
 export type IssueAdmissionPolicy = S['FactoryFlowIssueAdmissionPolicy'];
 export type AdmissionField = { alias: string; field: IssueFieldChoice; required: boolean };
-type Classification = S['FactoryIssueClassificationFieldSelection'];
+type Classification = S['FactoryIssueFieldForm'];
 const scheduling = FACTORY_AUTHORING_SCHEMAS.FactoryWorkClassification.properties;
 const riskValues = scheduling.risk.enum;
 
@@ -22,7 +22,9 @@ function eligible(field: AdmissionField, classification: Classification | undefi
     field.required &&
     choices(field).length > 0 &&
     (source.kind === 'property'
-      ? Object.values(classification?.properties ?? {}).includes(source.id)
+      ? classification?.fields.some(
+          ({ field }) => field.kind === 'property' && field.id === source.id,
+        )
       : ['priority', 'component', 'type', 'size', 'classification'].includes(source.kind))
   );
 }

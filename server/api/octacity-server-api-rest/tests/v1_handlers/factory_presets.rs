@@ -17,16 +17,16 @@ pub(super) fn management_requests() -> Vec<Request<Body>> {
   ]
 }
 
-fn preset_router() -> (axum::Router, ProjectId, Arc<testing::InMemoryFactoryConfigurationStore>) {
-  preset_router_with_policy(Arc::new(TrustedNetworkManagementPolicy), None)
+async fn preset_router() -> (axum::Router, ProjectId, Arc<testing::InMemoryFactoryConfigurationStore>) {
+  preset_router_with_policy(Arc::new(TrustedNetworkManagementPolicy), None).await
 }
-fn preset_router_with_policy(
+async fn preset_router_with_policy(
   policy: Arc<dyn ManagementAuthorizationPolicy>,
   revoke: Option<Arc<std::sync::atomic::AtomicBool>>,
 ) -> (axum::Router, ProjectId, Arc<testing::InMemoryFactoryConfigurationStore>) {
-  preset_router_with_input(policy, revoke, None)
+  preset_router_with_input(policy, revoke, None).await
 }
-fn preset_router_with_input(
+async fn preset_router_with_input(
   policy: Arc<dyn ManagementAuthorizationPolicy>,
   revoke: Option<Arc<std::sync::atomic::AtomicBool>>,
   input: Option<serde_json::Value>,
@@ -34,6 +34,7 @@ fn preset_router_with_input(
   let project = ProjectId::generate();
   let store = Arc::new(testing::InMemoryFactoryConfigurationStore::new());
   store.seed_project(project).unwrap();
+  let properties = preset_properties(project).await;
   let peer = Arc::new(RecordingApplication::default());
   let metadata = Arc::new(AuthorizedQueryHandler::new(
     policy.clone(),
@@ -41,6 +42,7 @@ fn preset_router_with_input(
   ));
   let handlers = Arc::new(
     FactoryPresetHandlers::new(store.clone(), policy.clone())
+      .with_issue_properties(properties.clone())
       .with_repositories(metadata.clone())
       .with_sources(metadata.clone())
       .with_source_actions(metadata.clone())
@@ -57,8 +59,11 @@ fn preset_router_with_input(
     .unwrap()
     .with_repositories(metadata.clone()),
   );
-  let configs =
-    Arc::new(FactoryConfigurationHandlers::with_policy(store.clone(), policy.clone()).with_source_actions(metadata));
+  let configs = Arc::new(
+    FactoryConfigurationHandlers::with_policy(store.clone(), policy.clone())
+      .with_issue_properties(properties)
+      .with_source_actions(metadata),
+  );
   let commands = Arc::new(AuthorizedCommandHandler::new(policy.clone(), peer.clone()));
   let queries = Arc::new(AuthorizedQueryHandler::new(policy.clone(), peer.clone()));
   let factory = octacity_server_api_rest::v1::FactoryManagementApplication::new(
@@ -181,7 +186,7 @@ async fn schema_decimal_bounds_reject_overflow_and_noncanonical_text() {
 #[tokio::test]
 async fn ticket_delivery_example_is_discoverable_and_reports_missing_bindings_before_publication() {
   use testing::MutationEvidenceProbe;
-  let (router, project, store) = preset_router();
+  let (router, project, store) = preset_router().await;
   let before = store.mutation_evidence_counts().await;
   let path = format!("/api/v1/projects/{project}/factory-presets");
   let page = json(router.clone().oneshot(empty_request("GET", &path, None)).await.unwrap()).await;
@@ -241,7 +246,7 @@ async fn ticket_delivery_example_is_discoverable_and_reports_missing_bindings_be
 #[tokio::test]
 async fn ticket_delivery_example_rejects_an_uninstalled_publication_target() {
   use testing::MutationEvidenceProbe;
-  let (router, project, store) = preset_router();
+  let (router, project, store) = preset_router().await;
   let mut parameters = selected_parameters(&router, project, &store).await;
   let path = format!("/api/v1/projects/{project}/factory-presets");
   let page = json(router.clone().oneshot(empty_request("GET", &path, None)).await.unwrap()).await;
@@ -274,7 +279,9 @@ async fn ticket_delivery_example_rejects_an_uninstalled_publication_target() {
       project_id: project,
       identity: "uninstalled-command-result".parse().unwrap(),
       version: "v1".parse().unwrap(),
-      shape: serde_json::from_value(serde_json::json!({"type":"boolean"})).unwrap(),
+      source: FactoryFlowDataSchemaSource::Shape(
+        serde_json::from_value(serde_json::json!({"type":"boolean"})).unwrap(),
+      ),
     },
   )
   .await
@@ -323,7 +330,7 @@ async fn ticket_delivery_example_rejects_an_uninstalled_publication_target() {
 
 #[tokio::test]
 async fn presets_discovery_exposes_bounded_release_identity_without_factory_execution() {
-  let (router, project, _) = preset_router();
+  let (router, project, _) = preset_router().await;
   let response = router
     .clone()
     .oneshot(empty_request(
@@ -357,7 +364,7 @@ async fn presets_discovery_exposes_bounded_release_identity_without_factory_exec
   assert_eq!(next["items"][0]["reference"]["version"], "v2");
   assert!(next["next_cursor"].is_string());
   assert_json_matches_component(&openapi_document(), "FactoryPresetPage", &page);
-  let (router, project, _) = preset_router();
+  let (router, project, _) = preset_router().await;
   let response = router
     .oneshot(empty_request(
       "GET",
@@ -368,7 +375,7 @@ async fn presets_discovery_exposes_bounded_release_identity_without_factory_exec
     .unwrap();
   let page = json(response).await;
   let preset = triage_preset(&page);
-  assert_eq!(preset["reference"]["version"], "v3");
+  assert_eq!(preset["reference"]["version"], "v4");
   assert_eq!(preset["reference"]["digest"].as_str().unwrap().len(), 64);
   let aliases = preset["profile_aliases"].as_array().unwrap();
   assert!(aliases.contains(&serde_json::json!("eligibility")));
@@ -380,7 +387,7 @@ async fn presets_discovery_exposes_bounded_release_identity_without_factory_exec
 #[tokio::test]
 async fn preset_resolution_returns_reviewable_process_criteria_and_missing_dependencies_without_publication() {
   use testing::MutationEvidenceProbe;
-  let (router, project, store) = preset_router();
+  let (router, project, store) = preset_router().await;
   let before = store.mutation_evidence_counts().await;
   let path = format!("/api/v1/projects/{project}/factory-presets");
   let page = json(router.clone().oneshot(empty_request("GET", &path, None)).await.unwrap()).await;
@@ -406,14 +413,9 @@ async fn preset_resolution_returns_reviewable_process_criteria_and_missing_depen
     result["completion"]["content"]
       .as_str()
       .unwrap()
-      .contains("not ticket-authored implementation acceptance")
+      .contains("not implementation acceptance")
   );
-  for path in [
-    "/profiles/eligibility",
-    "/profiles/classification",
-    "/repository",
-    "/context",
-  ] {
+  for path in ["/profiles/eligibility", "/profiles/classification", "/repository"] {
     assert!(
       result["diagnostics"]
         .as_array()
@@ -453,7 +455,19 @@ async fn selected_parameters_with_runtime(
     PresetTestRuntime::Mcp(count) => testing::installed_mcp_readiness_choices_with_count(project, count),
     PresetTestRuntime::ControlledTools => testing::installed_tool_readiness_choices(project),
   };
+  let writer = serde_json::json!({"identity":"test.issue-fields","version":"v1","digest":"62".repeat(32)});
+  let mut installed_writer = choices.entries().references[0].clone();
+  installed_writer.kind = serde_json::from_value(serde_json::json!("node_capability")).unwrap();
+  installed_writer.alias = "fields".parse().unwrap();
+  installed_writer.reference = serde_json::from_value(writer.clone()).unwrap();
+  let choices = choices.with_reference_choice(installed_writer).unwrap()
+    .with_choice_metadata(serde_json::from_value(serde_json::json!("node_capability")).unwrap(),"fields".parse().unwrap(),serde_json::from_value(serde_json::json!({"node_kinds":["trusted_action"],"signal_purposes":[],"enforcement":[],"compatible_choices":[],"issue_classification":{"policy":"issue-fields","size_labels":{}}})).unwrap()).unwrap();
   store.enable_project(project, choices).unwrap();
+  let execution_permissions = definition
+    .permissions
+    .clone()
+    .with_plugin(serde_json::from_value(writer).unwrap())
+    .unwrap();
   let policy = Arc::new(TrustedNetworkManagementPolicy);
   let roles = AuthorizedCommandHandler::new(
     policy.clone(),
@@ -498,7 +512,7 @@ async fn selected_parameters_with_runtime(
   serde_json::json!({"preset":triage_preset(&page)["reference"],"flow_id":uuid::Uuid::new_v4().to_string(),"configuration_id":uuid::Uuid::new_v4().to_string(),
     "profiles":profiles,"repository":{"project_id":project,"id":repository(project).id,"version":1,"definition_digest":repository(project).definition_digest().unwrap()},
     "context":{"eligibility":context,"classification":context},
-    "execution":{"budget":budget,"permissions":definition.permissions,"max_active_nodes":1},
+    "execution":{"budget":budget,"permissions":execution_permissions,"max_active_nodes":1},
     "configuration":{"admission_policy":"admission","permission_ceiling":"permissions","wip_limits":{"max_active_runs":1,"max_active_nodes":1},"hard_budget":budget}
   })
 }
@@ -506,7 +520,7 @@ async fn selected_parameters_with_runtime(
 #[tokio::test]
 async fn selected_preset_profiles_resolve_to_an_ordinary_immutable_flow_draft() {
   use testing::MutationEvidenceProbe;
-  let (router, project, store) = preset_router();
+  let (router, project, store) = preset_router().await;
   let parameters = selected_parameters(&router, project, &store).await;
   assert_json_matches_component(&openapi_document(), "FactoryPresetResolutionRequest", &parameters);
   let before = store.mutation_evidence_counts().await;
@@ -524,7 +538,7 @@ async fn selected_preset_profiles_resolve_to_an_ordinary_immutable_flow_draft() 
   let result = json(response).await;
   assert_eq!(result["diagnostics"], serde_json::json!([]), "{result}");
   let nodes = result["flow"]["root"]["nodes"].as_array().unwrap();
-  assert_eq!(nodes.len(), 4);
+  assert_eq!(nodes.len(), 3);
   for alias in ["eligibility", "classification"] {
     let node = nodes.iter().find(|node| node["key"] == alias).unwrap();
     assert_eq!(node["kind"], "reasoning");
@@ -545,9 +559,9 @@ async fn selected_preset_profiles_resolve_to_an_ordinary_immutable_flow_draft() 
       })
     })
     .collect();
-  assert_eq!(cards.len(), 11);
+  assert_eq!(cards.len(), 4);
   assert!(cards.contains(&("eligibility_gate", "review")));
-  assert!(cards.contains(&("classification_gate", "requirements")));
+  assert!(cards.iter().all(|(node, _)| *node == "eligibility_gate"));
   assert!(!cards.contains(&("eligibility_gate", "classify")));
   assert_eq!(result["configuration"]["enabled"], false);
   assert_eq!(
@@ -564,8 +578,62 @@ async fn selected_preset_profiles_resolve_to_an_ordinary_immutable_flow_draft() 
 }
 
 #[tokio::test]
+async fn preset_discovery_and_resolution_agree_that_project_context_is_optional() {
+  use testing::MutationEvidenceProbe;
+  let (router, project, store) = preset_router().await;
+  let mut parameters = selected_parameters(&router, project, &store).await;
+  parameters.as_object_mut().unwrap().remove("context");
+  let before = store.mutation_evidence_counts().await;
+  let path = format!("/api/v1/projects/{project}/factory-presets");
+  let page = json(router.clone().oneshot(empty_request("GET", &path, None)).await.unwrap()).await;
+  let response = router
+    .oneshot(json_request(
+      "POST",
+      &format!("{path}/resolve"),
+      "without-context",
+      None,
+      &parameters.to_string(),
+    ))
+    .await
+    .unwrap();
+  assert_eq!(response.status(), StatusCode::OK);
+  let resolved = json(response).await;
+  assert_eq!(resolved["diagnostics"], serde_json::json!([]), "{resolved}");
+  assert!(resolved["flow"]["root"]["nodes"].is_array());
+  let advertised = triage_preset(&page)["parameters"].as_array().unwrap();
+  for alias in ["eligibility", "classification"] {
+    let context = advertised
+      .iter()
+      .find(|p| p["path"] == format!("/context/{alias}"))
+      .unwrap();
+    assert_eq!(context["kind"], "project_context");
+    assert_eq!(
+      context["required"], false,
+      "an optional resolver input must not require document setup"
+    );
+    let node = resolved["flow"]["root"]["nodes"]
+      .as_array()
+      .unwrap()
+      .iter()
+      .find(|n| n["key"] == alias)
+      .unwrap();
+    assert!(node["context_binding"].is_null());
+    assert_eq!(
+      advertised
+        .iter()
+        .find(|p| p["path"] == format!("/profiles/{alias}"))
+        .unwrap()["required"],
+      true
+    );
+  }
+  assert_eq!(store.mutation_evidence_counts().await, before);
+  assert_json_matches_component(&openapi_document(), "FactoryPresetPage", &page);
+  assert_json_matches_component(&openapi_document(), "FactoryPresetResolution", &resolved);
+}
+
+#[tokio::test]
 async fn preset_resolution_without_project_rules_preserves_each_stages_goals_without_policy_placeholders() {
-  let (router, project, store) = preset_router();
+  let (router, project, store) = preset_router().await;
   let mut parameters = selected_parameters(&router, project, &store).await;
   parameters["context"]["eligibility"]
     .as_object_mut()
@@ -602,7 +670,7 @@ async fn preset_resolution_without_project_rules_preserves_each_stages_goals_wit
 #[tokio::test]
 async fn preset_resolution_rejects_a_forged_repository_pin_without_publication() {
   use testing::MutationEvidenceProbe;
-  let (router, project, store) = preset_router();
+  let (router, project, store) = preset_router().await;
   let mut parameters = selected_parameters(&router, project, &store).await;
   parameters["repository"]["definition_digest"] = serde_json::json!("e".repeat(64));
   let before = store.mutation_evidence_counts().await;
@@ -651,7 +719,7 @@ fn repository(project: ProjectId) -> RepositoryProjection {
 
 #[tokio::test]
 async fn preset_resolution_checks_exact_context_metadata_without_fetching_object_bytes() {
-  let (router, project, store) = preset_router();
+  let (router, project, store) = preset_router().await;
   let parameters = selected_parameters(&router, project, &store).await;
   for field in ["goals", "rules"] {
     let mut parameters = parameters.clone();
@@ -725,7 +793,7 @@ impl ManagementAuthorizationPolicy for RevocablePresetPolicy {
 async fn preset_resolution_rechecks_project_visibility_after_metadata_reads() {
   let visible = Arc::new(std::sync::atomic::AtomicBool::new(true));
   let (router, project, store) =
-    preset_router_with_policy(Arc::new(RevocablePresetPolicy(visible.clone())), Some(visible));
+    preset_router_with_policy(Arc::new(RevocablePresetPolicy(visible.clone())), Some(visible)).await;
   let parameters = selected_parameters(&router, project, &store).await;
   let response = router
     .oneshot(json_request(
@@ -746,7 +814,7 @@ async fn preset_resolution_rechecks_project_visibility_after_metadata_reads() {
 /// A saved triage Configuration needs no preset adapter to read, validate or replace it.
 #[tokio::test]
 async fn saved_triage_configurations_republish_without_the_legacy_authoring_adapter() {
-  let (legacy, project, store) = preset_router();
+  let (legacy, project, store) = preset_router().await;
   let parameters = selected_parameters(&legacy, project, &store).await;
   let response = legacy
     .oneshot(json_request(
@@ -764,7 +832,10 @@ async fn saved_triage_configurations_republish_without_the_legacy_authoring_adap
 
   let policy = Arc::new(TrustedNetworkManagementPolicy);
   let peer = Arc::new(RecordingApplication::default());
-  let configs = Arc::new(FactoryConfigurationHandlers::with_policy(store.clone(), policy.clone()));
+  let configs = Arc::new(
+    FactoryConfigurationHandlers::with_policy(store.clone(), policy.clone())
+      .with_issue_properties(preset_properties(project).await),
+  );
   let commands = Arc::new(AuthorizedCommandHandler::new(policy.clone(), peer.clone()));
   let queries = Arc::new(AuthorizedQueryHandler::new(policy.clone(), peer.clone()));
   let factory = octacity_server_api_rest::v1::FactoryManagementApplication::new(
@@ -862,7 +933,7 @@ async fn saved_triage_configurations_republish_without_the_legacy_authoring_adap
 #[tokio::test]
 async fn resolved_preset_uses_ordinary_confirmed_versioned_publication_and_current_dependencies() {
   use testing::MutationEvidenceProbe;
-  let (router, project, store) = preset_router();
+  let (router, project, store) = preset_router().await;
   let parameters = selected_parameters(&router, project, &store).await;
   let response = router
     .clone()
@@ -986,7 +1057,7 @@ async fn resolved_preset_uses_ordinary_confirmed_versioned_publication_and_curre
 
 #[tokio::test]
 async fn preset_discovery_advertises_typed_parameters_and_required_technical_node_kinds() {
-  let (router, project, _) = preset_router();
+  let (router, project, _) = preset_router().await;
   let response = router
     .oneshot(empty_request(
       "GET",
@@ -1010,7 +1081,7 @@ async fn preset_discovery_advertises_typed_parameters_and_required_technical_nod
     );
     assert!(
       parameters
-        .contains(&serde_json::json!({"path":format!("/context/{alias}"),"kind":"project_context","required":true}))
+        .contains(&serde_json::json!({"path":format!("/context/{alias}"),"kind":"project_context","required":false}))
     );
   }
   assert_json_matches_component(&openapi_document(), "FactoryPresetPage", &page);
@@ -1022,7 +1093,7 @@ fn input_selection() -> serde_json::Value {
 }
 #[tokio::test]
 async fn preset_resolution_reports_unavailable_source_selection_without_enabling_intake() {
-  let (router, project, store) = preset_router();
+  let (router, project, store) = preset_router().await;
   let mut parameters = selected_parameters(&router, project, &store).await;
   parameters["input"] = input_selection();
   let response = router
@@ -1047,7 +1118,7 @@ async fn preset_resolution_reports_unavailable_source_selection_without_enabling
 
 #[tokio::test]
 async fn preset_http_contract_bounds_discovery_and_rejects_authority_or_unsupported_fields() {
-  let (router, project, store) = preset_router();
+  let (router, project, store) = preset_router().await;
   let parameters = selected_parameters(&router, project, &store).await;
   let path = format!("/api/v1/projects/{project}/factory-presets");
   for key in ["enabled", "credentials", "grant", "flow", "model", "provider_url"] {
@@ -1173,7 +1244,7 @@ async fn selected_source_and_literal_effects_resolve_to_an_ordinary_disabled_inp
   use testing::MutationEvidenceProbe;
   let input = reviewed_input_selection();
   let (router, project, store) =
-    preset_router_with_input(Arc::new(TrustedNetworkManagementPolicy), None, Some(input.clone()));
+    preset_router_with_input(Arc::new(TrustedNetworkManagementPolicy), None, Some(input.clone())).await;
   let mut parameters = selected_parameters(&router, project, &store).await;
   parameters["input"] = input.clone();
   let before = store.mutation_evidence_counts().await;
@@ -1205,7 +1276,7 @@ async fn selected_source_and_literal_effects_resolve_to_an_ordinary_disabled_inp
 
 #[tokio::test]
 async fn preset_resolution_reports_the_unavailable_exact_profile_parameter_without_private_details() {
-  let (router, project, store) = preset_router();
+  let (router, project, store) = preset_router().await;
   let mut parameters = selected_parameters(&router, project, &store).await;
   parameters["profiles"]["eligibility"]["profile"]["digest"] = serde_json::json!("e".repeat(64));
   let response = router
@@ -1232,7 +1303,7 @@ async fn preset_resolution_reports_the_unavailable_exact_profile_parameter_witho
 async fn preset_resolution_rejects_an_unpaired_connection_writer_pin_like_normal_publication() {
   let input = input_selection();
   let (router, project, store) =
-    preset_router_with_input(Arc::new(TrustedNetworkManagementPolicy), None, Some(input.clone()));
+    preset_router_with_input(Arc::new(TrustedNetworkManagementPolicy), None, Some(input.clone())).await;
   let mut parameters = selected_parameters(&router, project, &store).await;
   parameters["input"] = input;
   let response = router
@@ -1275,7 +1346,7 @@ impl ManagementAuthorizationPolicy for RevocableArtifactPolicy {
 async fn preset_resolution_rechecks_individual_artifact_visibility_after_metadata_reads() {
   let visible = Arc::new(std::sync::atomic::AtomicBool::new(true));
   let (router, project, store) =
-    preset_router_with_policy(Arc::new(RevocableArtifactPolicy(visible.clone())), Some(visible));
+    preset_router_with_policy(Arc::new(RevocableArtifactPolicy(visible.clone())), Some(visible)).await;
   let parameters = selected_parameters(&router, project, &store).await;
   let response = router
     .oneshot(json_request(
@@ -1318,9 +1389,12 @@ async fn effect_parameters(
   let policy = Arc::new(TrustedNetworkManagementPolicy);
   let schema = AuthorizedQueryHandler::new(policy.clone(), Arc::new(FactoryFlowDefinitionHandlers::new(store.clone(), policy))).handle_query(
     &ManagementRequestContext::trusted_network(ManagementRequestId::new(uuid::Uuid::new_v4()).unwrap()),
-    ValidateFactoryFlowDataSchemaQuery { project_id:project, identity:"report.receipt".parse().unwrap(), version:"v1".parse().unwrap(), shape:serde_json::from_value(serde_json::json!({"type":"object","fields":{"receipt":{"required":true,"value":{"type":"string","min_bytes":64,"max_bytes":64}}}})).unwrap() }).await.unwrap();
+    ValidateFactoryFlowDataSchemaQuery { project_id:project, identity:"report.receipt".parse().unwrap(), version:"v1".parse().unwrap(), source:FactoryFlowDataSchemaSource::Shape(serde_json::from_value(serde_json::json!({"type":"object","fields":{"receipt":{"required":true,"value":{"type":"string","min_bytes":64,"max_bytes":64}}}})).unwrap()) }).await.unwrap();
   let mut permissions = parameters["execution"]["permissions"].clone();
-  permissions["plugins"] = serde_json::json!([input["reporter"]["capability"]]);
+  permissions["plugins"]
+    .as_array_mut()
+    .unwrap()
+    .push(input["reporter"]["capability"].clone());
   parameters["execution"]["permissions"] = permissions.clone();
   parameters["execution"]["budget"]["max_attempts"] = serde_json::json!(512);
   parameters["configuration"]["hard_budget"]["max_attempts"] = serde_json::json!(512);
@@ -1341,7 +1415,7 @@ async fn selected_accepted_gate_effects_resolve_to_ordinary_reporting_flows_and_
   use testing::MutationEvidenceProbe;
   let input = reviewed_input_selection();
   let (router, project, store) =
-    preset_router_with_input(Arc::new(TrustedNetworkManagementPolicy), None, Some(input.clone()));
+    preset_router_with_input(Arc::new(TrustedNetworkManagementPolicy), None, Some(input.clone())).await;
   let mut parameters = selected_parameters(&router, project, &store).await;
   let reporting = effect_parameters(project, &store, &mut parameters, &input).await;
   parameters["effects"] = serde_json::json!({"eligibility_gate":reporting});
@@ -1404,7 +1478,7 @@ async fn selected_accepted_gate_effects_resolve_to_ordinary_reporting_flows_and_
 
 #[tokio::test]
 async fn preset_resolution_names_an_unavailable_factory_installation_as_a_dependency() {
-  let (router, project, store) = preset_router();
+  let (router, project, store) = preset_router().await;
   let parameters = selected_parameters(&router, project, &store).await;
   store.disable_project(project).unwrap();
   let response = router
@@ -1434,7 +1508,8 @@ async fn preset_effects_cannot_resolve_against_another_selected_input_connection
     Arc::new(TrustedNetworkManagementPolicy),
     None,
     Some(serde_json::json!([input, other_input])),
-  );
+  )
+  .await;
   let mut parameters = selected_parameters(&router, project, &store).await;
   let reporting = effect_parameters(project, &store, &mut parameters, &other_input).await;
   parameters["effects"] = serde_json::json!({"eligibility_gate":reporting});
@@ -1478,7 +1553,7 @@ impl ManagementAuthorizationPolicy for HiddenPresetRepository {
 }
 #[tokio::test]
 async fn preset_resolution_returns_a_safe_dependency_reason_for_a_hidden_repository() {
-  let (router, project, store) = preset_router_with_policy(Arc::new(HiddenPresetRepository), None);
+  let (router, project, store) = preset_router_with_policy(Arc::new(HiddenPresetRepository), None).await;
   let parameters = selected_parameters(&router, project, &store).await;
   let response = router
     .oneshot(json_request(
@@ -1503,7 +1578,7 @@ async fn preset_resolution_returns_a_safe_dependency_reason_for_a_hidden_reposit
 async fn preset_resolution_rejects_root_and_child_flow_identity_collisions() {
   let input = reviewed_input_selection();
   let (router, project, store) =
-    preset_router_with_input(Arc::new(TrustedNetworkManagementPolicy), None, Some(input.clone()));
+    preset_router_with_input(Arc::new(TrustedNetworkManagementPolicy), None, Some(input.clone())).await;
   let mut parameters = selected_parameters(&router, project, &store).await;
   let mut reporting = effect_parameters(project, &store, &mut parameters, &input).await;
   reporting["id"] = parameters["flow_id"].clone();
@@ -1524,47 +1599,13 @@ async fn preset_resolution_rejects_root_and_child_flow_identity_collisions() {
 }
 
 #[tokio::test]
-async fn preset_resolution_rejects_distinct_reporting_children_with_flow_identity_collisions() {
+async fn preset_resolution_rejects_reporting_for_an_undeclared_gate() {
   let input = reviewed_input_selection();
   let (router, project, store) =
-    preset_router_with_input(Arc::new(TrustedNetworkManagementPolicy), None, Some(input.clone()));
+    preset_router_with_input(Arc::new(TrustedNetworkManagementPolicy), None, Some(input.clone())).await;
   let mut parameters = selected_parameters(&router, project, &store).await;
-  let baseline = json(
-    router
-      .clone()
-      .oneshot(json_request(
-        "POST",
-        &format!("/api/v1/projects/{project}/factory-presets/resolve"),
-        "read",
-        None,
-        &parameters.to_string(),
-      ))
-      .await
-      .unwrap(),
-  )
-  .await;
   let reporting = effect_parameters(project, &store, &mut parameters, &input).await;
-  let mut second = reporting.clone();
-  let outcomes = baseline["flow"]["root"]["nodes"]
-    .as_array()
-    .unwrap()
-    .iter()
-    .find(|n| n["key"] == "classification_gate")
-    .unwrap()["outcomes"]
-    .as_array()
-    .unwrap();
-  second["definition"]["outcomes"] = serde_json::Value::Object(
-    outcomes
-      .iter()
-      .map(|o| {
-        (
-          o["key"].as_str().unwrap().to_owned(),
-          serde_json::json!({"status":"reviewed","add":["triage:reviewed"],"remove":[],"state":null}),
-        )
-      })
-      .collect(),
-  );
-  parameters["effects"] = serde_json::json!({"eligibility_gate":reporting,"classification_gate":second});
+  parameters["effects"] = serde_json::json!({"undeclared_gate":reporting});
   let response = router
     .oneshot(json_request(
       "POST",
@@ -1610,7 +1651,7 @@ fn source_preparation_schema_preserves_explicit_completion_and_legacy_acceptance
 #[tokio::test]
 async fn preset_resolution_freezes_installed_compilation_for_exact_profiles_without_client_hashes() {
   use testing::MutationEvidenceProbe;
-  let (router, project, store) = preset_router();
+  let (router, project, store) = preset_router().await;
   let mut parameters = selected_parameters(&router, project, &store).await;
   let binding = parameters["profiles"]["eligibility"]["build"].clone();
   testing::qualify_preset_compilation(&store, project, binding.clone()).await;
@@ -1651,3 +1692,30 @@ async fn preset_resolution_freezes_installed_compilation_for_exact_profiles_with
 
 #[path = "factory_readiness.rs"]
 mod readiness_tests;
+
+async fn preset_properties(project: ProjectId) -> Arc<testing::InMemoryProjectStore> {
+  let properties = testing::manual_issue_store(project).await;
+  let policy = Arc::new(TrustedNetworkManagementPolicy);
+  let definition = serde_json::json!({"labels":[],"components":[{"id":"general","name":"General","retired":false}],"properties":[
+    {"id":"impact","name":"Impact","retired":false,"kind":{"type":"choice","choices":[{"id":"advisory","name":"Advisory","retired":false}]}},
+    {"id":"risk","name":"Risk","retired":false,"kind":{"type":"choice","choices":[{"id":"low","name":"Low","retired":false}]}},
+    {"id":"route","name":"Route","retired":false,"kind":{"type":"choice","choices":[{"id":"requirements","name":"Requirements","retired":false}]}},
+    {"id":"repro","name":"Reproduction","retired":false,"kind":{"type":"choice","choices":[{"id":"unknown","name":"Unknown","retired":false}]}}
+  ]});
+  AuthorizedCommandHandler::new(policy.clone(), Arc::new(IssueHandlers::new(properties.clone(), policy)))
+    .handle_command(
+      &ManagementRequestContext::trusted_network(ManagementRequestId::new(uuid::Uuid::new_v4()).unwrap()),
+      PublishIssuePropertiesCommand {
+        intent: PublishIssuePropertiesIntent {
+          project_id: project,
+          expected_version: 0,
+          definition: serde_json::from_value(definition).unwrap(),
+        },
+        idempotency_key: "preset-properties".parse().unwrap(),
+        published_at: Timestamp::from_unix_millis(1).unwrap(),
+      },
+    )
+    .await
+    .unwrap();
+  properties
+}

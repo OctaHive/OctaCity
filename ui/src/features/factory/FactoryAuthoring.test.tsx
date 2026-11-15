@@ -381,6 +381,7 @@ it.each([
           reference: { ...preset, version: 'v2' },
           editor: {
             ...legacyExample.editor,
+            choice_thresholds: { specification_cutoff: { kind: 'size' } },
             issue_snapshot_fields: {
               priority: { kind: 'priority' },
               risk: { kind: 'classification', slot: 'severity' },
@@ -392,8 +393,8 @@ it.each([
             ...legacyExample.parameters,
             { path: '/issue_snapshot', kind: 'issue_snapshot' as const, required: true },
             {
-              path: '/issue_snapshot/specification_from_size',
-              kind: 'issue_size_threshold' as const,
+              path: '/issue_snapshot/choice_thresholds/specification_cutoff',
+              kind: 'choice_threshold' as const,
               required: true,
             },
           ],
@@ -549,7 +550,7 @@ it.each([
           ? {
               issue_snapshot: {
                 definition_version: 7,
-                specification_from_size: 'medium',
+                choice_thresholds: { specification_cutoff: 'medium' },
                 admission: {
                   priority: { field: 'priority', values: { urgent: 90, routine: 20 } },
                   risk: { field: 'risk', values: { major: 'high', minor: 'low' } },

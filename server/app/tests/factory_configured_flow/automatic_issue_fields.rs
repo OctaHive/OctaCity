@@ -206,6 +206,12 @@ async fn ordinary_form_captures_invocation_baseline_and_applies_the_exact_accept
   let clock = Arc::new(FactoryTestClock(std::sync::atomic::AtomicI64::new(12)));
   let writer = writer(store.clone(), &fixture, clock.clone());
   let record = analyze(&db, &store, &fixture, &claim, &clock).await;
+  let pending = field_application(store.clone(), fixture.admission.run.id()).await;
+  assert_eq!(
+    pending["status"], "pending",
+    "accepted analysis does not establish a saved Issue"
+  );
+  assert_eq!(pending["form"]["fields"][0]["field"], json!({"kind":"priority"}));
   assert_eq!(record.input().issue_field_baseline().unwrap().version, before.version);
   assert_eq!(
     store.issue(issue.project_id, issue.id, None).await.unwrap(),
@@ -236,6 +242,13 @@ async fn ordinary_form_captures_invocation_baseline_and_applies_the_exact_accept
     FactoryRunState::Completed
   );
   assert_eq!(writer.dispatch_once(at(17)).await.unwrap().delivered, 1);
+  let saved = field_application(store.clone(), fixture.admission.run.id()).await;
+  assert_eq!(saved["status"], "applied");
+  assert_eq!(
+    saved["operation_id"], pending["operation_id"],
+    "observation keeps the same accepted save operation"
+  );
+  assert!(saved.get("delivery_record").is_some());
   let applied = store.issue(issue.project_id, issue.id, None).await.unwrap();
   assert_eq!(applied.content.priority, Some(IssuePriority::Choice("high".into())));
   let origin = serde_json::to_value(&applied.classification).unwrap()["fields"][0]["origin"].clone();
@@ -595,4 +608,30 @@ impl octacity_artifact_store::ArtifactByteReader for DocumentBytes {
       .cloned()
       .ok_or(octacity_artifact_store::ArtifactStoreError::NotFound)
   }
+}
+
+async fn field_application(store: Arc<PostgresStore>, run: FactoryRunId) -> serde_json::Value {
+  let before = store.factory_run_snapshot(run).await.unwrap();
+  let query = AuthorizedQueryHandler::new(
+    Arc::new(TrustedNetworkManagementPolicy),
+    Arc::new(FactoryDiscoveryHandlers::new(store.clone())),
+  );
+  let page = query
+    .handle_query(
+      &context(),
+      ListFactoryDiagnosticsQuery::try_new(run, FactoryDiagnosticCollection::NodeCompletions, None, 1).unwrap(),
+    )
+    .await
+    .unwrap();
+  let wire = serde_json::to_value(page).unwrap();
+  assert!(
+    wire["items"][0]["record"].get("public_result").is_none(),
+    "saving grants no access to private analysis"
+  );
+  assert_eq!(
+    store.factory_run_snapshot(run).await.unwrap(),
+    before,
+    "status reads cannot apply or renew fields"
+  );
+  wire["items"][0]["record"]["issue_fields"].clone()
 }

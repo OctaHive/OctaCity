@@ -6,7 +6,7 @@ pub(super) fn insert(schemas: &mut Map<String, Value>) {
     object(
       [
         ("reference", schema_ref("FactoryImmutableReferenceResource")),
-        ("parameters", bounded_array(object([("path", non_empty_string()), ("kind", json!({"type":"string","enum":["identity","role_profile","repository","project_context","execution_policy","configuration_policy","source_input","reporting_effects","command","publication","accepted_predecessor","issue_snapshot","issue_size_threshold"]})), ("required", boolean())], &["path","kind","required"]), octacity_server_application::factory_configuration_document_bounds().choice_entries)),
+        ("parameters", bounded_array(object([("path", non_empty_string()), ("kind", json!({"type":"string","enum":["identity","role_profile","repository","project_context","execution_policy","configuration_policy","source_input","reporting_effects","command","publication","accepted_predecessor","issue_snapshot","choice_threshold","issue_fields"]})), ("required", boolean())], &["path","kind","required"]), octacity_server_application::factory_configuration_document_bounds().choice_entries)),
         ("required_node_kinds", bounded_array(schema_ref("FactoryFlowNodeKind"), octacity_server_application::factory_configuration_document_bounds().nodes)),
         ("editor", schema_ref("FactoryPresetEditor")),
         (
@@ -28,6 +28,7 @@ pub(super) fn insert(schemas: &mut Map<String, Value>) {
         ("name", non_empty_string()),
         ("budget", schema_ref("FactoryBudget")),
         ("max_active_nodes", bounded_integer(1, b.active_nodes.into())),
+        ("choice_thresholds",bounded_map(schema_ref("FactoryFlowIssueFieldSource"),b.nodes)),
         ("issue_snapshot_fields", json!({"type":"object","maxProperties":b.schema_entries,"propertyNames":key(),"additionalProperties":schema_ref("FactoryFlowIssueFieldSource")})),
         (
           "steps",
@@ -131,6 +132,10 @@ pub(super) fn insert(schemas: &mut Map<String, Value>) {
     object(
       [
         ("preset", reference()),
+        (
+          "issue_fields",
+          bounded_map(schema_ref("FactoryIssueFieldForm"), b.nodes),
+        ),
         ("flow_id", nullable(uuid())),
         ("flow_only", boolean()),
         (

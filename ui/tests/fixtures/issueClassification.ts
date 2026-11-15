@@ -62,6 +62,7 @@ export function issueClassificationFixture(project = 'delivery') {
           run_id: classificationRun,
           work_id: '45000000-0000-4000-8000-000000000001',
           record: 'a'.repeat(64),
+          form: 'c'.repeat(64),
           policy: 'triage',
           operation_id: 'b'.repeat(64),
         },

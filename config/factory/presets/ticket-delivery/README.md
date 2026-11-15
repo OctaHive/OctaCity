@@ -10,7 +10,7 @@ Project's published field-definition version and an explicit admission policy:
 {
   "issue_snapshot": {
     "definition_version": 1,
-    "specification_from_size": "large",
+    "choice_thresholds": {"requirements_needed": "large"},
     "admission": {
       "priority": {"field": "priority", "values": {"blocker": 100, "high": 80, "medium": 50, "low": 20}},
       "risk": {"field": "risk", "values": {"low": "low", "medium": "medium", "high": "high", "critical": "critical"}},
@@ -26,25 +26,26 @@ The explicit type allowlist must be a nonempty subset of the release's supported
 `defect`/`feature_request` routes; adding a Project type does not assign a route.
 
 The example selects built-in priority, component, type (`work_kind`) and size,
-existing dependency references, and the Project's severity, risk, recommended
-route and reproducibility semantic bindings. Publish those definitions first.
+existing dependency references, and ordinary properties `impact`, `risk`, `route`
+and `repro`. `parameters-v1.json` owns these example selections and existing Flow
+projections; none is a required classification role. Publish those definitions first.
 The resolver derives the shared result/input types from that exact catalog;
 operators do not copy its enums into each step. No `accepted_predecessor`,
 producing Flow/terminal/schema or triage Run is required. Passing a predecessor
 alongside this mode is rejected. An eligible manually prepared Issue uses the
 same contract as an Issue classified by any authorized triage implementation.
 
-Project sizes are ordered from smallest to largest. `specification_from_size`
+Project sizes are ordered from smallest to largest. `choice_thresholds.requirements_needed`
 selects an active stable choice ID; it and every greater active size require
 specification authoring. The resolver compiles that suffix into the ordinary
 `requirements_needed` gate and freezes the exact input vocabulary. For
 `xs, small, medium, large, xl`, threshold `large` includes both `large` and `xl`.
 Renaming labels never infers a route, and subsequent Project reordering does not
-change the published graph. Unknown/retired thresholds and omitted thresholds
-for custom catalogs report `/issue_snapshot/specification_from_size`. Legacy
-requests omitting the parameter retain the original route only with the active
-ordered IDs `small, medium, large`. Existing publications and Runs retain their
-original rules.
+change the published graph. Missing, unknown or retired thresholds report
+`/issue_snapshot/choice_thresholds/requirements_needed`. Every resolution requires
+an explicit threshold; there is no special three-size fallback. This uses the
+common ordered-choice condition compiler and also supports non-Size choice fields.
+Published Flows and Runs retain their original rules.
 
 The frozen Issue supplies the reproduction decision and requirements summary.
 Requirements approval uses Project priority IDs: the released example requests
@@ -69,9 +70,11 @@ Choose `v1` only when the intended input is an exact producer result.
 
 ## Retained v1 producer-result example
 
-`v1.json` and its parts retain their original bytes and exact accepted-triage
-contract. Discovery offers both `v1` and `v2`, and exact references for both
-remain resolvable. Follow the catalog's opaque `next_cursor` to visit every
+`v1.json` is an explicit accepted-producer-result example, while `v2.json` reads
+the Issue independently. `setup-v1.json` declares their publication step, optional
+command branch and existing incoming projections as configuration. Both compile
+into ordinary editable Flows; the resolver has no business phase-name dispatch.
+Discovery offers both input modes. Follow the catalog's opaque `next_cursor` to visit every
 version; older identity cursors still skip all versions of that identity.
 Existing published Flows,
 Configurations and Runs are not upgraded in place. Their Incoming pipeline
@@ -84,7 +87,11 @@ Configuration publication. The example selects no credential, activates no intak
 and grants no access.
 
 The reproduction command is optional. Leave it unselected for feature tickets:
-the ordinary entry gate routes features and already reproduced defects onward.
+the ordinary entry gate routes features onward. The Issue example does not
+select reproduction proof: a scalar `reproduced` value must run the deeper check
+as well. Independently qualified observation selection and proof-based gates remain
+available through the common snapshot/evidence contract; prose or a field value
+cannot substitute for those checks.
 Without this command, a defect that still needs reproduction goes to the existing
 operator review step; it cannot proceed directly to test authoring. Selecting an
 installed reproduction command keeps the full observation branch below.
@@ -119,10 +126,11 @@ writes while the original attempt can still observe an existing PR.
 
 `reproduction-v1.json` is an editable Flow manifest for the reproduction branch.
 Resolve its parts relative to `config/factory` through the ordinary manifest
-loader. The branch accepts only `work_kind` and `reproducibility` from the exact
-accepted triage result. Select those fields explicitly in the parent call.
-When placing the nodes directly in a root Flow, use the same projection from
-the pinned incoming triage schema instead of the caller input.
+loader. The branch accepts `work_kind` and `reproducibility` through the ordinary
+caller projection. Select them explicitly from the admitted Issue or an exact
+accepted producer result. For a root Flow, use the corresponding pinned Incoming
+schema instead of caller input. The default standalone branch uses the conservative
+Issue routing policy and does not treat a `reproduced` scalar as proof.
 
 Bind `reproduction` to the exact installed Tester command and review its
 permissions and budget. Add its canonical `observation_contract.report_schema()`

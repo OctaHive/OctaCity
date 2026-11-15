@@ -1,0 +1,116 @@
+{
+  "publication": "publish_pull_request",
+  "optional_command": {
+    "alias": "reproduction",
+    "nodes": [
+      "reproduction",
+      "reproduction-result"
+    ],
+    "terminal": "cannot_reproduce",
+    "route": {
+      "predecessor": "reproduction-needed",
+      "outcome": "check",
+      "target": {
+        "kind": "node",
+        "key": "review-reproduction"
+      },
+      "max_repeats": 0,
+      "exhausted_terminal": null
+    }
+  },
+  "incoming": {
+    "source_alias": "triage",
+    "schema_alias": "predecessor",
+    "inputs": {
+      "reproduction-needed": {
+        "value": {
+          "mapping": "object",
+          "fields": {
+            "work_kind": {
+              "mapping": "pointer",
+              "path": "/triage/assessment/work_kind"
+            },
+            "reproducibility": {
+              "mapping": "pointer",
+              "path": "/triage/assessment/reproducibility"
+            },
+            "triage_accepted": {
+              "mapping": "pointer",
+              "path": "/triage/accepted"
+            }
+          }
+        }
+      },
+      "requirements_needed": {
+        "value": {
+          "mapping": "object",
+          "fields": {
+            "summary": {
+              "mapping": "object",
+              "fields": {
+                "work_kind": {
+                  "mapping": "pointer",
+                  "path": "/triage/assessment/work_kind"
+                },
+                "size": {
+                  "mapping": "pointer",
+                  "path": "/triage/assessment/size"
+                },
+                "risk": {
+                  "mapping": "pointer",
+                  "path": "/triage/assessment/risk"
+                },
+                "admission_risk": {
+                  "mapping": "pointer",
+                  "path": "/triage/admission_risk"
+                },
+                "recommended_route": {
+                  "mapping": "pointer",
+                  "path": "/triage/assessment/recommended_route"
+                },
+                "research_required": {
+                  "mapping": "constant",
+                  "value": false
+                },
+                "research_accepted": {
+                  "mapping": "constant",
+                  "value": false
+                },
+                "component": {
+                  "mapping": "pointer",
+                  "path": "/triage/assessment/component"
+                },
+                "severity": {
+                  "mapping": "pointer",
+                  "path": "/triage/assessment/severity"
+                },
+                "dependencies": {
+                  "mapping": "pointer",
+                  "path": "/triage/assessment/dependencies"
+                }
+              }
+            },
+            "priority_assessment": {
+              "mapping": "pointer",
+              "path": "/triage/assessment/priority_assessment"
+            }
+          }
+        }
+      }
+    },
+    "preconditions": {
+      "reproduction-needed": {
+        "operation": "compare",
+        "left": {
+          "source": "path",
+          "path": "/triage_accepted"
+        },
+        "comparison": "equal",
+        "right": {
+          "source": "literal",
+          "value": true
+        }
+      }
+    }
+  }
+}

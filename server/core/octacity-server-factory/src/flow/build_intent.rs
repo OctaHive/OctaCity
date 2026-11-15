@@ -156,6 +156,7 @@ impl FlowBuildIntent {
           .execution_permissions_for_step(declared.permissions())
       },
     );
+    permissions = declared.without_local_effects(permissions);
     if let Some(profile) = admitted.access_profile() {
       if profile.reference().project_id != input.subject().project_id() {
         return Err(invalid());

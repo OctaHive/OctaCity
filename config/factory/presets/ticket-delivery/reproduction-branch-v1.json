@@ -1,18 +1,5 @@
 {
   "schemas": {
-    "reproduction_route": {
-      "identity": "factory.ticket-delivery.reproduction-route",
-      "version": "v1",
-      "shape": {
-        "type": "object",
-        "fields": {
-          "work_kind": {"required": true, "value": {"type": "enum", "values": ["defect", "feature_request"]}},
-          "reproducibility": {"required": true, "value": {"type": "enum", "values": [
-            "reproduced", "not_reproduced", "unknown", "needs_research", "needs_input", "not_applicable"
-          ]}}
-        }
-      }
-    },
     "reproduction_task": {
       "identity": "factory.ticket-delivery.reproduction-task",
       "version": "v1",
@@ -39,21 +26,6 @@
       "input_binding": {
         "sources": {"triage": {"source": "caller_input", "path": ""}},
         "mapping": {"value": {"mapping": "pointer", "path": "/triage"}}
-      },
-      "gate": {
-        "rules": [
-          {"outcome": "bypass", "when": {"operation": "any", "predicates": [
-            {"operation": "compare", "left": {"source": "path", "path": "/work_kind"}, "comparison": "equal", "right": {"source": "literal", "value": "feature_request"}},
-            {"operation": "compare", "left": {"source": "path", "path": "/reproducibility"}, "comparison": "equal", "right": {"source": "literal", "value": "reproduced"}}
-          ]}},
-          {"outcome": "check", "when": {"operation": "any", "predicates": [
-            {"operation": "compare", "left": {"source": "path", "path": "/reproducibility"}, "comparison": "equal", "right": {"source": "literal", "value": "unknown"}},
-            {"operation": "compare", "left": {"source": "path", "path": "/reproducibility"}, "comparison": "equal", "right": {"source": "literal", "value": "not_reproduced"}},
-            {"operation": "compare", "left": {"source": "path", "path": "/reproducibility"}, "comparison": "equal", "right": {"source": "literal", "value": "needs_research"}}
-          ]}}
-        ],
-        "fallback": "needs_input",
-        "default_output": {"value": {"mapping": "pointer", "path": ""}}
       }
     },
     {

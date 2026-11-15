@@ -36,6 +36,15 @@ pub struct FactoryIssueFieldChoice {
   /// Stable property ID for ordinary/semantic Project sources; absent for built-ins.
   #[serde(skip_serializing_if = "Option::is_none")]
   pub property_id: Option<String>,
+  /// Writable identity when the shared form owner supports this field; absence grants no save scope.
+  #[serde(skip_serializing_if = "Option::is_none")]
+  pub write_target: Option<IssueFieldTarget>,
+  /// Original Project type, preserving date semantics and exact choice metadata.
+  #[serde(skip_serializing_if = "Option::is_none")]
+  pub value_type: Option<IssuePropertyKind>,
+  /// Server-derived value key, independent of the field label and local snapshot alias.
+  #[serde(skip_serializing_if = "Option::is_none")]
+  pub value_key: Option<FactoryKey>,
   /// Whether the exact catalog supports required as well as optional selection.
   pub required_supported: bool,
   /// Project-derived type/choices/bounds, normalized by the shared contract owner.
@@ -46,6 +55,7 @@ pub struct FactoryIssueFieldChoice {
 }
 
 pub(crate) fn contracts(catalog: &PublishedIssueProperties) -> FactoryIssueFieldChoices {
+  let selection = crate::factory::reporting::factory_issue_classification_contract::selection(catalog);
   let ordinary = catalog.definition.properties.iter().map(|p| {
     (
       FlowIssueFieldSource::Property { id: p.id.clone() },
@@ -84,22 +94,42 @@ pub(crate) fn contracts(catalog: &PublishedIssueProperties) -> FactoryIssueField
         catalog,
       )
       .is_some();
-      let choice_labels = if matches!(source, FlowIssueFieldSource::Size) {
-        catalog
-          .definition
-          .sizes
-          .iter()
-          .filter(|c| !c.retired)
-          .map(|c| (c.id.clone(), c.name.clone()))
-          .collect()
-      } else {
-        Default::default()
+      let target = match &source {
+        FlowIssueFieldSource::Priority => Some(IssueFieldTarget::Priority),
+        FlowIssueFieldSource::Component => Some(IssueFieldTarget::Component),
+        FlowIssueFieldSource::Type => Some(IssueFieldTarget::Type),
+        FlowIssueFieldSource::Size => Some(IssueFieldTarget::Size),
+        FlowIssueFieldSource::Property { id } => Some(IssueFieldTarget::Property { id: id.clone() }),
+        _ => None,
       };
+      let display = target.clone().or_else(|| {
+        property_id
+          .as_ref()
+          .map(|id| IssueFieldTarget::Property { id: id.clone() })
+      });
+      let choice_labels = match display.and_then(|target| target.kind(catalog)) {
+        Some(IssuePropertyKind::Choice { choices }) => choices
+          .into_iter()
+          .filter(|choice| !choice.retired)
+          .map(|choice| (choice.id, choice.name))
+          .collect(),
+        _ => Default::default(),
+      };
+      let write_target = target.filter(|target| {
+        selection
+          .as_ref()
+          .is_some_and(|form| form.fields.iter().any(|selected| &selected.field == target))
+      });
+      let value_key = write_target.as_ref().and_then(|target| target.key().ok());
+      let value_type = write_target.as_ref().and_then(|target| target.kind(catalog));
       Some(FactoryIssueFieldChoice {
         source,
         name,
         property_id,
         required_supported,
+        write_target,
+        value_key,
+        value_type,
         shape,
         choice_labels,
       })
@@ -107,7 +137,7 @@ pub(crate) fn contracts(catalog: &PublishedIssueProperties) -> FactoryIssueField
     .collect();
   FactoryIssueFieldChoices {
     definition_version: catalog.version,
-    classification: crate::factory::reporting::factory_issue_classification_contract::selection(catalog),
+    classification: selection,
     fields,
   }
 }

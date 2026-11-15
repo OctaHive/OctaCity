@@ -1,6 +1,6 @@
 import { emptyFactoryPermissions } from '../../src/features/factory/emptyFlowDraft';
 import { expect, test, type Locator } from '@playwright/test';
-import { configurationFixture } from '../fixtures/factory';
+import { authoredSchemaShape, configurationFixture } from '../fixtures/factory';
 import type { components } from '../../.generated/api/schema';
 import { issueFixture } from '../fixtures/issues';
 import { executionFixture } from '../fixtures/issueExecutions';
@@ -466,9 +466,9 @@ test('submits the reviewed Flow, Project policies, and manual Issue start to the
     return route.fulfill({ json: flowResource(validatedFlow!).flow });
   });
   await page.route('**/api/v1/flow-data-schemas/validate', (route) => {
-    const { identity, version, shape }: S['ValidateFactoryFlowDataSchemaRequest'] = route
-      .request()
-      .postDataJSON();
+    const body: S['ValidateFactoryFlowDataSchemaRequest'] = route.request().postDataJSON();
+    const { identity, version } = body;
+    const shape = authoredSchemaShape(body);
     const digest = createHash('sha256')
       .update(JSON.stringify({ identity, version, shape }))
       .digest('hex');

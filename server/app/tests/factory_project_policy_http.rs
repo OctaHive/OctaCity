@@ -614,3 +614,6 @@ mod configuration;
 
 #[path = "factory_project_policy_http/admission.rs"]
 mod admission;
+
+#[path = "factory_project_policy_http/issue_fields.rs"]
+mod issue_fields;

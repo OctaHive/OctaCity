@@ -171,7 +171,7 @@ fn data_schema_normalization_returns_the_exact_content_identity_without_publishi
           project_id,
           identity: key("operator.boolean"),
           version: key("v1"),
-          shape: octacity_server_factory::FlowValueSchema::Boolean,
+          source: crate::FactoryFlowDataSchemaSource::Shape(octacity_server_factory::FlowValueSchema::Boolean),
         },
       )
       .await
@@ -1400,7 +1400,7 @@ fn schema_normalization_rejects_hidden_owners_and_unbounded_shapes_without_write
       project_id,
       identity: key("operator.boolean"),
       version: key("v1"),
-      shape: octacity_server_factory::FlowValueSchema::Boolean,
+      source: crate::FactoryFlowDataSchemaSource::Shape(octacity_server_factory::FlowValueSchema::Boolean),
     };
     assert!(matches!(
       hidden.handle_query(&context(), query.clone()).await,
@@ -1412,10 +1412,10 @@ fn schema_normalization_rejects_hidden_owners_and_unbounded_shapes_without_write
       Arc::new(crate::FactoryFlowDefinitionHandlers::new(store.clone(), policy)),
     );
     let oversized = crate::ValidateFactoryFlowDataSchemaQuery {
-      shape: octacity_server_factory::FlowValueSchema::String {
+      source: crate::FactoryFlowDataSchemaSource::Shape(octacity_server_factory::FlowValueSchema::String {
         min_bytes: 0,
         max_bytes: usize::MAX,
-      },
+      }),
       ..query
     };
     assert!(visible.handle_query(&context(), oversized).await.is_err());

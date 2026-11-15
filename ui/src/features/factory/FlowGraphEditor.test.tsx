@@ -7,7 +7,7 @@ import { useState } from 'react';
 import { afterEach, expect, it, vi } from 'vitest';
 import type { components } from '../../../.generated/api/schema';
 import { factoryProfileConfigurationFixture } from '../../../tests/fixtures/factoryRoles';
-import { configurationFixture } from '../../../tests/fixtures/factory';
+import { authoredSchemaShape, configurationFixture } from '../../../tests/fixtures/factory';
 import { ConfigurationEditor } from './ConfigurationEditor';
 import { FlowGraphEditor } from './FlowGraphEditor';
 import { factoryApi, type FactoryApi } from './api';
@@ -149,16 +149,14 @@ it.each([
       normalizeSchema: vi.fn<FactoryApi['normalizeSchema']>(async (body) => {
         if (scenario === 'edited' && body.identity.startsWith('issue-classification.'))
           await normalization;
+        const shape = authoredSchemaShape(body);
         return {
           reference: {
             identity: body.identity,
             version: body.version,
-            digest: (body.shape.type === 'object' && 'receipt' in body.shape.fields
-              ? 'b'
-              : 'c'
-            ).repeat(64),
+            digest: (shape.type === 'object' && 'receipt' in shape.fields ? 'b' : 'c').repeat(64),
           },
-          shape: body.shape,
+          shape: authoredSchemaShape(body),
         };
       }),
     };

@@ -185,6 +185,7 @@ impl FactoryResultReportingDraft {
           schema: outcome.schema.clone(),
           public_result: false,
           issue_presentation: None,
+          issue_fields: None,
         }],
         budget: self.execution.budget(),
         max_execution_retries: 0,

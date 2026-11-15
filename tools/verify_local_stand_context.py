@@ -28,11 +28,17 @@ MANDATORY_FINAL_DENIES = frozenset(
 )
 
 FACTORY_RELEASE_MANIFESTS = (
+    "config/factory/presets/triage/v4.json",
     "config/factory/presets/ticket-delivery/v1.json",
     "config/factory/presets/ticket-delivery/v2.json",
 )
 
 REQUIRED_CONTEXT_PATHS = (
+    "config/factory/presets/triage/parameters-v1.json",
+    "config/factory/presets/triage/completion-v3.json",
+    "config/factory/presets/ticket-delivery/setup-v1.json",
+    "config/factory/presets/ticket-delivery/parameters-v1.json",
+
     "Cargo.lock",
     "Cargo.toml",
     "rust-toolchain.toml",

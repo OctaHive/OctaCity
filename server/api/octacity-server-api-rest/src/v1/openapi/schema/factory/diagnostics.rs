@@ -62,6 +62,7 @@ pub(super) fn insert(schemas: &mut Map<String, Value>) {
         ("outcome", key()),
         ("output_schema", schema_ref("FactoryImmutableReferenceResource")),
         ("output_digest", schema_ref("FactoryDigest")),
+        ("issue_fields",schema_ref("FactoryIssueFieldApplication")),
         ("verified_report", object([
           ("content_digest", schema_ref("FactoryDigest")),
           ("verified_at", integer()),

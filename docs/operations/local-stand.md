@@ -442,12 +442,17 @@ source revision's release, real-backend and provider/model qualification gates.
 `tools/factory-stand` installs an explicit example using the ordinary Factory
 APIs: a Project agent assesses eligibility and a separate systems analyst
 classifies eligible work. Reusable agents come from
-`deployment/local-stand/factory-agents.json`; their step assignments and result
-examples come from `factory-triage-tasks.json`. They are not product templates or
-prerequisites for **Add pipeline**. The launcher normalizes the shared reviewed
-schema/gate fragments through the same public APIs as Console, resolves exact
-installed execution bindings, then publishes an ordinary Flow and Configuration.
-It never calls the legacy preset endpoints or borrows an existing Flow.
+`deployment/local-stand/factory-agents.json`; connection scope is explicit seed
+data and does not depend on an agent alias. The example release, initial Project
+fields, completion document and common local writer come from
+`deployment/local-stand/factory-triage.json`. Step assignments live in the release's
+`assignments-v4.json`. These defaults are not prerequisites for **Add pipeline**.
+The launcher seeds only an unpublished Project field catalog, calls the shared
+read-only preset resolver, then publishes its ordinary editable Flow and disabled
+Configuration through the same owners as Console. It does not reconstruct result
+schemas or map output paths. One Project-derived form defines both the result and
+selected Issue write set. The local save grant belongs to the Flow, not Agent tools.
+Published operator catalogs and exact retained installations survive restart.
 Server retains their states, accepted results and exact selected Context.
 The launcher retains installation references only. Intake and Configuration
 start disabled; installation does not invoke a model or create a demonstration
@@ -806,6 +811,13 @@ agent. Pipeline completion criteria use the common process editor and explicitly
 select both reasoning steps. Editing publishes a new immutable Flow version;
 select it explicitly in the reviewed Configuration.
 
+The optional example uses the common template resolver, then applies
+`flow_limits` from `deployment/local-stand/factory-triage.json` before normal
+validation/publication. Structural ceilings (depth, expanded nodes, repeats,
+fan-out and WIP) stay under that reviewed stand policy; the selected execution
+policy supplies the exact budget and permissions. Resolver product defaults do
+not replace those settings. Retained installations keep their original versions.
+
 Create, view and edit shared documents in **Project documents** in Project
 settings. The initial Project goals and process criteria are exact managed
 Artifact publications. Document edits create new identities; attach the intended
@@ -813,6 +825,11 @@ version explicitly to each step. Existing accepted inputs and Runs retain their
 original bytes. The default creates no triage-rules document and requires no
 fixed rules slot. Independently selected controlling policy keeps its ordinary
 precedence and cannot grant permissions.
+
+Project Context is an optional template input: discovery marks each
+`/context/{alias}` as optional, and resolution can omit the Context map. Selecting
+documents remains explicit; omission does not create placeholders or relax the
+ordinary Role/Profile requirements.
 
 Repeated startup resumes the retained installation. It neither reseeds published
 agents/definitions nor renews credentials or expired documents. New example

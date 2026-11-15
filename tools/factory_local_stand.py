@@ -436,8 +436,9 @@ def publish_triage_roles(client, project: str, namespace: uuid.UUID, *,
              "profiles": []})["role"]["reference"]
         definition = copy.deepcopy(ceiling)
         definition.update(seed["profile"])
-        definition["context_requirements"] = ["task"]
-        if stage == "classification":
+        if type(seed["project_connections"]) is not bool:
+            raise ValueError("agent seed project_connections must be a boolean")
+        if not seed["project_connections"]:
             execution = definition["execution"]
             execution["mcp_servers"] = {}
             execution["integrations"] = {}
@@ -463,11 +464,11 @@ def publish_triage(client, project: str, selection: dict, namespace: uuid.UUID, 
         configuration = retained_configuration
         flow = configuration["flow"]
     else:
+        factory_stand_flow.prepare_project_fields(client, project, namespace)
         flow_id = str(uuid.uuid5(namespace, "flow/triage/manual-v1"))
         configuration_id = _seed_configuration_id(namespace)
         criteria = client.post(f"/api/v1/projects/{project}/input-documents", f"{namespace}-manual-v1-criteria",
-            {"name": "Triage completion criteria", "content": json.loads((launcher.REPOSITORY /
-                "config/factory/presets/triage/completion-v2.json").read_text())["content"]})["artifact"]
+            {"name": "Triage completion criteria", "content": factory_stand_flow.completion_document()["content"]})["artifact"]
         draft = factory_stand_flow.flow_draft(client, project, selection, namespace, criteria)
         body = {"id": flow_id, "project_id": project, "definition": draft}
         preview = client.post("/api/v1/flow-definitions/validate", f"{namespace}-manual-v1-flow-review", body)

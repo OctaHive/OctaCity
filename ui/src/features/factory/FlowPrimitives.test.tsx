@@ -1,3 +1,4 @@
+import { authoredSchemaShape } from '../../../tests/fixtures/factory';
 // @vitest-environment jsdom
 import { useState } from 'react';
 import { QueryClientProvider } from '@tanstack/react-query';
@@ -78,9 +79,9 @@ function setup(
         reference: {
           identity: body.identity,
           version: body.version,
-          digest: (body.shape.type === 'boolean' ? 'b' : 'd').repeat(64),
+          digest: (authoredSchemaShape(body).type === 'boolean' ? 'b' : 'd').repeat(64),
         },
-        shape: body.shape,
+        shape: authoredSchemaShape(body),
       }),
     ),
     createFlow: vi.fn(),

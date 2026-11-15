@@ -2,7 +2,7 @@ import { translate, type MessageKey } from '../../src/app/presentation/messages'
 import { expect, test, type Page } from '@playwright/test';
 import type { components } from '../../.generated/api/schema';
 import { factoryRoleFixture } from '../fixtures/factoryRoles';
-import { configurationFixture } from '../fixtures/factory';
+import { authoredSchemaShape, configurationFixture } from '../fixtures/factory';
 import { installOperatorFixture } from './operatorFixture';
 import { factoryIssueFieldsFixture } from '../fixtures/factoryIssueFields';
 
@@ -231,7 +231,7 @@ for (const language of ['en', 'ru'] as const) {
             version: body.version,
             digest: (++sequence).toString().repeat(64),
           },
-          shape: body.shape,
+          shape: authoredSchemaShape(body),
         },
       });
     });
@@ -303,7 +303,7 @@ for (const language of ['en', 'ru'] as const) {
             version: body.version,
             digest: (++sequence).toString().repeat(64),
           },
-          shape: body.shape,
+          shape: authoredSchemaShape(body),
         },
       });
     });
@@ -411,7 +411,7 @@ for (const language of ['en', 'ru'] as const) {
             version: body.version,
             digest: (++sequence).toString().repeat(64),
           },
-          shape: body.shape,
+          shape: authoredSchemaShape(body),
         },
       });
     });
@@ -718,7 +718,7 @@ for (const language of ['en', 'ru'] as const) {
       normalized.push(body);
       await route.fulfill({
         json: {
-          shape: body.shape,
+          shape: authoredSchemaShape(body),
           reference: {
             identity: body.identity,
             version: body.version,
@@ -837,7 +837,7 @@ for (const language of ['en', 'ru'] as const) {
         path: '/summary',
       },
     });
-    expect(normalized[1]!.shape).toEqual({
+    expect(authoredSchemaShape(normalized[1])).toEqual({
       type: 'object',
       fields: { summary: { required: true, value: { type: 'boolean' } } },
     });

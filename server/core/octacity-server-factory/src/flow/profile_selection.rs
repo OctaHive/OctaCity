@@ -196,6 +196,7 @@ impl FlowProfileSelectionBinding {
       super::predicate::validate_predicates(rules.iter().map(|rule| &rule.when))?;
     }
     let first = self.candidates.values().next().ok_or_else(invalid)?;
+    let permissions = node.without_local_effects(node.permissions().clone());
     for candidate in self.candidates.values() {
       let profile = candidate.profile.definition();
       let build = &candidate.build;
@@ -226,13 +227,13 @@ impl FlowProfileSelectionBinding {
         || build.evidence != first.build.evidence
         || profile.credential_purpose != first.profile.definition().credential_purpose
         || if profile.execution_binding.is_profile() {
-          !profile.permissions.is_no_broader_than(node.permissions())
+          !profile.permissions.is_no_broader_than(&permissions)
         } else {
-          !node.permissions().is_no_broader_than(&profile.permissions)
+          !permissions.is_no_broader_than(&profile.permissions)
         }
         || build.execution_permissions.as_ref().is_some_and(|required| {
-          !required.is_no_broader_than(node.permissions())
-            || (!profile.execution_binding.is_profile() && !node.permissions().is_no_broader_than(required))
+          !required.is_no_broader_than(&permissions)
+            || (!profile.execution_binding.is_profile() && !permissions.is_no_broader_than(required))
         })
         || profile
           .context_requirements

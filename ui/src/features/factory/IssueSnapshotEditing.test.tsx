@@ -6,7 +6,7 @@ import userEvent from '@testing-library/user-event';
 import { afterEach, expect, it, vi } from 'vitest';
 import type { components } from '../../../.generated/api/schema';
 import { createConsoleQueryClient } from '../../app/query';
-import { configurationFixture } from '../../../tests/fixtures/factory';
+import { authoredSchemaShape, configurationFixture } from '../../../tests/fixtures/factory';
 import { factoryIssueFieldsFixture } from '../../../tests/fixtures/factoryIssueFields';
 import { factoryApi, type FactoryApi } from './api';
 import { emptyFlowDraft } from './emptyFlowDraft';
@@ -229,7 +229,7 @@ it('keeps the snapshot schema catalog bounded across unchanged applies and mater
       version: body.version,
       digest: (++sequence).toString(16).repeat(64),
     },
-    shape: body.shape,
+    shape: authoredSchemaShape(body),
   }));
   const changed = vi.fn();
   let latest = draft;
@@ -379,11 +379,14 @@ it.each(['retired property', 'removed classification binding'] as const)(
         : !(field.source.kind === 'classification' && field.source.slot === 'severity'),
     );
     if (kind === 'removed classification binding')
-      capabilities.issue_fields.classification.properties = {};
+      capabilities.issue_fields.classification.fields =
+        capabilities.issue_fields.classification.fields.filter(
+          ({ field }) => field.kind !== 'property' || field.id !== 'impact',
+        );
     api.getAuthoringCapabilities.mockResolvedValue(capabilities);
     api.normalizeSchema.mockImplementation(async (body) => ({
       reference: { identity: body.identity, version: body.version, digest: 'd'.repeat(64) },
-      shape: body.shape,
+      shape: authoredSchemaShape(body),
     }));
     const onChange = vi.fn();
     render(
@@ -472,7 +475,7 @@ it('reuses and retires typed classification input schemas without deleting regis
       type: 'object',
       fields: {
         component,
-        severity: { required: false, value: { type: 'enum', values: ['major', 'minor'] } },
+        'property.impact': { required: false, value: { type: 'enum', values: ['major', 'minor'] } },
         private_notes: { required: true, value: { type: 'string', min_bytes: 0, max_bytes: 100 } },
       },
     },
@@ -519,7 +522,7 @@ it('reuses and retires typed classification input schemas without deleting regis
       version: body.version,
       digest: (++sequence).toString(16).repeat(64),
     },
-    shape: body.shape,
+    shape: authoredSchemaShape(body),
   }));
   let latest = draft;
   const changed = vi.fn();
@@ -549,8 +552,7 @@ it('reuses and retires typed classification input schemas without deleting regis
   await user.click(screen.getByRole('checkbox', { name: 'Apply classification to Issue' }));
   await user.click(await screen.findByRole('checkbox', { name: 'Issue component' }));
   for (let edit = 0; edit < 4; edit++) {
-    if (edit > 1)
-      await user.click(screen.getByRole('checkbox', { name: 'Classification: Impact' }));
+    if (edit > 1) await user.click(screen.getByRole('checkbox', { name: 'Project field: Impact' }));
     await user.click(screen.getByRole('button', { name: 'Use Project classification' }));
     await waitFor(() => expect(changed).toHaveBeenCalledTimes(edit + 1));
     expect(latest.data_schemas).toHaveLength(4);
@@ -565,7 +567,12 @@ it('reuses and retires typed classification input schemas without deleting regis
       fields: {
         component,
         ...(edit === 2
-          ? { severity: { required: false, value: { type: 'enum', values: ['major', 'minor'] } } }
+          ? {
+              'property.impact': {
+                required: false,
+                value: { type: 'enum', values: ['major', 'minor'] },
+              },
+            }
           : {}),
       },
     });

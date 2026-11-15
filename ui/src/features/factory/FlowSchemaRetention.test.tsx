@@ -5,7 +5,7 @@ import userEvent from '@testing-library/user-event';
 import { afterEach, expect, it, vi } from 'vitest';
 import type { components } from '../../../.generated/api/schema';
 import { createConsoleQueryClient } from '../../app/query';
-import { configurationFixture } from '../../../tests/fixtures/factory';
+import { authoredSchemaShape, configurationFixture } from '../../../tests/fixtures/factory';
 import { factoryIssueFieldsFixture } from '../../../tests/fixtures/factoryIssueFields';
 import { factoryApi, type FactoryApi } from './api';
 import { emptyFlowDraft } from './emptyFlowDraft';
@@ -187,7 +187,7 @@ it.each(['complete', 'nested', 'unavailable', 'different version'] as const)(
       ),
       normalizeSchema: vi.fn<FactoryApi['normalizeSchema']>(async (body) => ({
         reference: { identity: body.identity, version: body.version, digest: 'd'.repeat(64) },
-        shape: body.shape,
+        shape: authoredSchemaShape(body),
       })),
     };
     const onChange = vi.fn();

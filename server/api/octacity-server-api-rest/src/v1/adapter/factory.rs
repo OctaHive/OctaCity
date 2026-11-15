@@ -4,10 +4,23 @@ pub(super) async fn validate_factory_flow_data_schema(
   Extension(crate::ManagementRequest(request_id, context)): Extension<crate::ManagementRequest>,
   payload: Result<Json<crate::v1::ValidateFactoryFlowDataSchemaRequest>, JsonRejection>,
 ) -> Result<impl IntoResponse, ApiError> {
-  let body = body(payload, &request_id)?;
+  let (project, identity, version, shape, fields) = match body(payload, &request_id)? {
+    crate::v1::ValidateFactoryFlowDataSchemaRequest::Shape {
+      project_id,
+      identity,
+      version,
+      shape,
+    } => (project_id, identity, version, Some(shape), None),
+    crate::v1::ValidateFactoryFlowDataSchemaRequest::IssueFields {
+      project_id,
+      identity,
+      version,
+      issue_fields,
+    } => (project_id, identity, version, None, Some(issue_fields)),
+  };
   let query = application
     .inputs
-    .validate_factory_flow_data_schema(&body.project_id, &body.identity, &body.version, body.shape)
+    .validate_factory_flow_data_schema(&project, &identity, &version, shape, fields)
     .map_err(|error| invalid_input(error, &request_id))?;
   let schema = application
     .factory
@@ -15,7 +28,10 @@ pub(super) async fn validate_factory_flow_data_schema(
     .handle_authorized_query(&context, query)
     .await
     .map_err(|error| authorized_handler_error(error, &request_id))?;
-  Ok(Json(super::factory_schema_wire::schema(encode(schema, &request_id)?)))
+  Ok((
+    [(axum::http::header::CACHE_CONTROL, "no-store")],
+    Json(super::factory_schema_wire::schema(encode(schema, &request_id)?)),
+  ))
 }
 pub(super) async fn confirm_factory_node_operation(
   State(application): State<Arc<ManagementApplication>>,

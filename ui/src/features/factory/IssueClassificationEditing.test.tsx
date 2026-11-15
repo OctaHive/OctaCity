@@ -6,7 +6,7 @@ import userEvent from '@testing-library/user-event';
 import { afterEach, expect, it, vi } from 'vitest';
 import type { components } from '../../../.generated/api/schema';
 import { createConsoleQueryClient } from '../../app/query';
-import { configurationFixture } from '../../../tests/fixtures/factory';
+import { authoredSchemaShape, configurationFixture } from '../../../tests/fixtures/factory';
 import { factoryIssueFieldsFixture } from '../../../tests/fixtures/factoryIssueFields';
 import { factoryApi, type FactoryApi } from './api';
 import { emptyFlowDraft } from './emptyFlowDraft';
@@ -82,7 +82,7 @@ it.each(['producer', 'outcome', 'writer'] as const)(
                   version: body.version,
                   digest: 'c'.repeat(64),
                 },
-                shape: body.shape,
+                shape: authoredSchemaShape(body),
               });
           }),
       ),

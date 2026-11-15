@@ -1,6 +1,7 @@
 import type { components } from '../../../.generated/api/schema';
 import { FACTORY_AUTHORING_SCHEMAS } from '../../../.generated/api/factory-authoring';
 import { sourceReferenceKey } from '../../shared/sourceReferences';
+import { classificationFields, sameIssueFieldTarget } from './issueFields';
 
 type S = components['schemas'];
 export const classificationAction = 'apply_issue_classification';
@@ -103,32 +104,30 @@ export function matchesClassification(
       'size_labels' in parameters
     )
       return false;
-    const values = Object.entries(selected);
-    const booleans = Object.entries(available).filter(([, value]) => typeof value === 'boolean');
     if (
-      values.length !== booleans.length + 2 ||
+      Object.keys(selected).length !== 3 ||
+      !('project_id' in selected) ||
+      selected.project_id !== available.project_id ||
       !('definition_version' in selected) ||
       selected.definition_version !== fields.definition_version ||
-      !('properties' in selected) ||
-      !selected.properties ||
-      typeof selected.properties !== 'object' ||
-      Array.isArray(selected.properties)
+      !('fields' in selected) ||
+      !Array.isArray(selected.fields) ||
+      selected.fields.length === 0
     )
       return false;
-    const entries = Object.entries(selected.properties);
-    return (
-      booleans.every(([key, supported]) =>
-        values.some(
-          ([name, value]) => name === key && typeof value === 'boolean' && (!value || supported),
-        ),
-      ) &&
-      entries.every(([slot, id]) =>
-        Object.entries(available.properties).some(
-          ([name, target]) => name === slot && target === id,
-        ),
-      ) &&
-      (entries.length > 0 || values.some(([, value]) => value === true))
-    );
+    const targets = classificationFields(fields);
+    const keys = selected.fields.map((value: unknown) => {
+      if (
+        !value ||
+        typeof value !== 'object' ||
+        !('field' in value) ||
+        Object.keys(value).some((key) => key !== 'field' && key !== 'required') ||
+        ('required' in value && typeof value.required !== 'boolean')
+      )
+        return null;
+      return targets.find(({ target }) => sameIssueFieldTarget(target, value.field))?.name ?? null;
+    });
+    return keys.every((key) => key !== null) && new Set(keys).size === keys.length;
   }
   if (
     !('size_labels' in parameters) ||

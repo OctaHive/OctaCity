@@ -42,7 +42,9 @@
     "ready": "protected_tests",
     "verified_candidate": null
   },
-  "without_pools": ["protected_tests"],
+  "without_pools": [
+    "protected_tests"
+  ],
   "parts": [
     "presets/ticket-delivery/assignments-v1.json",
     "flows/base-flow/schemas/artifact_reference.json",
@@ -92,6 +94,7 @@
     "presets/ticket-delivery/implementation-capture-gate-v1.json",
     "presets/ticket-delivery/agent-result-gates-v1.json",
     "presets/ticket-delivery/development-v1.json",
-    "presets/ticket-delivery/pull-request-v1.json"
+    "presets/ticket-delivery/pull-request-v1.json",
+    "presets/ticket-delivery/predecessor-route-v1.json"
   ]
 }

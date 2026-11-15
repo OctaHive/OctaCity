@@ -97,6 +97,7 @@ export function classifiedSnapshotFixture(projectId = 'delivery') {
         run_id: '44000000-0000-4000-8000-000000000001',
         work_id: '45000000-0000-4000-8000-000000000001',
         record: 'a'.repeat(64),
+        form: 'c'.repeat(64),
         operation_id: 'b'.repeat(64),
         policy: 'triage',
       },

@@ -48,6 +48,9 @@ pub struct FactoryPresetEditor {
   /// Release-owned snapshot aliases; shapes and active choices come from the Project catalog.
   #[serde(skip_serializing_if = "std::collections::BTreeMap::is_empty")]
   pub issue_snapshot_fields: std::collections::BTreeMap<FactoryKey, FlowIssueFieldSource>,
+  /// Configured condition identities and their Project-backed ordered choice fields.
+  #[serde(skip_serializing_if = "std::collections::BTreeMap::is_empty")]
+  pub choice_thresholds: std::collections::BTreeMap<FactoryKey, FlowIssueFieldSource>,
 }
 /// One independently reviewed executor selection.
 #[derive(Clone, Debug, Serialize)]
@@ -99,8 +102,10 @@ pub enum FactoryPresetParameterKind {
   AcceptedPredecessor,
   /// Project field contract used instead of a producing Flow result.
   IssueSnapshot,
-  /// Explicit threshold in the ordered Project size catalog.
-  IssueSizeThreshold,
+  /// Explicit inclusive threshold in the configured Project choice order.
+  ChoiceThreshold,
+  /// One Project-derived form selecting result fields and the permitted Issue write set.
+  IssueFields,
 }
 /// Ordinary bounded discovery envelope, without private profile content or installation paths.
 #[derive(Clone, Debug, Serialize)]
@@ -152,6 +157,9 @@ pub struct FactoryPresetResolutionRequest {
   /// Exact Project definitions and reviewed scheduling policy for the Issue-based example.
   #[serde(default)]
   pub issue_snapshot: Option<FactoryPresetIssueSnapshotSelection>,
+  /// Overrides of template field sets, keyed by ordinary node identity; no source-path mapping.
+  #[serde(default)]
+  pub issue_fields: std::collections::BTreeMap<FactoryKey, octacity_server_store::IssueFieldForm>,
 }
 
 /// Project-owned types for the release's explicit classification selections.
@@ -163,10 +171,9 @@ pub struct FactoryPresetIssueSnapshotSelection {
   /// Reviewed conversion to Work scheduling/risk; omission is an unmet preset dependency.
   #[serde(default)]
   pub admission: Option<FlowIssueAdmissionPolicy>,
-  /// First active size requiring specifications; greater sizes follow the same route.
-  /// Omitted legacy requests retain only the original compatible three-size policy.
+  /// First active choice for each declared condition; there is no omitted-default fallback.
   #[serde(default)]
-  pub specification_from_size: Option<String>,
+  pub choice_thresholds: std::collections::BTreeMap<FactoryKey, String>,
 }
 
 /// Ordinary command definition, independent of a particular stage alias.

@@ -110,8 +110,8 @@ class FactoryStandPoliciesTests(unittest.TestCase):
         self.assertEqual(self.client.get(self.base + '/defaults')['defaults'], original_defaults)
 
     def test_installer_upgrades_only_its_original_triage_permissions_and_retains_history(self):
-        writer = {'identity': 'stand.issue-classification', 'version': 'v1',
-            'digest': hashlib.sha256(b'stand.issue-classification').hexdigest()}
+        writer = {'identity': 'stand.issue-fields', 'version': 'v1',
+            'digest': hashlib.sha256(b'stand.issue-fields').hexdigest()}
         original = copy.deepcopy(self.client.access)
         triage.provision_project_policies(self.client, self.project, self.namespace, self.catalog)
         previous = copy.deepcopy(self.client.defaults)
@@ -151,3 +151,16 @@ class FactoryStandPoliciesTests(unittest.TestCase):
         delivery.provision_access_profile(self.client, self.project, self.namespace, self.catalog)
         self.assertEqual(self.client.get(self.base), before)
         self.assertEqual(self.client.get(self.base + '/defaults'), defaults)
+
+class CommonIssueWriterCeilingTests(unittest.TestCase):
+    def test_common_writer_cannot_expand_an_existing_reviewed_project_ceiling(self):
+        project = str(uuid.uuid4())
+        catalog = {"projects": [{"project_id": project, "references": [{
+            "kind": "permission_ceiling", "alias": triage._INSTALLED_ACCESS_DEFAULT,
+            "reference": {"identity": "reviewed", "version": "v1", "digest": "a" * 64},
+            "metadata": {"permission_declarations": {"plugins": []}},
+        }]}]}
+        original = copy.deepcopy(catalog)
+        with self.assertRaisesRegex(ValueError, "reviewed Project ceiling"):
+            triage.install_issue_classification(catalog, project)
+        self.assertEqual(catalog, original, "installation must not invent a wider ceiling or legacy alias")

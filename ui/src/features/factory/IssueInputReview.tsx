@@ -2,6 +2,7 @@ import type { components } from '../../../.generated/api/schema';
 import { usePresentation } from '../../app/presentation/PresentationProvider';
 import {
   classificationFields,
+  sameIssueFieldTarget,
   issueFieldLabel,
   type IssueFieldChoices,
 } from './IssueFieldContracts';
@@ -45,13 +46,17 @@ export function TypedClassificationReview({
       <p>{t('planning.definition', { version: choices.definition_version })}</p>
       <ul>
         {classificationFields(choices)
-          .filter(({ name, field }) =>
-            field.source.kind === 'classification'
-              ? 'properties' in selected &&
-                !!selected.properties &&
-                typeof selected.properties === 'object' &&
-                Object.keys(selected.properties).includes(name)
-              : Object.entries(selected).some(([key, value]) => key === name && value === true),
+          .filter(
+            ({ target }) =>
+              'fields' in selected &&
+              Array.isArray(selected.fields) &&
+              selected.fields.some(
+                (item: unknown) =>
+                  !!item &&
+                  typeof item === 'object' &&
+                  'field' in item &&
+                  sameIssueFieldTarget(target, item.field),
+              ),
           )
           .map(({ name, field }) => (
             <li key={name}>{issueFieldLabel(field, t)}</li>

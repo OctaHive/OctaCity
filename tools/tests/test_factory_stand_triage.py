@@ -28,6 +28,16 @@ import factory_local_stand as stand
 
 
 class FactoryStandTriageTests(unittest.TestCase):
+    def test_preparation_uses_the_configured_selected_field_completion_document(self):
+        import factory_triage_setup as setup
+        mapping = setup.preparation_mapping(str(uuid.uuid4()))
+        document = mapping["acceptance"]["value"]
+        self.assertEqual(document["preset"]["version"], "v3")
+        self.assertIn("selected Issue fields", document["content"])
+        self.assertIn("receipt", document["content"])
+        self.assertEqual(document["preset"]["digest"], hashlib.sha256(document["content"].encode()).hexdigest())
+        self.assertFalse(mapping["require_body"])
+
     @unittest.skipUnless(os.name == "posix", "private stand initialization requires POSIX ownership and modes")
     def test_guest_image_contains_only_the_public_ca_and_returns_the_verified_msb_identity(self):
         import factory_triage_setup as setup
@@ -156,8 +166,9 @@ class FactoryStandTriageTests(unittest.TestCase):
             try:
                 profiles = {"eligibility": {"profile": "reviewed-project"}, "classification": {"profile": "reviewed-analyst"}}
                 context = {"project_id": project, "goals": "frozen-goals", "rules": "frozen-rules", "documents": {}}
+                agent_permissions = {"network_hosts": []}
                 selection = setup.pipeline_selection(client, {"project": project, "repository": repository},
-                    profiles, context, {"id": connection, "version": 3}, namespace, {"network_hosts": []}, policy_defaults=defaults)
+                    profiles, context, {"id": connection, "version": 3}, namespace, agent_permissions, policy_defaults=defaults)
                 self.assertEqual(selection["profiles"], profiles)
                 self.assertEqual(selection["context"], {stage: context for stage in profiles})
                 self.assertEqual(selection["input"]["connection"], {"id": connection, "version": 3,
@@ -168,6 +179,8 @@ class FactoryStandTriageTests(unittest.TestCase):
                 self.assertIsNone(selection["input"]["reporter"])
                 self.assertEqual(selection["effects"], {})
                 self.assertEqual(selection["execution"]["budget"]["max_tokens"], 300000)
+                self.assertEqual(selection["execution"]["permissions"].get("plugins"), [setup._reference("stand.issue-fields")])
+                self.assertEqual(agent_permissions, {"network_hosts": []}, "local effects must not widen Agent permissions")
                 self.assertEqual(selection["configuration"], {
                     "admission_policy": {"project_policy": defaults["launch_policy"]},
                     "permission_ceiling": {"project_policy": defaults["access_profile"]},
@@ -236,11 +249,13 @@ class FactoryStandTriageTests(unittest.TestCase):
                 catalog = json.loads(Path(result["profiles"]).read_text())
                 writer, = catalog["issue_classification_actions"]
                 self.assertEqual(writer["principal"], "local-stand-gateway")
+                self.assertEqual(writer["identity"]["identity"], "stand.issue-fields",
+                    "the installed save capability must be usable by any agent pipeline")
                 capability, = [entry for entry in catalog["projects"][0]["references"]
                     if entry.get("metadata", {}).get("issue_classification")]
                 self.assertEqual(capability["reference"], writer["identity"])
                 self.assertEqual(capability["metadata"]["issue_classification"],
-                    {"policy": "triage", "size_labels": {}})
+                    {"policy": "issue-fields", "size_labels": {}})
                 access, = [entry for entry in catalog["projects"][0]["references"]
                     if entry["kind"] == "permission_ceiling"]
                 self.assertIn(writer["identity"], access["metadata"]["permission_declarations"]["plugins"])
@@ -382,6 +397,12 @@ class FactoryStandTriageTests(unittest.TestCase):
         self.assertNotIn("trigger", resources)
 
     def test_publishes_two_separate_reviewed_roles_without_inheriting_investigation_credentials(self):
+        self._assert_reviewed_role_scopes({})
+
+    def test_configured_agent_aliases_do_not_choose_their_permissions(self):
+        self._assert_reviewed_role_scopes({"eligibility": "investigate", "classification": "analyze"})
+
+    def _assert_reviewed_role_scopes(self, aliases):
         project, namespace = str(uuid.uuid4()), uuid.uuid4()
         base = f"/api/v1/projects/{project}"
         calls, reads = [], []
@@ -423,12 +444,20 @@ class FactoryStandTriageTests(unittest.TestCase):
             client = bootstrap.BootstrapClient(stand.BootstrapTransport(server.server_port),
                 bootstrap.RetryPolicy(attempts=1, timeout_seconds=2, initial_delay_seconds=0))
             try:
-                selections = stand.publish_triage_roles(client, project, namespace,
-                    runtime="reviewed-runtime", model_credential_profile="native-model")
-                first_calls = copy.deepcopy(calls)
-                self.assertEqual(stand.publish_triage_roles(client, project, namespace,
-                    runtime="reviewed-runtime", model_credential_profile="native-model"), selections)
-                self.assertEqual(calls[:len(first_calls)], calls[len(first_calls):], "restart replays exact publication intents")
+                original_seeds = json.loads((stand.launcher.REPOSITORY / "deployment/local-stand/factory-agents.json").read_text())
+                seeds = {aliases.get(name, name): seed for name, seed in original_seeds.items()}
+                with tempfile.TemporaryDirectory() as directory:
+                    repository = Path(directory)
+                    agents = repository / "deployment/local-stand/factory-agents.json"
+                    agents.parent.mkdir(parents=True)
+                    agents.write_text(json.dumps(seeds))
+                    with mock.patch.object(stand.launcher, "REPOSITORY", repository):
+                        selections = stand.publish_triage_roles(client, project, namespace,
+                            runtime="reviewed-runtime", model_credential_profile="native-model")
+                        first_calls = copy.deepcopy(calls)
+                        self.assertEqual(stand.publish_triage_roles(client, project, namespace,
+                            runtime="reviewed-runtime", model_credential_profile="native-model"), selections)
+                        self.assertEqual(calls[:len(first_calls)], calls[len(first_calls):], "restart replays exact publication intents")
             finally:
                 server.shutdown()
                 thread.join(timeout=2)
@@ -447,8 +476,8 @@ class FactoryStandTriageTests(unittest.TestCase):
         self.assertEqual(profiles[1]["execution"]["environment"], {"NO_PROXY": {"kind": "public", "value": "host.microsandbox.internal"}})
         self.assertEqual(profiles[1]["permissions"]["secret_profiles"], ["native-model"])
         self.assertEqual(capability["definition"]["permissions"]["secret_profiles"], ["native-model", "project-reader"])
-        self.assertNotEqual(selections["eligibility"]["role"]["id"], selections["classification"]["role"]["id"])
-        self.assertNotEqual(selections["eligibility"]["profile"]["id"], selections["classification"]["profile"]["id"])
+        self.assertNotEqual(selections[aliases.get("eligibility", "eligibility")]["role"]["id"], selections[aliases.get("classification", "classification")]["role"]["id"])
+        self.assertNotEqual(selections[aliases.get("eligibility", "eligibility")]["profile"]["id"], selections[aliases.get("classification", "classification")]["profile"]["id"])
         self.assertEqual({path for path, _, _ in first_calls}, {base + "/factory-role-publications", base + "/factory-role-profiles/validate"})
 
     @unittest.skipUnless(os.name == "posix", "private GitHub installation requires POSIX ownership")
@@ -627,7 +656,7 @@ class FactoryStandTriageTests(unittest.TestCase):
             self.assertFalse(root.exists())
 
     def test_publishes_the_resolved_two_stage_pipeline_without_starting_intake_or_work(self):
-        """The example is a common HTTP client; a preset service is deliberately absent."""
+        """The example delegates authoring to the common resolver and publishes only reviewed disabled drafts."""
         project, namespace = str(uuid.uuid4()), uuid.uuid4()
         base = f"/api/v1/projects/{project}"
         reference = lambda identity: {"project_id": project, "id": identity, "version": 1, "digest": "a" * 64}
@@ -661,13 +690,11 @@ class FactoryStandTriageTests(unittest.TestCase):
                 self.wfile.write(data)
             def do_GET(self):
                 reads.append(self.path)
-                if self.path == f"/api/v1/build-configurations/{worker_reference['id']}/versions/1":
-                    return self.reply({"definition": {"source": worker_source[0]}})
-                for item in profiles.values():
-                    if self.path == f"{base}/factory-role-profiles/{item['profile']['id']}/versions/1":
-                        return self.reply({"reference": item["profile"], "role": item["role"],
-                            "definition": {"budget": budget, "permissions": permissions, "build_configuration": worker_reference}})
-                self.reply({"error": "no preset service or other implicit dependency"}, 404)
+                if self.path == base + "/issue-property-definitions":
+                    return self.reply({"version": 1, "definition": {}})
+                if self.path == base + "/factory-presets":
+                    return self.reply({"items": [{"reference": {"identity": "triage", "version": "v4", "digest": "a" * 64}}]})
+                self.reply({"error": "no unreviewed dependency"}, 404)
             def do_POST(self):
                 body = json.loads(self.rfile.read(int(self.headers["Content-Length"])))
                 key = self.headers.get("Idempotency-Key")
@@ -682,15 +709,19 @@ class FactoryStandTriageTests(unittest.TestCase):
                                 "encoded_size": len(body["content"].encode())}
                     published["documents"][body["name"]] = artifact
                     result = {"project_id": project, "artifact": artifact}
-                elif self.path == "/api/v1/flow-data-schemas/validate":
-                    result = {"reference": {"identity": body["identity"], "version": body["version"], "digest": "e" * 64},
-                              "shape": body["shape"]}
-                elif self.path == base + "/factory-execution-bindings/resolve":
-                    result = {"build": {"result_outcome": body["result_outcome"], "server_binding": "exact-installed-compilation"},
-                              "incompatibility": None}
-                elif self.path == base + "/factory-gate-programs/validate":
-                    result = {"policy": {"identity": "server-normalized-gate", "version": "v1", "digest": "f" * 64},
-                              "parameters": body["program"]}
+                elif self.path == base + "/factory-presets/resolve":
+                    if worker_source[0] != {"kind": "source_free_v1"}:
+                        result = {"flow": None, "diagnostics": [{"path": "/profiles", "reason": "unavailable"}]}
+                    else:
+                        nodes = [{"key": stage, "task": ["Follow the protected result contract."],
+                            "profile_selection": {"role": entry["role"], "candidates": {"selected": {
+                                "build": {"server_binding": "exact-installed-compilation"}}}}}
+                            for stage, entry in body["profiles"].items()]
+                        nodes.append({"key": "eligibility_gate"})
+                        next(node for node in nodes if node["key"] == "classification")["outcomes"] = [
+                            {"key": "observed", "issue_fields": {"policy": "issue-fields"}}]
+                        result = {"diagnostics": [], "flow": {"root": {"nodes": nodes},
+                            "limits": {"budget": budget, "permissions": permissions}, "data_schemas": []}}
                 elif self.path == "/api/v1/flow-definitions/validate":
                     definition = body["definition"]
                     normalized[body["id"]] = {"closure": {"root": {"id": body["id"], "version": 1, "digest": "b" * 64}},
@@ -744,13 +775,13 @@ class FactoryStandTriageTests(unittest.TestCase):
                     retained_configuration=retained), receipt)
                 self.assertEqual([path for path, _, _ in calls[before:]],
                     [f"{base}/factory-source-inputs/{input_id}/versions"])
-                with self.assertRaisesRegex(ValueError, "source-free"):
+                with self.assertRaisesRegex(ValueError, "requires review"):
                     stand.publish_triage(client, project, selected, uuid.uuid4())
             finally:
                 server.shutdown()
                 worker.join(timeout=3)
         self.assertEqual(selected, original)
-        self.assertFalse(any("factory-presets" in path for path in reads))
+        self.assertTrue(any("factory-presets" in path for path in reads))
         self.assertEqual(len(published["flows"]), 1)
         self.assertEqual(len(published["configurations"]), 1)
         configuration = published["configurations"][receipt["configuration"]["id"]]
@@ -758,14 +789,13 @@ class FactoryStandTriageTests(unittest.TestCase):
             self.assertEqual(configuration[field], original["configuration"][field])
         flow = next(iter(published["flows"].values()))
         nodes = {node["key"]: node for node in flow["root"]["nodes"]}
-        self.assertEqual(set(nodes), {"eligibility", "eligibility_gate", "classification", "classification_gate"})
+        self.assertEqual(set(nodes), {"eligibility", "eligibility_gate", "classification"})
         for stage in profiles:
             assignment = "\n".join(nodes[stage]["task"])
-            self.assertIn("Example result:", assignment)
+            self.assertIn("protected result contract", assignment)
             self.assertEqual(nodes[stage]["profile_selection"]["candidates"]["selected"]["build"]["server_binding"], "exact-installed-compilation")
             self.assertEqual(nodes[stage]["profile_selection"]["role"], profiles[stage]["role"])
-        self.assertIn("duplicate", "\n".join(nodes["eligibility"]["task"]))
-        self.assertIn("priority_assessment", "\n".join(nodes["classification"]["task"]))
+        self.assertEqual(nodes["classification"]["outcomes"][0]["issue_fields"]["policy"], "issue-fields")
         self.assertEqual(receipt["configuration"]["id"], next(iter(published["configurations"])))
         self.assertEqual(receipt["input"], {"project_id": project, "id": input_id, "version": 1})
         self.assertFalse(published["inputs"][input_id]["definition"]["enabled"])

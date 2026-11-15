@@ -156,9 +156,12 @@ function ExampleBindings({
     sizeField?.shape.type === 'enum'
       ? sizeField.shape.values.filter((value): value is string => typeof value === 'string')
       : [];
+  const sizeCondition = Object.entries(editor.choice_thresholds ?? {}).find(
+    ([, source]) => source.kind === 'size',
+  )?.[0];
   const ready =
     snapshotReady &&
-    (!needs('issue_size_threshold') || sizes.includes(specificationFromSize)) &&
+    (!needs('choice_threshold') || (!!sizeCondition && sizes.includes(specificationFromSize))) &&
     (!needs('accepted_predecessor') || !!inputs.accepted_predecessor?.outcomes.length) &&
     (!needs('publication') || !!publisher) &&
     commandSteps.every(
@@ -210,8 +213,8 @@ function ExampleBindings({
                 issue_snapshot: {
                   definition_version: catalog.definition_version,
                   admission,
-                  ...(needs('issue_size_threshold')
-                    ? { specification_from_size: specificationFromSize }
+                  ...(needs('choice_threshold') && sizeCondition
+                    ? { choice_thresholds: { [sizeCondition]: specificationFromSize } }
                     : {}),
                 },
               }
@@ -267,7 +270,7 @@ function ExampleBindings({
             classification={catalog?.classification}
             onChange={setAdmission}
           />
-          {needs('issue_size_threshold') ? (
+          {needs('choice_threshold') ? (
             <>
               <SelectMenu
                 ariaLabel={t('factory.specificationFromSize')}

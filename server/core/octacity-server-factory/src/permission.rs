@@ -659,6 +659,22 @@ impl FactoryPermissionSet {
     Self::default()
   }
 
+  /// Adds one explicitly selected local capability, retaining every other grant and its bounds.
+  pub fn with_plugin(mut self, plugin: ImmutableReference) -> Result<Self, FactoryError> {
+    self.plugins = bounded_set(
+      self.plugins.into_iter().chain(std::iter::once(plugin)).collect(),
+      PermissionCategory::PluginIdentity,
+    )?;
+    Ok(self)
+  }
+
+  pub(crate) fn without_plugins<'a>(mut self, plugins: impl Iterator<Item = &'a ImmutableReference>) -> Self {
+    for plugin in plugins {
+      self.plugins.remove(plugin);
+    }
+    self
+  }
+
   /// Validates bounded grants and produces their canonical ordering.
   pub fn try_new(draft: FactoryPermissionDraft) -> Result<Self, FactoryError> {
     if draft.max_descendants > MAX_FACTORY_PROCESS_COUNT {

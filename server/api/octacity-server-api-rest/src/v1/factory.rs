@@ -70,18 +70,32 @@ pub struct FactoryConfigurationDetails {
   pub pool_policy_digests: std::collections::BTreeMap<String, String>,
 }
 
-/// Non-mutating authoring request; the server computes canonical schema provenance.
+/// Non-mutating authoring request with exactly one source; unknown fields are rejected.
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
-#[serde(deny_unknown_fields)]
-pub struct ValidateFactoryFlowDataSchemaRequest {
-  /// Owning visible Project.
-  pub project_id: String,
-  /// Logical schema name.
-  pub identity: String,
-  /// Explicit schema version.
-  pub version: String,
-  /// Closed bounded data grammar documented by FactoryFlowValueSchema.
-  pub shape: serde_json::Value,
+#[serde(untagged, deny_unknown_fields)]
+pub enum ValidateFactoryFlowDataSchemaRequest {
+  /// Ordinary free-form data grammar, without a caller-computed digest.
+  Shape {
+    /// Owning visible Project.
+    project_id: String,
+    /// Logical schema name.
+    identity: String,
+    /// Explicit schema version.
+    version: String,
+    /// Closed bounded grammar documented by FactoryFlowValueSchema.
+    shape: serde_json::Value,
+  },
+  /// One Project selection generating the form and the permitted save set.
+  IssueFields {
+    /// Owning visible Project.
+    project_id: String,
+    /// Logical schema name.
+    identity: String,
+    /// Explicit schema version.
+    version: String,
+    /// Exact selected fields, without a separate shape or mapping.
+    issue_fields: serde_json::Value,
+  },
 }
 
 /// Durable publication result; an exact replay returns the original resource.

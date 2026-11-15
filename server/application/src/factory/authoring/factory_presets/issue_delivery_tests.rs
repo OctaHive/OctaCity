@@ -63,7 +63,7 @@ fn issue_delivery_requires_project_input_contract_instead_of_a_producer() {
   });
 }
 
-async fn properties(project: ProjectId) -> Arc<octacity_server_store::testing::InMemoryProjectStore> {
+pub(super) async fn properties(project: ProjectId) -> Arc<octacity_server_store::testing::InMemoryProjectStore> {
   use octacity_server_store::testing::{InMemoryProjectStore, management_mutation};
   use octacity_server_store::*;
   let store = Arc::new(InMemoryProjectStore::new());
@@ -111,7 +111,7 @@ async fn properties(project: ProjectId) -> Arc<octacity_server_store::testing::I
 fn issue_input() -> FactoryPresetIssueSnapshotSelection {
   FactoryPresetIssueSnapshotSelection {
     definition_version: 1,
-    specification_from_size: None,
+    choice_thresholds: [(key("requirements_needed"), "large".into())].into(),
     admission: Some(
       serde_json::from_value(serde_json::json!({
         "priority":{"field":"priority","values":{"blocker":100,"high":80,"medium":50,"low":20,"urgent_local":100}},
@@ -121,6 +121,134 @@ fn issue_input() -> FactoryPresetIssueSnapshotSelection {
       .unwrap(),
     ),
   }
+}
+
+#[test]
+fn template_discovery_and_resolution_require_the_configured_choice_threshold() {
+  run_ready(async {
+    let fixture = delivery_fixture().await;
+    let resolver = AuthorizedQueryHandler::new(
+      fixture.policy.clone(),
+      Arc::new(
+        FactoryPresetHandlers::new(fixture.store.clone(), fixture.policy.clone())
+          .with_repositories(fixture.reader.clone())
+          .with_issue_properties(properties(fixture.project).await),
+      ),
+    );
+    let page = resolver
+      .handle_query(
+        &fixture.context,
+        ListFactoryPresetsQuery {
+          page: CurrentDefinitionPageInput::try_new(fixture.project, None, 100).unwrap(),
+        },
+      )
+      .await
+      .unwrap();
+    let metadata = serde_json::to_value(
+      page
+        .items
+        .iter()
+        .find(|item| item.reference.identity() == &key("ticket-delivery") && item.reference.version() == &key("v2"))
+        .unwrap(),
+    )
+    .unwrap();
+    assert!(
+      metadata["parameters"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .any(|p| p["kind"] == "choice_threshold"
+          && p["path"] == "/issue_snapshot/choice_thresholds/requirements_needed"
+          && p["required"] == true)
+    );
+    assert_eq!(
+      metadata["editor"]["choice_thresholds"]["requirements_needed"],
+      serde_json::json!({"kind":"size"})
+    );
+    let mut selection = issue_selection(&fixture).await;
+    selection.issue_snapshot = Some(
+      serde_json::from_value(serde_json::json!({
+        "definition_version":1,"admission":issue_input().admission,"choice_thresholds":{}
+      }))
+      .unwrap(),
+    );
+    let result = resolver
+      .handle_query(
+        &fixture.context,
+        ResolveFactoryPresetQuery {
+          project_id: fixture.project,
+          selection,
+        },
+      )
+      .await
+      .unwrap();
+    assert!(result.flow.is_none());
+    assert_eq!(
+      result.diagnostics[0].path,
+      "/issue_snapshot/choice_thresholds/requirements_needed"
+    );
+  });
+}
+
+#[test]
+fn delivery_template_reads_configured_property_ids_without_classification_roles() {
+  run_ready(async {
+    let fixture = delivery_fixture().await;
+    let properties = properties(fixture.project).await;
+    let mut definition = properties
+      .issue_properties(fixture.project, None)
+      .await
+      .unwrap()
+      .definition;
+    definition.classification = Default::default();
+    properties
+      .publish_issue_properties(octacity_server_store::testing::management_mutation(
+        octacity_server_store::PublishIssueProperties {
+          intent: octacity_server_store::PublishIssuePropertiesIntent {
+            project_id: fixture.project,
+            expected_version: 1,
+            definition,
+          },
+          idempotency_key: "direct-delivery-fields".parse().unwrap(),
+          published_at: Timestamp::from_unix_millis(2).unwrap(),
+        },
+      ))
+      .await
+      .unwrap();
+    let mut selection = issue_selection(&fixture).await;
+    let mut input = issue_input();
+    input.definition_version = 2;
+    selection.issue_snapshot = Some(input);
+    let result = AuthorizedQueryHandler::new(
+      fixture.policy.clone(),
+      Arc::new(
+        FactoryPresetHandlers::new(fixture.store.clone(), fixture.policy.clone())
+          .with_repositories(fixture.reader.clone())
+          .with_issue_properties(properties.clone()),
+      ),
+    )
+    .handle_query(
+      &fixture.context,
+      ResolveFactoryPresetQuery {
+        project_id: fixture.project,
+        selection,
+      },
+    )
+    .await
+    .unwrap();
+    assert!(result.diagnostics.is_empty(), "{:?}", result.diagnostics);
+    let input = result.flow.unwrap().issue_snapshot.unwrap();
+    assert_eq!(
+      input.fields[&key("severity")].source,
+      FlowIssueFieldSource::Property { id: "impact".into() }
+    );
+    assert_eq!(
+      input.fields[&key("risk")].source,
+      FlowIssueFieldSource::Property { id: "risk".into() }
+    );
+    assert!(!result.configuration.unwrap().enabled);
+    assert!(result.input.is_none());
+  });
 }
 
 #[test]
@@ -162,7 +290,9 @@ fn issue_delivery_custom_sizes_require_an_active_explicit_threshold() {
       let mut selection = issue_selection(&fixture).await;
       let mut input = issue_input();
       input.definition_version = 2;
-      input.specification_from_size = threshold.map(str::to_owned);
+      input.choice_thresholds = threshold
+        .map(|threshold| [(key("requirements_needed"), threshold.to_owned())].into())
+        .unwrap_or_default();
       selection.issue_snapshot = Some(input);
       let result = resolver
         .handle_query(
@@ -177,7 +307,7 @@ fn issue_delivery_custom_sizes_require_an_active_explicit_threshold() {
       assert!(result.flow.is_none());
       assert_eq!(
         result.diagnostics.iter().map(|d| d.path.as_str()).collect::<Vec<_>>(),
-        ["/issue_snapshot/specification_from_size"]
+        ["/issue_snapshot/choice_thresholds/requirements_needed"]
       );
     }
     assert_eq!(issues.mutation_evidence_counts().await, before);
@@ -643,7 +773,7 @@ fn issue_delivery_preserves_installed_executor_publication_and_access_checks() {
 }
 
 #[test]
-fn issue_delivery_reports_the_project_semantic_binding_that_is_unavailable() {
+fn issue_delivery_reports_the_configured_project_property_that_is_unavailable() {
   run_ready(async {
     use octacity_server_store::testing::management_mutation;
     use octacity_server_store::{IssuePropertyStore, PublishIssueProperties, PublishIssuePropertiesIntent};
@@ -654,7 +784,13 @@ fn issue_delivery_reports_the_project_semantic_binding_that_is_unavailable() {
       .await
       .unwrap()
       .definition;
-    definition.classification.reproducibility = None;
+    definition.classification = Default::default();
+    definition
+      .properties
+      .iter_mut()
+      .find(|property| property.id == "repro")
+      .unwrap()
+      .retired = true;
     properties
       .publish_issue_properties(management_mutation(PublishIssueProperties {
         intent: PublishIssuePropertiesIntent {

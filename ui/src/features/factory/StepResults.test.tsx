@@ -5,7 +5,7 @@ import { QueryClientProvider } from '@tanstack/react-query';
 import userEvent from '@testing-library/user-event';
 import { useState } from 'react';
 import { afterEach, expect, it, vi } from 'vitest';
-import { configurationFixture } from '../../../tests/fixtures/factory';
+import { authoredSchemaShape, configurationFixture } from '../../../tests/fixtures/factory';
 import { createConsoleQueryClient } from '../../app/query';
 import { factoryApi, type FactoryApi } from './api';
 import { StepResults, type ResultDraft } from './StepResults';
@@ -187,7 +187,7 @@ it('shows the step result fields and edits their format without replacing an exi
   let formats = [original] as typeof flow.data_schemas;
   const normalizeSchema = vi.fn<FactoryApi['normalizeSchema']>(async (body) => ({
     reference: { identity: body.identity, version: body.version, digest: 'b'.repeat(64) },
-    shape: body.shape,
+    shape: authoredSchemaShape(body),
   }));
   function Harness() {
     const [node, setNode] = useState(saved);
@@ -217,7 +217,7 @@ it('shows the step result fields and edits their format without replacing an exi
   await userEvent.click(screen.getByRole('button', { name: 'Add field' }));
   await userEvent.type(screen.getAllByRole('textbox', { name: 'Field name' })[1]!, 'fits');
   await userEvent.click(screen.getByRole('button', { name: 'Save result' }));
-  expect(normalizeSchema.mock.calls[0]?.[0].shape).toEqual({
+  expect(authoredSchemaShape(normalizeSchema.mock.calls[0]?.[0])).toEqual({
     type: 'object',
     fields: {
       summary: original.shape.fields.summary,

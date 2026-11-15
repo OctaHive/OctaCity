@@ -33,6 +33,9 @@ pub struct FlowTemplateOutcome {
   /// Optional Issue display binding resolved against the same outcome schema.
   #[serde(default, skip_serializing_if = "Option::is_none")]
   pub issue_presentation: Option<FlowIssuePresentation>,
+  /// Same reviewed form and automatic save binding as an ordinary published outcome.
+  #[serde(default, skip_serializing_if = "Option::is_none")]
+  pub issue_fields: Option<FlowIssueFieldWrite>,
 }
 /// An inline policy or explicit local choice resolved before immutable publication.
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
@@ -213,7 +216,8 @@ impl FlowDefinitionTemplate {
               Ok(
                 FlowOutcomeDefinition::new(outcome.key.clone(), outcome.kind, resolve(&outcome.schema)?)
                   .with_public_result(outcome.public_result)
-                  .with_issue_presentation(outcome.issue_presentation.clone()),
+                  .with_issue_presentation(outcome.issue_presentation.clone())
+                  .with_issue_fields(outcome.issue_fields.clone()),
               )
             })
             .collect::<Result<Vec<_>, FactoryError>>()?,

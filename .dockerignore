@@ -144,6 +144,16 @@ config/factory/presets/ticket-delivery/*
 !config/factory/presets/ticket-delivery/issue-summary-v2.json
 !config/factory/presets/ticket-delivery/requirements-branch-v2.json
 !config/factory/presets/ticket-delivery/requirements-approval-v2.json
+!config/factory/presets/triage/v4.json
+!config/factory/presets/triage/inputs-v3.json
+!config/factory/presets/triage/selected-fields-v1.json
+!config/factory/presets/triage/assignments-v4.json
+!config/factory/presets/triage/parameters-v1.json
+!config/factory/presets/triage/completion-v3.json
+!config/factory/presets/ticket-delivery/setup-v1.json
+!config/factory/presets/ticket-delivery/parameters-v1.json
+!config/factory/presets/ticket-delivery/predecessor-route-v1.json
+!config/factory/presets/ticket-delivery/issue-route-v1.json
 !config/factory/flows/
 config/factory/flows/*
 !config/factory/flows/base-flow/

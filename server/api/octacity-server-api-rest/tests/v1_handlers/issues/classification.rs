@@ -66,7 +66,7 @@ async fn issue_http_classification_reads_need_no_private_producer_and_recheck_is
   retained.version = retained.version.next().unwrap();
   retained.classification.fields[0].origin = serde_json::from_value(serde_json::json!({"kind":"pipeline",
     "actor":{"kind":"unauthenticated_management","identity":null},"work_id":"60000000-0000-4000-8000-000000000002",
-    "run_id":"60000000-0000-4000-8000-000000000003","record":"ab".repeat(32),"policy":"triage","operation_id":"cd".repeat(32)})).unwrap();
+    "run_id":"60000000-0000-4000-8000-000000000003","record":"ab".repeat(32),"form":"ee".repeat(32),"invocation":{"node":"analysis","attempt_id":"60000000-0000-4000-8000-000000000005","baseline":1},"policy":"triage","operation_id":"cd".repeat(32)})).unwrap();
   let origin = serde_json::to_value(&retained.classification.fields[0].origin).unwrap();
   let subject = serde_json::json!({"kind":"exact","value":{"project_id":PROJECT,"repository_id":"60000000-0000-4000-8000-000000000004","base_revision":"original-base"}});
   retained.classification.fields[0].inputs = serde_json::from_value(serde_json::json!({"subject":subject})).unwrap();

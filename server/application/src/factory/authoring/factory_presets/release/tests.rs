@@ -44,7 +44,7 @@ fn ticket_delivery_consumes_only_selected_fields_of_the_exact_published_triage_s
   use crate::factory_node_test_support::fixtures::key;
   use serde_json::json;
   let (mut template, _) = TICKET_DELIVERY.load().unwrap();
-  let (triage, _) = TRIAGE.load().unwrap();
+  let triage = TRIAGE.predecessor_fixture().unwrap();
   let triage = triage.data_schemas().unwrap().remove(&key("summary")).unwrap();
   let incompatible = FlowDataSchema::new(
     key("text-only"),
@@ -55,8 +55,10 @@ fn ticket_delivery_consumes_only_selected_fields_of_the_exact_published_triage_s
     },
   )
   .unwrap();
-  assert!(super::super::delivery::bind_predecessor(&mut template, &incompatible).is_err());
-  super::super::delivery::bind_predecessor(&mut template, &triage).unwrap();
+  let parameters = TICKET_DELIVERY.parameters().unwrap();
+  let incoming = parameters.incoming.as_ref().unwrap();
+  assert!(super::super::delivery::bind_predecessor(&mut template, &incompatible, incoming).is_err());
+  super::super::delivery::bind_predecessor(&mut template, &triage, incoming).unwrap();
   let entry = template.nodes.iter().find(|node| node.key == template.entry).unwrap();
   let requirements = template
     .nodes
@@ -148,8 +150,14 @@ fn ticket_delivery_publishes_exact_installed_commands_and_review_target_as_ordin
     review_url: true,
     permissions: Default::default(),
   };
-  let command_bindings =
-    super::super::delivery::bind_installed_steps(&mut template, &commands, &publication, &choice).unwrap();
+  let command_bindings = super::super::delivery::bind_installed_steps(
+    &mut template,
+    &commands,
+    &publication,
+    &choice,
+    TICKET_DELIVERY.parameters().unwrap().publication.as_ref().unwrap(),
+  )
+  .unwrap();
   let implementation = template
     .nodes
     .iter_mut()

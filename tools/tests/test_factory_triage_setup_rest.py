@@ -50,6 +50,11 @@ def server(root, installation, binary, environment, database, profiles=None, rea
     text = text.replace('/run/octacity-secrets/', str(private) + '/')
     text = text.replace('/run/octacity/job-spec-policy.json', str(Path(configured["job_spec_policy"])))
     text = text.replace(stand.initializer.gateway_origin("objects.localhost"), environment["OCTACITY_MINIO_ENDPOINT"])
+    if profiles is not None:
+        # Match the ordinary stand's verified local save authority without
+        # installing an external provider or activating its consumers.
+        text += (f'\n[integration_management]\nsocket_path = "{offline / "management.sock"}"\n'
+                 f'peer_uid = {os.getuid()}\nprincipal = "{triage.MANAGEMENT_PRINCIPAL}"\n')
     config = offline / "server.toml"
     config.write_text(text)
     config.chmod(0o600)
@@ -94,7 +99,7 @@ class FactoryTriageSetupRestTests(unittest.TestCase):
         psql = ["docker", "exec", postgres, "psql", "-U", user, "-d", "postgres", "-v", "ON_ERROR_STOP=1", "-c"]
         subprocess.run([*psql, f'CREATE DATABASE "{database}"'], check=True, capture_output=True)
         try:
-            with tempfile.TemporaryDirectory(prefix="oc84-triage-rest-") as temporary:
+            with tempfile.TemporaryDirectory(prefix="oc-rest-", dir="/tmp") as temporary:
                 base = Path(temporary).resolve()
                 root = base / "stand"
                 stand.initializer.initialize(root)
@@ -165,10 +170,12 @@ class FactoryTriageSetupRestTests(unittest.TestCase):
                     defaults = provisioned["defaults"]
                     launch, access = defaults["launch_policy"], defaults["access_profile"]
                     self.assertEqual(len(client.get(policies)["items"]), 2)
+                    permissions = copy.deepcopy(settings["permissions"])
+                    permissions["plugins"].append(triage._reference(json.loads(triage.POLICY.read_text())["issue_field_writer"]["identity"]))
                     selected = {"profiles": profiles, "context": {stage: context for stage in profiles},
                         "repository": {"project_id": project, "id": resources["repository"], "version": 1,
                             "definition_digest": repository["definition_digest"]},
-                        "execution": {"budget": budget, "permissions": settings["permissions"], "max_active_nodes": 1},
+                        "execution": {"budget": budget, "permissions": permissions, "max_active_nodes": 1},
                         "configuration": {"admission_policy": {"project_policy": launch}, "permission_ceiling": {"project_policy": access},
                             "wip_limits": {"max_active_runs": 1, "max_active_nodes": 1}, "hard_budget": budget}, "effects": {}}
                     published = stand.publish_triage(client, project, selected, namespace)
@@ -191,10 +198,17 @@ class FactoryTriageSetupRestTests(unittest.TestCase):
                     process = flow["flow"]["closure"]["definitions"][0].get("process") or {}
                     self.assertEqual(set(process.get("criteria", {}).get("recipients", [])), {"eligibility", "classification"})
                     for stage in profiles:
-                        self.assertIn("Example result:", "\n".join(nodes[stage]["task"]))
+                        self.assertTrue(nodes[stage]["task"])
                         self.assertEqual(nodes[stage]["code"], {"kind": "none"})
                         retained = client.get(f"/api/v1/projects/{project}/factory-role-profiles/{profiles[stage]['profile']['id']}")
                         self.assertEqual(retained["definition"]["toolchain"]["model"]["identity"], "gpt-6.1-sol")
+                    self.assertEqual(set(nodes), {"eligibility", "eligibility_gate", "classification"})
+                    outcome = nodes["classification"]["outcomes"][0]
+                    form = outcome["issue_fields"]["form"]
+                    self.assertEqual(form["definition_version"], 1)
+                    self.assertEqual(len(form["fields"]), 8)
+                    definitions = client.get(f"/api/v1/projects/{project}/issue-property-definitions")
+                    self.assertNotIn("classification", definitions["definition"], "ordinary Project fields need no classification-role configuration")
                     analyst = client.get(f"/api/v1/projects/{project}/factory-role-profiles/{profiles['classification']['profile']['id']}")
                     self.assertEqual(analyst["definition"]["execution"].get("mcp_servers", {}), {})
                     original = client.get(f"/api/v1/projects/{project}/input-documents/{context['goals']['artifact_id']}")

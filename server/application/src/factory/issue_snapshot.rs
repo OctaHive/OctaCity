@@ -24,10 +24,10 @@ pub(crate) async fn current_catalog(
       &query.management_resource().map_err(|_| ApplicationError::invalid())?,
     )
     .await;
-  let Ok(grant) = grant else { return Ok(None) };
-  if crate::factory::profiles::factory_role_profiles::require_project_visibility(&grant, project).is_err() {
-    return Ok(None);
-  }
+  // A missing optional catalog is availability; a revoked owner is an error.
+  // Do not let callers return partially resolved metadata after an awaited read.
+  let grant = grant.map_err(|_| ApplicationError::invalid())?;
+  crate::factory::profiles::factory_role_profiles::require_project_visibility(&grant, project)?;
   properties
     .issue_properties(project, None)
     .await

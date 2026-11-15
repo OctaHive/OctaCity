@@ -94,6 +94,7 @@
     "presets/ticket-delivery/implementation-capture-gate-v1.json",
     "presets/ticket-delivery/agent-result-gates-v1.json",
     "presets/ticket-delivery/development-v1.json",
-    "presets/ticket-delivery/pull-request-v1.json"
+    "presets/ticket-delivery/pull-request-v1.json",
+    "presets/ticket-delivery/issue-route-v1.json"
   ]
 }

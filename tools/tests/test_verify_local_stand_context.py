@@ -87,6 +87,17 @@ class LocalStandContextTests(unittest.TestCase):
                 immutable["native"][role]["sha256"] = digest
         return immutable
 
+    def test_configured_field_templates_and_setup_metadata_survive_filtering(self):
+        rules = VERIFY.validate_dockerignore(REPOSITORY / ".dockerignore")
+        for path in (
+            "triage/v4.json", "triage/inputs-v3.json", "triage/selected-fields-v1.json",
+            "triage/assignments-v4.json", "triage/parameters-v1.json", "triage/completion-v3.json",
+            "ticket-delivery/setup-v1.json", "ticket-delivery/parameters-v1.json",
+            "ticket-delivery/predecessor-route-v1.json", "ticket-delivery/issue-route-v1.json",
+        ):
+            with self.subTest(path=path):
+                self.assertTrue(VERIFY.docker_path_included("config/factory/presets/" + path, rules))
+
     def test_repository_policy_is_valid(self):
         VERIFY.validate_repository(REPOSITORY)
 

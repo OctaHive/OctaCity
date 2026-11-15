@@ -3,7 +3,7 @@ import { cleanup, render, screen, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { useState } from 'react';
 import { afterEach, it, expect } from 'vitest';
-import { configurationFixture } from '../../../tests/fixtures/factory';
+import { authoredSchemaShape, configurationFixture } from '../../../tests/fixtures/factory';
 import { FlowBindings } from './FlowBindings';
 afterEach(cleanup);
 it('finds a manually named schema by name and version when connecting it to a step', async () => {
@@ -337,7 +337,7 @@ it('connects only selected result fields without asking for an input schema and 
         version: body.version,
         digest: String(requests.length).repeat(64),
       },
-      shape: body.shape,
+      shape: authoredSchemaShape(body),
     };
   };
   function Harness() {

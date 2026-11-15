@@ -1,111 +1,122 @@
-//! Compile the released Issue field selections through the existing Project type owner.
+//! Resolves configured snapshot fields, projections and choice conditions through common owners.
 use super::*;
 use octacity_server_store::PublishedIssueProperties;
 use std::collections::BTreeMap;
+
+const PARAMETERS: &[u8] = include_bytes!("../../../../../../config/factory/presets/ticket-delivery/parameters-v1.json");
+
+#[derive(serde::Deserialize)]
+#[serde(deny_unknown_fields)]
+struct Parameters {
+  fields: BTreeMap<FactoryKey, FlowIssueFieldSource>,
+  identity: FactoryKey,
+  version: FactoryKey,
+  source_alias: FactoryKey,
+  admission_schema: FactoryKey,
+  admission_allowed: Vec<FactoryKey>,
+  schema_fields: BTreeMap<FactoryKey, Vec<FactoryKey>>,
+  inputs: BTreeMap<FactoryKey, FlowDataMapping>,
+  choice_condition: ChoiceCondition,
+}
+#[derive(serde::Deserialize)]
+#[serde(deny_unknown_fields)]
+struct ChoiceCondition {
+  node: FactoryKey,
+  field: FactoryKey,
+  path: String,
+  outcome: FactoryKey,
+  fallback: FactoryKey,
+  output: FlowDataMapping,
+}
+fn parameters() -> Result<Parameters, String> {
+  serde_json::from_slice(PARAMETERS).map_err(|_| "/issue_snapshot".to_owned())
+}
 
 pub(super) fn bind(
   template: &mut FlowDefinitionTemplate,
   selection: &FactoryPresetIssueSnapshotSelection,
   catalog: &PublishedIssueProperties,
 ) -> Result<FlowIssueSnapshotInput, String> {
-  let key = |value: &str| FactoryKey::new(value).expect("release key");
+  let config = parameters()?;
   let invalid_admission = || "/issue_snapshot/admission".to_owned();
   let admission = selection.admission.as_ref().ok_or_else(invalid_admission)?;
-  let kinds = admission
-    .allowed
-    .get(&key("work_kind"))
-    .filter(|kinds| !kinds.is_empty())
-    .ok_or_else(invalid_admission)?;
-  let route = template
+  let source = template
     .schemas
-    .get(&key("reproduction_route"))
+    .get(&config.admission_schema)
     .ok_or_else(invalid_admission)?;
-  let FlowValueSchema::Object { fields: route } = &route.shape else {
+  let FlowValueSchema::Object { fields: declared } = &source.shape else {
     return Err(invalid_admission());
   };
-  let supported = route.get(&key("work_kind")).ok_or_else(invalid_admission)?;
-  if kinds
-    .iter()
-    .any(|kind| !supported.value().accepts_value(&serde_json::json!(kind)))
-  {
-    return Err(invalid_admission());
+  for field in &config.admission_allowed {
+    let values = admission
+      .allowed
+      .get(field)
+      .filter(|v| !v.is_empty())
+      .ok_or_else(invalid_admission)?;
+    let shape = declared.get(field).ok_or_else(invalid_admission)?;
+    if values
+      .iter()
+      .any(|value| !shape.value().accepts_value(&serde_json::json!(value)))
+    {
+      return Err(invalid_admission());
+    }
   }
   let mut fields = BTreeMap::new();
   let mut shapes = BTreeMap::new();
-  for (alias, source) in field_sources() {
-    let selected = FlowIssueFieldSelection { source, required: true };
+  for (alias, source) in &config.fields {
+    let selected = FlowIssueFieldSelection {
+      source: source.clone(),
+      required: true,
+    };
     let shape = crate::factory::issue_snapshot::field_shape(&selected, catalog)
       .ok_or_else(|| format!("/issue_snapshot/fields/{alias}"))?;
     fields.insert(alias.clone(), selected);
-    shapes.insert(alias, FlowFieldSchema::required(shape));
+    shapes.insert(alias.clone(), FlowFieldSchema::required(shape));
   }
-  bind_size_threshold(template, selection.specification_from_size.as_deref(), catalog)?;
+  bind_choice_condition(template, &selection.choice_thresholds, catalog, &config)?;
+  let invalid = || "/issue_snapshot/schema".to_owned();
   let schema = FlowDataSchema::new(
-    key("factory.ticket-delivery.issue-input"),
-    key("v2"),
+    config.identity.clone(),
+    config.version.clone(),
     FlowValueSchema::Object { fields: shapes.clone() },
   )
-  .map_err(|_| "/issue_snapshot/schema".to_owned())?;
-  let invalid = || "/issue_snapshot/schema".to_owned();
-  let summary = template.schemas.get_mut(&key("summary")).ok_or_else(invalid)?;
-  let FlowValueSchema::Object { fields: summary } = &mut summary.shape else {
-    return Err(invalid());
-  };
-  summary.extend(shapes.clone());
-  for alias in ["reproduction_route", "spec_handoff", "spec_gate_input"] {
-    let schema = template.schemas.get_mut(&key(alias)).ok_or_else(invalid)?;
+  .map_err(|_| invalid())?;
+  for (alias, selected) in &config.schema_fields {
+    let schema = template.schemas.get_mut(alias).ok_or_else(invalid)?;
     let FlowValueSchema::Object { fields } = &mut schema.shape else {
       return Err(invalid());
     };
-    for name in ["work_kind", "reproducibility"] {
-      if let Some(field) = fields.get_mut(&key(name)) {
-        let selected = &shapes[&key(name)];
-        if field != selected {
-          *field = selected.clone();
-          schema.version = key("v2");
-        }
+    for name in selected {
+      let Some(value) = shapes.get(name) else {
+        return Err(invalid());
+      };
+      if fields.get(name) != Some(value) {
+        fields.insert(name.clone(), value.clone());
+        schema.version = config.version.clone();
       }
     }
   }
-  let incoming = |mapping| {
-    FlowInputBinding::new(
+  for (name, mapping) in config.inputs {
+    let node = template
+      .nodes
+      .iter_mut()
+      .find(|node| node.key == name)
+      .ok_or_else(invalid)?;
+    node.input_binding = FlowInputBinding::new(
       [(
-        key("issue"),
+        config.source_alias.clone(),
         FlowInputSource::Incoming {
           schema: schema.reference().clone(),
           path: String::new(),
         },
       )]
       .into(),
-      FlowDataMapping::new(mapping).map_err(|_| invalid())?,
+      mapping,
     )
-    .map_err(|_| invalid())
-  };
-  let entry = template
-    .nodes
-    .iter_mut()
-    .find(|node| node.key == template.entry)
-    .ok_or_else(invalid)?;
-  entry.input_binding = incoming(FlowValueMapping::Object {
-    fields: ["work_kind", "reproducibility"]
-      .map(|name| {
-        (
-          key(name),
-          FlowValueMapping::Pointer {
-            path: format!("/issue/{name}"),
-          },
-        )
-      })
-      .into(),
-  })?;
-  template
-    .nodes
-    .iter_mut()
-    .find(|node| node.key == key("requirements_needed"))
-    .ok_or_else(invalid)?
-    .input_binding = incoming(FlowValueMapping::Pointer { path: "/issue".into() })?;
+    .map_err(|_| invalid())?;
+  }
   template.schemas.insert(
-    key("issue"),
+    config.source_alias,
     FlowTemplateSchema {
       identity: schema.reference().identity().clone(),
       version: schema.reference().version().clone(),
@@ -123,58 +134,51 @@ pub(super) fn bind(
   })
 }
 
-/// Compile the reviewed catalog order once; execution never consults mutable Project choices.
-fn bind_size_threshold(
+fn bind_choice_condition(
   template: &mut FlowDefinitionTemplate,
-  threshold: Option<&str>,
+  thresholds: &BTreeMap<FactoryKey, String>,
   catalog: &PublishedIssueProperties,
+  config: &Parameters,
 ) -> Result<(), String> {
-  let invalid = || "/issue_snapshot/specification_from_size".to_owned();
-  let sizes: Vec<_> = catalog.definition.sizes.iter().filter(|c| !c.retired).collect();
-  let Some(threshold) = threshold else {
-    return if sizes.iter().map(|c| c.id.as_str()).eq(["small", "medium", "large"]) {
-      Ok(())
-    } else {
-      Err(invalid())
-    };
-  };
-  let key = |value: &str| FactoryKey::new(value).expect("release key");
-  let rules = vec![FlowGateRule {
-    when: crate::issue_choice_threshold(catalog, &FlowIssueFieldSource::Size, "/size", threshold)
-      .map_err(|_| invalid())?,
-    outcome: key("specification"),
-  }];
-  let program = FlowGateProgram::new(rules, key("prepared"))
-    .and_then(|p| {
-      p.with_default_output_mapping(FlowDataMapping::new(FlowValueMapping::Pointer { path: String::new() })?)
-    })
-    .map_err(|_| invalid())?;
+  let condition = &config.choice_condition;
+  let invalid = || format!("/issue_snapshot/choice_thresholds/{}", condition.node);
+  if thresholds.keys().any(|node| node != &condition.node) {
+    return Err("/issue_snapshot/choice_thresholds".into());
+  }
+  let threshold = thresholds.get(&condition.node).ok_or_else(invalid)?;
+  let source = config.fields.get(&condition.field).ok_or_else(invalid)?;
+  let program = FlowGateProgram::new(
+    vec![FlowGateRule {
+      when: crate::issue_choice_threshold(catalog, source, &condition.path, threshold).map_err(|_| invalid())?,
+      outcome: condition.outcome.clone(),
+    }],
+    condition.fallback.clone(),
+  )
+  .and_then(|program| program.with_default_output_mapping(condition.output.clone()))
+  .map_err(|_| invalid())?;
   template
     .nodes
     .iter_mut()
-    .find(|n| n.key == key("requirements_needed"))
+    .find(|node| node.key == condition.node)
     .ok_or_else(invalid)?
     .gate = Some(program);
   Ok(())
 }
 
-/// Release-owned aliases and source semantics shared by discovery and resolution.
-/// Project definitions continue to own the actual choices and bounds.
+/// Discovery and resolution read the same configuration; Project definitions own value types.
 pub(super) fn field_sources() -> BTreeMap<FactoryKey, FlowIssueFieldSource> {
-  let key = |value: &str| FactoryKey::new(value).expect("release key");
-  let semantic = |slot| FlowIssueFieldSource::Classification { slot: key(slot) };
-  [
-    ("priority", FlowIssueFieldSource::Priority),
-    ("component", FlowIssueFieldSource::Component),
-    ("work_kind", FlowIssueFieldSource::Type),
-    ("size", FlowIssueFieldSource::Size),
-    ("dependencies", FlowIssueFieldSource::Dependencies),
-    ("risk", semantic("risk")),
-    ("severity", semantic("severity")),
-    ("recommended_route", semantic("recommended_route")),
-    ("reproducibility", semantic("reproducibility")),
-  ]
-  .into_iter()
-  .map(|(alias, source)| (key(alias), source))
-  .collect()
+  parameters().expect("bundled snapshot parameters").fields
+}
+
+pub(super) fn content() -> serde_json::Value {
+  serde_json::from_slice(PARAMETERS).expect("bundled snapshot parameters")
+}
+
+pub(super) fn thresholds() -> BTreeMap<FactoryKey, FlowIssueFieldSource> {
+  let parameters = parameters().expect("bundled snapshot parameters");
+  [(
+    parameters.choice_condition.node,
+    parameters.fields[&parameters.choice_condition.field].clone(),
+  )]
+  .into()
 }

@@ -3,7 +3,7 @@ use super::*;
 #[tokio::test]
 async fn exact_configuration_repository_readiness_is_read_only_and_cannot_infer_execution_from_metadata() {
   use testing::MutationEvidenceProbe;
-  let (router, project, store) = preset_router();
+  let (router, project, store) = preset_router().await;
   let parameters = selected_parameters(&router, project, &store).await;
   let resolved = json(
     router
@@ -91,7 +91,7 @@ impl IssueArtifactReader for RetainedReadinessDocuments {
 }
 #[tokio::test]
 async fn readiness_observes_exact_declared_context_retention_and_expires_without_object_io() {
-  let (router, project, store) = preset_router();
+  let (router, project, store) = preset_router().await;
   let parameters = selected_parameters(&router, project, &store).await;
   let resolved = json(
     router
@@ -207,7 +207,7 @@ async fn published_target(enabled: bool) -> ReadinessPublishedTarget {
   published_target_with_runtime(enabled, PresetTestRuntime::Plain).await
 }
 async fn published_target_with_runtime(enabled: bool, runtime: PresetTestRuntime) -> ReadinessPublishedTarget {
-  let (router, project, store) = preset_router();
+  let (router, project, store) = preset_router().await;
   let parameters = selected_parameters_with_runtime(&router, project, &store, runtime).await;
   testing::qualify_readiness_pipeline(
     &store,
@@ -282,7 +282,7 @@ async fn readiness_rechecks_withdrawn_installation_instead_of_trusting_published
 
 #[tokio::test]
 async fn readiness_does_not_infer_scoped_mcp_authentication_or_capture_from_saved_settings() {
-  let (router, project, store) = preset_router();
+  let (router, project, store) = preset_router().await;
   let parameters = selected_parameters_with_runtime(&router, project, &store, PresetTestRuntime::Mcp(1)).await;
   let resolved = json(
     router
@@ -851,7 +851,7 @@ impl IssueArtifactReader for NoReadinessObjectReads {
 }
 #[tokio::test]
 async fn readiness_bounds_required_observations_and_dependency_work_without_truncating_to_ready() {
-  let (router, project, store) = preset_router();
+  let (router, project, store) = preset_router().await;
   let parameters = selected_parameters_with_runtime(&router, project, &store, PresetTestRuntime::Mcp(24)).await;
   let resolved = json(
     router
@@ -1003,7 +1003,7 @@ impl ManagementQueryUseCase<ListWorkSourceInputChoicesQuery> for ReadinessAction
 async fn readiness_checks_frozen_reporter_actions_without_an_optional_input() {
   let input = reviewed_input_selection();
   let (router, project, store) =
-    preset_router_with_input(Arc::new(TrustedNetworkManagementPolicy), None, Some(input.clone()));
+    preset_router_with_input(Arc::new(TrustedNetworkManagementPolicy), None, Some(input.clone())).await;
   let mut parameters = selected_parameters(&router, project, &store).await;
   let reporting = effect_parameters(project, &store, &mut parameters, &input).await;
   parameters["effects"] = serde_json::json!({"eligibility_gate":reporting});
@@ -1264,7 +1264,7 @@ async fn readiness_rejects_pipeline_shapes_that_the_selected_materializer_cannot
 
 #[tokio::test]
 async fn readiness_shared_pool_supports_many_required_profiles_within_the_observation_budget() {
-  let (router, project, store) = preset_router();
+  let (router, project, store) = preset_router().await;
   let parameters = selected_parameters(&router, project, &store).await;
   testing::qualify_readiness_pipeline(
     &store,

@@ -2,6 +2,94 @@ use crate::flow_test_support::*;
 use crate::*;
 
 #[test]
+fn local_issue_save_permission_is_not_exported_in_an_ordinary_build_intent() {
+  let work = work();
+  let writer = reference("controller.issue-fields");
+  let schema = FlowDataSchema::new(
+    key("priority.form"),
+    key("v1"),
+    FlowValueSchema::Object {
+      fields: [(
+        key("priority"),
+        FlowFieldSchema::required(FlowValueSchema::Enum {
+          values: ["blocker", "high", "medium", "low"]
+            .map(serde_json::Value::from)
+            .to_vec(),
+        }),
+      )]
+      .into(),
+    },
+  )
+  .unwrap();
+  let fields = FlowIssueFieldWrite {
+    writer: writer.clone(),
+    policy: key("selected-fields"),
+    form: IssueFieldForm {
+      project_id: work.subject().project_id(),
+      definition_version: 0,
+      fields: vec![IssueFormField {
+        field: IssueFieldTarget::Priority,
+        required: true,
+      }],
+    },
+  };
+  let (_, admitted, _, input, attempt) = issue_field_execution_fixture(work, schema, fields);
+  let node = admitted
+    .closure()
+    .definition(input.definition())
+    .unwrap()
+    .node(input.node())
+    .unwrap();
+  assert!(node.permissions().plugins().any(|plugin| plugin == &writer));
+  let intent = FlowBuildIntent::new(input, &admitted, attempt, BudgetUsage::default(), 0).unwrap();
+  assert!(
+    !intent.permissions().plugins().any(|plugin| plugin == &writer),
+    "the controller's post-result write must not enter a signed Agent request"
+  );
+}
+
+#[test]
+fn ordinary_template_retains_the_same_selected_issue_form_on_its_outcome() {
+  let project = octacity_server_domain::ProjectId::generate();
+  let selected = FlowIssueFieldWrite {
+    writer: reference("installed.issue-fields"),
+    policy: key("agent-assessment"),
+    form: IssueFieldForm {
+      project_id: project,
+      definition_version: 7,
+      fields: vec![IssueFormField {
+        field: IssueFieldTarget::Property { id: "follow_up".into() },
+        required: false,
+      }],
+    },
+  };
+  let mut wire = serde_json::to_value(supplied_base_flow_template()).unwrap();
+  let nodes = wire["nodes"].as_array_mut().unwrap();
+  let node = nodes.iter_mut().find(|node| node["kind"] == "reasoning").unwrap();
+  let name: FactoryKey = serde_json::from_value(node["key"].clone()).unwrap();
+  node["outcomes"][0]["issue_fields"] = serde_json::to_value(&selected).unwrap();
+  let template: FlowDefinitionTemplate = serde_json::from_value(wire).unwrap();
+  let profiles = template
+    .nodes
+    .iter()
+    .filter_map(|node| node.build_profile.as_ref())
+    .map(|name| (name.clone(), binding(project)))
+    .collect();
+  let published = template
+    .instantiate(FlowDefinitionId::generate(), FlowDefinitionVersion::INITIAL, &profiles)
+    .unwrap();
+  assert_eq!(
+    published.definition.node(&name).unwrap().outcomes()[0].issue_fields(),
+    Some(&selected)
+  );
+  assert_eq!(
+    published.definition.nodes().len(),
+    template.nodes.len(),
+    "field filling adds no apply node"
+  );
+}
+
+#[test]
 fn decision_signal_template_requires_an_exact_installed_action_before_publication() {
   let mut template = supplied_base_flow_template();
   let choice = &mut template.nodes[0];

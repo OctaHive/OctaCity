@@ -1355,6 +1355,41 @@ qualification, mapping editor or new rules language.
 
 See [task 10.4 verification](../../openspec/changes/add-issue-classification-snapshots/verification-direct-issue-consumers.md).
 
+### Configured examples and stand installation
+
+Task 10.5 moves example field sets, incoming projections, optional command branches
+and publication node selections into the existing preset configuration. The
+`triage · v4` example resolves one Project-derived selected-field form onto its
+ordinary classification outcome. The same form generates the result schema and
+save set; the selected values are neither copied into installer code nor mapped
+from a separate assessment schema. Its only other steps are eligibility reasoning
+and the ordinary eligibility gate.
+
+The stand installs the configured common `stand.issue-fields` local capability.
+It must already fit the reviewed Project ceiling; installation does not silently
+widen that ceiling or manufacture a compatibility alias. Each selected-field node
+opts in. Profile-selection checks distinguish that Server-local grant from Agent
+permissions, and signed Build intents exclude the local writer.
+
+`ticket-delivery · v2` reads configured direct core/property identities without
+classification-role bindings. Choice thresholds are explicit under
+`issue_snapshot.choice_thresholds`, keyed by the configured condition node (the
+example uses `requirements_needed`). The generic compiler freezes the selected
+Project choice order; missing thresholds never select an implicit Size policy.
+The default snapshot selects no reproduction proof, so a `reproduced` scalar alone
+still requires the deeper check or operator review. Consumers that select trusted
+observations can compose proof-based routing through the existing evidence/gate
+contracts. The explicit accepted-producer-result example remains independent.
+
+Only an unpublished Project catalog receives the configured example definitions.
+Existing operator publications, Issue values, exact retained Configuration pins
+and disabled intake survive restart. The launcher calls the common resolver and
+ordinary publication owners; it does not recreate field schemas in Python.
+Template resolution never publishes, launches a model or enables provider writes.
+REST/Console selector updates remain tasks 10.6–10.8.
+
+See [task 10.5 verification](../../openspec/changes/add-issue-classification-snapshots/verification-template-configuration.md).
+
 ## Shared Project text publication
 
 `ProjectTextIntake` is the common application service for manual Project-owned
@@ -3288,3 +3323,66 @@ records Red/Green, PostgreSQL/browser pilots and remaining live-adapter limits.
 
 Review corrections for tasks 10.3–10.4, with regressions and observed Red/Green:
 [verification report](../../openspec/changes/add-issue-classification-snapshots/verification-10.3-10.4-review.md).
+
+## Selected Issue fields in Factory REST authoring
+
+`GET /api/v1/projects/{project}/factory-authoring-capabilities` advertises the
+current Project field catalog in `issue_fields`. A writable descriptor has
+`write_target`, `value_key`, `value_type`, the bounded Flow `shape`, current
+`choice_labels`, and `required_supported`. Use its stable target identity rather
+than the display name. Retired properties are absent; read-only sources do not
+advertise a write target. `value_type` preserves scalar semantics such as a date
+that otherwise has the same Flow shape as ten-byte text.
+
+The existing `POST /api/v1/flow-data-schemas/validate` accepts exactly one source:
+an ordinary authored `shape`, or `issue_fields` with the canonical form below.
+Both variants require `project_id`, `identity`, and `version`; responses use
+`Cache-Control: no-store`. The form's Project must match the request owner and
+its catalog version must be current.
+
+```json
+{
+  "project_id": "11111111-1111-4111-8111-111111111111",
+  "identity": "analysis.fields",
+  "version": "v1",
+  "issue_fields": {
+    "project_id": "11111111-1111-4111-8111-111111111111",
+    "definition_version": 7,
+    "fields": [
+      {"field": {"kind": "priority"}},
+      {"field": {"kind": "property", "id": "impact"}, "required": false}
+    ]
+  }
+}
+```
+
+`required` defaults to `true`. Built-in targets are `priority`, `component`,
+`type`, and `size`; custom scalar targets use `property` plus their stable property ID in that Project.
+The server derives value keys (`priority`, `property.impact`) and the result
+schema from that selection. Reuse the same form in the outcome's `issue_fields`
+write declaration (`writer`, `policy`, `form`); do not copy a separate writable
+schema or supply a source-path mapping. The declaration authorizes only the
+selected fields and does not grant an agent direct Issue write authority.
+Unknown fields, competing schema sources, foreign/stale catalog selections and
+caller-supplied provenance are rejected. Ordinary free-form schemas remain
+non-writing. An acknowledged publication replay returns the original immutable
+resource even if the catalog has since changed.
+
+Node-completion diagnostics can carry `issue_fields: {form, operation_id,
+status, delivery_record?}` independently of the accepted analysis. `pending`
+means no confirmed local save receipt; `applied` requires a matching delivered
+receipt. `conflict`, `denied`, and `failed` preserve a separately failed save
+without rewriting the accepted analysis. These safe diagnostics expose no
+proposed field values, Issue text or worker credentials. Pipeline-origin field
+updates retain the exact `form` digest and invocation baseline/attempt; callers
+cannot manufacture those facts.
+
+The new agent-step controls are task 10.7; generic template and condition controls
+are task 10.8. Existing editor bindings have been aligned with the canonical REST
+contract. See the [task 10.6 verification report](../../openspec/changes/add-issue-classification-snapshots/verification-selected-fields-rest.md).
+
+Preset discovery and resolution agree on optional Project Context:
+`/context/{alias}` is advertised with `required: false`; callers may omit the
+Context map without creating document placeholders. Required executor selections
+remain required, and explicitly supplied Context is checked through its existing
+Project/document owners.

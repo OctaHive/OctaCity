@@ -1,4 +1,6 @@
 mod diagnostics;
+mod issue_fields;
+pub use issue_fields::{FactoryIssueFieldApplication, FactoryIssueFieldApplicationStatus};
 mod profile_selections;
 use crate::{
   ApplicationError, ManagementAction, ManagementAuthorizationMapping, ManagementAuthorizationTarget,

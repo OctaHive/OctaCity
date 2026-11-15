@@ -31,7 +31,7 @@ fn project_size_catalog_and_delivery_threshold_have_closed_public_contracts() {
   assert_json_matches_component(
     &document,
     "FactoryPresetIssueSnapshotSelection",
-    &serde_json::json!({"definition_version":2,"specification_from_size":"xl"}),
+    &serde_json::json!({"definition_version":2,"choice_thresholds":{"requirements_needed":"xl"}}),
   );
   let defaults = &document["components"]["schemas"]["IssuePropertyDefinitionSet"]["properties"]["sizes"]["default"];
   assert_eq!(
@@ -1168,7 +1168,7 @@ fn factory_setup_inventory_keeps_read_authority_and_shared_contract_bounds() {
 #[test]
 fn classification_capabilities_document_the_shared_project_contract() {
   let contract = serde_json::json!({
-    "selection":{"definition_version":7,"priority":true,"component":false,"kind":false,"size":false,"properties":{"reproducibility":"repro"}},
+    "selection":{"project_id":"11111111-1111-4111-8111-111111111111","definition_version":7,"fields":[{"field":{"kind":"priority"},"required":false}]},
     "schema":{"reference":{"identity":"issue-classification.fields","version":"7","digest":"a".repeat(64)},
       "shape":{"type":"object","fields":{"priority":{"required":false,"value":{"type":"enum","values":["high"]}}}}}
   });

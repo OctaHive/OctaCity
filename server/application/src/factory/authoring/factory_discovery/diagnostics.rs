@@ -246,6 +246,9 @@ pub struct FactoryNodeCompletionProjection {
   pub output_schema: octacity_server_factory::ImmutableReference,
   /// Complete retained record identity, without its bytes.
   pub output_digest: octacity_server_factory::FactoryDigest,
+  /// Accepted form scope and independently observed save state; never private result values.
+  #[serde(default, skip_serializing_if = "Option::is_none")]
+  pub issue_fields: Option<super::FactoryIssueFieldApplication>,
   /// Exact verified report identity and validity, without the report bytes or artifact handle.
   #[serde(default, skip_serializing_if = "Option::is_none")]
   pub verified_report: Option<FactoryVerifiedReportProjection>,
@@ -316,6 +319,7 @@ impl From<&octacity_server_factory::NodeAttemptCompletion> for FactoryNodeComple
       output_schema: row.output_schema().clone(),
       output_digest: row.output_digest(),
       verified_report: None,
+      issue_fields: None,
       public_result: None,
       result_provenance: vec![],
       usage: row.usage(),
@@ -708,6 +712,11 @@ impl<S: FactoryDiscoveryStore + FactoryRunStore + 'static> crate::ManagementQuer
         if let FactoryDiagnosticRecord::NodeCompletion(projection) = item
           && let Some((record, node)) = completion_record(projection, &snapshot)?
         {
+          projection.issue_fields = node
+            .outcome(record.outcome())
+            .and_then(|outcome| outcome.issue_fields())
+            .map(|write| super::issue_fields::project(record, write, &snapshot))
+            .transpose()?;
           projection.verified_report = record
             .primary_build_output()
             .filter(|output| output.output_kind == octacity_server_factory::EvidenceOutputKind::Report)

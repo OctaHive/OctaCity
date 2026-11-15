@@ -5,6 +5,7 @@ pub(super) fn insert(schemas: &mut Map<String, Value>) {
   let b = octacity_server_application::factory_configuration_document_bounds();
   schemas.insert("FactoryIssueFieldChoice".into(), object([
     ("source", schema_ref("FactoryFlowIssueFieldSource")),
+    ("write_target",schema_ref("FactoryIssueFieldTarget")),("value_key",key()),("value_type",schema_ref("IssuePropertyKind")),
     ("name", json!({"type":"string","minLength":1,"maxLength":octacity_server_application::MAX_ISSUE_TITLE_BYTES,"x-max-utf8-bytes":octacity_server_application::MAX_ISSUE_TITLE_BYTES})),
     ("property_id", json!({"type":"string","minLength":1,"maxLength":octacity_server_application::MAX_ISSUE_PROPERTY_KEY_BYTES})),
     ("required_supported", boolean()), ("shape", schema_ref("FactoryFlowValueSchema")),
@@ -15,7 +16,7 @@ pub(super) fn insert(schemas: &mut Map<String, Value>) {
     object(
       [
         ("definition_version", non_negative_integer()),
-        ("classification", schema_ref("FactoryIssueClassificationFieldSelection")),
+        ("classification", schema_ref("FactoryIssueFieldForm")),
         (
           "fields",
           bounded_array(
@@ -113,31 +114,10 @@ pub(super) fn insert(schemas: &mut Map<String, Value>) {
     ),
   );
   schemas.insert(
-    "FactoryIssueClassificationFieldSelection".into(),
-    object(
-      [
-        ("definition_version", positive_integer()),
-        ("priority", boolean()),
-        ("component", boolean()),
-        ("kind", boolean()),
-        ("size", boolean()),
-        ("properties", schema_ref("IssueClassificationBindings")),
-      ],
-      &[
-        "definition_version",
-        "priority",
-        "component",
-        "kind",
-        "size",
-        "properties",
-      ],
-    ),
-  );
-  schemas.insert(
     "FactoryIssueClassificationFieldContract".into(),
     object(
       [
-        ("selection", schema_ref("FactoryIssueClassificationFieldSelection")),
+        ("selection", schema_ref("FactoryIssueFieldForm")),
         ("schema", schema_ref("FactoryFlowDataSchema")),
       ],
       &["selection", "schema"],

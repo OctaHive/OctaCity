@@ -1,175 +1,76 @@
-//! Binds the delivery example to reviewed dependencies before ordinary Flow authoring.
+//! Compiles declared example dependencies using ordinary Flow inputs, commands and actions.
 use super::*;
 use std::collections::BTreeMap;
 
-/// Features and already reproduced defects keep their ordinary bypass. Without an
-/// installed observation command, unresolved defects require operator attention.
-pub(super) fn without_reproduction(template: &mut FlowDefinitionTemplate) {
-  let removed = |key: &FactoryKey| matches!(key.as_str(), "reproduction" | "reproduction-result");
-  template.nodes.retain(|node| !removed(&node.key));
-  template.transitions.retain(|route| !removed(route.predecessor()));
+pub(super) fn without_command(template: &mut FlowDefinitionTemplate, optional: &release::OptionalCommand) {
+  template.nodes.retain(|node| !optional.nodes.contains(&node.key));
+  template
+    .transitions
+    .retain(|route| !optional.nodes.contains(route.predecessor()));
   for route in &mut template.transitions {
-    if route.predecessor().as_str() == "reproduction-needed" && route.outcome().as_str() == "check" {
-      *route = FlowTransition::new(
-        route.predecessor().clone(),
-        route.outcome().clone(),
-        FlowTransitionTarget::Node("review-reproduction".parse().expect("release key")),
-      );
+    if route.predecessor() == optional.route.predecessor() && route.outcome() == optional.route.outcome() {
+      *route = optional.route.clone();
     }
   }
-  template
-    .terminals
-    .remove(&"cannot_reproduce".parse().expect("release key"));
+  template.terminals.remove(&optional.terminal);
 }
 
-/// Projects only the explicit triage fields needed by the two delivery entry gates.
+/// Exact external inputs use declared projections, not a producer name or result vocabulary.
 pub(super) fn bind_predecessor(
   template: &mut FlowDefinitionTemplate,
   predecessor: &FlowDataSchema,
+  parameters: &release::Incoming,
 ) -> Result<(), FactoryError> {
   let invalid = || FactoryError::InvalidConfiguration {
-    field: "ticket delivery predecessor schema",
+    field: "preset incoming contract",
   };
-  let key = |value: &str| FactoryKey::new(value).expect("release key");
-  let source = predecessor.shape();
   let schemas = template.data_schemas()?;
-  let field = |name: &str, path: &str, target: &FlowDataSchema| {
-    let target = required_field(target.shape(), name).ok_or_else(invalid)?;
-    checked_pointer(source, path, target)
-  };
-  let route_key = key("reproduction_route");
-  let route = schemas.get(&route_key).ok_or_else(invalid)?;
-  let route_fields = [
-    (key("work_kind"), field("work_kind", "/assessment/work_kind", route)?),
-    (
-      key("reproducibility"),
-      field("reproducibility", "/assessment/reproducibility", route)?,
-    ),
-    (
-      key("triage_accepted"),
-      checked_pointer(source, "/accepted", &FlowValueSchema::Boolean)?,
-    ),
-  ];
-  let requirements_key = key("delivery_requirements_input");
-  let requirements = schemas.get(&requirements_key).ok_or_else(invalid)?;
-  let FlowValueSchema::Object { fields } = required_field(requirements.shape(), "summary").ok_or_else(invalid)? else {
-    return Err(invalid());
-  };
-  let summary = fields
-    .iter()
-    .filter(|(_, field)| field.is_required())
-    .map(|(name, field)| {
-      let mapping = match name.as_str() {
-        "research_required" | "research_accepted" => FlowValueMapping::Constant { value: false.into() },
-        "admission_risk" => checked_pointer(source, "/admission_risk", field.value())?,
-        name => checked_pointer(source, &format!("/assessment/{name}"), field.value())?,
-      };
-      Ok((name.clone(), mapping))
-    })
-    .collect::<Result<_, FactoryError>>()?;
-  let requirement_fields = [
-    (key("summary"), FlowValueMapping::Object { fields: summary }),
-    (
-      key("priority_assessment"),
-      field("priority_assessment", "/assessment/priority_assessment", requirements)?,
-    ),
-  ];
-  let binding = |fields| {
-    FlowInputBinding::new(
+  for (name, mapping) in &parameters.inputs {
+    let node = template
+      .nodes
+      .iter_mut()
+      .find(|node| &node.key == name)
+      .ok_or_else(invalid)?;
+    let target = schemas.get(&node.input_schema).ok_or_else(invalid)?;
+    let binding = FlowInputBinding::new(
       [(
-        key("triage"),
+        parameters.source_alias.clone(),
         FlowInputSource::Incoming {
           schema: predecessor.reference().clone(),
           path: String::new(),
         },
       )]
       .into(),
-      FlowDataMapping::new(FlowValueMapping::Object { fields })?,
-    )
-  };
-  let route_binding = binding(route_fields.into())?;
-  let requirements_binding = binding(requirement_fields.into())?;
-  let entry = template
-    .nodes
-    .iter_mut()
-    .find(|node| node.key == template.entry)
-    .ok_or_else(invalid)?;
-  entry.gate = Some(
-    entry
-      .gate
-      .take()
-      .ok_or_else(invalid)?
-      .with_precondition(FlowPredicate::Compare {
-        left: FlowOperand::Path {
-          path: "/triage_accepted".into(),
-        },
-        comparison: FlowComparison::Equal,
-        right: FlowOperand::Literal { value: true.into() },
-      })?,
-  );
-  entry.input_binding = route_binding;
-  template
-    .nodes
-    .iter_mut()
-    .find(|node| node.key.as_str() == "requirements_needed")
-    .ok_or_else(invalid)?
-    .input_binding = requirements_binding;
-  let Some(FlowTemplateSchema {
-    shape: FlowValueSchema::Object { fields },
-    ..
-  }) = template.schemas.get_mut(&route_key)
-  else {
-    return Err(invalid());
-  };
-  fields.insert(
-    key("triage_accepted"),
-    FlowFieldSchema::required(FlowValueSchema::Boolean),
-  );
+      mapping.clone(),
+    )?;
+    if !binding.fits_incoming(predecessor.reference(), predecessor.shape(), target) {
+      return Err(invalid());
+    }
+    node.input_binding = binding;
+  }
+  for (name, predicate) in &parameters.preconditions {
+    let node = template
+      .nodes
+      .iter_mut()
+      .find(|node| &node.key == name)
+      .ok_or_else(invalid)?;
+    node.gate = Some(
+      node
+        .gate
+        .take()
+        .ok_or_else(invalid)?
+        .with_precondition(predicate.clone())?,
+    );
+  }
   template.schemas.insert(
-    key("predecessor"),
+    parameters.schema_alias.clone(),
     FlowTemplateSchema {
       identity: predecessor.reference().identity().clone(),
       version: predecessor.reference().version().clone(),
-      shape: source.clone(),
+      shape: predecessor.shape().clone(),
     },
   );
   Ok(())
-}
-
-fn required_field<'a>(schema: &'a FlowValueSchema, name: &str) -> Option<&'a FlowValueSchema> {
-  let FlowValueSchema::Object { fields } = schema else {
-    return None;
-  };
-  fields
-    .iter()
-    .find(|(key, field)| key.as_str() == name && field.is_required())
-    .map(|(_, field)| field.value())
-}
-
-fn checked_pointer(
-  source: &FlowValueSchema,
-  path: &str,
-  target: &FlowValueSchema,
-) -> Result<FlowValueMapping, FactoryError> {
-  let invalid = || FactoryError::InvalidConfiguration {
-    field: "ticket delivery predecessor field",
-  };
-  let source = path
-    .trim_start_matches('/')
-    .split('/')
-    .try_fold(source, required_field)
-    .ok_or_else(invalid)?;
-  let target = FlowDataSchema::new(
-    "projection".parse().expect("schema key"),
-    "v1".parse().expect("schema version"),
-    target.clone(),
-  )?;
-  if !target.accepts_all(source) {
-    return Err(invalid());
-  }
-  Ok(FlowValueMapping::Pointer {
-    path: format!("/triage{path}"),
-  })
 }
 
 /// Resolves release-local aliases; the resulting graph uses only ordinary node contracts.
@@ -178,6 +79,7 @@ pub(super) fn bind_installed_steps(
   commands: &BTreeMap<FactoryKey, FactoryPresetCommandSelection>,
   publication: &FactoryPresetPublicationSelection,
   publisher: &FactoryCandidatePublicationChoice,
+  publication_node: &FactoryKey,
 ) -> Result<BTreeMap<FactoryKey, FlowBuildBinding>, String> {
   let schemas = template.data_schemas().map_err(|_| "/commands".to_owned())?;
   let mut builds = BTreeMap::new();
@@ -235,7 +137,7 @@ pub(super) fn bind_installed_steps(
   let node = template
     .nodes
     .iter_mut()
-    .find(|node| node.key.as_str() == "publish_pull_request")
+    .find(|node| &node.key == publication_node)
     .ok_or_else(|| "/publication".to_owned())?;
   let original = node.action.as_ref().ok_or_else(|| "/publication".to_owned())?;
   let result = node

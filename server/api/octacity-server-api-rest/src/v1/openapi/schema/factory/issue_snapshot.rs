@@ -35,7 +35,7 @@ pub(super) fn insert(schemas: &mut Map<String, Value>) {
       [
         ("definition_version", non_negative_integer()),
         ("admission", nullable(schema_ref("FactoryFlowIssueAdmissionPolicy"))),
-        ("specification_from_size", nullable(key())),
+        ("choice_thresholds", bounded_map(key(), bounds.nodes)),
       ],
       &["definition_version"],
     ),
@@ -90,10 +90,25 @@ pub(super) fn insert(schemas: &mut Map<String, Value>) {
     ),
   );
   schemas.insert(
+    "FactoryFlowIssueObservation".into(),
+    object(
+      [
+        ("environment", schema_ref("FactoryImmutableReferenceResource")),
+        ("criterion", schema_ref("FactoryImmutableReferenceResource")),
+        (
+          "finding",
+          json!({"type":"string","enum":["matched","not_matched","indeterminate"]}),
+        ),
+      ],
+      &["environment", "criterion", "finding"],
+    ),
+  );
+  schemas.insert(
     "FactoryFlowIssueEvidenceSelection".into(),
     object(
       [
         ("field", key()),
+        ("observation", schema_ref("FactoryFlowIssueObservation")),
         ("required", boolean()),
         ("maximum", bounded_integer(1, references as u64)),
       ],

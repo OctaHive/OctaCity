@@ -26,12 +26,23 @@ pub(super) fn insert(schemas: &mut Map<String, Value>) {
       tagged("kind","dependencies",[],&[])
     ]}),
   );
+  schemas.insert(
+    "IssueFieldInvocation".into(),
+    object(
+      [
+        ("node", super::factory::key()),
+        ("attempt_id", id()),
+        ("baseline", positive_integer()),
+      ],
+      &["node", "attempt_id", "baseline"],
+    ),
+  );
   schemas.insert("IssueClassificationOrigin".into(), json!({"oneOf":[
     tagged("kind","manual",[("actor",schema_ref("AuditActor"))],&["actor"]),
     tagged("kind","pipeline",[
       ("actor",schema_ref("AuditActor")),("work_id",id()),("run_id",id()),
-      ("record",schema_ref("FactoryDigest")),("policy",super::factory::key()),("operation_id",schema_ref("FactoryDigest"))
-    ],&["actor","work_id","run_id","record","policy","operation_id"]),
+      ("record",schema_ref("FactoryDigest")),("form",schema_ref("FactoryDigest")),("invocation",schema_ref("IssueFieldInvocation")),("policy",super::factory::key()),("operation_id",schema_ref("FactoryDigest"))
+    ],&["actor","work_id","run_id","record","form","policy","operation_id"]),
     tagged("kind","source",[
       ("actor",schema_ref("AuditActor")),("mapping",schema_ref("FactoryImmutableReferenceResource")),
       ("observation",schema_ref("FactoryDigest")),("native_correlation",schema_ref("FactoryDigest"))

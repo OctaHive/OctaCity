@@ -4,13 +4,19 @@
   "source_reference": "refs/heads/main",
   "pipeline_node": "triage-agent",
   "model_identifier": "gpt-6.1-sol",
+  "issue_field_writer": {
+    "identity": "stand.issue-fields",
+    "policy": "issue-fields"
+  },
   "job_command_argument_max_bytes": 16384,
   "mcp_evidence_verifier": {
     "identity": "native-mcp-evidence",
     "version": "v1",
     "digest": "6921e3ae725944f5f3969ea11dc7a264d12e205774e4b92195f2f82933c08886"
   },
-  "mcp_evidence_stages": ["eligibility"],
+  "mcp_evidence_stages": [
+    "eligibility"
+  ],
   "mcp_credential_lifetime_millis": 2592000000,
   "stage_budget": {
     "max_attempts": 1,
@@ -26,7 +32,12 @@
     "max_cost_micro_units": 2000000,
     "max_output_bytes": 134217728
   },
-  "network_hosts": ["auth.openai.com", "chatgpt.com", "github.com", "host.microsandbox.internal"],
+  "network_hosts": [
+    "auth.openai.com",
+    "chatgpt.com",
+    "github.com",
+    "host.microsandbox.internal"
+  ],
   "resources": {
     "cpu_millis": 1000,
     "memory_bytes": 1073741824,
@@ -53,5 +64,116 @@
     "max_repeat_count": 1,
     "max_fan_out": 1,
     "max_wip": 1
-  }
+  },
+  "example_preset": {
+    "identity": "triage",
+    "version": "v4"
+  },
+  "project_fields": {
+    "components": [
+      {
+        "id": "general",
+        "name": "General",
+        "retired": false
+      }
+    ],
+    "properties": [
+      {
+        "id": "impact",
+        "name": "impact",
+        "retired": false,
+        "kind": {
+          "type": "choice",
+          "choices": [
+            {
+              "id": "advisory",
+              "name": "Advisory",
+              "retired": false
+            },
+            {
+              "id": "low",
+              "name": "Low",
+              "retired": false
+            },
+            {
+              "id": "high",
+              "name": "High",
+              "retired": false
+            }
+          ]
+        }
+      },
+      {
+        "id": "risk",
+        "name": "risk",
+        "retired": false,
+        "kind": {
+          "type": "choice",
+          "choices": [
+            {
+              "id": "low",
+              "name": "Low",
+              "retired": false
+            },
+            {
+              "id": "high",
+              "name": "High",
+              "retired": false
+            }
+          ]
+        }
+      },
+      {
+        "id": "route",
+        "name": "route",
+        "retired": false,
+        "kind": {
+          "type": "choice",
+          "choices": [
+            {
+              "id": "requirements",
+              "name": "Requirements",
+              "retired": false
+            },
+            {
+              "id": "research",
+              "name": "Research",
+              "retired": false
+            }
+          ]
+        }
+      },
+      {
+        "id": "repro",
+        "name": "repro",
+        "retired": false,
+        "kind": {
+          "type": "choice",
+          "choices": [
+            {
+              "id": "unknown",
+              "name": "Unknown",
+              "retired": false
+            },
+            {
+              "id": "needs_input",
+              "name": "Needs input",
+              "retired": false
+            },
+            {
+              "id": "needs_research",
+              "name": "Needs research",
+              "retired": false
+            },
+            {
+              "id": "not_applicable",
+              "name": "Not applicable",
+              "retired": false
+            }
+          ]
+        }
+      }
+    ]
+  },
+  "completion_document": "config/factory/presets/triage/completion-v3.json"
 }

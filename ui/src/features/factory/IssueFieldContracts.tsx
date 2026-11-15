@@ -6,6 +6,9 @@ import { QueryFailureNotice } from '../../shared/QueryStateNotice';
 import { useFactoryAuthoringCapabilities } from './useFactoryAuthoringCapabilities';
 import type { FlowAuthoringServices } from './FlowPrimitives';
 
+import { classificationFields } from './issueFields';
+export { classificationFields, sameIssueFieldTarget } from './issueFields';
+
 type S = components['schemas'];
 export type IssueFieldChoice = S['FactoryIssueFieldChoice'];
 export type IssueFieldChoices = S['FactoryIssueFieldChoices'];
@@ -33,30 +36,6 @@ export function issueFieldLabel(
     : field.source.kind === 'classification'
       ? t('factory.issueClassificationField', { name: field.name ?? field.source.slot })
       : t(labels[field.source.kind]);
-}
-
-/** Server availability, Project bindings and shapes supply the targets; the UI assembles only projections. */
-export function classificationFields(choices: IssueFieldChoices | undefined) {
-  const selection = choices?.classification;
-  if (!selection || !choices) return [];
-  const enabled = new Set(
-    Object.entries(selection)
-      .filter(([, value]) => value === true)
-      .map(([key]) => key),
-  );
-  return choices.fields.flatMap((field) => {
-    if (field.source.kind === 'classification') {
-      const binding = Object.entries(selection.properties).find(
-        ([slot, id]) =>
-          field.source.kind === 'classification' &&
-          slot === field.source.slot &&
-          id === field.property_id,
-      );
-      return binding ? [{ name: binding[0], field }] : [];
-    }
-    const name = field.source.kind === 'type' ? 'kind' : field.source.kind;
-    return enabled.has(name) ? [{ name, field }] : [];
-  });
 }
 
 export function ClassificationFieldPicker({

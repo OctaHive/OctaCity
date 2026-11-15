@@ -4,6 +4,7 @@ mod build;
 mod contracts;
 mod delivery;
 mod effects;
+mod fields;
 mod input;
 mod issue_delivery;
 mod release;
@@ -113,7 +114,13 @@ impl<S: FactoryConfigurationStore> ManagementQueryUseCase<ListFactoryPresetsQuer
       if version_offset.is_some() || after.is_none_or(|after| reference.identity() > after) {
         items.push((
           release.cursor(),
-          summary(template, reference, release.name, release.issue_snapshot)?,
+          summary(
+            template,
+            reference,
+            release.name,
+            release.issue_snapshot,
+            release.parameters()?,
+          )?,
         ));
       }
     }
@@ -133,8 +140,9 @@ fn summary(
   reference: ImmutableReference,
   name: Option<&'static str>,
   issue_snapshot: bool,
+  setup: release::Parameters,
 ) -> Result<FactoryPresetSummary, ApplicationError> {
-  let delivery = name.is_some();
+  let delivery = setup.publication.is_some();
   let mut parameters = vec![
     parameter("/flow_id", FactoryPresetParameterKind::Identity),
     parameter("/configuration_id", FactoryPresetParameterKind::Identity),
@@ -164,10 +172,12 @@ fn summary(
       },
     ));
     if issue_snapshot {
-      parameters.push(parameter(
-        "/issue_snapshot/specification_from_size",
-        FactoryPresetParameterKind::IssueSizeThreshold,
-      ));
+      for node in issue_delivery::thresholds().keys() {
+        parameters.push(parameter(
+          &format!("/issue_snapshot/choice_thresholds/{node}"),
+          FactoryPresetParameterKind::ChoiceThreshold,
+        ));
+      }
     }
   }
   for node in &template.nodes {
@@ -186,7 +196,10 @@ fn summary(
         parameters.push(FactoryPresetParameter {
           path: format!("/commands/{alias}"),
           kind: FactoryPresetParameterKind::Command,
-          required: alias.as_str() != "reproduction",
+          required: setup
+            .optional_command
+            .as_ref()
+            .is_none_or(|optional| &optional.alias != alias),
         });
         continue;
       }
@@ -196,10 +209,11 @@ fn summary(
         FactoryPresetParameterKind::RoleProfile,
       ));
       if !delivery {
-        parameters.push(parameter(
-          &format!("/context/{alias}"),
-          FactoryPresetParameterKind::ProjectContext,
-        ));
+        parameters.push(FactoryPresetParameter {
+          path: format!("/context/{alias}"),
+          kind: FactoryPresetParameterKind::ProjectContext,
+          required: false,
+        });
       }
     }
   }
@@ -211,6 +225,11 @@ fn summary(
       max_active_nodes: template.execution.max_active_nodes(),
       issue_snapshot_fields: if issue_snapshot {
         issue_delivery::field_sources()
+      } else {
+        Default::default()
+      },
+      choice_thresholds: if issue_snapshot {
+        issue_delivery::thresholds()
       } else {
         Default::default()
       },
@@ -281,22 +300,21 @@ impl<S: FactoryConfigurationStore + octacity_server_store::FactoryRoleProfileSto
       dependencies: vec![],
     };
     let p = query.selection;
-    let delivery = release.is_delivery();
+    let setup = release.parameters()?;
+    let delivery = setup.publication.is_some();
     if release.issue_snapshot && p.accepted_predecessor.is_some() {
       return Err(FactoryValidationDiagnostics::invalid("/accepted_predecessor"));
     }
     if !release.issue_snapshot && p.issue_snapshot.is_some() {
       return Err(FactoryValidationDiagnostics::invalid("/issue_snapshot"));
     }
-    if p.flow_only && (!delivery || p.input.is_some() || p.configuration.is_some() || p.configuration_id.is_some()) {
+    if p.flow_only && (p.input.is_some() || p.configuration.is_some() || p.configuration_id.is_some()) {
       return Err(FactoryValidationDiagnostics::invalid("/flow_only"));
     }
-    if delivery
-      && !p
-        .commands
-        .contains_key(&FactoryKey::new("reproduction").expect("release key"))
+    if let Some(optional) = &setup.optional_command
+      && !p.commands.contains_key(&optional.alias)
     {
-      delivery::without_reproduction(&mut template);
+      delivery::without_command(&mut template, optional);
     }
     let commands: std::collections::BTreeSet<_> = template
       .nodes
@@ -331,7 +349,6 @@ impl<S: FactoryConfigurationStore + octacity_server_store::FactoryRoleProfileSto
     }
     for (missing, path) in [
       (!p.flow_only && p.repository.is_none(), "/repository"),
-      (!delivery && p.context.is_empty(), "/context"),
       (delivery && p.publication.is_none(), "/publication"),
       (
         delivery && !release.issue_snapshot && p.accepted_predecessor.is_none(),
@@ -392,7 +409,7 @@ impl<S: FactoryConfigurationStore + octacity_server_store::FactoryRoleProfileSto
       }
     }
     let now = SystemFactoryExecutionClock.now()?;
-    for alias in aliases.iter().filter(|_| !delivery) {
+    for alias in aliases.iter().filter(|alias| p.context.contains_key(*alias)) {
       let Some(selection) = p.context.get(alias) else {
         result.diagnostics.push(required(format!("/context/{alias}")));
         continue;
@@ -486,7 +503,13 @@ impl<S: FactoryConfigurationStore + octacity_server_store::FactoryRoleProfileSto
     }
     let command_bindings = match publication {
       Some((publication, publisher)) => {
-        match delivery::bind_installed_steps(&mut template, &p.commands, publication, publisher) {
+        match delivery::bind_installed_steps(
+          &mut template,
+          &p.commands,
+          publication,
+          publisher,
+          setup.publication.as_ref().expect("selected publication parameter"),
+        ) {
           Ok(builds) => builds,
           Err(path) => return Ok(result.unavailable(path)),
         }
@@ -513,7 +536,11 @@ impl<S: FactoryConfigurationStore + octacity_server_store::FactoryRoleProfileSto
       else {
         return Ok(result.unavailable("/accepted_predecessor"));
       };
-      if delivery::bind_predecessor(&mut template, schema).is_err() {
+      if setup
+        .incoming
+        .as_ref()
+        .is_none_or(|incoming| delivery::bind_predecessor(&mut template, schema, incoming).is_err())
+      {
         return Ok(result.unavailable("/accepted_predecessor/schema"));
       }
     }
@@ -576,7 +603,7 @@ impl<S: FactoryConfigurationStore + octacity_server_store::FactoryRoleProfileSto
           None => return Ok(result.unavailable(format!("/profiles/{alias}/build"))),
         },
       };
-      if !delivery {
+      if p.context.contains_key(&alias) {
         node.context_binding = Some(
           p.context
             .get(&alias)
@@ -604,17 +631,47 @@ impl<S: FactoryConfigurationStore + octacity_server_store::FactoryRoleProfileSto
         selection_budget: BudgetUsage::default(),
       });
     }
+    let defaults = setup.field_forms;
+    if !defaults.is_empty() || !p.issue_fields.is_empty() {
+      let Some((writer, policy)) = choices.issue_classification() else {
+        return Ok(result.unavailable("/issue_fields/writer"));
+      };
+      let Some(catalog) = crate::factory::issue_snapshot::current_catalog(
+        self.issue_properties.as_deref(),
+        self.policy.as_ref(),
+        context,
+        query.project_id,
+      )
+      .await?
+      else {
+        return Ok(result.unavailable("/issue_fields/definition_version"));
+      };
+      if let Err(path) = fields::bind(
+        &mut template,
+        defaults,
+        p.issue_fields,
+        &catalog,
+        writer,
+        &policy.policy,
+      ) {
+        return Ok(result.unavailable(path));
+      }
+    }
     let (template, children) = effects::compose(template, p.effects, p.flow_id.unwrap())?;
     let published = template
       .instantiate(p.flow_id.unwrap(), FlowDefinitionVersion::INITIAL, &command_bindings)
       .map_err(|_| FactoryValidationDiagnostics::invalid("/profiles"))?;
+    // Examples start without code attachments. Operators attach sources explicitly
+    // in the same editor; the Work's immutable subject remains independent.
+    let definition = published
+      .definition
+      .without_code()
+      .map_err(|_| ApplicationError::invalid())?;
     let root = &match release.name {
-      Some(name) => published
-        .definition
+      Some(name) => definition
         .with_name(Some(FactoryText::new(name).map_err(|_| ApplicationError::invalid())?))
-        .and_then(FlowDefinition::without_code)
         .map_err(|_| ApplicationError::invalid())?,
-      None => published.definition,
+      None => definition,
     };
     let limits = FlowAdmissionLimits::product_defaults(
       template.execution.max_active_nodes(),
@@ -653,6 +710,15 @@ impl<S: FactoryConfigurationStore + octacity_server_store::FactoryRoleProfileSto
       self.issue_properties.as_deref(),
       self.policy.as_ref(),
       context,
+    )
+    .await?;
+    crate::factory::reporting::factory_issue_classification_authoring::validate_publication(
+      &flow,
+      &choices,
+      self.issue_properties.as_deref(),
+      self.policy.as_ref(),
+      context,
+      query.project_id,
     )
     .await?;
     crate::factory::authoring::factory_configuration_choices::validate_flow_choices(

@@ -29,6 +29,7 @@ impl ManagementQueryUseCase<octacity_server_application::ValidateFactoryFlowData
       store,
       Arc::new(octacity_server_application::TrustedNetworkManagementPolicy),
     )
+    .with_issue_properties(octacity_server_application::testing::manual_issue_store(query.project_id).await)
     .execute_management_query(context, grant, query)
     .await
   }
@@ -689,11 +690,7 @@ impl ManagementQueryUseCase<octacity_server_application::ValidateFactoryFlowDefi
     query: octacity_server_application::ValidateFactoryFlowDefinitionQuery,
   ) -> Result<octacity_server_application::FactoryFlowDefinitionValidation, Self::Error> {
     self.factory_flow_drafts.lock().unwrap().push(query.draft.clone());
-    if let Some(task) = query.draft.root.nodes.iter().find_map(|node| node.task()) {
-      assert_eq!(
-        task.entries(),
-        &["Assess layout accessibility using the selected documents.".to_owned()]
-      );
+    if query.draft.root.nodes.iter().any(|node| node.task().is_some()) {
       self.record("validate_step_task");
     }
     if let Some(binding) = query
@@ -756,6 +753,13 @@ async fn flow_http_keeps_reviewed_step_instructions_separate_from_the_role_and_i
   assert_eq!(
     *application.calls.lock().unwrap(),
     ["validate_step_task", "validate_factory_flow_definition"]
+  );
+  assert_eq!(
+    application.factory_flow_drafts.lock().unwrap()[0].root.nodes[0]
+      .task()
+      .unwrap()
+      .entries(),
+    &["Assess layout accessibility using the selected documents.".to_owned()]
   );
 }
 
@@ -1561,6 +1565,7 @@ impl ManagementQueryUseCase<octacity_server_application::ListFactoryDiagnosticsQ
           "id":"ab".repeat(32),"node_attempt_id":"44444444-4444-4444-8444-444444444444",
           "flow_run_id":"22222222-2222-4222-8222-222222222222","cycle_id":"22222222-2222-4222-8222-222222222222",
           "node_key":"arbitrary","outcome":"declared-result","output_schema":{"identity":"result","version":"v1","digest":"ab".repeat(32)},
+          "issue_fields":{"form":{"project_id":"11111111-1111-4111-8111-111111111111","definition_version":0,"fields":[{"field":{"kind":"priority"},"required":true}]},"operation_id":"ad".repeat(32),"status":"pending","delivery_record":"ae".repeat(32)},
           "output_digest":"ac".repeat(32),"usage":{"attempts":0,"elapsed_millis":0,"tokens":0,"cost_micro_units":0,"output_bytes":0},"observed_at":20
         }}))
       }

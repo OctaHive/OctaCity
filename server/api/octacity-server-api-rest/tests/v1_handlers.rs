@@ -2389,3 +2389,6 @@ unavailable_query!(
   octacity_server_application::ListIssueChildrenQuery,
   "list_issue_children"
 );
+
+#[path = "v1_handlers/factory_fields.rs"]
+mod factory_fields;

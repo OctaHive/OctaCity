@@ -17,10 +17,7 @@ async fn issue_http_planning_choices_are_unassigned_without_a_directory_or_provi
   assert_eq!(response.headers()["cache-control"], "no-store");
   let result = document(response).await;
   assert_eq!(result["definitions"]["version"], 0);
-  assert_eq!(
-    result["definitions"]["definition"],
-    serde_json::json!({"labels":[],"properties":[]})
-  );
+  assert_eq!(result["definitions"]["definition"], initial_catalog());
   assert_eq!(result["assignees"], serde_json::json!({"available":false,"items":[]}));
   let response = router
     .oneshot(json_request(
@@ -36,7 +33,7 @@ async fn issue_http_planning_choices_are_unassigned_without_a_directory_or_provi
 }
 
 fn catalog() -> serde_json::Value {
-  serde_json::json!({"labels":[{"id":"defect","name":"Дефект","retired":false}],"properties":[
+  serde_json::json!({"priorities":initial_catalog()["priorities"],"types":initial_catalog()["types"],"sizes":initial_catalog()["sizes"],"labels":[{"id":"defect","name":"Дефект","retired":false}],"properties":[
     {"id":"size","name":"Размер","retired":false,"kind":{"type":"choice","choices":[{"id":"small","name":"S","retired":false}]}},
     {"id":"note","name":"Заметка","retired":false,"kind":{"type":"text","max_bytes":16}},
     {"id":"verified","name":"Проверено","retired":false,"kind":{"type":"boolean"}},
@@ -819,4 +816,11 @@ async fn issue_http_planning_definition_administration_and_task_editing_have_sep
       StatusCode::NOT_FOUND
     );
   }
+}
+
+fn initial_catalog() -> serde_json::Value {
+  serde_json::json!({"labels":[],"properties":[],
+    "priorities":[{"id":"blocker","name":"Blocker","retired":false},{"id":"high","name":"High","retired":false},{"id":"medium","name":"Medium","retired":false},{"id":"low","name":"Low","retired":false}],
+    "types":[{"id":"defect","name":"Defect","retired":false},{"id":"feature_request","name":"Feature request","retired":false}],
+    "sizes":[{"id":"small","name":"Small","retired":false},{"id":"medium","name":"Medium","retired":false},{"id":"large","name":"Large","retired":false}]})
 }

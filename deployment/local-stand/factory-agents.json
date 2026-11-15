@@ -10,8 +10,12 @@
     },
     "profile": {
       "name": "Project reasoning",
-      "instructions": []
-    }
+      "instructions": [],
+      "context_requirements": [
+        "task"
+      ]
+    },
+    "project_connections": true
   },
   "classification": {
     "role": {
@@ -24,7 +28,11 @@
     },
     "profile": {
       "name": "Systems analysis",
-      "instructions": []
-    }
+      "instructions": [],
+      "context_requirements": [
+        "task"
+      ]
+    },
+    "project_connections": false
   }
 }

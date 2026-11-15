@@ -160,6 +160,15 @@ pub struct FactoryFlowDefinitionDraft {
   pub pools: BTreeMap<FactoryKey, FlowPoolSettings>,
 }
 
+/// One authored grammar or one Project selection; the two cannot compete.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub enum FactoryFlowDataSchemaSource {
+  /// An ordinary explicitly authored result, without an Issue effect.
+  Shape(octacity_server_factory::FlowValueSchema),
+  /// One exact form reused by result generation and the permitted Issue save set.
+  IssueFields(octacity_server_store::IssueFieldForm),
+}
+
 /// Non-mutating schema normalization with the same Project-scoped authoring authority.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct ValidateFactoryFlowDataSchemaQuery {
@@ -169,8 +178,8 @@ pub struct ValidateFactoryFlowDataSchemaQuery {
   pub identity: FactoryKey,
   /// Explicit immutable contract version.
   pub version: FactoryKey,
-  /// Closed bounded data grammar, without a caller-computed digest.
-  pub shape: octacity_server_factory::FlowValueSchema,
+  /// Exclusive authored grammar or exact Project field selection.
+  pub source: FactoryFlowDataSchemaSource,
 }
 impl Query for ValidateFactoryFlowDataSchemaQuery {
   type Outcome = FlowDataSchema;
@@ -204,7 +213,24 @@ impl<S: octacity_server_store::FactoryConfigurationStore + 'static>
       query.project_id,
     )
     .await?;
-    FlowDataSchema::new(query.identity, query.version, query.shape)
+    let shape = match query.source {
+      FactoryFlowDataSchemaSource::Shape(shape) => shape,
+      FactoryFlowDataSchemaSource::IssueFields(form) => {
+        use octacity_server_store::IssueFieldFormContract;
+        let catalog = crate::factory::issue_snapshot::current_catalog(
+          self.issue_properties.as_deref(),
+          self.policy.as_ref(),
+          context,
+          query.project_id,
+        )
+        .await?
+        .ok_or_else(|| crate::FactoryValidationDiagnostics::unavailable("/issue_fields"))?;
+        form
+          .form_schema(&catalog)
+          .map_err(|_| crate::FactoryValidationDiagnostics::invalid("/issue_fields"))?
+      }
+    };
+    FlowDataSchema::new(query.identity, query.version, shape)
       .map_err(|_| crate::FactoryValidationDiagnostics::invalid("/shape"))
   }
 }

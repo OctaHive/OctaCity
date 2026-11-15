@@ -1166,7 +1166,7 @@ fn source_preparation_binds_an_exact_project_completion_document_without_build_p
 fn packaged_triage_completion_prepares_title_only_input_without_a_prior_build_or_upload() {
   run_ready(async {
     for (preset, version) in [
-      (crate::TRIAGE_COMPLETION_PRESET, "v2"),
+      (crate::TRIAGE_COMPLETION_PRESET, "v3"),
       (
         include_bytes!("../../../../../../config/factory/presets/triage/completion-v1.json").as_slice(),
         "v1",
@@ -1205,11 +1205,18 @@ fn packaged_triage_completion_prepares_title_only_input_without_a_prior_build_or
         "triage-completion"
       );
       assert_eq!(completion["completion_document"]["preset"]["version"], version);
-      if version == "v2" {
+      if version == "v3" {
         assert!(
           completion["criteria"].as_str().unwrap().len() < 1000,
           "the default criteria describe results concisely, without runtime or storage instructions"
         );
+        assert!(
+          completion["criteria"]
+            .as_str()
+            .unwrap()
+            .contains("selected Issue fields")
+        );
+        assert!(completion["criteria"].as_str().unwrap().contains("receipt"));
       } else {
         assert_eq!(
           completion["completion_document"]["preset"]["digest"],
@@ -1220,7 +1227,9 @@ fn packaged_triage_completion_prepares_title_only_input_without_a_prior_build_or
       assert_eq!(completion["criteria"], reviewed["content"]);
       assert_eq!(completion["completion_document"]["preset"], reviewed["preset"]);
       assert!(completion["criteria"].as_str().unwrap().contains("Project"));
-      assert!(completion["criteria"].as_str().unwrap().contains("Systems analyst"));
+      if version == "v1" {
+        assert!(completion["criteria"].as_str().unwrap().contains("Systems analyst"));
+      }
       assert!(
         completion["criteria"]
           .as_str()

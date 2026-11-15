@@ -1,0 +1,58 @@
+{
+  "field_forms": {
+    "classification": [
+      {
+        "field": {
+          "kind": "priority"
+        },
+        "required": true
+      },
+      {
+        "field": {
+          "kind": "component"
+        },
+        "required": true
+      },
+      {
+        "field": {
+          "kind": "type"
+        },
+        "required": true
+      },
+      {
+        "field": {
+          "kind": "size"
+        },
+        "required": true
+      },
+      {
+        "field": {
+          "kind": "property",
+          "id": "impact"
+        },
+        "required": true
+      },
+      {
+        "field": {
+          "kind": "property",
+          "id": "risk"
+        },
+        "required": true
+      },
+      {
+        "field": {
+          "kind": "property",
+          "id": "route"
+        },
+        "required": true
+      },
+      {
+        "field": {
+          "kind": "property",
+          "id": "repro"
+        },
+        "required": true
+      }
+    ]
+  }
+}

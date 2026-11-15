@@ -1,0 +1,184 @@
+{
+  "schemas": {
+    "selected_fields": {
+      "identity": "factory.issue-fields.form",
+      "version": "v1",
+      "shape": {
+        "type": "boolean"
+      }
+    }
+  },
+  "nodes": [
+    {
+      "key": "classification",
+      "kind": "reasoning",
+      "input_schema": "analyst_input",
+      "outcomes": [
+        {
+          "key": "observed",
+          "kind": "success",
+          "schema": "selected_fields"
+        }
+      ],
+      "budget": {
+        "max_attempts": 1,
+        "max_elapsed_millis": 60000,
+        "max_tokens": 10000,
+        "max_cost_micro_units": 1000000,
+        "max_output_bytes": 1048576
+      },
+      "required": true,
+      "input_binding": {
+        "sources": {
+          "task": {
+            "source": "work",
+            "path": "/artifacts/task"
+          },
+          "completion": {
+            "source": "work",
+            "path": "/artifacts/acceptance"
+          },
+          "priority": {
+            "source": "work",
+            "path": "/priority"
+          },
+          "risk": {
+            "source": "work",
+            "path": "/risk"
+          },
+          "eligibility": {
+            "source": "record",
+            "node": "eligibility_gate",
+            "outcome": "classify",
+            "path": ""
+          },
+          "previous": {
+            "source": "predecessor",
+            "view": "metadata",
+            "path": ""
+          }
+        },
+        "mapping": {
+          "value": {
+            "mapping": "object",
+            "fields": {
+              "task": {
+                "mapping": "pointer",
+                "path": "/task"
+              },
+              "completion": {
+                "mapping": "pointer",
+                "path": "/completion"
+              },
+              "work": {
+                "mapping": "object",
+                "fields": {
+                  "priority": {
+                    "mapping": "pointer",
+                    "path": "/priority"
+                  },
+                  "admission_risk": {
+                    "mapping": "pointer",
+                    "path": "/risk"
+                  }
+                }
+              },
+              "eligibility": {
+                "mapping": "object",
+                "fields": {
+                  "accepted": {
+                    "mapping": "pointer",
+                    "path": "/eligibility/accepted"
+                  },
+                  "decision": {
+                    "mapping": "pointer",
+                    "path": "/eligibility/decision"
+                  },
+                  "reason": {
+                    "mapping": "pointer",
+                    "path": "/eligibility/conclusion"
+                  },
+                  "evidence": {
+                    "mapping": "pointer",
+                    "path": "/eligibility/evidence"
+                  }
+                }
+              }
+            }
+          }
+        }
+      },
+      "build_profile": "classification",
+      "task": [
+        "Analyze the frozen task and explicitly selected Context. Fill only the selected Issue form using the Project definitions in the protected result contract. Preserve uncertainty; field values do not establish independently verified reproduction, approval or permission to start another pipeline."
+      ]
+    }
+  ],
+  "transitions": [
+    {
+      "predecessor": "eligibility",
+      "outcome": "observed",
+      "target": {
+        "kind": "node",
+        "key": "eligibility_gate"
+      },
+      "max_repeats": 0,
+      "exhausted_terminal": null
+    },
+    {
+      "predecessor": "eligibility_gate",
+      "outcome": "duplicate",
+      "target": {
+        "kind": "terminal",
+        "key": "rejected"
+      },
+      "max_repeats": 0,
+      "exhausted_terminal": null
+    },
+    {
+      "predecessor": "eligibility_gate",
+      "outcome": "out_of_scope",
+      "target": {
+        "kind": "terminal",
+        "key": "rejected"
+      },
+      "max_repeats": 0,
+      "exhausted_terminal": null
+    },
+    {
+      "predecessor": "eligibility_gate",
+      "outcome": "needs_input",
+      "target": {
+        "kind": "terminal",
+        "key": "project_review"
+      },
+      "max_repeats": 0,
+      "exhausted_terminal": null
+    },
+    {
+      "predecessor": "eligibility_gate",
+      "outcome": "review",
+      "target": {
+        "kind": "terminal",
+        "key": "project_review"
+      },
+      "max_repeats": 0,
+      "exhausted_terminal": null
+    },
+    {
+      "predecessor": "classification",
+      "outcome": "observed",
+      "target": {
+        "kind": "terminal",
+        "key": "triaged"
+      },
+      "max_repeats": 0,
+      "exhausted_terminal": null
+    }
+  ],
+  "terminals": {
+    "rejected": "eligibility_accepted",
+    "project_review": "eligibility_accepted",
+    "triaged": "selected_fields"
+  }
+}

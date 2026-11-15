@@ -9,6 +9,7 @@ mod constraints;
 mod data;
 mod diagnostics;
 mod flow;
+mod issue_fields;
 mod issue_snapshot;
 mod permissions;
 mod presets;
@@ -51,6 +52,7 @@ pub(super) fn tagged<const N: usize>(
 pub(super) fn insert_factory_schemas(schemas: &mut Map<String, Value>) {
   let bounds = octacity_server_application::factory_configuration_document_bounds();
   diagnostics::insert(schemas);
+  issue_fields::insert(schemas);
   roles::insert(schemas);
   project_policies::insert(schemas);
   presets::insert(schemas);
@@ -815,18 +817,10 @@ pub(super) fn insert_factory_schemas(schemas: &mut Map<String, Value>) {
       &["configuration", "published_at_unix_ms"],
     ),
   );
-  schemas.insert(
-    "ValidateFactoryFlowDataSchemaRequest".to_owned(),
-    object(
-      [
-        ("project_id", non_empty_string()),
-        ("identity", non_empty_string()),
-        ("version", non_empty_string()),
-        ("shape", schema_ref("FactoryFlowValueSchema")),
-      ],
-      &["project_id", "identity", "version", "shape"],
-    ),
-  );
+  schemas.insert("ValidateFactoryFlowDataSchemaRequest".into(), json!({"oneOf":[
+    object([("project_id",non_empty_string()),("identity",key()),("version",key()),("shape",schema_ref("FactoryFlowValueSchema"))], &["project_id","identity","version","shape"]),
+    object([("project_id",non_empty_string()),("identity",key()),("version",key()),("issue_fields",schema_ref("FactoryIssueFieldForm"))], &["project_id","identity","version","issue_fields"])
+  ]}));
   schemas.insert(
     "FactoryConfigurationSummaryResource".to_owned(),
     object(

@@ -479,6 +479,7 @@ fn source_template() -> FlowDefinitionTemplate {
       schema: key("summary"),
       public_result: true,
       issue_presentation: None,
+      issue_fields: None,
     })
     .collect();
   source.budget = BudgetLimit::new(1, 1000, 0, 0, 1024).unwrap();
@@ -1236,7 +1237,7 @@ fn delivery_reproduction_routes_one_build_and_reports_only_conclusive_checks() {
         "reproduced",
         "indeterminate",
         "environment_unavailable",
-        "bypass",
+        "unresolved",
         None,
       ),
       (

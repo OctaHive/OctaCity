@@ -554,8 +554,9 @@ pub const MAX_WEBHOOK_HEADER_NAME_BYTES: usize = octacity_server_store::MAX_WEBH
 pub const MAX_WEBHOOK_HEADER_VALUE_BYTES: usize = octacity_server_store::MAX_WEBHOOK_HEADER_VALUE_BYTES;
 
 pub use factory::authoring::factory_flow_definition::{
-  FactoryFlowDefinitionDraft, FactoryFlowDefinitionHandlers, FactoryFlowDefinitionValidation, FactoryFlowRootDraft,
-  ValidateFactoryFlowDataSchemaQuery, ValidateFactoryFlowDefinitionQuery, factory_native_gate_policies,
+  FactoryFlowDataSchemaSource, FactoryFlowDefinitionDraft, FactoryFlowDefinitionHandlers,
+  FactoryFlowDefinitionValidation, FactoryFlowRootDraft, ValidateFactoryFlowDataSchemaQuery,
+  ValidateFactoryFlowDefinitionQuery, factory_native_gate_policies,
 };
 
 pub use factory::authoring::factory_flow_definition::{
@@ -571,11 +572,11 @@ pub use management::management_input::factory::ManualFactoryWorkInput;
 
 pub use factory::authoring::factory_discovery::{
   FactoryAuditProjection, FactoryCallProjection, FactoryDiagnosticCollection, FactoryDiagnosticPage,
-  FactoryDiagnosticRecord, FactoryDiscoveryHandlers, FactoryNodeAttemptProjection, FactoryNodeCompletionProjection,
-  FactoryNodeStopProjection, FactoryProfileBuildProjection, FactoryProfileCandidateProjection,
-  FactoryProfileControlProjection, FactoryProfileSelectionProjection, FactoryProfileSignalProjection,
-  FactoryWorkProjection, GetFactoryRunQuery, ListFactoryDiagnosticsQuery, ListFactoryRunsQuery,
-  MAX_FACTORY_DIAGNOSTIC_PAGE_SIZE,
+  FactoryDiagnosticRecord, FactoryDiscoveryHandlers, FactoryIssueFieldApplication, FactoryIssueFieldApplicationStatus,
+  FactoryNodeAttemptProjection, FactoryNodeCompletionProjection, FactoryNodeStopProjection,
+  FactoryProfileBuildProjection, FactoryProfileCandidateProjection, FactoryProfileControlProjection,
+  FactoryProfileSelectionProjection, FactoryProfileSignalProjection, FactoryWorkProjection, GetFactoryRunQuery,
+  ListFactoryDiagnosticsQuery, ListFactoryRunsQuery, MAX_FACTORY_DIAGNOSTIC_PAGE_SIZE,
 };
 pub use management::management_input::factory::{FactoryNodeControlInput, FactoryRunListInput};
 pub use octacity_server_factory::{

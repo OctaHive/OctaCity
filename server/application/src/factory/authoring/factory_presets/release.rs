@@ -22,6 +22,7 @@ macro_rules! bundled_parts {
 
 bundled_parts!(
   "presets/triage/inputs-v2.json",
+  "presets/triage/inputs-v3.json",
   "presets/triage/eligibility-results-v3.json",
   "flows/base-flow/schemas/artifact_reference.json",
   "presets/triage/classification-results-v2.json",
@@ -32,6 +33,8 @@ bundled_parts!(
   "presets/triage/classification-gate-v2.json",
   "presets/triage/routing-v1.json",
   "presets/triage/direct-classification-v1.json",
+  "presets/triage/selected-fields-v1.json",
+  "presets/triage/assignments-v4.json",
   "flows/base-flow/schemas/declared_requirements.json",
   "flows/base-flow/schemas/summary.json",
   "flows/base-flow/schemas/spec_manifest.json",
@@ -78,6 +81,8 @@ bundled_parts!(
   "flows/base-flow/policies/public-deliverables.json",
   "flows/base-flow/gate-programs.json",
   "presets/ticket-delivery/reproduction-branch-v1.json",
+  "presets/ticket-delivery/predecessor-route-v1.json",
+  "presets/ticket-delivery/issue-route-v1.json",
   "presets/ticket-delivery/protected-preparation-v1.json",
   "presets/ticket-delivery/implementation-capture-gate-v1.json",
   "presets/ticket-delivery/agent-result-gates-v1.json",
@@ -87,11 +92,12 @@ bundled_parts!(
 
 pub(super) const TRIAGE: Release = Release {
   identity: "triage",
-  version: "v3",
-  manifest: asset!("presets/triage/v3.json"),
-  completion: TRIAGE_COMPLETION_PRESET,
+  version: "v4",
+  manifest: asset!("presets/triage/v4.json"),
+  completion: asset!("presets/triage/completion-v3.json"),
   name: None,
   issue_snapshot: false,
+  parameters: Some(asset!("presets/triage/parameters-v1.json")),
 };
 pub(super) const TICKET_DELIVERY: Release = Release {
   identity: "ticket-delivery",
@@ -100,6 +106,7 @@ pub(super) const TICKET_DELIVERY: Release = Release {
   completion: asset!("presets/ticket-delivery/completion-v1.json"),
   name: Some("Ticket delivery"),
   issue_snapshot: false,
+  parameters: Some(asset!("presets/ticket-delivery/setup-v1.json")),
 };
 
 const ISSUE_DELIVERY: Release = Release {
@@ -109,6 +116,7 @@ const ISSUE_DELIVERY: Release = Release {
   completion: asset!("presets/ticket-delivery/completion-v1.json"),
   name: Some("Ticket delivery"),
   issue_snapshot: true,
+  parameters: Some(asset!("presets/ticket-delivery/setup-v1.json")),
 };
 
 #[derive(Clone, Copy)]
@@ -119,9 +127,35 @@ pub(super) struct Release {
   pub(super) completion: &'static [u8],
   pub(super) name: Option<&'static str>,
   pub(super) issue_snapshot: bool,
+  parameters: Option<&'static [u8]>,
 }
 
-// Retained versions remain discoverable while clients adopt newer input contracts.
+#[derive(Default, serde::Deserialize, serde::Serialize)]
+#[serde(default, deny_unknown_fields)]
+pub(super) struct Parameters {
+  pub field_forms: std::collections::BTreeMap<FactoryKey, Vec<IssueFormField>>,
+  pub publication: Option<FactoryKey>,
+  pub optional_command: Option<OptionalCommand>,
+  pub incoming: Option<Incoming>,
+}
+#[derive(serde::Deserialize, serde::Serialize)]
+#[serde(deny_unknown_fields)]
+pub(super) struct OptionalCommand {
+  pub alias: FactoryKey,
+  pub nodes: std::collections::BTreeSet<FactoryKey>,
+  pub terminal: FactoryKey,
+  pub route: FlowTransition,
+}
+#[derive(serde::Deserialize, serde::Serialize)]
+#[serde(deny_unknown_fields)]
+pub(super) struct Incoming {
+  pub source_alias: FactoryKey,
+  pub schema_alias: FactoryKey,
+  pub inputs: std::collections::BTreeMap<FactoryKey, FlowDataMapping>,
+  pub preconditions: std::collections::BTreeMap<FactoryKey, FlowPredicate>,
+}
+
+// Two explicit consumer input modes and one selected-field producer example.
 pub(super) const RELEASES: [Release; 3] = [TICKET_DELIVERY, ISSUE_DELIVERY, TRIAGE];
 
 impl Release {
@@ -141,8 +175,10 @@ impl Release {
     let completion: serde_json::Value =
       serde_json::from_slice(self.completion).map_err(|_| ApplicationError::invalid())?;
     let mut content = serde_json::json!({"template":template,"completion":completion});
+    content["parameters"] = serde_json::to_value(self.parameters()?).map_err(|_| ApplicationError::invalid())?;
     if self.issue_snapshot {
       content["input"] = "issue_snapshot".into();
+      content["snapshot_parameters"] = super::issue_delivery::content();
     }
     if let Some(name) = self.name {
       content["name"] = name.into();
@@ -160,8 +196,20 @@ impl Release {
     reference.identity().as_str() == self.identity && reference.version().as_str() == self.version
   }
 
-  pub(super) fn is_delivery(self) -> bool {
-    self.identity == TICKET_DELIVERY.identity
+  pub(super) fn parameters(self) -> Result<Parameters, ApplicationError> {
+    self
+      .parameters
+      .map(|bytes| serde_json::from_slice(bytes).map_err(|_| ApplicationError::invalid()))
+      .transpose()
+      .map(Option::unwrap_or_default)
+  }
+
+  #[cfg(test)]
+  pub(super) fn predecessor_fixture(self) -> Result<FlowDefinitionTemplate, ApplicationError> {
+    FlowDefinitionTemplate::from_manifest(asset!("presets/triage/v3.json"), |path| {
+      Ok(bundled_part(path.as_str()).unwrap().to_vec())
+    })
+    .map_err(|_| ApplicationError::invalid())
   }
 }
 

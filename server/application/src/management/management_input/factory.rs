@@ -402,13 +402,18 @@ impl ManagementInputFactory {
     project: &str,
     identity: &str,
     version: &str,
-    shape: Value,
+    shape: Option<Value>,
+    issue_fields: Option<Value>,
   ) -> Result<crate::ValidateFactoryFlowDataSchemaQuery, ManagementInputError> {
     Ok(crate::ValidateFactoryFlowDataSchemaQuery {
       project_id: parse(project, "project id")?,
       identity: factory_decode(Value::String(identity.to_owned()))?,
       version: factory_decode(Value::String(version.to_owned()))?,
-      shape: factory_decode(shape)?,
+      source: match (shape, issue_fields) {
+        (Some(shape), None) => crate::FactoryFlowDataSchemaSource::Shape(factory_decode(shape)?),
+        (None, Some(fields)) => crate::FactoryFlowDataSchemaSource::IssueFields(factory_decode(fields)?),
+        _ => return Err(ManagementInputError::Invalid("one schema source is required")),
+      },
     })
   }
   /// Parses closed operator choices without accepting caller lifecycle data.

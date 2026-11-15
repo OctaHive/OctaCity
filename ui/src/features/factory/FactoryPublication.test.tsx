@@ -34,12 +34,12 @@ it('reviews selected typed classification fields and snapshot step inputs withou
       outcome: node.outcomes[0]!.key,
       policy: capabilities.issue_classification.policy,
       fields: {
+        project_id: config.reference.project_id,
         definition_version: 7,
-        priority: false,
-        component: true,
-        kind: false,
-        size: false,
-        properties: { severity: 'impact' },
+        fields: [
+          { field: { kind: 'component' }, required: true },
+          { field: { kind: 'property', id: 'impact' }, required: true },
+        ],
       },
     },
   };
@@ -80,7 +80,7 @@ it('reviews selected typed classification fields and snapshot step inputs withou
   await userEvent.click(screen.getByRole('button', { name: 'Validate draft' }));
   await userEvent.click(await screen.findByRole('button', { name: 'Review publication' }));
   const dialog = within(await screen.findByRole('dialog'));
-  expect(await dialog.findByText('Classification: Impact')).toBeTruthy();
+  expect(await dialog.findByText('Project field: Impact')).toBeTruthy();
   expect(dialog.getByText('component · Required')).toBeTruthy();
   expect(dialog.getByText('context · Optional · selected · 2 · 2048 bytes')).toBeTruthy();
   expect(dialog.getByText(`${node.key} · component`)).toBeTruthy();

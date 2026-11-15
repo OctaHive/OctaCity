@@ -1,101 +1,57 @@
-"""Author the opt-in stand example with ordinary public Factory contracts.
-
-Shared reviewed schema/routing fragments remain data. Only the Server normalizes
-schemas, evaluator policies and exact installed execution bindings. This module
-owns neither retained definitions nor runtime state, and is not a prerequisite
-of the blank Console journey.
-"""
+"""Resolve the configured stand example through ordinary read-only Factory authoring."""
 from __future__ import annotations
 
 import copy
 import json
 from pathlib import Path
+import uuid
+
+POLICY = Path(__file__).resolve().parents[1] / "deployment/local-stand/factory-triage.json"
 
 
-CONFIG = Path(__file__).resolve().parents[1] / "config/factory"
-EXAMPLE = CONFIG.parents[1] / "deployment/local-stand"
-MAX_FRAGMENT_EXPANSION_DEPTH = 64
+def completion_document() -> dict:
+    """Read the example's configured process criteria from the reviewed repository assets."""
+    repository = Path(__file__).resolve().parents[1]
+    path = (repository / json.loads(POLICY.read_text())["completion_document"]).resolve()
+    if not path.is_relative_to(repository):
+        raise ValueError("example completion document must belong to the repository")
+    return json.loads(path.read_text())
 
 
-def _read(path: str) -> dict:
-    return json.loads((CONFIG / path).read_text())
-
-
-def _shape(value, schemas: dict, depth: int = 0):
-    """Inline this fixed example's named shape fragments before public validation."""
-    if depth > MAX_FRAGMENT_EXPANSION_DEPTH:
-        raise ValueError("stand schema fragments exceed their expansion bound")
-    if isinstance(value, dict):
-        if value.get("type") == "reference":
-            return _shape(schemas[value["schema"]]["shape"], schemas, depth + 1)
-        return {key: _shape(item, schemas, depth + 1) for key, item in value.items()}
-    if isinstance(value, list):
-        return [_shape(item, schemas, depth + 1) for item in value]
-    return value
+def prepare_project_fields(client, project: str, namespace) -> None:
+    """Seed the configured example definitions once; published operator catalogs are authoritative."""
+    path = f"/api/v1/projects/{project}/issue-property-definitions"
+    catalog = client.get(path)
+    if catalog["version"] != 0:
+        return
+    configured = json.loads(POLICY.read_text())["project_fields"]
+    definition = {**catalog["definition"], **configured}
+    key = uuid.uuid5(namespace, "example-fields/" + json.dumps(definition, sort_keys=True))
+    client.post(path, str(key), {"expected_version": 0, "definition": definition})
 
 
 def flow_draft(client, project: str, selection: dict, namespace, criteria: dict) -> dict:
-    """Compose the bundled example through ordinary authoring contracts."""
+    """The server derives forms and bindings; installation only reviews the resulting draft."""
     if selection.get("effects"):
         raise ValueError("stand reporting requires separately reviewed ordinary action settings")
-    manifest = _read("presets/triage/v3.json")
-    parts = [_read(path) for path in manifest["parts"]]
-    schemas = {alias: schema for part in parts for alias, schema in part.get("schemas", {}).items()}
-    normalized = {alias: client.post("/api/v1/flow-data-schemas/validate", f"{namespace}-manual-v1-schema-{alias}",
-        {"project_id": project, "identity": schema["identity"], "version": schema["version"],
-         "shape": _shape(schema["shape"], schemas)}) for alias, schema in schemas.items()}
-    tasks = json.loads((EXAMPLE / "factory-triage-tasks.json").read_text())
-    policy = json.loads((EXAMPLE / "factory-triage.json").read_text())
-    deny = manifest["execution"]["permissions"]
-    nodes = [node for part in parts for node in part.get("nodes", [])]
-    for node in nodes:
-        stage = node["key"]
-        node["input_schema"] = normalized[node["input_schema"]]["reference"]
-        node["outcomes"] = [{**outcome, "schema": normalized[outcome["schema"]]["reference"]}
-                            for outcome in node["outcomes"]]
-        node["permissions"] = copy.deepcopy(deny)
-        node["code"] = {"kind": "none"}
-        if "gate" in node:
-            node["gate"] = client.post(f"/api/v1/projects/{project}/factory-gate-programs/validate",
-                f"{namespace}-manual-v1-gate-{stage}", {"program": node["gate"]})
-        else:
-            selected = selection["profiles"][stage]
-            ref = selected["profile"]
-            profile = client.get(f"/api/v1/projects/{project}/factory-role-profiles/{ref['id']}/versions/{ref['version']}")
-            if profile["reference"] != ref or profile["role"] != selected["role"]:
-                raise ValueError("stand selected Profile identity changed")
-            worker = profile["definition"]["build_configuration"]
-            configuration = client.get(
-                f"/api/v1/build-configurations/{worker['id']}/versions/{worker['version']}")
-            if configuration["definition"].get("source") != {"kind": "source_free_v1"}:
-                raise ValueError("stand requires an exact source-free worker")
-            outcome, = node["outcomes"]
-            binding = client.post(f"/api/v1/projects/{project}/factory-execution-bindings/resolve",
-                f"{namespace}-manual-v1-binding-{stage}", {"profile": ref,
-                    "capability": selected["capability"], "result_outcome": outcome["key"]})
-            if binding["incompatibility"] is not None or binding["build"] is None:
-                raise ValueError("stand selected execution binding is unavailable")
-            build = copy.deepcopy(binding["build"])
-            if stage in policy["mcp_evidence_stages"]:
-                build["result_tool"] = policy["mcp_evidence_verifier"]
-            node.pop("build_profile")
-            node.update(task=tasks[stage], budget=profile["definition"]["budget"],
-                permissions=profile["definition"]["permissions"], profile_selection={
-                    "role": selected["role"], "candidates": {"selected": {"profile": profile, "build": build}},
-                    "policy": {"mode": "manual", "candidate": "selected"}, "failure": {"kind": "manual_selection"},
-                    "selection_budget": {"attempts": 0, "elapsed_millis": 0, "tokens": 0, "cost_micro_units": 0, "output_bytes": 0}})
-            context = selection["context"][stage]
-            documents = {"project-goals": context["goals"], **context.get("documents", {})}
-            node["context_binding"] = {"work_task": "task", "entries": {
-                name: {"source_kind": "specification", "source": {"value": {"mapping": "constant",
-                       "value": {"kind": "artifact", "value": artifact}}}} for name, artifact in documents.items()}}
-    routes = [route for part in parts for route in part.get("transitions", [])]
-    terminals = [{"key": key, "schema": normalized[schema]["reference"]}
-                 for part in parts for key, schema in part.get("terminals", {}).items()]
-    return {"root": {"input_schema": normalized[manifest["input_schema"]]["reference"], "entry": manifest["entry"],
-        "nodes": nodes, "transitions": routes, "terminals": terminals,
-        "context_projections": [], "data_projections": [], "code_sources": {},
-        "process": {"criteria": {"artifact": criteria, "recipients": list(tasks)}}, "execution": copy.deepcopy(selection["execution"])},
-        "data_schemas": list(normalized.values()), "pools": {},
-        "limits": {**policy["flow_limits"], "budget": selection["execution"]["budget"],
-                   "permissions": selection["execution"]["permissions"]}}
+    policy = json.loads(POLICY.read_text())
+    configured = policy["example_preset"]
+    base = f"/api/v1/projects/{project}/factory-presets"
+    page = client.get(base)
+    preset, = [item["reference"] for item in page["items"]
+        if all(item["reference"][key] == value for key, value in configured.items())]
+    request = {"preset": preset, "flow_id": str(uuid.uuid5(namespace,
+            f"flow/{configured['identity']}/manual-v1")), "flow_only": True,
+        "profiles": {alias: {key: entry[key] for key in ("role", "profile")}
+            for alias, entry in selection["profiles"].items()},
+        "context": copy.deepcopy(selection["context"]), "execution": copy.deepcopy(selection["execution"])}
+    resolved = client.post(base + "/resolve", f"{namespace}-manual-v1-template", request)
+    if resolved["diagnostics"] or resolved.get("flow") is None or resolved.get("dependencies"):
+        raise ValueError("stand template requires review of its explicit dependencies before publication")
+    flow = copy.deepcopy(resolved["flow"])
+    # The template supplies the graph; installation retains its reviewed ceilings.
+    flow["limits"] = {**policy["flow_limits"],
+        "budget": copy.deepcopy(selection["execution"]["budget"]),
+        "permissions": copy.deepcopy(selection["execution"]["permissions"])}
+    flow["root"]["process"] = {"criteria": {"artifact": criteria, "recipients": list(selection["profiles"])}}
+    return flow

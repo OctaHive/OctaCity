@@ -6,6 +6,7 @@ test adapters. File validation, atomic updates and argument selection stay real.
 from contextlib import redirect_stderr, redirect_stdout
 import copy
 import io
+import hashlib
 import json
 import os
 from pathlib import Path
@@ -49,9 +50,12 @@ class FactoryStandRecoveryTests(unittest.TestCase):
         }
         self.policy_defaults = {"version": 4, "launch_policy": None, "access_profile": None}
         catalog = json.loads(self.profiles.read_text())
+        writer = json.loads(stand.triage.POLICY.read_text())["issue_field_writer"]
+        permissions = {"plugins": [stand.triage._reference(writer["identity"])]}
+        digest = hashlib.sha256(json.dumps(permissions, sort_keys=True, separators=(",", ":")).encode()).hexdigest()
         catalog["projects"][0]["references"].append({"kind": "permission_ceiling", "alias": "triage-ceiling",
-            "reference": {"identity": "triage-ceiling", "version": "v1", "digest": "06" * 32},
-            "metadata": {"permission_declarations": {"plugins": []}}})
+            "reference": {"identity": "triage-ceiling", "version": "v1", "digest": digest},
+            "metadata": {"permission_declarations": permissions}})
         self.profiles.write_text(json.dumps(catalog))
         self.provisioned_defaults = None
         self.unresolved_policy_receipts = {}
@@ -205,7 +209,6 @@ class FactoryStandRecoveryTests(unittest.TestCase):
     def test_default_resume_installs_the_local_writer_without_republishing_pipeline_state(self):
         catalog = json.loads(self.profiles.read_text())
         ceiling, = [row for row in catalog['projects'][0]['references'] if row['alias'] == 'triage-ceiling']
-        ceiling['metadata'] = {'permission_declarations': {'plugins': []}}
         self.profiles.write_text(json.dumps(catalog))
         self._update(self.readers)
         receipt = (self.root / 'evidence/factory-triage.json').read_bytes()
@@ -213,7 +216,7 @@ class FactoryStandRecoveryTests(unittest.TestCase):
         installed = json.loads((self.root / 'config/server/factory-profiles.json').read_text())
         installed_ceilings = [row for row in installed['projects'][0]['references'] if row['kind'] == 'permission_ceiling']
         current, = [row for row in installed_ceilings if row['alias'] == 'triage-ceiling']
-        self.assertNotEqual(current['reference']['version'], ceiling['reference']['version'])
+        self.assertEqual(current['reference'], ceiling['reference'])
         self.assertIn(ceiling['reference'], [row['reference'] for row in installed_ceilings])
         writer, = installed['issue_classification_actions']
         self.assertEqual(writer['principal'], 'local-stand-gateway')

@@ -6,6 +6,7 @@ import { QueryFailureNotice } from '../../shared/QueryStateNotice';
 import { SelectMenu } from '../../shared/SelectMenu';
 import {
   classificationFields,
+  sameIssueFieldTarget,
   ClassificationFieldPicker,
   type IssueFieldChoices,
 } from './IssueFieldContracts';
@@ -52,15 +53,17 @@ export function TypedIssueClassification({
     const original = classificationParameters(node.action)?.fields;
     if (!original || typeof original !== 'object') return [];
     return targets
-      .filter(({ name, field }) =>
-        field.source.kind === 'classification'
-          ? 'properties' in original &&
-            !!original.properties &&
-            typeof original.properties === 'object' &&
-            Object.entries(original.properties).some(
-              ([slot, id]) => slot === name && id === field.property_id,
-            )
-          : Object.entries(original).some(([key, value]) => key === name && value === true),
+      .filter(
+        ({ target }) =>
+          'fields' in original &&
+          Array.isArray(original.fields) &&
+          original.fields.some(
+            (selected: unknown) =>
+              !!selected &&
+              typeof selected === 'object' &&
+              'field' in selected &&
+              sameIssueFieldTarget(target, selected.field),
+          ),
       )
       .map(({ name }) => name);
   });
@@ -172,19 +175,13 @@ export function TypedIssueClassification({
         current.choices !== choices
       )
         throw new Error(t('factory.classificationDraftChanged'));
-      const selection: S['FactoryIssueClassificationFieldSelection'] = {
+      const selection: S['FactoryIssueFieldForm'] = {
+        project_id: services.projectId,
         definition_version: fields.definition_version,
-        priority: selected.includes('priority'),
-        component: selected.includes('component'),
-        kind: selected.includes('kind'),
-        size: selected.includes('size'),
-        properties: Object.fromEntries(
-          selectedTargets.flatMap(({ name, field }) =>
-            field.source.kind === 'classification' && field.property_id
-              ? [[name, field.property_id]]
-              : [],
-          ),
-        ),
+        fields: selectedTargets.map(({ name, target }) => ({
+          field: target,
+          required: producer.shape.fields[name]?.required ?? true,
+        })),
       };
       const receipt = node.outcomes.find((o) => o.key === 'applied');
       if (

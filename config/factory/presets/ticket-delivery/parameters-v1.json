@@ -1,0 +1,103 @@
+{
+  "fields": {
+    "priority": {
+      "kind": "priority"
+    },
+    "component": {
+      "kind": "component"
+    },
+    "work_kind": {
+      "kind": "type"
+    },
+    "size": {
+      "kind": "size"
+    },
+    "dependencies": {
+      "kind": "dependencies"
+    },
+    "risk": {
+      "kind": "property",
+      "id": "risk"
+    },
+    "severity": {
+      "kind": "property",
+      "id": "impact"
+    },
+    "recommended_route": {
+      "kind": "property",
+      "id": "route"
+    },
+    "reproducibility": {
+      "kind": "property",
+      "id": "repro"
+    }
+  },
+  "identity": "factory.ticket-delivery.issue-input",
+  "version": "v2",
+  "source_alias": "issue",
+  "admission_schema": "reproduction_route",
+  "admission_allowed": [
+    "work_kind"
+  ],
+  "schema_fields": {
+    "summary": [
+      "priority",
+      "component",
+      "work_kind",
+      "size",
+      "dependencies",
+      "risk",
+      "severity",
+      "recommended_route",
+      "reproducibility"
+    ],
+    "reproduction_route": [
+      "work_kind",
+      "reproducibility"
+    ],
+    "spec_handoff": [
+      "work_kind",
+      "reproducibility"
+    ],
+    "spec_gate_input": [
+      "work_kind",
+      "reproducibility"
+    ]
+  },
+  "inputs": {
+    "reproduction-needed": {
+      "value": {
+        "mapping": "object",
+        "fields": {
+          "work_kind": {
+            "mapping": "pointer",
+            "path": "/issue/work_kind"
+          },
+          "reproducibility": {
+            "mapping": "pointer",
+            "path": "/issue/reproducibility"
+          }
+        }
+      }
+    },
+    "requirements_needed": {
+      "value": {
+        "mapping": "pointer",
+        "path": "/issue"
+      }
+    }
+  },
+  "choice_condition": {
+    "node": "requirements_needed",
+    "field": "size",
+    "path": "/size",
+    "outcome": "specification",
+    "fallback": "prepared",
+    "output": {
+      "value": {
+        "mapping": "pointer",
+        "path": ""
+      }
+    }
+  }
+}

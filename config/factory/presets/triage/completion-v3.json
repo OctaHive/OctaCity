@@ -1,0 +1,8 @@
+{
+  "preset": {
+    "identity": "triage-completion",
+    "version": "v3",
+    "digest": "d88e4716b90f7483ed473e2579e7baabc3fbfee939d7b6126b0cf893260dddfa"
+  },
+  "content": "# Triage completion\n\nRetain the bounded Project eligibility decision and its independently observed lookup evidence.\nFor an eligible task, the ordinary analyst fills the selected Issue fields using their exact Project definitions.\nKeep missing information and reproduction uncertainty explicit. Field values do not establish independently verified observations, human acceptance or permission to launch another pipeline.\n\nKeep accepted analysis separate from the guarded save receipt. Report pending, conflicting or denied saves without claiming that Issue fields were applied. Provider reporting and downstream intake remain separate explicit selections.\n\nThese criteria complete this assessment pipeline; they are not implementation acceptance or proof of a delivered fix.\n"
+}

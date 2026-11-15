@@ -2,6 +2,7 @@ import { readFileSync } from 'node:fs';
 import { resolve } from 'node:path';
 import type {
   FactoryConfigurationDetails,
+  FactoryApi,
   FactoryRun,
   FactoryDiagnostic,
 } from '../../src/features/factory/api';
@@ -117,4 +118,13 @@ export function diagnosticFixture(collection: string): FactoryDiagnostic[] {
       },
     ];
   return [];
+}
+
+/** Existing free-form editor fixtures reject an unexpected selected-form request. */
+export function authoredSchemaShape(
+  request: Parameters<FactoryApi['normalizeSchema']>[0] | undefined,
+) {
+  if (!request || !('shape' in request))
+    throw new Error('This fixture requires an authored schema request');
+  return request.shape;
 }

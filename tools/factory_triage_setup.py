@@ -21,6 +21,7 @@ from urllib.parse import urlencode
 import configure_local_stand_agent as agent
 import configure_local_stand_server as server
 import factory_local_runtime as runtime
+import factory_stand_flow
 import local_stand_state as state
 import local_stand_build_inputs as build_inputs
 from factory_integrations import MANAGEMENT_PRINCIPAL
@@ -140,7 +141,7 @@ def preparation_mapping(project: str) -> dict:
     repository = POLICY.parents[2]
     source = json.loads((POLICY.parent / "source-policy.json").read_text())
     mapping = source["reader"]["preparation"]["mapping"]
-    completion = json.loads((repository / "config/factory/presets/triage/completion-v2.json").read_text())
+    completion = factory_stand_flow.completion_document()
     document = {"kind": "draft", "project_id": str(uuid.UUID(project)), **completion}
     mapping.update(require_body=False, acceptance={"kind": "process_completion", "value": document})
     return mapping
@@ -159,7 +160,12 @@ def pipeline_selection(client, resources: dict, profiles: dict, context: dict,
     if "none" not in source.get("predicate_label_presence", []) or "open" not in source.get("predicate_states", []):
         raise ValueError("triage Source does not support the reviewed open unlabeled scope")
     repository = client.get(f"/api/v1/repositories/{resources['repository']}/versions/1")
-    budget = json.loads(POLICY.read_text())["flow_budget"]
+    policy = json.loads(POLICY.read_text())
+    budget = policy["flow_budget"]
+    permissions = copy.deepcopy(permissions)
+    writer = _reference(policy["issue_field_writer"]["identity"])
+    if writer not in permissions.setdefault("plugins", []):
+        permissions["plugins"].append(writer)
     configuration = None
     if policy_defaults is not None:
         launch, access = (policy_defaults[key] for key in ("launch_policy", "access_profile"))
@@ -201,33 +207,26 @@ def install_issue_classification(catalog: dict, project: str) -> None:
 
     The runtime independently checks this principal against management config.
     Only the Project ceiling grants the plugin; individual Flows must opt in.
-    Retain old ceilings so already published configurations remain resolvable.
+    The configured writer must already fit the reviewed Project ceiling.
     """
-    writer = _reference("stand.issue-classification")
+    selection = json.loads(POLICY.read_text())["issue_field_writer"]
+    writer = _reference(selection["identity"])
+    owner, = [row for row in catalog["projects"] if row["project_id"] == project]
+    ceiling, = [row for row in owner["references"]
+        if row["kind"] == "permission_ceiling" and row["alias"] == _INSTALLED_ACCESS_DEFAULT]
+    if writer not in ceiling["metadata"]["permission_declarations"]["plugins"]:
+        raise ValueError("configured Issue writer exceeds the reviewed Project ceiling")
     declaration = {"identity": writer, "principal": MANAGEMENT_PRINCIPAL}
     actions = catalog.setdefault("issue_classification_actions", [])
     if declaration not in actions:
         if any(row["identity"]["identity"] == writer["identity"] for row in actions):
             raise ValueError("installed classification writer differs from the reviewed declaration")
         actions.append(declaration)
-    owner, = [row for row in catalog["projects"] if row["project_id"] == project]
     capability = {"kind": "node_capability", "alias": writer["identity"], "reference": writer,
         "metadata": {"node_kinds": ["trusted_action"], "signal_purposes": [], "enforcement": [],
-            "compatible_choices": [], "issue_classification": {"policy": "triage", "size_labels": {}}}}
+            "compatible_choices": [], "issue_classification": {"policy": selection["policy"], "size_labels": {}}}}
     if capability not in owner["references"]:
         owner["references"].append(capability)
-    ceiling, = [row for row in owner["references"]
-        if row["kind"] == "permission_ceiling" and row["alias"] == _INSTALLED_ACCESS_DEFAULT]
-    permissions = copy.deepcopy(ceiling["metadata"]["permission_declarations"])
-    if writer in permissions["plugins"]:
-        return
-    permissions["plugins"].append(writer)
-    # The original digest remains addressable, while provisioning chooses the new declaration.
-    ceiling["alias"] += "-legacy-" + ceiling["reference"]["digest"][:12]
-    digest = hashlib.sha256(json.dumps(permissions, sort_keys=True, separators=(",", ":")).encode()).hexdigest()
-    owner["references"].append({**ceiling, "alias": _INSTALLED_ACCESS_DEFAULT,
-        "reference": _reference(_INSTALLED_ACCESS_DEFAULT, "v2", digest=digest),
-        "metadata": {**ceiling["metadata"], "permission_declarations": permissions}})
 
 
 def same_permissions(left: dict, right: dict) -> bool:
@@ -319,7 +318,7 @@ def _name_triage_access(client, base: str, namespace: uuid.UUID, original: dict,
     # Only an exact installer-owned declaration can advance automatically. An
     # operator's reviewed version is never widened or selected as a new default.
     expected = copy.deepcopy(original_permissions)
-    writer = _reference("stand.issue-classification")
+    writer = _reference(json.loads(POLICY.read_text())["issue_field_writer"]["identity"])
     if writer not in expected.get("plugins", []):
         expected.setdefault("plugins", []).append(writer)
     desired = expected if installed_permissions is not None and same_permissions(installed_permissions, expected) else original_permissions
@@ -451,7 +450,7 @@ def prepare_runtime(root: Path, native: dict, resources: dict, client) -> dict:
     references.append({"kind": "node_capability", "alias": policy["mcp_evidence_verifier"]["identity"],
                        "reference": policy["mcp_evidence_verifier"]})
     access_permissions = copy.deepcopy(permissions)
-    access_permissions["plugins"].append(_reference("stand.issue-classification"))
+    access_permissions["plugins"].append(_reference(policy["issue_field_writer"]["identity"]))
     permission_digest = hashlib.sha256(json.dumps(access_permissions, sort_keys=True, separators=(",", ":")).encode()).hexdigest()
     references.append({"kind": "permission_ceiling", "alias": _INSTALLED_ACCESS_DEFAULT,
         "reference": _reference(_INSTALLED_ACCESS_DEFAULT, "v2", digest=permission_digest),

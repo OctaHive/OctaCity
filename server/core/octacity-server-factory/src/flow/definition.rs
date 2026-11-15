@@ -506,6 +506,16 @@ impl FlowNodeDefinition {
   pub const fn permissions(&self) -> &FactoryPermissionSet {
     &self.permissions
   }
+
+  /// Local accepted-result effects belong to the controller, outside the Agent's Build request.
+  pub(crate) fn without_local_effects(&self, permissions: FactoryPermissionSet) -> FactoryPermissionSet {
+    permissions.without_plugins(
+      self
+        .outcomes
+        .iter()
+        .filter_map(|outcome| outcome.issue_fields().map(|fields| &fields.writer)),
+    )
+  }
   /// Reports whether this node must be reachable before publication.
   #[must_use]
   pub const fn is_required(&self) -> bool {

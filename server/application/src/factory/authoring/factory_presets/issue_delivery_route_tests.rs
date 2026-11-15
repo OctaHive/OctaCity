@@ -105,16 +105,43 @@ async fn admitted_issue_with_threshold(
       .await
       .unwrap();
   }
+  if reproducibility == "reproduced" {
+    let current = issues.issue_properties(f.project, None).await.unwrap();
+    let mut definition = current.definition;
+    definition.classification = Default::default();
+    let property = definition.properties.iter_mut().find(|p| p.id == "repro").unwrap();
+    if let IssuePropertyKind::Choice { choices } = &mut property.kind {
+      choices.push(IssuePropertyChoice {
+        id: "reproduced".into(),
+        name: "Reproduced".into(),
+        retired: false,
+      });
+    }
+    issues
+      .publish_issue_properties(testing::management_mutation(PublishIssueProperties {
+        intent: PublishIssuePropertiesIntent {
+          project_id: f.project,
+          expected_version: current.version,
+          definition,
+        },
+        idempotency_key: "ordinary-reproduction-choice".parse().unwrap(),
+        published_at: Timestamp::from_unix_millis(2).unwrap(),
+      }))
+      .await
+      .unwrap();
+  }
   let mut selection = issue_selection(&f).await;
   selection.issue_snapshot = Some(if let Some(threshold) = threshold {
     serde_json::from_value(
       serde_json::json!({"definition_version":2,"admission":issue_input().admission,
-      "specification_from_size":threshold}),
+      "choice_thresholds":{"requirements_needed":threshold}}),
     )
     .expect("Delivery accepts an explicit Project size threshold")
   } else {
     issue_input()
   });
+  selection.issue_snapshot.as_mut().unwrap().definition_version =
+    issues.issue_properties(f.project, None).await.unwrap().version;
   let resolved = AuthorizedQueryHandler::new(
     f.policy.clone(),
     Arc::new(
@@ -195,7 +222,7 @@ async fn admitted_issue_with_threshold(
           priority: Some(IssuePriority::Choice(priority.into())),
         },
         planning: IssuePlanning {
-          definition_version: if threshold.is_some() { 2 } else { 1 },
+          definition_version: issues.issue_properties(f.project, None).await.unwrap().version,
           issue_type: Some(kind.into()),
           size: Some(size),
           component: Some(component.into()),
@@ -466,6 +493,14 @@ fn issue_delivery_routes_frozen_kind_size_component_and_priority() {
         "compiler",
         "low",
         "unknown",
+        "reproduction",
+      ),
+      (
+        "defect",
+        String::from("small"),
+        "compiler",
+        "low",
+        "reproduced",
         "reproduction",
       ),
       (
