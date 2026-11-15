@@ -8,6 +8,7 @@ pub(super) fn insert(schemas: &mut Map<String, Value>) {
     ("name", json!({"type":"string","minLength":1,"maxLength":octacity_server_application::MAX_ISSUE_TITLE_BYTES,"x-max-utf8-bytes":octacity_server_application::MAX_ISSUE_TITLE_BYTES})),
     ("property_id", json!({"type":"string","minLength":1,"maxLength":octacity_server_application::MAX_ISSUE_PROPERTY_KEY_BYTES})),
     ("required_supported", boolean()), ("shape", schema_ref("FactoryFlowValueSchema")),
+    ("choice_labels", json!({"type":"object","maxProperties":octacity_server_application::MAX_ISSUE_PROPERTY_CHOICES,"additionalProperties":{"type":"string","minLength":1,"maxLength":octacity_server_application::MAX_ISSUE_TITLE_BYTES,"x-max-utf8-bytes":octacity_server_application::MAX_ISSUE_TITLE_BYTES}})),
   ], &["source","name","required_supported","shape"]));
   schemas.insert(
     "FactoryIssueFieldChoices".into(),

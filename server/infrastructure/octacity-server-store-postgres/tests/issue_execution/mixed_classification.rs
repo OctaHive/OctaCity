@@ -41,7 +41,7 @@ async fn apply_typed(
       priority: Some("high".into()),
       component: None,
       issue_type: None,
-      size: Some(IssueSize::Small),
+      size: Some(String::from("small")),
       properties: Default::default(),
     }),
     size_label: None,

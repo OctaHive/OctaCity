@@ -264,7 +264,7 @@ async fn native_source_admission_retains_the_matching_linked_issue_revision() {
         priority: None,
         component: None,
         issue_type: None,
-        size: Some(octacity_server_store::IssueSize::Small),
+        size: Some(String::from("small")),
         properties: Default::default(),
         inputs: Default::default(),
       }),
@@ -275,10 +275,7 @@ async fn native_source_admission_retains_the_matching_linked_issue_revision() {
     }))
     .await
     .expect("an exact native Issue baseline must support explicit local triage application");
-  assert_eq!(
-    applied.issue.planning.size,
-    Some(octacity_server_store::IssueSize::Small)
-  );
+  assert_eq!(applied.issue.planning.size, Some(String::from("small")));
   assert!(applied.issue.planning.labels.is_empty());
   assert_eq!(
     store.factory_run_snapshot(admission.run.id()).await.unwrap().work,

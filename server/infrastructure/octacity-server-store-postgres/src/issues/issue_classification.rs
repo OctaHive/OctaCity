@@ -315,8 +315,8 @@ fn classification_field_baseline<'a>(
       baseline.planning.issue_type.clone_from(&reviewed.planning.issue_type);
       (vec!["planning", "type"], json!(reviewed.planning.issue_type))
     }
-    IssueClassificationFieldReference::Size => {
-      baseline.planning.size = reviewed.planning.size;
+    IssueClassificationFieldReference::Size { .. } => {
+      baseline.planning.size.clone_from(&reviewed.planning.size);
       (vec!["planning", "size"], json!(reviewed.planning.size))
     }
     IssueClassificationFieldReference::Property { id, .. } => {

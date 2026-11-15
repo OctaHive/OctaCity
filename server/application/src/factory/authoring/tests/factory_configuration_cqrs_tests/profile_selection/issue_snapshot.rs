@@ -11,6 +11,63 @@ mod fields;
 mod projections;
 
 #[test]
+fn authoring_size_contract_uses_the_active_ordered_project_catalog() {
+  run_ready(async {
+    let project = ProjectId::generate();
+    let fixture = selected_fixture(project);
+    let properties = properties(project).await;
+    let mut definition = properties.issue_properties(project, None).await.unwrap().definition;
+    definition.sizes[0].retired = true;
+    definition.sizes.push(octacity_server_store::IssuePropertyChoice {
+      id: "xl".into(),
+      name: "Extra large".into(),
+      retired: false,
+    });
+    properties
+      .publish_issue_properties(management_mutation(octacity_server_store::PublishIssueProperties {
+        intent: octacity_server_store::PublishIssuePropertiesIntent {
+          project_id: project,
+          expected_version: 1,
+          definition,
+        },
+        idempotency_key: "custom-size-contract".parse().unwrap(),
+        published_at: octacity_server_domain::Timestamp::from_unix_millis(2).unwrap(),
+      }))
+      .await
+      .unwrap();
+    let policy = Arc::new(TrustedNetworkManagementPolicy);
+    let result = AuthorizedQueryHandler::new(
+      policy.clone(),
+      Arc::new(
+        crate::FactoryRoleProfileHandlers::with_policy(
+          Arc::new(PublicationChoices::for_publication(fixture.choices)),
+          policy,
+        )
+        .with_issue_properties(properties),
+      ),
+    )
+    .handle_query(
+      &context(),
+      crate::GetFactoryAuthoringCapabilitiesQuery { project_id: project },
+    )
+    .await
+    .unwrap();
+    let wire = serde_json::to_value(result).unwrap();
+    let size = wire["issue_fields"]["fields"]
+      .as_array()
+      .unwrap()
+      .iter()
+      .find(|f| f["source"] == serde_json::json!({"kind":"size"}))
+      .unwrap();
+    assert_eq!(
+      size["shape"],
+      serde_json::json!({"type":"enum","values":["medium","large","xl"]})
+    );
+    assert_eq!(size["choice_labels"]["xl"], "Extra large");
+  });
+}
+
+#[test]
 fn authoring_offers_project_issue_field_contracts_without_a_classification_writer_or_body_reads() {
   run_ready(async {
     let project = ProjectId::generate();

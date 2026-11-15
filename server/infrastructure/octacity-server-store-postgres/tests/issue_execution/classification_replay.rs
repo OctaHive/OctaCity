@@ -26,7 +26,7 @@ async fn typed_classification_replay_after_later_edits_and_pool_restart_returns_
     applied.issue.content.priority,
     Some(IssuePriority::Choice("high".into()))
   );
-  assert_eq!(applied.issue.planning.size, Some(IssueSize::Small));
+  assert_eq!(applied.issue.planning.size, Some(String::from("small")));
   assert!(
     applied
       .issue
@@ -88,7 +88,7 @@ async fn typed_classification_replay_after_later_edits_and_pool_restart_returns_
         expected_version: edited.version,
         planning: IssuePlanning {
           definition_version: 2,
-          size: Some(IssueSize::Large),
+          size: Some(String::from("large")),
           issue_type: Some("feature_request".into()),
           due_date: Some("2026-12-01".into()),
           values: [("notes".into(), IssuePropertyValue::Text("Keep this manual note".into()))].into(),
@@ -147,7 +147,7 @@ async fn typed_classification_replay_after_later_edits_and_pool_restart_returns_
     applied.issue
   );
   let mut changed_reuse = command.clone();
-  changed_reuse.fields.as_mut().unwrap().size = Some(IssueSize::Large);
+  changed_reuse.fields.as_mut().unwrap().size = Some(String::from("large"));
   assert!(matches!(
     restarted
       .apply_issue_classification(management_mutation(changed_reuse))
@@ -205,7 +205,7 @@ async fn rejected_typed_classification_replays_its_original_conflict_after_resta
         id: issue.id,
         expected_version: applied.version,
         planning: IssuePlanning {
-          size: Some(IssueSize::Large),
+          size: Some(String::from("large")),
           ..applied.planning
         },
       },

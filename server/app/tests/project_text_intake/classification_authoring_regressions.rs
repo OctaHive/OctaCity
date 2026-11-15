@@ -423,7 +423,7 @@ async fn published_classification_preserves_declared_material_dependencies() {
   )
   .await;
   let current = store.issue(issue.project_id, issue.id, None).await.unwrap();
-  assert_eq!(current.planning.size, Some(IssueSize::Small));
+  assert_eq!(current.planning.size, Some(String::from("small")));
   assert_eq!(current.classification.fields.len(), 1);
   assert_eq!(
     current.classification.fields[0].inputs.materials,

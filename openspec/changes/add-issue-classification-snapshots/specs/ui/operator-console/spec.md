@@ -62,7 +62,7 @@ The outcome editor SHALL provide **Show on Issue** and use the supported outcome
 ## ADDED Requirements
 
 ### Requirement: Project settings administer shared Issue field definitions
-Project settings SHALL provide authorized creation and compatible maintenance of Project-owned Issue property definitions using the existing versioned publication contract. Controls SHALL support text/choice/boolean/bounded-integer/date kinds, their authoritative bounds, choice IDs/display names, compatible display renames, retirement and optional classification semantic bindings. Priority, component, type and size SHALL be identified as built-in attributes; Project settings SHALL provide dedicated settings for the Project's own priority/component/type choices separately from custom property definitions. Classification SHALL remain an optional subset whose remaining semantic bindings target distinct supported choice properties. Operators SHALL not need hand-written JSON, duplicate per-pipeline vocabulary lists or per-Issue schema administration.
+Project settings SHALL provide authorized creation and compatible maintenance of Project-owned Issue property definitions using the existing versioned publication contract. Controls SHALL support text/choice/boolean/bounded-integer/date kinds, their authoritative bounds, choice IDs/display names, compatible display renames, retirement and optional classification semantic bindings. Priority, component, type and size SHALL be identified as built-in attributes; Project settings SHALL provide dedicated settings for the Project's own priority/component/type/size choices separately from custom property definitions. Classification SHALL remain an optional subset whose remaining semantic bindings target distinct supported choice properties. Operators SHALL not need hand-written JSON, duplicate per-pipeline vocabulary lists or per-Issue schema administration.
 
 Review SHALL show stable identities, Project-wide availability, exact current catalog version and the effect of additions/retirement. Existing keys/types and retained history SHALL remain explainable. Current-version conflicts and incompatible changes SHALL retain the draft and require renewed review; publication SHALL not silently rewrite Issue values or start execution. Issue value editing SHALL remain separate from Project administration. EN/RU, keyboard and narrow-layout support SHALL cover these controls.
 
@@ -75,7 +75,7 @@ Review SHALL show stable identities, Project-wide availability, exact current ca
 - **THEN** current editing explains the new availability while old Issue revisions retain their original definitions and no stored value is silently remapped
 
 #### Scenario: An administrator configures Project components
-- **WHEN** an authorized administrator opens the priority/component/type-list settings for a Project and creates, renames or retires an option
+- **WHEN** an authorized administrator opens the priority/component/type/size-list settings for a Project and creates, renames or retires an option
 - **THEN** the reviewed versioned list supplies that Project's built-in Issue selectors independently of custom fields, and existing Issue values/history are not silently rewritten
 
 ### Requirement: Issues manage their own documents and explicitly link shared Project documents
@@ -134,3 +134,10 @@ An operator on the ordinary stand SHALL be able to create, review and publish tr
 - **WHEN** an operator uses the ordinary installed stand with no Flow or Configuration
 - **THEN** UI actions create and publish triage, apply its classification to an Issue, create and publish independent Delivery, and start it from the Issue snapshot without an upstream Run selector
 - **AND** packaged qualification prepares neither pipeline nor its gates/admission selections through test-side API calls, and retains protected validation and confirmed test PR evidence
+
+### Requirement: Project size choices and Delivery specification threshold are UI-authorable
+Project Issue field settings SHALL administer ordered size choices alongside priority, component and type with bounded additions, stable IDs, rename, retirement, explicit reorder, publication review and conflicts. Issue properties, triage field reuse and snapshot authoring SHALL use the exact published size catalog. Delivery example authoring SHALL expose **Create specifications starting at size** with active Project choices in their reviewed order and require explicit selection. Reopening a published graph SHALL preserve its concrete routes. EN/RU and keyboard controls SHALL be covered without API-only preparation.
+
+#### Scenario: Operator configures a custom size scale and threshold
+- **WHEN** an operator publishes custom ordered sizes and selects a Delivery threshold through Console controls
+- **THEN** Issue editing offers those sizes, the editable Delivery graph routes the selected suffix to specification authoring, and renaming display labels infers no behavior

@@ -32,7 +32,7 @@ pub(super) async fn replay_fixture(store: &PostgresStore) -> (IssueRevision, Pro
         id: issue.id,
         expected_version: issue.version,
         planning: IssuePlanning {
-          size: Some(IssueSize::Small),
+          size: Some(String::from("small")),
           ..issue.planning
         },
       },
@@ -93,7 +93,7 @@ pub(super) async fn change_reviewed_issue(store: &PostgresStore, issue: &IssueRe
         expected_version: issue.version,
         planning: IssuePlanning {
           definition_version: 1,
-          size: Some(IssueSize::Large),
+          size: Some(String::from("large")),
           ..issue.planning
         },
       },

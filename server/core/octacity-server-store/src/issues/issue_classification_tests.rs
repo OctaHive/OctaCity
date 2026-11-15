@@ -59,6 +59,131 @@ fn manual_priority() -> Value {
 }
 
 #[test]
+fn builtin_size_uses_ordered_project_choices_and_retains_history_and_replay() {
+  run_ready(async {
+    let store = testing::InMemoryProjectStore::new();
+    let original = ordinary_issue(&store).await;
+    let definition: IssuePropertyDefinitionSet = serde_json::from_value(json!({
+      "labels":[], "properties":[], "sizes":[
+        {"id":"xs","name":"Extra small","retired":false},
+        {"id":"small","name":"Small","retired":false},
+        {"id":"medium","name":"Medium","retired":false},
+        {"id":"large","name":"Large","retired":false},
+        {"id":"xl","name":"Extra large","retired":false}
+      ]
+    }))
+    .expect("size choices belong to the Project catalog");
+    let published = store
+      .publish_issue_properties(testing::management_mutation(PublishIssueProperties {
+        intent: PublishIssuePropertiesIntent {
+          project_id: original.project_id,
+          expected_version: 0,
+          definition,
+        },
+        idempotency_key: key("size-catalog"),
+        published_at: at(3),
+      }))
+      .await
+      .unwrap()
+      .resource;
+    let edit = EditIssuePlanning {
+      intent: EditIssuePlanningIntent {
+        project_id: original.project_id,
+        id: original.id,
+        expected_version: original.version,
+        planning: serde_json::from_value(json!({"definition_version":1,"size":"xl","assignee":null,
+          "labels":[],"due_date":null,"parent_id":null,"values":{}}))
+        .unwrap(),
+      },
+      assignees: Default::default(),
+      idempotency_key: key("size-select"),
+      edited_at: at(4),
+    };
+    let selected = store
+      .edit_issue_planning(testing::management_mutation(edit.clone()))
+      .await
+      .unwrap()
+      .issue;
+    assert_eq!(serde_json::to_value(&selected).unwrap()["planning"]["size"], "xl");
+    let metadata = serde_json::to_value(&selected.classification).unwrap();
+    let size = metadata["fields"]
+      .as_array()
+      .unwrap()
+      .iter()
+      .find(|f| f["field"]["kind"] == "size")
+      .unwrap();
+    assert_eq!(
+      size["field"]["definition_version"], 1,
+      "custom size attribution pins its Project catalog"
+    );
+    let fragment =
+      IssueSnapshotDefinitions::selected(&published, selected.classification.fields.iter().map(|f| &f.field)).unwrap();
+    let wire = serde_json::to_value(fragment).unwrap();
+    let sizes = wire["selected_v1"]["sizes"]
+      .as_array()
+      .expect("snapshot retains the selected size vocabulary");
+    assert_eq!(
+      sizes.iter().map(|s| s["id"].as_str().unwrap()).collect::<Vec<_>>(),
+      ["xs", "small", "medium", "large", "xl"]
+    );
+    let mut retired = serde_json::to_value(&published.definition).unwrap();
+    retired["sizes"][4]["retired"] = json!(true);
+    retired["sizes"][4]["name"] = json!("Retained XL");
+    retired["sizes"].as_array_mut().unwrap().reverse();
+    store
+      .publish_issue_properties(testing::management_mutation(PublishIssueProperties {
+        intent: PublishIssuePropertiesIntent {
+          project_id: original.project_id,
+          expected_version: 1,
+          definition: serde_json::from_value(retired).unwrap(),
+        },
+        idempotency_key: key("size-retire"),
+        published_at: at(5),
+      }))
+      .await
+      .unwrap();
+    assert_eq!(
+      store.issue_properties(original.project_id, Some(1)).await.unwrap(),
+      published
+    );
+    let mut unchanged = edit.clone();
+    unchanged.intent.expected_version = selected.version;
+    unchanged.intent.planning.definition_version = 2;
+    unchanged.idempotency_key = key("size-preserve-retired");
+    let retained = store
+      .edit_issue_planning(testing::management_mutation(unchanged))
+      .await
+      .unwrap()
+      .issue;
+    assert_eq!(retained.planning.size, selected.planning.size);
+    for value in ["foreign_size", "xs"] {
+      let mut invalid = edit.clone();
+      invalid.intent.expected_version = retained.version;
+      invalid.intent.planning.definition_version = 2;
+      let mut wire = serde_json::to_value(&invalid.intent.planning).unwrap();
+      wire["size"] = json!(value);
+      invalid.intent.planning = serde_json::from_value(wire).unwrap();
+      invalid.idempotency_key = key(value);
+      let result = store.edit_issue_planning(testing::management_mutation(invalid)).await;
+      assert_eq!(result.is_ok(), value == "xs");
+    }
+    let replay = store
+      .edit_issue_planning(testing::management_mutation(edit))
+      .await
+      .unwrap();
+    assert_eq!(replay.disposition, MutationDisposition::Replayed);
+    assert_eq!(replay.issue, selected);
+    assert!(
+      !serde_json::to_value(IssuePropertyDefinitionSet::default())
+        .unwrap()
+        .as_object()
+        .unwrap()
+        .contains_key("sizes")
+    );
+  });
+}
+
+#[test]
 fn retained_classification_rejects_duplicate_locations_across_catalog_versions() {
   let metadata = |first: Value, second: Value| {
     let mut one = manual_priority()["fields"][0].clone();

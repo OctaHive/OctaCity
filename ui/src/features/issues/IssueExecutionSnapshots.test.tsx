@@ -736,3 +736,82 @@ it.each(['selected_v1', 'legacy'])(
     expect(executions.start).not.toHaveBeenCalled();
   },
 );
+
+it.each([
+  ['preview', 'selected_v1'],
+  ['detail', 'selected_v1'],
+  ['preview', 'legacy'],
+  ['detail', 'legacy'],
+] as const)(
+  'retains the original size name after a Project rename in %s (%s definitions)',
+  async (mode, format) => {
+    const { executions, getConfiguration, api } = setupExecution(
+      mode === 'detail'
+        ? `/projects/delivery/issues/${issue.id}?section=runs&execution=request-one`
+        : undefined,
+    );
+    const snapshot = snapshotFixture();
+    snapshot.input.definition_version = 7;
+    snapshot.values.size = 'size_xl';
+    snapshot.input.admission!.risk!.values = { size_xl: 'low' };
+    const sizes = [{ id: 'size_xl', name: 'Original extra large', retired: false }];
+    snapshot.definitions['7'] =
+      format === 'selected_v1'
+        ? {
+            selected_v1: {
+              project_id: 'delivery',
+              version: 7,
+              published_at: 1,
+              publication_digest: '7'.repeat(64),
+              properties: [],
+              sizes,
+            },
+          }
+        : {
+            project_id: 'delivery',
+            version: 7,
+            published_at: 1,
+            definition: { labels: [], properties: [], sizes },
+          };
+    api.planningChoices.mockResolvedValue({
+      definitions: {
+        project_id: 'delivery',
+        version: 8,
+        published_at_unix_ms: 2,
+        definition: { labels: [], properties: [], sizes: [{ ...sizes[0]!, name: 'Renamed size' }] },
+      },
+      assignees: { available: false, items: [] },
+    });
+    let view: HTMLElement;
+    if (mode === 'preview') {
+      const configuration = snapshotConfiguration();
+      configuration.configuration.flow.issue_snapshot = snapshot.input;
+      getConfiguration.mockResolvedValue(configuration);
+      executions.review.mockResolvedValue({
+        version: 1,
+        target: snapshot.target,
+        snapshot,
+        snapshot_digest: 'f'.repeat(64),
+      });
+      await userEvent.click(await screen.findByRole('button', { name: 'Start pipeline' }));
+      await screen.findByRole('combobox', { name: 'Factory Configurations' });
+      await userEvent.click(screen.getByRole('button', { name: 'Review pipeline launch' }));
+      view = await screen.findByRole('dialog');
+    } else {
+      const receipt = executionFixture();
+      receipt.intent.target = snapshot.target;
+      receipt.snapshot_digest = 'f'.repeat(64);
+      executions.get.mockResolvedValue(receipt);
+      executions.snapshot.mockResolvedValue({
+        availability: 'available',
+        digest: receipt.snapshot_digest,
+        snapshot,
+        subject: null,
+      });
+      view = await screen.findByRole('region', { name: 'Frozen execution input' });
+    }
+    expect(await within(view).findByText('Original extra large · size_xl')).toBeTruthy();
+    expect(within(view).queryByText('Renamed size · size_xl')).toBeNull();
+    expect(executions.start).not.toHaveBeenCalled();
+  },
+);

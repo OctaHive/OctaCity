@@ -50,6 +50,10 @@ pub(super) fn insert(schemas: &mut Map<String, Value>) {
         bounded_array(schema_ref("IssuePropertyChoice"), MAX_ISSUE_PROPERTY_CHOICES),
       ),
       (
+        "sizes",
+        bounded_array(schema_ref("IssuePropertyChoice"), MAX_ISSUE_PROPERTY_CHOICES),
+      ),
+      (
         "properties",
         bounded_array(schema_ref("IssueSnapshotPropertyDefinition"), MAX_ISSUE_PROPERTIES),
       ),

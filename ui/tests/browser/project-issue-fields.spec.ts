@@ -110,6 +110,7 @@ for (const language of ['en', 'ru'] as const) {
       components: ru ? 'Компоненты' : 'Components',
       priorities: ru ? 'Приоритеты' : 'Priorities',
       types: ru ? 'Типы Issue' : 'Issue types',
+      sizes: ru ? 'Размеры' : 'Sizes',
       newOption: ru ? 'Название нового варианта' : 'New option name',
       addOption: ru ? 'Добавить вариант' : 'Add option',
       optionName: ru ? 'Название варианта' : 'Option display name',
@@ -141,6 +142,22 @@ for (const language of ['en', 'ru'] as const) {
     const types = page.getByRole('group', { name: names.types, exact: true });
     await types.getByRole('textbox', { name: names.newOption, exact: true }).fill('Incident');
     await types.getByRole('button', { name: names.addOption, exact: true }).click();
+    const sizes = page.getByRole('group', { name: names.sizes, exact: true });
+    await sizes.getByRole('textbox', { name: names.newOption, exact: true }).fill('Extra large');
+    await sizes
+      .getByRole('textbox', {
+        name: ru ? 'ID нового варианта (необязательно)' : 'New option ID (optional)',
+        exact: true,
+      })
+      .fill('xl');
+    await sizes.getByRole('button', { name: names.addOption, exact: true }).click();
+    await sizes
+      .getByRole('button', {
+        name: ru ? 'Переместить Extra large выше' : 'Move Extra large up',
+        exact: true,
+      })
+      .focus();
+    await page.keyboard.press('Enter');
     const fields = page.getByRole('group', { name: names.fields, exact: true });
     async function addField(name: string, type: string) {
       await fields.getByRole('textbox', { name: names.newField, exact: true }).fill(name);
@@ -225,6 +242,7 @@ for (const language of ['en', 'ru'] as const) {
       'feature_request',
     ]);
     expect(planning).toHaveLength(0);
+    expect(catalog.definition.sizes?.map((c) => c.id)).toEqual(['small', 'medium', 'xl', 'large']);
     await dialog.getByRole('button', { name: names.close, exact: true }).click();
     await page.goto(`/projects/${project}/issues/${issue.id}`);
     await page.getByRole('button', { name: ru ? 'Свойства' : 'Properties', exact: true }).click();
@@ -247,9 +265,9 @@ for (const language of ['en', 'ru'] as const) {
       .getByRole('combobox', { name: ru ? 'Размер задачи' : 'Issue size', exact: true })
       .click();
     await expect(
-      properties.getByRole('option', { name: ru ? 'Малый' : 'Small', exact: true }),
+      properties.getByRole('option', { name: 'Extra large', exact: true }),
     ).toBeVisible();
-    await properties.getByRole('option', { name: ru ? 'Малый' : 'Small', exact: true }).click();
+    await properties.getByRole('option', { name: 'Extra large', exact: true }).click();
     await properties.getByRole('textbox', { name: 'Environment', exact: true }).fill('staging');
     await properties
       .getByRole('button', { name: ru ? 'Проверить свойства' : 'Review properties', exact: true })
@@ -263,7 +281,7 @@ for (const language of ['en', 'ru'] as const) {
       definition_version: 2,
       component: catalog.definition.components![0]!.id,
       type: catalog.definition.types!.at(-1)!.id,
-      size: 'small',
+      size: 'xl',
     });
     const environmentId = catalog.definition.properties.find((p) => p.name === 'Environment')!.id;
     expect(planning[0]!.values[environmentId]).toEqual({ type: 'text', value: 'staging' });

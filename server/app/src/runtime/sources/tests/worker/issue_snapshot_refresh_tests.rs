@@ -155,7 +155,7 @@ async fn revise_issue(f: &Fixture<PostgresStore>, issue: IssueRevision) -> Issue
         id: issue.id,
         expected_version: issue.version,
         planning: IssuePlanning {
-          size: Some(IssueSize::Large),
+          size: Some(String::from("large")),
           ..issue.planning
         },
       },

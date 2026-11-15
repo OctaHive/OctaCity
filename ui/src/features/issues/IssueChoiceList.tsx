@@ -8,10 +8,12 @@ type Choice = components['schemas']['IssuePropertyChoice'];
 export function IssueChoiceList({
   label,
   choices,
+  ordered = false,
   onChange,
 }: {
   label: string;
   choices: Choice[];
+  ordered?: boolean;
   onChange: (choices: Choice[]) => void;
 }) {
   const { t } = usePresentation();
@@ -28,7 +30,7 @@ export function IssueChoiceList({
   return (
     <fieldset>
       <legend>{label}</legend>
-      {choices.map((choice) => (
+      {choices.map((choice, index) => (
         <div key={choice.id}>
           <p>{choice.id}</p>
           <label>
@@ -42,6 +44,25 @@ export function IssueChoiceList({
               }
             />
           </label>
+          {ordered
+            ? ([-1, 1] as const).map((direction) => (
+                <button
+                  key={direction}
+                  type="button"
+                  aria-label={t(direction < 0 ? 'issueFields.moveUp' : 'issueFields.moveDown', {
+                    name: choice.name,
+                  })}
+                  disabled={index + direction < 0 || index + direction >= choices.length}
+                  onClick={() => {
+                    const next = choices.filter((_, i) => i !== index);
+                    next.splice(index + direction, 0, choice);
+                    onChange(next);
+                  }}
+                >
+                  {t(direction < 0 ? 'issueFields.up' : 'issueFields.down')}
+                </button>
+              ))
+            : null}
           <label>
             <input
               type="checkbox"

@@ -16,9 +16,9 @@ pub struct IssuePlanning {
   /// Built-in optional type selected from this Project's exact type catalog.
   #[serde(default, rename = "type", skip_serializing_if = "Option::is_none")]
   pub issue_type: Option<String>,
-  /// Built-in finite work size; missing never implies small.
+  /// Built-in Project size choice; missing never implies the first size.
   #[serde(default, skip_serializing_if = "Option::is_none")]
-  pub size: Option<IssueSize>,
+  pub size: Option<String>,
   /// Server-resolved organizational identity, independent of actor or worker.
   pub assignee: Option<String>,
   /// Stable Project label identities.
@@ -175,6 +175,9 @@ impl IssueClassificationBindings {
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
 #[serde(deny_unknown_fields)]
 pub struct IssuePropertyDefinitionSet {
+  /// Project-owned sizes ordered from smallest to largest; missing legacy lists retain defaults.
+  #[serde(default = "default_issue_sizes", skip_serializing_if = "standard_issue_sizes")]
+  pub sizes: Vec<IssuePropertyChoice>,
   /// Project-specific choices for the built-in Issue component, separate from custom properties.
   #[serde(default, skip_serializing_if = "Vec::is_empty")]
   pub components: Vec<IssuePropertyChoice>,
@@ -198,6 +201,7 @@ pub struct IssuePropertyDefinitionSet {
 impl Default for IssuePropertyDefinitionSet {
   fn default() -> Self {
     Self {
+      sizes: default_issue_sizes(),
       components: vec![],
       types: default_issue_types(),
       priorities: default_issue_priorities(),
@@ -238,16 +242,18 @@ fn default_issue_priorities() -> Vec<IssuePropertyChoice> {
 fn standard_issue_priorities(priorities: &[IssuePropertyChoice]) -> bool {
   priorities == default_issue_priorities()
 }
-/// Fixed built-in sizes shared by Issue editing and classification, independent of display text.
-#[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq, Serialize)]
-#[serde(rename_all = "snake_case")]
-pub enum IssueSize {
-  /// Small bounded work.
-  Small,
-  /// Medium bounded work.
-  Medium,
-  /// Large work requiring the consumer's declared requirements route.
-  Large,
+fn default_issue_sizes() -> Vec<IssuePropertyChoice> {
+  [("small", "Small"), ("medium", "Medium"), ("large", "Large")]
+    .into_iter()
+    .map(|(id, name)| IssuePropertyChoice {
+      id: id.into(),
+      name: name.into(),
+      retired: false,
+    })
+    .collect()
+}
+fn standard_issue_sizes(sizes: &[IssuePropertyChoice]) -> bool {
+  sizes == default_issue_sizes()
 }
 /// Retained exact catalog publication used to explain old Issue revisions.
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
@@ -398,6 +404,7 @@ impl IssuePropertyDefinitionSet {
       || !choices_valid(&self.labels)
       || !choices_valid(&self.components)
       || !choices_valid(&self.types)
+      || !choices_valid(&self.sizes)
       || !choices_valid(&self.priorities)
       || self.properties.iter().map(|p| &p.id).collect::<BTreeSet<_>>().len() != self.properties.len()
       || serde_json::to_vec(self).map_err(|_| invalid())?.len() > MAX_ISSUE_DOCUMENT_BYTES
@@ -433,6 +440,7 @@ impl IssuePropertyDefinitionSet {
     if !retains(&previous.labels, &self.labels)
       || !retains(&previous.components, &self.components)
       || !retains(&previous.types, &self.types)
+      || !retains(&previous.sizes, &self.sizes)
       || !retains(&previous.priorities, &self.priorities)
       || previous.properties.iter().any(|old| {
         self.properties.iter().find(|p| p.id == old.id).is_none_or(|new| {
@@ -523,6 +531,13 @@ impl IssuePlanning {
       && !catalog.definition.types.iter().any(|choice| {
         choice.id == *issue_type
           && (!choice.retired || previous.is_some_and(|p| p.issue_type.as_ref() == Some(issue_type)))
+      })
+    {
+      return Err(invalid());
+    }
+    if let Some(size) = &self.size
+      && !catalog.definition.sizes.iter().any(|choice| {
+        choice.id == *size && (!choice.retired || previous.is_some_and(|p| p.size.as_ref() == Some(size)))
       })
     {
       return Err(invalid());

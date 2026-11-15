@@ -93,7 +93,13 @@ export const ruMessages = {
   'issueFields.priorities': 'Приоритеты',
   'issueFields.components': 'Компоненты',
   'issueFields.types': 'Типы Issue',
-  'issueFields.fixedSize': 'Встроенный размер имеет фиксированные варианты: {values}.',
+  'issueFields.sizes': 'Размеры',
+  'issueFields.sizeOrder':
+    'Расположите размеры от меньшего к большему. Delivery фиксирует выбранный порог подготовки спецификации при публикации.',
+  'issueFields.moveUp': 'Переместить {name} выше',
+  'issueFields.moveDown': 'Переместить {name} ниже',
+  'issueFields.up': 'Выше',
+  'issueFields.down': 'Ниже',
   'issueFields.scope':
     'Доступно всем Issue этого Project. Требуются права администратора Project отдельно от редактирования Issue. Значения существующих Issue и выполнений не переписываются.',
   'issueFields.version': 'Версия каталога Project: {version}',
@@ -388,6 +394,9 @@ export const ruMessages = {
   'factory.bytes': 'байтов',
   'factory.projectionTooLarge':
     'Проекция превышает лимит входного mapping. Выберите меньше необязательных полей или используйте расширенный редактор входа.',
+  'factory.specificationFromSize': 'Создавать спецификации начиная с размера',
+  'factory.specificationFromSizeHelp':
+    'Выбранный размер и все большие размеры по опубликованному порядку Project требуют спецификации. Публикация фиксирует маршруты; последующие изменения каталога не перенаправляют этот pipeline.',
   'factory.snapshotAdmission': 'Допуск по снимку',
   'factory.snapshotAdmissionHelp':
     'Явно сопоставьте обязательные поля классификации. Значения без сопоставления блокируют допуск; правила не дают прав запуска и не заменяют проверку свидетельств.',

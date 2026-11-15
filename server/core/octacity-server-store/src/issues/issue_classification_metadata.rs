@@ -55,7 +55,7 @@ impl IssueClassificationMetadata {
           IssueClassificationFieldReference::Priority { .. } | IssueClassificationFieldReference::Type { .. } => true,
           IssueClassificationFieldReference::Component { definition_version }
           | IssueClassificationFieldReference::Property { definition_version, .. } => *definition_version != 0,
-          IssueClassificationFieldReference::Size | IssueClassificationFieldReference::Dependencies => true,
+          IssueClassificationFieldReference::Size { .. } | IssueClassificationFieldReference::Dependencies => true,
         };
         let identity = field.field.identity();
         if let IssueClassificationFieldIdentity::Property { id } = identity {
@@ -126,8 +126,10 @@ impl IssueRevision {
         self.planning.issue_type.is_some(),
       ),
       (
-        Field::Size,
-        self.planning.size != previous.and_then(|p| p.planning.size),
+        Field::Size {
+          definition_version: Some(catalog.version),
+        },
+        self.planning.size.as_ref() != previous.and_then(|p| p.planning.size.as_ref()),
         self.planning.size.is_some(),
       ),
     ] {
@@ -217,8 +219,12 @@ pub enum IssueClassificationFieldReference {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     definition_version: Option<u64>,
   },
-  /// Built-in finite size, independent of legacy size-label effects.
-  Size,
+  /// Project size choice; older fixed-size assessments omit the catalog version.
+  Size {
+    /// Exact size catalog publication, absent on retained fixed-size assessments.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    definition_version: Option<u64>,
+  },
   /// Built-in type and the exact Project type-list publication.
   Type {
     /// Exact Project catalog publication; zero pins the built-in default template.
@@ -265,11 +271,11 @@ impl IssueClassificationFieldReference {
   /// Exact Project publication supplying this field's meaning; fixed built-ins have none.
   pub fn definition_version(&self) -> Option<u64> {
     match self {
-      Self::Priority { definition_version } => *definition_version,
+      Self::Priority { definition_version } | Self::Size { definition_version } => *definition_version,
       Self::Component { definition_version }
       | Self::Type { definition_version }
       | Self::Property { definition_version, .. } => Some(*definition_version),
-      Self::Size | Self::Dependencies => None,
+      Self::Dependencies => None,
     }
   }
   /// Identifies the same effective field across Project definition publications.
@@ -278,7 +284,7 @@ impl IssueClassificationFieldReference {
       Self::Priority { .. } => IssueClassificationFieldIdentity::Priority,
       Self::Component { .. } => IssueClassificationFieldIdentity::Component,
       Self::Type { .. } => IssueClassificationFieldIdentity::Type,
-      Self::Size => IssueClassificationFieldIdentity::Size,
+      Self::Size { .. } => IssueClassificationFieldIdentity::Size,
       Self::Property { id, .. } => IssueClassificationFieldIdentity::Property { id },
       Self::Dependencies => IssueClassificationFieldIdentity::Dependencies,
     }

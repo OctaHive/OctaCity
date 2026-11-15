@@ -17,7 +17,7 @@ fn issue_snapshot_policy_never_uses_an_accepted_flag_to_bypass_readiness() {
                 size: if case == "missing" {
                   None
                 } else {
-                  Some(IssueSize::Large)
+                  Some(String::from("large"))
                 },
                 ..issue.planning
               },

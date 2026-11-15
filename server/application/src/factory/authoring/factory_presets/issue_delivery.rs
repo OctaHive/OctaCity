@@ -39,6 +39,7 @@ pub(super) fn bind(
     fields.insert(alias.clone(), selected);
     shapes.insert(alias, FlowFieldSchema::required(shape));
   }
+  bind_size_threshold(template, selection.specification_from_size.as_deref(), catalog)?;
   let schema = FlowDataSchema::new(
     key("factory.ticket-delivery.issue-input"),
     key("v2"),
@@ -120,6 +121,50 @@ pub(super) fn bind(
     materials: Default::default(),
     evidence: Default::default(),
   })
+}
+
+/// Compile the reviewed catalog order once; execution never consults mutable Project choices.
+fn bind_size_threshold(
+  template: &mut FlowDefinitionTemplate,
+  threshold: Option<&str>,
+  catalog: &PublishedIssueProperties,
+) -> Result<(), String> {
+  let invalid = || "/issue_snapshot/specification_from_size".to_owned();
+  let sizes: Vec<_> = catalog.definition.sizes.iter().filter(|c| !c.retired).collect();
+  let Some(threshold) = threshold else {
+    return if sizes.iter().map(|c| c.id.as_str()).eq(["small", "medium", "large"]) {
+      Ok(())
+    } else {
+      Err(invalid())
+    };
+  };
+  let start = sizes.iter().position(|c| c.id == threshold).ok_or_else(invalid)?;
+  let key = |value: &str| FactoryKey::new(value).expect("release key");
+  let rules = sizes[start..]
+    .iter()
+    .map(|size| FlowGateRule {
+      when: FlowPredicate::Compare {
+        left: FlowOperand::Path { path: "/size".into() },
+        comparison: FlowComparison::Equal,
+        right: FlowOperand::Literal {
+          value: serde_json::Value::String(size.id.clone()),
+        },
+      },
+      outcome: key("specification"),
+    })
+    .collect();
+  let program = FlowGateProgram::new(rules, key("prepared"))
+    .and_then(|p| {
+      p.with_default_output_mapping(FlowDataMapping::new(FlowValueMapping::Pointer { path: String::new() })?)
+    })
+    .map_err(|_| invalid())?;
+  template
+    .nodes
+    .iter_mut()
+    .find(|n| n.key == key("requirements_needed"))
+    .ok_or_else(invalid)?
+    .gate = Some(program);
+  Ok(())
 }
 
 /// Release-owned aliases and source semantics shared by discovery and resolution.

@@ -91,6 +91,7 @@ function ExampleBindings({
   const [commands, setCommands] = useState<Record<string, string>>({});
   const [target, setTarget] = useState('');
   const [admission, setAdmission] = useState<IssueAdmissionPolicy>();
+  const [specificationFromSize, setSpecificationFromSize] = useState('');
   const [issues, setIssues] = useState<S['FactoryPresetResolution']['diagnostics']>([]);
   const [error, setError] = useState<Error>();
   const [busy, setBusy] = useState(false);
@@ -150,8 +151,14 @@ function ExampleBindings({
       snapshotFields.length === snapshotSources.length &&
       !!admission &&
       validIssueAdmission(admission, snapshotFields, catalog.classification));
+  const sizeField = snapshotFields.find(({ field }) => field.source.kind === 'size')?.field;
+  const sizes =
+    sizeField?.shape.type === 'enum'
+      ? sizeField.shape.values.filter((value): value is string => typeof value === 'string')
+      : [];
   const ready =
     snapshotReady &&
+    (!needs('issue_size_threshold') || sizes.includes(specificationFromSize)) &&
     (!needs('accepted_predecessor') || !!inputs.accepted_predecessor?.outcomes.length) &&
     (!needs('publication') || !!publisher) &&
     commandSteps.every(
@@ -199,7 +206,15 @@ function ExampleBindings({
           commands: Object.fromEntries(commandSelections),
           ...(publication ? { publication } : {}),
           ...(needs('issue_snapshot') && catalog && admission
-            ? { issue_snapshot: { definition_version: catalog.definition_version, admission } }
+            ? {
+                issue_snapshot: {
+                  definition_version: catalog.definition_version,
+                  admission,
+                  ...(needs('issue_size_threshold')
+                    ? { specification_from_size: specificationFromSize }
+                    : {}),
+                },
+              }
             : {}),
           ...(inputs.accepted_predecessor
             ? { accepted_predecessor: inputs.accepted_predecessor }
@@ -252,6 +267,23 @@ function ExampleBindings({
             classification={catalog?.classification}
             onChange={setAdmission}
           />
+          {needs('issue_size_threshold') ? (
+            <>
+              <SelectMenu
+                ariaLabel={t('factory.specificationFromSize')}
+                value={specificationFromSize}
+                options={[
+                  { value: '', label: t('factory.chooseInput') },
+                  ...sizes.map((size) => ({
+                    value: size,
+                    label: sizeField?.choice_labels?.[size] ?? size,
+                  })),
+                ]}
+                onValueChange={setSpecificationFromSize}
+              />
+              <p>{t('factory.specificationFromSizeHelp')}</p>
+            </>
+          ) : null}
         </>
       ) : null}
       {reasoningSteps.map((step) => (

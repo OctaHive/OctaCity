@@ -542,7 +542,7 @@ async fn manual_edit(store: &PostgresStore, issue: &IssueRevision, field: IssueF
   match field {
     IssueField::Component => planning.component = Some("engine".into()),
     IssueField::Type => planning.issue_type = Some("feature_request".into()),
-    IssueField::Size => planning.size = Some(IssueSize::Large),
+    IssueField::Size => planning.size = Some(String::from("large")),
     IssueField::Properties => {
       planning
         .values

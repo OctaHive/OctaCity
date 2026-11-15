@@ -2,6 +2,50 @@ use super::*;
 use octacity_server_application::{ManagementAuthorizationMapping, ManagementResourceKind};
 
 #[test]
+fn project_size_catalog_and_delivery_threshold_have_closed_public_contracts() {
+  let document = openapi_document();
+  assert_json_matches_component(
+    &document,
+    "FactoryIssueFieldChoice",
+    &serde_json::json!({
+      "source":{"kind":"size"},"name":"Issue size","required_supported":true,
+      "shape":{"type":"enum","values":["xl"]},"choice_labels":{"xl":"Extra large"}
+    }),
+  );
+  let choice = serde_json::json!({"id":"xl","name":"Extra large","retired":false});
+  assert_json_matches_component(
+    &document,
+    "IssuePropertyDefinitionSet",
+    &serde_json::json!({"labels":[],"properties":[],"sizes":[choice.clone()]}),
+  );
+  assert_json_matches_component(
+    &document,
+    "IssuePlanning",
+    &serde_json::json!({"definition_version":2,"size":"xl","assignee":null,"labels":[],"due_date":null,"parent_id":null,"values":{}}),
+  );
+  assert_json_matches_component(
+    &document,
+    "IssueClassificationFieldReference",
+    &serde_json::json!({"kind":"size","definition_version":2}),
+  );
+  assert_json_matches_component(
+    &document,
+    "FactoryPresetIssueSnapshotSelection",
+    &serde_json::json!({"definition_version":2,"specification_from_size":"xl"}),
+  );
+  let defaults = &document["components"]["schemas"]["IssuePropertyDefinitionSet"]["properties"]["sizes"]["default"];
+  assert_eq!(
+    defaults
+      .as_array()
+      .unwrap()
+      .iter()
+      .map(|s| s["id"].as_str().unwrap())
+      .collect::<Vec<_>>(),
+    ["small", "medium", "large"]
+  );
+}
+
+#[test]
 fn agent_inventory_contract_documents_qualified_selected_source_visibility() {
   let document = openapi_document();
   assert_json_matches_component(

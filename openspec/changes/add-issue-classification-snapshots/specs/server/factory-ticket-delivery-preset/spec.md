@@ -67,14 +67,14 @@ Timeouts, missing dependencies, unavailable environments and insufficient inform
 
 ### Requirement: Issue size selects conditional OpenSpec authoring
 
-The pipeline SHALL use the size frozen in its Issue snapshot and route `large` tickets through an isolated OpenSpec authoring invocation producing a coherent proposal, delta specifications, design and implementation tasks before test authoring. The retained requirements artifact set SHALL be the input to subsequent stages and part of the delivered candidate. `small` and `medium` tickets SHALL proceed to test authoring using an immutable Accepted Work Contract derived from the ticket's explicit expected behavior and frozen Issue classification, after any configured human requirements acceptance. Triage process-completion criteria SHALL NOT substitute for implementation acceptance. Missing expected behavior or unresolved material requirements SHALL pause the ticket rather than invent acceptance criteria. Human requirements acceptance SHALL follow the pinned component/size/priority policy for either branch. No additional independent AI specification-review invocation SHALL be required by this pipeline.
+The pipeline SHALL use the size frozen in its Issue snapshot and route sizes at or above its explicitly selected specification threshold through an isolated OpenSpec authoring invocation producing a coherent proposal, delta specifications, design and implementation tasks before test authoring. The retained requirements artifact set SHALL be the input to subsequent stages and part of the delivered candidate. Sizes below the selected threshold SHALL proceed to test authoring using an immutable Accepted Work Contract derived from the ticket's explicit expected behavior and frozen Issue classification, after any configured human requirements acceptance. Triage process-completion criteria SHALL NOT substitute for implementation acceptance. Missing expected behavior or unresolved material requirements SHALL pause the ticket rather than invent acceptance criteria. Human requirements acceptance SHALL follow the pinned component/size/priority policy for either branch. No additional independent AI specification-review invocation SHALL be required by this pipeline.
 
 #### Scenario: Large feature or defect needs specifications
-- **WHEN** size routing receives an accepted `large` ticket
+- **WHEN** size routing receives a ticket at or above its published threshold (including `large` under the original default policy)
 - **THEN** OpenSpec artifacts are prepared and retained before tests or implementation use those exact requirements
 
 #### Scenario: Non-large ticket has sufficient expected behavior
-- **WHEN** size routing receives a `small` or `medium` ticket with explicit implementation acceptance
+- **WHEN** size routing receives a below-threshold ticket with explicit implementation acceptance
 - **THEN** test authoring starts without an OpenSpec authoring invocation
 
 #### Scenario: Triage succeeded without implementation acceptance
@@ -130,3 +130,12 @@ Acceptance SHALL bind the authorized actor, exact requirements or contract diges
 #### Scenario: Requirements change after approval
 - **WHEN** requirements change after human approval
 - **THEN** the prior approval cannot authorize that changed version and the applicable gate requests a fresh decision
+
+## ADDED Requirements
+
+### Requirement: Delivery specification threshold is explicit and immutable
+New Issue-snapshot Delivery authoring SHALL offer a specification threshold from the ordered active Project size choices. The threshold and every greater active size SHALL route through specification authoring; lower sizes SHALL use the Accepted Work Contract. The resolver SHALL compile concrete stable choice IDs into the ordinary gate and pin the exact catalog snapshot. Catalog names SHALL NOT infer routing. Later additions, renames, reordering and retirement SHALL NOT reroute published Flows or admitted Runs. Unknown or inactive threshold values SHALL produce field-specific diagnostics. Legacy requests without this parameter SHALL preserve their three-size route only for a compatible standard catalog; custom catalogs SHALL require an explicit threshold. Earlier exact-producer publications SHALL remain unchanged.
+
+#### Scenario: Threshold routes custom sizes and survives catalog reordering
+- **WHEN** a Project orders `xs`, `s`, `m`, `l`, `xl` and Delivery is published with threshold `l`
+- **THEN** `l` and `xl` require specifications, `xs`, `s`, `m` use explicit acceptance, and later Project reordering leaves those published routes unchanged

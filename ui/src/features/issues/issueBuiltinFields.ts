@@ -12,6 +12,7 @@ export function issueBuiltinChoices(definition: IssuePropertyCatalog['definition
     component: definition.components ?? [],
     type: definition.types ?? bounds.defaultTypes,
     priority: definition.priorities ?? bounds.defaultPriorities,
+    size: definition.sizes ?? bounds.defaultSizes,
   };
 }
 
@@ -67,11 +68,8 @@ export function builtinPlanningFields(
     {
       field: 'size' as const,
       label: t('classification.size'),
-      value: plan?.size ? t(`triageResult.value.${plan.size}`) : t('issues.notSet'),
-      options: [
-        { value: '', label: t('issues.notSet') },
-        ...bounds.sizes.map((value) => ({ value, label: t(`triageResult.value.${value}`) })),
-      ],
+      value: choiceLabel(plan?.size, choices.size, t),
+      options: choiceOptions(plan?.size, choices.size, t),
     },
   ];
 }

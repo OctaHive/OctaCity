@@ -262,10 +262,7 @@ export function IssuePlanningEditor({
                   onValueChange={(value) =>
                     setDraft({
                       ...draft,
-                      [field]:
-                        field === 'size'
-                          ? (bounds.sizes.find((size) => size === value) ?? null)
-                          : value || null,
+                      [field]: value || null,
                     })
                   }
                 />

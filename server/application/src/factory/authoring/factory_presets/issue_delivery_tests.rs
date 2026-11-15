@@ -111,6 +111,7 @@ async fn properties(project: ProjectId) -> Arc<octacity_server_store::testing::I
 fn issue_input() -> FactoryPresetIssueSnapshotSelection {
   FactoryPresetIssueSnapshotSelection {
     definition_version: 1,
+    specification_from_size: None,
     admission: Some(
       serde_json::from_value(serde_json::json!({
         "priority":{"field":"priority","values":{"blocker":100,"high":80,"medium":50,"low":20,"urgent_local":100}},
@@ -120,6 +121,67 @@ fn issue_input() -> FactoryPresetIssueSnapshotSelection {
       .unwrap(),
     ),
   }
+}
+
+#[test]
+fn issue_delivery_custom_sizes_require_an_active_explicit_threshold() {
+  run_ready(async {
+    let fixture = delivery_fixture().await;
+    let issues = properties(fixture.project).await;
+    let mut definition = issues.issue_properties(fixture.project, None).await.unwrap().definition;
+    definition.sizes[0].retired = true;
+    definition.sizes.push(octacity_server_store::IssuePropertyChoice {
+      id: "xl".into(),
+      name: "Extra large".into(),
+      retired: false,
+    });
+    issues
+      .publish_issue_properties(octacity_server_store::testing::management_mutation(
+        octacity_server_store::PublishIssueProperties {
+          intent: octacity_server_store::PublishIssuePropertiesIntent {
+            project_id: fixture.project,
+            expected_version: 1,
+            definition,
+          },
+          idempotency_key: "size-threshold-errors".parse().unwrap(),
+          published_at: Timestamp::from_unix_millis(2).unwrap(),
+        },
+      ))
+      .await
+      .unwrap();
+    let before = issues.mutation_evidence_counts().await;
+    let resolver = AuthorizedQueryHandler::new(
+      fixture.policy.clone(),
+      Arc::new(
+        FactoryPresetHandlers::new(fixture.store.clone(), fixture.policy.clone())
+          .with_repositories(fixture.reader.clone())
+          .with_issue_properties(issues.clone()),
+      ),
+    );
+    for threshold in [None, Some("foreign_size"), Some("small")] {
+      let mut selection = issue_selection(&fixture).await;
+      let mut input = issue_input();
+      input.definition_version = 2;
+      input.specification_from_size = threshold.map(str::to_owned);
+      selection.issue_snapshot = Some(input);
+      let result = resolver
+        .handle_query(
+          &fixture.context,
+          ResolveFactoryPresetQuery {
+            project_id: fixture.project,
+            selection,
+          },
+        )
+        .await
+        .unwrap();
+      assert!(result.flow.is_none());
+      assert_eq!(
+        result.diagnostics.iter().map(|d| d.path.as_str()).collect::<Vec<_>>(),
+        ["/issue_snapshot/specification_from_size"]
+      );
+    }
+    assert_eq!(issues.mutation_evidence_counts().await, before);
+  });
 }
 
 #[test]

@@ -31,6 +31,13 @@ function contract() {
             components: { maxItems: 15 },
             priorities: { default: [{ id: 'urgent', name: 'Urgent', retired: false }] },
             types: { default: [{ id: 'request', name: 'Request', retired: false }] },
+            sizes: {
+              default: [
+                { id: 'small', name: 'Small', retired: false },
+                { id: 'medium', name: 'Medium', retired: false },
+                { id: 'large', name: 'Large', retired: false },
+              ],
+            },
           },
         },
         IssuePropertyDefinition: {
@@ -75,6 +82,16 @@ function contract() {
   };
 }
 
+test('derives default size choices from the Project catalog rather than a fixed Issue enum', () => {
+  const document = contract();
+  const sizes = [{ id: 'xl', name: 'Extra large', retired: false }];
+  document.components.schemas.IssuePropertyDefinitionSet.properties.sizes = { default: sizes };
+  document.components.schemas.IssuePlanning.properties.size = {
+    anyOf: [{ type: 'string', pattern: '^[a-z0-9_]+$' }, { type: 'null' }],
+  };
+  assert.deepEqual(issueConstraints(document).defaultSizes, sizes);
+});
+
 test('derives reason and outcome conclusion limits in UTF-8 bytes', () => {
   assert.deepEqual(issueConstraints(contract()), {
     catalog: {
@@ -94,7 +111,11 @@ test('derives reason and outcome conclusion limits in UTF-8 bytes', () => {
     labelsMaximumCount: 3,
     defaultPriorities: [{ id: 'urgent', name: 'Urgent', retired: false }],
     defaultTypes: [{ id: 'request', name: 'Request', retired: false }],
-    sizes: ['small', 'medium', 'large'],
+    defaultSizes: [
+      { id: 'small', name: 'Small', retired: false },
+      { id: 'medium', name: 'Medium', retired: false },
+      { id: 'large', name: 'Large', retired: false },
+    ],
     titleMaximumBytes: 37,
     descriptionMaximumBytes: 1024,
     acceptanceMaximumBytes: 2048,
@@ -148,7 +169,7 @@ test('generated Issue catalogs keep default choice lists optional on the wire', 
     type.members.find((member) => member.name?.getText(source) === name);
   const schemas = property(components, 'schemas').type;
   const catalog = property(schemas, 'IssuePropertyDefinitionSet').type;
-  for (const field of ['priorities', 'types']) {
+  for (const field of ['priorities', 'types', 'sizes']) {
     assert.ok(
       property(catalog, field).questionToken,
       `${field} may be omitted to use Project defaults`,

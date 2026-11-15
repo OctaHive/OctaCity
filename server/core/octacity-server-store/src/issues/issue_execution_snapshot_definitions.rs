@@ -40,6 +40,9 @@ pub enum IssueSnapshotDefinitions {
     /// Present only when this publication supplies a selected built-in type.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     types: Option<Vec<IssuePropertyChoice>>,
+    /// Selected Project size catalog; omitted for the original default scale to preserve legacy digests.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    sizes: Option<Vec<IssuePropertyChoice>>,
     /// Only selected property IDs, sorted and deduplicated within this publication.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     properties: Vec<IssueSnapshotPropertyDefinition>,
@@ -57,6 +60,7 @@ impl IssueSnapshotDefinitions {
     let mut priorities = None;
     let mut components = None;
     let mut types = None;
+    let mut sizes = None;
     let mut properties = BTreeMap::new();
     for field in fields
       .into_iter()
@@ -71,6 +75,11 @@ impl IssueSnapshotDefinitions {
         }
         IssueClassificationFieldReference::Type { .. } => {
           types.get_or_insert_with(|| catalog.definition.types.clone());
+        }
+        IssueClassificationFieldReference::Size { .. }
+          if catalog.definition.sizes != IssuePropertyDefinitionSet::default().sizes =>
+        {
+          sizes.get_or_insert_with(|| catalog.definition.sizes.clone());
         }
         IssueClassificationFieldReference::Property { id, .. } => {
           let definition = catalog
@@ -102,6 +111,7 @@ impl IssueSnapshotDefinitions {
       priorities,
       components,
       types,
+      sizes,
       properties: properties.into_values().collect(),
     })
   }

@@ -317,7 +317,7 @@ async fn published_triage_explicitly_applies_shared_project_contract_without_ext
   );
   assert_eq!(current.planning.component.as_deref(), Some("compiler"));
   assert_eq!(current.planning.issue_type.as_deref(), Some("feature_request"));
-  assert_eq!(current.planning.size, Some(IssueSize::Medium));
+  assert_eq!(current.planning.size, Some(String::from("medium")));
   assert_eq!(
     current.planning.values["repro"],
     IssuePropertyValue::Choice("needs_input".into())

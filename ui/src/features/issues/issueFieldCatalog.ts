@@ -13,7 +13,7 @@ export function fieldCatalogProblems(definition: Definition): string[] {
   const problems: string[] = [];
   const choicesValid = (choices: components['schemas']['IssuePropertyChoice'][]) =>
     choices.length <= bounds.catalog.maximumChoices && choices.every((c) => validName(c.name));
-  for (const list of ['priorities', 'components', 'types', 'labels'] as const)
+  for (const list of ['priorities', 'components', 'types', 'sizes', 'labels'] as const)
     if (!choicesValid(definition[list] ?? [])) problems.push(list);
   if (definition.properties.length > bounds.catalog.maximumFields) problems.push('properties');
   for (const field of definition.properties) {
@@ -73,7 +73,12 @@ export function reconcileFieldCatalog(
   decisions: Readonly<Record<string, 'local' | 'current'>> = {},
 ) {
   const conflicts: string[] = [];
-  function rows<T extends Row>(namespace: string, previous: T[], local: T[], remote: T[]) {
+  function rows<T extends Row>(
+    namespace: string,
+    previous: readonly T[],
+    local: readonly T[],
+    remote: readonly T[],
+  ) {
     const result = remote.map((item) => {
       const original = previous.find((p) => p.id === item.id);
       const edited = local.find((p) => p.id === item.id);
@@ -107,6 +112,23 @@ export function reconcileFieldCatalog(
     });
     return [...result, ...local.filter((item) => !remote.some((r) => r.id === item.id))];
   }
+  const originalSizes = base.sizes ?? bounds.defaultSizes;
+  const localSizes = draft.sizes ?? bounds.defaultSizes;
+  const remoteSizes = current.sizes ?? bounds.defaultSizes;
+  const order = (items: typeof localSizes) => JSON.stringify(items.map((item) => item.id));
+  let sizeOrder = remoteSizes;
+  if (order(localSizes) !== order(originalSizes)) {
+    if (order(remoteSizes) !== order(originalSizes) && order(remoteSizes) !== order(localSizes)) {
+      // Choice IDs cannot contain @; ordering must not share a choice's decision key.
+      const key = 'sizes/@order';
+      if (!decisions[key]) conflicts.push(key);
+      if (decisions[key] === 'local') sizeOrder = localSizes;
+    } else sizeOrder = localSizes;
+  }
+  const sizeRank = new Map(sizeOrder.map((item, index) => [item.id, index]));
+  const sizes = rows('sizes', originalSizes, localSizes, remoteSizes).sort(
+    (a, b) => (sizeRank.get(a.id) ?? sizeRank.size) - (sizeRank.get(b.id) ?? sizeRank.size),
+  );
   const definition: Definition = {
     ...current,
     priorities: rows(
@@ -122,6 +144,7 @@ export function reconcileFieldCatalog(
       current.components ?? [],
     ),
     types: rows('types', base.types ?? [], draft.types ?? [], current.types ?? []),
+    sizes,
     properties: rows('properties', base.properties, draft.properties, current.properties),
   };
   const bindings = { ...current.classification };

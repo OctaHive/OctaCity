@@ -15,7 +15,7 @@ fn issue_delivery_large_requirements_retain_specifications_and_choice_based_revi
     ] {
       let (f, issues, issue, published) = admitted_issue(
         "feature_request",
-        IssueSize::Large,
+        String::from("large"),
         component,
         priority,
         "not_applicable",

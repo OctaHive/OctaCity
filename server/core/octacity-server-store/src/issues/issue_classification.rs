@@ -66,7 +66,7 @@ pub struct IssueClassificationUpdate {
   /// Assessed built-in Issue type from the accepted kind; absence preserves the field.
   pub issue_type: Option<String>,
   /// Assessed built-in size; absence preserves the field.
-  pub size: Option<IssueSize>,
+  pub size: Option<String>,
   /// Assessed choice values by selected stable property ID; absence preserves that field.
   pub properties: BTreeMap<String, String>,
   /// Explicit assessment dependencies; omitted on earlier publications and receipts.
@@ -94,7 +94,9 @@ impl IssueClassificationUpdate {
       });
     }
     if self.size.is_some() {
-      fields.push(IssueClassificationFieldReference::Size);
+      fields.push(IssueClassificationFieldReference::Size {
+        definition_version: Some(version),
+      });
     }
     fields.extend(
       self
@@ -272,8 +274,11 @@ impl IssueRevision {
         }
         next.planning.issue_type = Some(issue_type.clone());
       }
-      if let Some(size) = update.size {
-        next.planning.size = Some(size);
+      if let Some(size) = &update.size {
+        if !catalog.definition.sizes.iter().any(|c| c.id == *size && !c.retired) {
+          return Err(conflict());
+        }
+        next.planning.size = Some(size.clone());
       }
       for (id, value) in &update.properties {
         let slot = update

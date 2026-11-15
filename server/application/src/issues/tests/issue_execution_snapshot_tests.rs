@@ -208,7 +208,7 @@ fn manual_issue_snapshot_checks_code_dependent_assessments_against_the_resolved_
       .classification
       .fields
       .iter_mut()
-      .find(|f| f.field == IssueClassificationFieldReference::Size)
+      .find(|f| f.field.identity() == octacity_server_store::IssueClassificationFieldIdentity::Size)
       .unwrap()
       .inputs
       .subject = Some(FactoryTaskSubject::Exact(ExactSubject::new(

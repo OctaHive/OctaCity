@@ -17,7 +17,7 @@ export function IssueFieldCatalogReview({ definition }: { definition: Definition
   );
   return (
     <>
-      {(['priorities', 'components', 'types'] as const).map((list) => (
+      {(['priorities', 'components', 'types', 'sizes'] as const).map((list) => (
         <section key={list}>
           <h3>{t(`issueFields.${list}`)}</h3>
           {choices(definition[list] ?? [])}

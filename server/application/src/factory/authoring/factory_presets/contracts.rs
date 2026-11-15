@@ -99,6 +99,8 @@ pub enum FactoryPresetParameterKind {
   AcceptedPredecessor,
   /// Project field contract used instead of a producing Flow result.
   IssueSnapshot,
+  /// Explicit threshold in the ordered Project size catalog.
+  IssueSizeThreshold,
 }
 /// Ordinary bounded discovery envelope, without private profile content or installation paths.
 #[derive(Clone, Debug, Serialize)]
@@ -161,6 +163,10 @@ pub struct FactoryPresetIssueSnapshotSelection {
   /// Reviewed conversion to Work scheduling/risk; omission is an unmet preset dependency.
   #[serde(default)]
   pub admission: Option<FlowIssueAdmissionPolicy>,
+  /// First active size requiring specifications; greater sizes follow the same route.
+  /// Omitted legacy requests retain only the original compatible three-size policy.
+  #[serde(default)]
+  pub specification_from_size: Option<String>,
 }
 
 /// Ordinary command definition, independent of a particular stage alias.

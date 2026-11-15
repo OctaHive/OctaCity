@@ -6,7 +6,7 @@ pub(super) fn insert(schemas: &mut Map<String, Value>) {
     object(
       [
         ("reference", schema_ref("FactoryImmutableReferenceResource")),
-        ("parameters", bounded_array(object([("path", non_empty_string()), ("kind", json!({"type":"string","enum":["identity","role_profile","repository","project_context","execution_policy","configuration_policy","source_input","reporting_effects","command","publication","accepted_predecessor","issue_snapshot"]})), ("required", boolean())], &["path","kind","required"]), octacity_server_application::factory_configuration_document_bounds().choice_entries)),
+        ("parameters", bounded_array(object([("path", non_empty_string()), ("kind", json!({"type":"string","enum":["identity","role_profile","repository","project_context","execution_policy","configuration_policy","source_input","reporting_effects","command","publication","accepted_predecessor","issue_snapshot","issue_size_threshold"]})), ("required", boolean())], &["path","kind","required"]), octacity_server_application::factory_configuration_document_bounds().choice_entries)),
         ("required_node_kinds", bounded_array(schema_ref("FactoryFlowNodeKind"), octacity_server_application::factory_configuration_document_bounds().nodes)),
         ("editor", schema_ref("FactoryPresetEditor")),
         (

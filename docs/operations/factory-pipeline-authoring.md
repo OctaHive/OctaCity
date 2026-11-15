@@ -1,5 +1,8 @@
 # Build a Factory pipeline from an empty Project
 
+For a complete Russian walkthrough of two independent pipelines, see
+[Triage and Delivery through the UI](triage-and-delivery-ui.ru.md).
+
 Open the Project's **Factory** page and choose **Add pipeline**. This opens an
 empty visual step graph. No triage preset, earlier Flow, Build or demonstration
 Run is required. The graph is a Flow Definition; a separate Factory Configuration
@@ -50,14 +53,22 @@ in browser storage.
 ## Prepare canonical Issue inputs
 
 In Project settings, open **Issue field settings**. Administer the Project's
-**Priorities**, **Components** and **Issue types** independently of **Custom
+**Priorities**, **Components**, **Issue types** and **Sizes** independently of **Custom
 Issue fields**. Initial priorities are `blocker`, `high`, `medium`, `low`; types
-are `defect`, `feature_request`. Size stays `small`, `medium`, `large`. Add the
+are `defect`, `feature_request`. Sizes initially offer `small`, `medium`, `large`.
+Add, rename or retire size choices in **Sizes** and use **Up / Down** to order
+them from smallest to largest. Publish the reviewed catalog before selecting
+values in Issue properties or creating Delivery. Changing the catalog does not
+classify an Issue or alter an already published Flow. Add the
 Project's components and any ordinary text/choice/boolean/integer/date fields.
 Review stable IDs, bounds and the catalog version before publishing. Rename or
 retire existing choices instead of changing their identities. Project
 administration and Issue editing require separate rights; publication supplies
 choices without filling or changing existing Issues.
+
+During catalog conflict reconciliation, size names and size ordering have
+independent decisions, including a choice whose stable ID is `order`. An operator
+may keep a local name with the current published order, or the opposite.
 
 Create or edit an Issue with explicit requirements and acceptance, then select
 its priority, component, type, size and any custom values in **Properties**.
@@ -243,7 +254,7 @@ reuse `issue_classification.field_contract.schema` as the analyst outcome and
 classification action input schema. It contains optional built-in priority,
 component, type (`kind`) and size fields, plus active semantic properties such as
 severity, risk, reproducibility and recommended route. Choice IDs come from the
-published Project definitions; size uses `small`, `medium`, `large`. Reference the
+published Project definitions, including the ordered size catalog. Reference the
 same immutable schema in each step rather than maintaining another enum list.
 The all-fields preview is unavailable until a Project catalog is published, or
 when the complete preview exceeds the existing Flow schema limits. A bounded
@@ -408,7 +419,7 @@ Build the routes in this order:
 1. Route unresolved defects through the Tester reproduction step. A conclusive
    negative check ends in `cannot_reproduce`. Missing evidence or an unavailable
    environment needs its own stop or wait route.
-2. Route large tickets through OpenSpec authoring. For small and medium tickets,
+2. Route sizes at or above the selected specification threshold through OpenSpec authoring. For smaller sizes,
    freeze the Issue's explicit acceptance criteria in the Accepted Work Contract.
    If requirements approval is needed, configure the component, size and priority
    rules and connect the exact prepared requirements to the operator gate.
@@ -455,6 +466,17 @@ there is no need to replace it with a `classification` source. Unbound ordinary
 properties remain ineligible for admission mappings.
 Once the selected mappings are valid, the admission warning clears, including
 when reopening a snapshot that uses a classification-bound `property`.
+
+Before **Open example draft**, select **Create specifications starting at size**.
+The choices show Project display names in their published order and retain their
+stable IDs in the request and graph. For example,
+with `xs → s → m → l → xl`, selecting `l` sends `l` and `xl` through OpenSpec
+authoring; lower sizes use the Issue acceptance criteria. The resolved ordinary
+`requirements_needed` gate contains concrete size IDs. Inspect/edit that gate
+in the normal Flow editor when revising the policy, then publish a new version.
+Later catalog additions, renames, reordering or retirement do not change its
+published routes or an admitted Run. Human requirements-approval policy is a
+separate setting; review its component/priority/size rules as well.
 
 Select each reasoning step's agent/Profile and installed execution mode. Use
 **Tester · Delivery → Prepare protected tests** for protected test authoring.
@@ -517,6 +539,9 @@ manually classified Issue and one prepared by a replacement triage Flow without
 republishing delivery. Inspect **Runs** to compare the admitted snapshot with
 current Properties; later edits do not reroute that execution. Re-review after
 a conflict instead of resubmitting changed input under the old request key.
+Snapshot review and detail resolve size display names from the retained catalog,
+not the current Project list. A later rename preserves the original name and ID
+in that snapshot; records without a retained label continue to show the safe ID.
 The [headless sequence](../reference/issues.md#headless-issue-snapshot-sequence)
 documents exact request/precondition handling. Enable Source intake and external
 Reporter effects only through their separate reviewed configuration; completing

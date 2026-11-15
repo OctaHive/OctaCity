@@ -378,6 +378,7 @@ assert.deepEqual(issueConstraints({
         components: {maxItems: 6},
         priorities: {default: [{id: 'urgent', name: 'Urgent', retired: false}]},
         types: {default: [{id: 'request', name: 'Request', retired: false}]},
+        sizes: {default: [{id: 'small', name: 'Small', retired: false}, {id: 'medium', name: 'Medium', retired: false}, {id: 'large', name: 'Large', retired: false}]},
       },
     },
     IssuePropertyDefinition: {properties: {
@@ -412,7 +413,7 @@ assert.deepEqual(issueConstraints({
   },
   defaultPriorities: [{id: 'urgent', name: 'Urgent', retired: false}],
   defaultTypes: [{id: 'request', name: 'Request', retired: false}],
-  sizes: ['small', 'medium', 'large'],
+  defaultSizes: [{id: 'small', name: 'Small', retired: false}, {id: 'medium', name: 'Medium', retired: false}, {id: 'large', name: 'Large', retired: false}],
   commentMaximumBytes: 7, labelsMaximumCount: 2, titleMaximumBytes: 64, descriptionMaximumBytes: 1024, acceptanceMaximumBytes: 512,
   priorityMinimum: 0, priorityMaximum: 9, defaultPageSize: 3, outcomeConclusionMaximumBytes: 96, reasonMaximumBytes: 80,
 });

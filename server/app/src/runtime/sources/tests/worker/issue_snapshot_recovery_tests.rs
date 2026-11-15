@@ -190,7 +190,7 @@ async fn automatic_issue_snapshot_duplicates_and_restart_keep_one_run_after_clas
         id: issue.id,
         expected_version: issue.version,
         planning: IssuePlanning {
-          size: Some(IssueSize::Large),
+          size: Some(String::from("large")),
           ..issue.planning
         },
       },
@@ -255,7 +255,7 @@ async fn automatic_issue_snapshot_duplicates_and_restart_keep_one_run_after_clas
   assert_eq!(actual.work, original.work);
   assert_eq!(actual.flow.data.incoming, original.flow.data.incoming);
   let current = fixture.store.issue(issue.project_id, issue.id, None).await.unwrap();
-  assert_eq!(current.planning.size, Some(IssueSize::Large));
+  assert_eq!(current.planning.size, Some(String::from("large")));
   assert_eq!(current.content.priority, Some(IssuePriority::Choice("low".into())));
   assert_eq!(
     fixture

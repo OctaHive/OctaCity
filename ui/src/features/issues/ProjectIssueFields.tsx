@@ -1,6 +1,5 @@
 import { useId, useRef, useState } from 'react';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
-import { ISSUE_CONSTRAINTS as bounds } from '../../../.generated/api/constraints';
 import { queryKeys } from '../../app/query';
 import { usePresentation } from '../../app/presentation/PresentationProvider';
 import { QueryContent } from '../../shared/QueryStateNotice';
@@ -72,6 +71,7 @@ function initialDefinition(catalog: IssuePropertyCatalog) {
     priorities: [...choices.priority],
     components: [...choices.component],
     types: [...choices.type],
+    sizes: [...choices.size],
   });
 }
 function Editor({
@@ -190,11 +190,17 @@ function Editor({
           fields={draft.properties}
           onChange={(properties) => setDraft({ ...draft, properties })}
         />
+        <p>{t('issueFields.sizeOrder')}</p>
+        <IssueChoiceList
+          label={t('issueFields.sizes')}
+          choices={draft.sizes}
+          ordered
+          onChange={(sizes) => setDraft({ ...draft, sizes })}
+        />
         <IssueFieldSemantics
           definition={draft}
           onChange={(classification) => setDraft({ ...draft, classification })}
         />
-        <p>{t('issueFields.fixedSize', { values: bounds.sizes.join(', ') })}</p>
       </fieldset>
       {problems.length ? (
         <p role="alert">{t('issueFields.invalid', { fields: problems.join(', ') })}</p>

@@ -248,13 +248,7 @@ pub(crate) fn field_shape(
     FlowIssueFieldSource::Priority => return choices(&catalog.definition.priorities),
     FlowIssueFieldSource::Component => return choices(&catalog.definition.components),
     FlowIssueFieldSource::Type => return choices(&catalog.definition.types),
-    FlowIssueFieldSource::Size => {
-      return Some(FlowValueSchema::Enum {
-        values: [IssueSize::Small, IssueSize::Medium, IssueSize::Large]
-          .map(|size| serde_json::to_value(size).expect("canonical Issue size"))
-          .into(),
-      });
-    }
+    FlowIssueFieldSource::Size => return choices(&catalog.definition.sizes),
     FlowIssueFieldSource::Dependencies => {
       return Some(FlowValueSchema::Array {
         min_items: 0,

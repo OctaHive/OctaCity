@@ -3,7 +3,7 @@ use crate::*;
 use octacity_server_factory::*;
 use octacity_server_store::{
   ApplyIssueClassification, FactoryRunStore, IssueClassificationAuthority, IssueClassificationFieldSelection,
-  IssueClassificationStore, IssueClassificationUpdate, IssueExecutionStore, IssueSize,
+  IssueClassificationStore, IssueClassificationUpdate, IssueExecutionStore,
 };
 use std::{collections::BTreeMap, sync::Arc};
 
@@ -237,13 +237,7 @@ impl<S: IssueClassificationStore, F: FactoryRunStore> FactoryFlowActionPlugin
         None
       };
       let issue_type = if selection.kind { choice("kind")? } else { None };
-      let size = if selection.size {
-        choice("size")?
-          .map(|value| serde_json::from_value::<IssueSize>(serde_json::json!(value)).map_err(|_| invalid()))
-          .transpose()?
-      } else {
-        None
-      };
+      let size = if selection.size { choice("size")? } else { None };
       let mut properties = BTreeMap::new();
       for (slot, id) in selection.properties.fields() {
         if let Some(value) = choice(slot)? {

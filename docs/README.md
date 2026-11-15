@@ -22,6 +22,7 @@ Runbooks for deploying and maintaining released components:
 - [Server operations](operations/server.md)
 - [Optional Factory operations and qualification](operations/factory.md)
 - [Build a Factory pipeline from an empty Project](operations/factory-pipeline-authoring.md)
+- [Triage and Delivery through the UI — Russian walkthrough](operations/triage-and-delivery-ui.ru.md)
 - [OpenAI Decisions shadow preparation](operations/openai-decisions-shadow.md)
 - [Agent operations](operations/agent.md)
 - [Backup, restore, and reconciliation](operations/backup-restore.md)

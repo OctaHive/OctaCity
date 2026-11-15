@@ -65,7 +65,9 @@ export function IssueExecutionSnapshotView({
                     ? catalog?.components
                     : source?.kind === 'type'
                       ? catalog?.types
-                      : undefined;
+                      : source?.kind === 'size'
+                        ? catalog?.sizes
+                        : undefined;
             const choice =
               typeof value === 'string' ? choices?.find((c) => c.id === value) : undefined;
             return (

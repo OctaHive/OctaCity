@@ -115,7 +115,9 @@ impl IssueRevision {
       Field::Type {
         definition_version: catalog.version,
       },
-      Field::Size,
+      Field::Size {
+        definition_version: Some(catalog.version),
+      },
     ]
     .into_iter()
     .chain(

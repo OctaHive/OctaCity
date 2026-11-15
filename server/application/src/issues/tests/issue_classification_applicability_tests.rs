@@ -27,10 +27,14 @@ fn classification_review_marks_changed_acceptance_stale_without_mutating_the_ass
       .unwrap()
       .issue;
     let mut edit = planning_edit(&created, "size");
-    edit.intent.planning.size = Some(octacity_server_store::IssueSize::Small);
+    edit.intent.planning.size = Some(String::from("small"));
     let assessed = commands.handle_command(&context(), edit).await.unwrap().issue;
     let initial = queries.handle_query(&context(), review(&assessed)).await.unwrap();
-    let size = initial.fields.iter().find(|field| field.field == Field::Size).unwrap();
+    let size = initial
+      .fields
+      .iter()
+      .find(|field| field.field.identity() == octacity_server_store::IssueClassificationFieldIdentity::Size)
+      .unwrap();
     assert!(size.problems.is_empty());
     assert_eq!(initial.version, assessed.version);
     let changed = commands
@@ -55,7 +59,11 @@ fn classification_review_marks_changed_acceptance_stale_without_mutating_the_ass
       .issue;
     let before = store.mutation_evidence_counts().await;
     let stale = queries.handle_query(&context(), review(&changed)).await.unwrap();
-    let size = stale.fields.iter().find(|field| field.field == Field::Size).unwrap();
+    let size = stale
+      .fields
+      .iter()
+      .find(|field| field.field.identity() == octacity_server_store::IssueClassificationFieldIdentity::Size)
+      .unwrap();
     assert_eq!(size.problems, vec![Problem::RequirementsChanged]);
     assert_eq!(changed.classification, assessed.classification);
     assert_eq!(
@@ -105,7 +113,7 @@ fn classification_review_preserves_assessment_for_assignee_date_and_unselected_c
       .unwrap()
       .issue;
     let mut classify = planning_edit(&original, "size");
-    classify.intent.planning.size = Some(octacity_server_store::IssueSize::Small);
+    classify.intent.planning.size = Some(String::from("small"));
     let assessed = commands.handle_command(&context(), classify).await.unwrap().issue;
     let mut organizational = planning_edit(&assessed, "organization");
     organizational.edited_at = at(31);
@@ -155,7 +163,7 @@ fn classification_review_preserves_assessment_for_assignee_date_and_unselected_c
       reviewed
         .fields
         .iter()
-        .find(|f| f.field == Field::Size)
+        .find(|f| f.field.identity() == octacity_server_store::IssueClassificationFieldIdentity::Size)
         .unwrap()
         .problems
         .is_empty()

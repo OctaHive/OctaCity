@@ -194,7 +194,7 @@ async fn linked_issue(f: &Fixture<PostgresStore>, item: &str, classified: bool) 
           id: issue.id,
           expected_version: issue.version,
           planning: IssuePlanning {
-            size: Some(IssueSize::Small),
+            size: Some(String::from("small")),
             ..issue.planning
           },
         },
@@ -304,7 +304,7 @@ async fn automatic_issue_snapshot_waits_for_classification_while_another_item_pr
         id: pending.id,
         expected_version: pending.version,
         planning: IssuePlanning {
-          size: Some(IssueSize::Medium),
+          size: Some(String::from("medium")),
           ..pending.planning
         },
       },

@@ -75,7 +75,9 @@ fn manual_classification_planning_retains_human_origin_without_a_run() {
     for field in [
       Field::Component { definition_version: 1 },
       Field::Type { definition_version: 1 },
-      Field::Size,
+      Field::Size {
+        definition_version: Some(1),
+      },
       Field::Property {
         id: "impact".into(),
         definition_version: 1,
@@ -196,7 +198,7 @@ fn manual_classification_priority_override_does_not_refresh_other_stale_fields()
       .issue;
     let mut edit = planning_edit(&original, "assess");
     edit.intent.planning.definition_version = 1;
-    edit.intent.planning.size = Some(octacity_server_store::IssueSize::Medium);
+    edit.intent.planning.size = Some(String::from("medium"));
     edit.intent.planning.values.insert(
       "impact".into(),
       octacity_server_store::IssuePropertyValue::Choice("major".into()),
@@ -268,13 +270,9 @@ fn manual_classification_priority_override_does_not_refresh_other_stale_fields()
     assert!(
       matches!(&impact.origin, IssueClassificationOrigin::Manual {actor} if actor.identity.as_deref()==Some("bob"))
     );
-    assert!(
-      overridden
-        .classification
-        .fields
-        .iter()
-        .any(|f| f.field == Field::Size && f.requirements_version == assessed.applicability_version)
-    );
+    assert!(overridden.classification.fields.iter().any(|f| f.field.identity()
+      == octacity_server_store::IssueClassificationFieldIdentity::Size
+      && f.requirements_version == assessed.applicability_version));
     let mut unrelated = planning_edit(&overridden, "unrelated-date");
     unrelated.edited_at = at(34);
     unrelated.intent.planning.due_date = Some("2026-12-01".into());
@@ -374,7 +372,7 @@ fn manual_classification_uses_default_catalog_on_creation_and_edit_without_setup
     let mut creation = create(project_id, "default-classified");
     creation.intent.content.priority = Some(IssuePriority::Choice("high".into()));
     creation.intent.planning.issue_type = Some("defect".into());
-    creation.intent.planning.size = Some(octacity_server_store::IssueSize::Small);
+    creation.intent.planning.size = Some(String::from("small"));
     let created = commands.handle_command(&context(), creation).await.unwrap().issue;
     assert_eq!(
       created.classification.fields.len(),
@@ -393,7 +391,9 @@ fn manual_classification_uses_default_catalog_on_creation_and_edit_without_setup
         definition_version: Some(0),
       },
       Field::Type { definition_version: 0 },
-      Field::Size,
+      Field::Size {
+        definition_version: Some(0),
+      },
     ] {
       let attribution = created.classification.fields.iter().find(|f| f.field == field).unwrap();
       assert_eq!(attribution.assessed_version, created.version);

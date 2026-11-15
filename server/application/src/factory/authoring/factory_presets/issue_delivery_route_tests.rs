@@ -49,7 +49,7 @@ fn next_node(snapshot: &FactoryRunSnapshot) -> FactoryKey {
 
 async fn admitted_issue(
   kind: &str,
-  size: IssueSize,
+  size: String,
   component: &str,
   priority: &str,
   reproducibility: &str,
@@ -59,10 +59,62 @@ async fn admitted_issue(
   IssueRevision,
   IssueExecutionRequest,
 ) {
+  admitted_issue_with_threshold(kind, size, component, priority, reproducibility, None).await
+}
+
+async fn admitted_issue_with_threshold(
+  kind: &str,
+  size: String,
+  component: &str,
+  priority: &str,
+  reproducibility: &str,
+  threshold: Option<&str>,
+) -> (
+  DeliveryFixture,
+  Arc<testing::InMemoryProjectStore>,
+  IssueRevision,
+  IssueExecutionRequest,
+) {
   let f = delivery_fixture().await;
   let issues = properties(f.project).await;
+  if threshold.is_some() {
+    let mut definition = issues.issue_properties(f.project, None).await.unwrap().definition;
+    definition.sizes.insert(
+      0,
+      IssuePropertyChoice {
+        id: "xs".into(),
+        name: "Extra small".into(),
+        retired: false,
+      },
+    );
+    definition.sizes.push(IssuePropertyChoice {
+      id: "xl".into(),
+      name: "Extra large".into(),
+      retired: false,
+    });
+    issues
+      .publish_issue_properties(testing::management_mutation(PublishIssueProperties {
+        intent: PublishIssuePropertiesIntent {
+          project_id: f.project,
+          expected_version: 1,
+          definition,
+        },
+        idempotency_key: "custom-delivery-sizes".parse().unwrap(),
+        published_at: Timestamp::from_unix_millis(2).unwrap(),
+      }))
+      .await
+      .unwrap();
+  }
   let mut selection = issue_selection(&f).await;
-  selection.issue_snapshot = Some(issue_input());
+  selection.issue_snapshot = Some(if let Some(threshold) = threshold {
+    serde_json::from_value(
+      serde_json::json!({"definition_version":2,"admission":issue_input().admission,
+      "specification_from_size":threshold}),
+    )
+    .expect("Delivery accepts an explicit Project size threshold")
+  } else {
+    issue_input()
+  });
   let resolved = AuthorizedQueryHandler::new(
     f.policy.clone(),
     Arc::new(
@@ -143,7 +195,7 @@ async fn admitted_issue(
           priority: Some(IssuePriority::Choice(priority.into())),
         },
         planning: IssuePlanning {
-          definition_version: 1,
+          definition_version: if threshold.is_some() { 2 } else { 1 },
           issue_type: Some(kind.into()),
           size: Some(size),
           component: Some(component.into()),
@@ -226,10 +278,63 @@ async fn admitted_issue(
 }
 
 #[test]
+fn issue_delivery_size_threshold_routes_the_frozen_project_order() {
+  run_ready(async {
+    for (size, threshold, expected) in [
+      ("xs", "large", "protected_tests"),
+      ("medium", "large", "protected_tests"),
+      ("large", "large", "specification_author"),
+      ("xl", "large", "specification_author"),
+      ("small", "small", "specification_author"),
+      ("large", "xl", "protected_tests"),
+      ("xl", "xl", "specification_author"),
+    ] {
+      let (f, issues, issue, admitted) = admitted_issue_with_threshold(
+        "feature_request",
+        size.into(),
+        "compiler",
+        "low",
+        "not_applicable",
+        Some(threshold),
+      )
+      .await;
+      let mut definition = issues.issue_properties(f.project, None).await.unwrap().definition;
+      definition.sizes.reverse();
+      issues
+        .publish_issue_properties(testing::management_mutation(PublishIssueProperties {
+          intent: PublishIssuePropertiesIntent {
+            project_id: f.project,
+            expected_version: 2,
+            definition,
+          },
+          idempotency_key: "reordered-size-catalog".parse().unwrap(),
+          published_at: Timestamp::from_unix_millis(30).unwrap(),
+        }))
+        .await
+        .unwrap();
+      let snapshot = advance_gates(&f, admitted.association.unwrap().run_id, 31).await;
+      assert_eq!(
+        next_node(&snapshot),
+        key(expected),
+        "{size} follows its published threshold after reordering"
+      );
+      assert_eq!(snapshot.flow.data.incoming[0].payload().value()["size"], size);
+      assert_eq!(issue.planning.size.as_deref(), Some(size));
+    }
+  });
+}
+
+#[test]
 fn issue_delivery_routes_the_original_small_feature_after_issue_edits() {
   run_ready(async {
-    let (f, issues, issue, published) =
-      admitted_issue("feature_request", IssueSize::Small, "compiler", "low", "not_applicable").await;
+    let (f, issues, issue, published) = admitted_issue(
+      "feature_request",
+      String::from("small"),
+      "compiler",
+      "low",
+      "not_applicable",
+    )
+    .await;
     let run = published.association.unwrap().run_id;
     let frozen = f.store.factory_run_snapshot(run).await.unwrap();
     assert_eq!(frozen.flow.data.incoming[0].payload().value()["size"], "small");
@@ -309,7 +414,7 @@ fn issue_delivery_routes_frozen_kind_size_component_and_priority() {
     for (kind, size, component, priority, repro, target) in [
       (
         "feature_request",
-        IssueSize::Small,
+        String::from("small"),
         "api",
         "high",
         "not_applicable",
@@ -317,7 +422,7 @@ fn issue_delivery_routes_frozen_kind_size_component_and_priority() {
       ),
       (
         "feature_request",
-        IssueSize::Medium,
+        String::from("medium"),
         "compiler",
         "high",
         "not_applicable",
@@ -325,7 +430,7 @@ fn issue_delivery_routes_frozen_kind_size_component_and_priority() {
       ),
       (
         "feature_request",
-        IssueSize::Medium,
+        String::from("medium"),
         "api",
         "low",
         "not_applicable",
@@ -333,7 +438,7 @@ fn issue_delivery_routes_frozen_kind_size_component_and_priority() {
       ),
       (
         "feature_request",
-        IssueSize::Medium,
+        String::from("medium"),
         "api",
         "high",
         "not_applicable",
@@ -341,7 +446,7 @@ fn issue_delivery_routes_frozen_kind_size_component_and_priority() {
       ),
       (
         "feature_request",
-        IssueSize::Medium,
+        String::from("medium"),
         "api",
         "blocker",
         "not_applicable",
@@ -349,23 +454,30 @@ fn issue_delivery_routes_frozen_kind_size_component_and_priority() {
       ),
       (
         "feature_request",
-        IssueSize::Large,
+        String::from("large"),
         "compiler",
         "low",
         "not_applicable",
         "specification_author",
       ),
-      ("defect", IssueSize::Small, "compiler", "low", "unknown", "reproduction"),
       (
         "defect",
-        IssueSize::Large,
+        String::from("small"),
+        "compiler",
+        "low",
+        "unknown",
+        "reproduction",
+      ),
+      (
+        "defect",
+        String::from("large"),
         "api",
         "high",
         "needs_input",
         "review-reproduction",
       ),
     ] {
-      let (f, issues, issue, published) = admitted_issue(kind, size, component, priority, repro).await;
+      let (f, issues, issue, published) = admitted_issue(kind, size.clone(), component, priority, repro).await;
       let run = published.association.unwrap().run_id;
       let frozen = f.store.factory_run_snapshot(run).await.unwrap();
       change_issue(issues.as_ref(), &issue).await;
@@ -417,8 +529,14 @@ fn issue_delivery_routes_frozen_kind_size_component_and_priority() {
 fn issue_delivery_human_acceptance_retains_the_reviewed_issue_after_edits() {
   run_ready(async {
     for disposition in [FlowHumanDisposition::Resume, FlowHumanDisposition::Abort] {
-      let (f, issues, issue, published) =
-        admitted_issue("feature_request", IssueSize::Medium, "api", "high", "not_applicable").await;
+      let (f, issues, issue, published) = admitted_issue(
+        "feature_request",
+        String::from("medium"),
+        "api",
+        "high",
+        "not_applicable",
+      )
+      .await;
       let run = published.association.unwrap().run_id;
       let initial = f.store.factory_run_snapshot(run).await.unwrap();
       issues
@@ -528,7 +646,7 @@ fn issue_delivery_human_acceptance_retains_the_reviewed_issue_after_edits() {
 
 async fn change_issue(issues: &testing::InMemoryProjectStore, issue: &IssueRevision) {
   let kind = issue.planning.issue_type.as_deref().unwrap();
-  let size = issue.planning.size.unwrap();
+  let size = issue.planning.size.as_ref().unwrap();
   let component = issue.planning.component.as_deref().unwrap();
   let Some(IssuePriority::Choice(priority)) = &issue.content.priority else {
     panic!("Project priority")
@@ -553,10 +671,10 @@ async fn change_issue(issues: &testing::InMemoryProjectStore, issue: &IssueRevis
     .unwrap()
     .issue;
   let mut planning = changed.planning.clone();
-  planning.size = Some(if size == IssueSize::Large {
-    IssueSize::Small
+  planning.size = Some(if size == "large" {
+    String::from("small")
   } else {
-    IssueSize::Large
+    String::from("large")
   });
   planning.component = Some(if component == "api" { "compiler" } else { "api" }.into());
   planning.issue_type = Some(if kind == "defect" { "feature_request" } else { "defect" }.into());
@@ -642,8 +760,14 @@ async fn review_requirements(
 #[test]
 fn issue_delivery_does_not_treat_unattributed_dependencies_as_an_empty_list() {
   run_ready(async {
-    let (f, issues, issue, published) =
-      admitted_issue("feature_request", IssueSize::Small, "compiler", "low", "not_applicable").await;
+    let (f, issues, issue, published) = admitted_issue(
+      "feature_request",
+      String::from("small"),
+      "compiler",
+      "low",
+      "not_applicable",
+    )
+    .await;
     let original = f
       .store
       .factory_run_snapshot(published.association.unwrap().run_id)

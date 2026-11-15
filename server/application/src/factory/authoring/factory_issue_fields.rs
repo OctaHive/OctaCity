@@ -40,6 +40,9 @@ pub struct FactoryIssueFieldChoice {
   pub required_supported: bool,
   /// Project-derived type/choices/bounds, normalized by the shared contract owner.
   pub shape: FlowValueSchema,
+  /// Optional display labels; allowed IDs and their order remain owned by the shape.
+  #[serde(skip_serializing_if = "std::collections::BTreeMap::is_empty")]
+  pub choice_labels: std::collections::BTreeMap<String, String>,
 }
 
 pub(crate) fn contracts(catalog: &PublishedIssueProperties) -> FactoryIssueFieldChoices {
@@ -81,12 +84,24 @@ pub(crate) fn contracts(catalog: &PublishedIssueProperties) -> FactoryIssueField
         catalog,
       )
       .is_some();
+      let choice_labels = if matches!(source, FlowIssueFieldSource::Size) {
+        catalog
+          .definition
+          .sizes
+          .iter()
+          .filter(|c| !c.retired)
+          .map(|c| (c.id.clone(), c.name.clone()))
+          .collect()
+      } else {
+        Default::default()
+      };
       Some(FactoryIssueFieldChoice {
         source,
         name,
         property_id,
         required_supported,
         shape,
+        choice_labels,
       })
     })
     .collect();

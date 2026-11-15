@@ -15,7 +15,7 @@ pub(super) async fn snapshot_fixture() -> Fixture {
         id: issue.id,
         expected_version: issue.version,
         planning: IssuePlanning {
-          size: Some(IssueSize::Small),
+          size: Some(String::from("small")),
           ..issue.planning
         },
       },

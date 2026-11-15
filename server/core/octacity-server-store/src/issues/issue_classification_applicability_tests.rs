@@ -230,7 +230,7 @@ fn classification_application_retains_declared_inputs_and_rejects_substituted_ma
         priority: None,
         component: None,
         issue_type: None,
-        size: Some(IssueSize::Small),
+        size: Some(String::from("small")),
         properties: Default::default(),
         inputs: inputs.clone(),
       }),
@@ -242,7 +242,7 @@ fn classification_application_retains_declared_inputs_and_rejects_substituted_ma
       .classification
       .fields
       .iter()
-      .find(|f| f.field == IssueClassificationFieldReference::Size)
+      .find(|f| f.field.identity() == crate::IssueClassificationFieldIdentity::Size)
       .unwrap();
     assert_eq!(size.inputs, inputs);
     assert!(
@@ -255,7 +255,7 @@ fn classification_application_retains_declared_inputs_and_rejects_substituted_ma
         )
         .fields
         .iter()
-        .find(|f| f.field == IssueClassificationFieldReference::Size)
+        .find(|f| f.field.identity() == crate::IssueClassificationFieldIdentity::Size)
         .unwrap()
         .problems
         .is_empty()
@@ -454,7 +454,7 @@ fn classification_review_distinguishes_missing_values_from_legacy_unattributed_v
       review
         .fields
         .iter()
-        .find(|field| field.field == IssueClassificationFieldReference::Size)
+        .find(|field| field.field.identity() == crate::IssueClassificationFieldIdentity::Size)
         .unwrap()
         .problems,
       vec![IssueClassificationProblem::MissingValue]

@@ -21,11 +21,10 @@ export function issueConstraints(document) {
   const slots = schemas?.IssueClassificationBindings?.properties;
   if (!Array.isArray(kinds) || !slots || !field?.id?.pattern)
     throw new Error('Missing Issue field administration contracts.');
-  const sizes = unwrap(document.components?.schemas?.IssuePlanning?.properties?.size)?.enum;
   if (
     !Array.isArray(catalog?.priorities?.default) ||
     !Array.isArray(catalog?.types?.default) ||
-    !Array.isArray(sizes)
+    !Array.isArray(catalog?.sizes?.default)
   )
     throw new Error('Missing Issue built-in choice contracts.');
   const limit = document.paths?.['/api/v1/projects/{project_id}/issues']?.get?.parameters?.find(
@@ -53,7 +52,7 @@ export function issueConstraints(document) {
     },
     defaultPriorities: catalog.priorities.default,
     defaultTypes: catalog.types.default,
-    sizes,
+    defaultSizes: catalog.sizes.default,
     titleMaximumBytes: bound(fields?.title?.['x-max-utf8-bytes']),
     descriptionMaximumBytes: bound(fields?.description?.['x-max-utf8-bytes']),
     acceptanceMaximumBytes: bound(unwrap(fields?.acceptance)?.['x-max-utf8-bytes']),

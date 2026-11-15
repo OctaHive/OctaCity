@@ -258,7 +258,7 @@ async fn issue_snapshot_incompatible_code_subject_waits_with_existing_run_withou
       priority: None,
       component: None,
       issue_type: None,
-      size: Some(IssueSize::Medium),
+      size: Some(String::from("medium")),
       properties: Default::default(),
       inputs: IssueClassificationAssessmentInputs {
         subject: Some(FactoryTaskSubject::Exact(ExactSubject::new(

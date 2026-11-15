@@ -605,7 +605,10 @@ The ordinary CI worker Pipeline is a technical executor and remains installed.
 Use the [UI authoring walkthrough](factory-pipeline-authoring.md#author-ticket-delivery)
 to create triage with Project-backed result fields and explicit local application,
 then independently create Delivery v2 with reviewed snapshot admission mappings.
-Publish each Flow and its own Configuration. Delivery reads the effective Issue
+Administer ordered **Sizes** in Project **Issue field settings**, then select
+**Create specifications starting at size** in the Delivery example. This is
+reviewed Flow policy; it adds no installer flag or ambient size routing. Publish
+each Flow and its own Configuration. Delivery reads the effective Issue
 snapshot and asks for no producing Run.
 
 #### Qualify Issue-snapshot delivery
@@ -619,7 +622,8 @@ the shared **Standard** launch policy; each step requests its own narrower scope
 
 1. In Project **Issue field settings**, publish the intended component and
    priority/type choices and supported custom fields. Retain stable IDs and the
-   catalog version. Size remains `small`, `medium`, `large`. For the complete
+   catalog version. Configure **Sizes** in increasing order (initially
+   `small`, `medium`, `large`) and review the Delivery specification threshold. For the complete
    `ticket-delivery/v2` example, also publish its required semantic fields from
    the [resolver prerequisites](../../config/factory/presets/ticket-delivery/README.md#current-v2-issue-snapshot-example).
 2. Prepare requirements/acceptance and classification in Issue **Properties**,

@@ -385,11 +385,17 @@ it.each([
               priority: { kind: 'priority' },
               risk: { kind: 'classification', slot: 'severity' },
               work_kind: { kind: 'type' },
+              size: { kind: 'size' },
             },
           },
           parameters: [
             ...legacyExample.parameters,
             { path: '/issue_snapshot', kind: 'issue_snapshot' as const, required: true },
+            {
+              path: '/issue_snapshot/specification_from_size',
+              kind: 'issue_size_threshold' as const,
+              required: true,
+            },
           ],
         },
       ],
@@ -432,6 +438,18 @@ it.each([
       listFlows: vi.fn(async () => ({ items: [], total: 0, next_cursor: null })),
       getAuthoringCapabilities: vi.fn<FactoryApi['getAuthoringCapabilities']>(async () => ({
         ...factoryIssueFieldsFixture(),
+        issue_fields: {
+          ...factoryIssueFieldsFixture().issue_fields,
+          fields: factoryIssueFieldsFixture().issue_fields.fields.map((field) =>
+            field.source.kind === 'size'
+              ? {
+                  ...field,
+                  shape: { type: 'enum' as const, values: ['xs', 'medium', 'xl'] },
+                  choice_labels: { xs: 'XS', medium: 'Project medium', xl: 'XL' },
+                }
+              : field,
+          ),
+        },
         commands: required ? [command, alternateCommand] : [],
         candidate_publications: [],
         human_gates: [],
@@ -490,6 +508,17 @@ it.each([
       await choose('Admission risk: major', 'High');
       await choose('Admission risk: minor', 'Low');
       await userEvent.click(screen.getByRole('checkbox', { name: 'Allow work_kind: defect' }));
+      expect(screen.getByRole('button', { name: 'Open example draft' })).toHaveProperty(
+        'disabled',
+        true,
+      );
+      const threshold = screen.getByRole('combobox', {
+        name: 'Create specifications starting at size',
+      });
+      threshold.focus();
+      await userEvent.keyboard('{Enter}{Home}{ArrowDown}{ArrowDown}');
+      expect(screen.getByRole('option', { name: 'Project medium' })).toBeTruthy();
+      await userEvent.keyboard('{Enter}');
       expect(screen.queryByRole('combobox', { name: /predecessor/i })).toBeNull();
     }
     if (!required) {
@@ -520,6 +549,7 @@ it.each([
           ? {
               issue_snapshot: {
                 definition_version: 7,
+                specification_from_size: 'medium',
                 admission: {
                   priority: { field: 'priority', values: { urgent: 90, routine: 20 } },
                   risk: { field: 'risk', values: { major: 'high', minor: 'low' } },

@@ -636,7 +636,9 @@ labelled as legacy values and survive unrelated edits until explicitly replaced
 or cleared; their retained REST range is 0–255. The canonical content priority
 location supports both retained numbers and new choice IDs. Built-in component
 and type use separate Project lists, initially no components and types `defect`
-and `feature_request`; size keeps `small`, `medium` and `large`. Default choices
+and `feature_request`; the ordered size catalog initially offers `small`, `medium`
+and `large`. Project settings administer size identities, labels, retirement and
+smallest-to-largest order alongside the other choice lists. Default choices
 do not fill Issue values. Execution scheduling priority remains separate.
 
 Description, acceptance criteria and priority can be completed later; no
@@ -829,9 +831,9 @@ use public Issue/Factory ports.
 
 Snapshot task 2.1 adds four optional built-in attributes, separate from arbitrary
 `planning.values`: Project choice IDs in `content.priority`, Project component/type
-IDs in `planning.component` and `planning.type`, and fixed `planning.size` values
-`small`, `medium`, `large`. Each Project's shared definition catalog owns bounded
-`priorities`, `components` and `types` lists. Initial priorities are `blocker`, `high`,
+IDs in `planning.component`, `planning.type` and `planning.size`. Each Project's
+shared definition catalog owns bounded `priorities`, `components`, `types` and
+ordered `sizes` lists. Initial sizes are `small`, `medium`, `large`. Initial priorities are `blocker`, `high`,
 `medium`, `low`; initial types are `defect`, `feature_request`; components require
 the Project's own choices. Defaults populate available options, never Issue values.
 Omitted default lists preserve legacy publication/replay encoding; their effective
@@ -1010,8 +1012,8 @@ and creation fingerprint.
 
 Open a Project task and use **Properties → Edit properties**. The panel shows
 organizational responsibility, Project labels, due date, built-in Issue component,
-type and size, and installed scalar or choice definitions. Component/type selectors
-reuse the Project catalog; size uses the fixed server-supported choices. Legacy
+type and size, and installed scalar or choice definitions. Component/type/size selectors
+reuse the Project catalog, including retained retired values on unchanged Issues. Legacy
 type/component/size custom properties remain separate and are never promoted into
 built-ins. Project choice-list administration remains scoped to task 6.6. These
 fields are not provider names, agent roles or execution settings. An unconfigured
@@ -1072,7 +1074,7 @@ assessment alone does not establish verified reproduction or execution readiness
 Missing/denied applicability never appears as current data. **Refresh task** also
 rechecks time-dependent evidence even when the Issue version has not changed.
 Project field names and choice labels stay authoritative catalog data in either
-language; Console labels, fixed size names and diagnostics support English/Russian.
+language; Console controls and diagnostics support English/Russian; choice display names belong to the Project.
 
 Parent and sub-issue links show visible human task keys and titles. Parent
 selection reuses bounded authorized Project task pages, excludes the task itself

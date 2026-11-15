@@ -21,7 +21,7 @@ pub(super) fn insert(schemas: &mut Map<String, Value>) {
       // committed component attributions still require a positive publication.
       tagged("kind","component",[("definition_version",non_negative_integer())],&["definition_version"]),
       tagged("kind","type",[("definition_version",non_negative_integer())],&["definition_version"]),
-      tagged("kind","size",[],&[]),
+      tagged("kind","size",[("definition_version",non_negative_integer())],&[]),
       tagged("kind","property",[("id",key()),("definition_version",positive_integer())],&["id","definition_version"]),
       tagged("kind","dependencies",[],&[])
     ]}),

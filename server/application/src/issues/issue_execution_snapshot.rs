@@ -353,11 +353,10 @@ fn field_value(
       }),
     ),
     Source::Size => (
-      issue
-        .planning
-        .size
-        .map(|v| serde_json::to_value(v).expect("Issue size")),
-      Some(Field::Size),
+      issue.planning.size.as_ref().map(string),
+      Some(Field::Size {
+        definition_version: Some(version),
+      }),
     ),
     Source::Dependencies => (
       Some(serde_json::to_value(&issue.classification.dependencies).expect("typed dependencies")),

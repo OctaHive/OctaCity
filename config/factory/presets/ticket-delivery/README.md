@@ -10,6 +10,7 @@ Project's published field-definition version and an explicit admission policy:
 {
   "issue_snapshot": {
     "definition_version": 1,
+    "specification_from_size": "large",
     "admission": {
       "priority": {"field": "priority", "values": {"blocker": 100, "high": 80, "medium": 50, "low": 20}},
       "risk": {"field": "risk", "values": {"low": "low", "medium": "medium", "high": "high", "critical": "critical"}},
@@ -32,6 +33,18 @@ operators do not copy its enums into each step. No `accepted_predecessor`,
 producing Flow/terminal/schema or triage Run is required. Passing a predecessor
 alongside this mode is rejected. An eligible manually prepared Issue uses the
 same contract as an Issue classified by any authorized triage implementation.
+
+Project sizes are ordered from smallest to largest. `specification_from_size`
+selects an active stable choice ID; it and every greater active size require
+specification authoring. The resolver compiles that suffix into the ordinary
+`requirements_needed` gate and freezes the exact input vocabulary. For
+`xs, small, medium, large, xl`, threshold `large` includes both `large` and `xl`.
+Renaming labels never infers a route, and subsequent Project reordering does not
+change the published graph. Unknown/retired thresholds and omitted thresholds
+for custom catalogs report `/issue_snapshot/specification_from_size`. Legacy
+requests omitting the parameter retain the original route only with the active
+ordered IDs `small, medium, large`. Existing publications and Runs retain their
+original rules.
 
 The frozen Issue supplies the reproduction decision and requirements summary.
 Requirements approval uses Project priority IDs: the released example requests

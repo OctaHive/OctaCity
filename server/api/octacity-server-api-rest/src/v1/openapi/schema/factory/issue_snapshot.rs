@@ -35,6 +35,7 @@ pub(super) fn insert(schemas: &mut Map<String, Value>) {
       [
         ("definition_version", non_negative_integer()),
         ("admission", nullable(schema_ref("FactoryFlowIssueAdmissionPolicy"))),
+        ("specification_from_size", nullable(key())),
       ],
       &["definition_version"],
     ),

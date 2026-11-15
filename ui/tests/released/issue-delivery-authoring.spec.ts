@@ -113,6 +113,7 @@ test('authors triage and Delivery through the ordinary stand Console without API
       .fill(score!);
   await choose(page, page, 'Admission risk field', 'Classification: Delivery risk · risk');
   await choose(page, page, 'Admission risk: low', 'Low');
+  await choose(page, page, 'Create specifications starting at size', 'Large');
   await setChecked(
     page.getByRole('checkbox', { name: 'Allow work_kind: feature_request', exact: true }),
   );

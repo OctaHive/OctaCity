@@ -163,6 +163,12 @@ fn summary(
         FactoryPresetParameterKind::AcceptedPredecessor
       },
     ));
+    if issue_snapshot {
+      parameters.push(parameter(
+        "/issue_snapshot/specification_from_size",
+        FactoryPresetParameterKind::IssueSizeThreshold,
+      ));
+    }
   }
   for node in &template.nodes {
     if !required_node_kinds.contains(&node.kind) {

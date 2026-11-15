@@ -90,7 +90,13 @@ export const enMessages = {
   'issueFields.priorities': 'Priorities',
   'issueFields.components': 'Components',
   'issueFields.types': 'Issue types',
-  'issueFields.fixedSize': 'Built-in size has fixed choices: {values}.',
+  'issueFields.sizes': 'Sizes',
+  'issueFields.sizeOrder':
+    'Order sizes from smallest to largest. Delivery freezes its selected specification threshold when published.',
+  'issueFields.moveUp': 'Move {name} up',
+  'issueFields.moveDown': 'Move {name} down',
+  'issueFields.up': 'Up',
+  'issueFields.down': 'Down',
   'issueFields.scope':
     'Available to all Issues in this Project. Requires Project administration, separately from Issue editing. Existing Issue values and executions are not rewritten.',
   'issueFields.version': 'Project catalog version {version}',
@@ -380,6 +386,9 @@ export const enMessages = {
   'factory.bytes': 'bytes',
   'factory.projectionTooLarge':
     'This projection exceeds the input mapping limits. Select fewer optional fields or use the advanced input editor.',
+  'factory.specificationFromSize': 'Create specifications starting at size',
+  'factory.specificationFromSizeHelp':
+    'The selected size and all greater sizes in the published Project order require specifications. Publishing freezes these routes; later catalog changes do not reroute this pipeline.',
   'factory.snapshotAdmission': 'Snapshot admission',
   'factory.snapshotAdmissionHelp':
     'Map required classification fields explicitly. Unmapped values block admission; these rules do not grant launch or evidence authority.',

@@ -74,7 +74,16 @@ The qualification in section 7 starts published pipelines prepared by the harnes
 - [x] 8.5 Add and observe a packaged browser/native end-to-end test that begins without a Flow or Configuration and creates, reviews and publishes both triage and Delivery through UI. Test-side API calls must not prepare pipelines, admission mappings, gates or configurations; normal technical installation is allowed and read-only observation may collect evidence. Execute triage, verify applied Issue fields, independently start Delivery without an upstream selector and retain mandatory protected validation and confirmed test PR evidence.
 - [x] 8.6 Update the operator walkthrough and qualification documentation with the complete UI path, remove superseded API-only workarounds, and record actual Red/Green commands and full qualification results. Preserve the historical section 7 reports and keep unobserved acceptance unchecked.
 
-## 9. Verification commands
+## 9. Project size catalogs and Delivery specification threshold
+
+The fixed-size behavior in completed tasks 2.1/6.6 is historical; this follow-up supersedes it without rewriting retained publications or qualification reports.
+
+- [x] 9.1 Observe Red/Green at Issue publication/edit/classification/snapshot boundaries for Project-owned ordered size choices, legacy defaults and replay bytes, retired/foreign rejection and historical values; extend existing persistence contracts additively.
+- [x] 9.2 Observe Red/Green for an explicit Delivery specification threshold, custom size routing on both sides of the threshold, field-specific invalid/missing diagnostics and frozen routing after catalog edits; preserve prior publication and resolver contracts.
+- [x] 9.3 Observe Red/Green through Console Project/Issue/Delivery controls for size administration/order, actual custom-value selection, threshold selection and retained drafts; generate API/client contracts and cover EN/RU and keyboard use.
+- [x] 9.4 Run affected Rust/store/REST/UI regressions, update operator/reference documentation and record actual commands, Red/Green and any qualification limits.
+
+## 10. Verification commands
 
 Each executable behavior above uses one public-boundary Red/Green cycle before moving to the next slice. Use the repository's existing fixtures and test contracts; a setup failure is not Red. Select the existing PostgreSQL/native qualification environment explicitly when those tests require it.
 

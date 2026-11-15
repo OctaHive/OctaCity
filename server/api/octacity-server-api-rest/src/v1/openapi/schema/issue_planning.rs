@@ -69,6 +69,10 @@ pub(super) fn insert(schemas: &mut Map<String, Value>) {
   let mut definition = object(
     [
       (
+        "sizes",
+        json!({"type":"array","maxItems":MAX_ISSUE_PROPERTY_CHOICES,"items":schema_ref("IssuePropertyChoice")}),
+      ),
+      (
         "components",
         json!({"type":"array","maxItems":MAX_ISSUE_PROPERTY_CHOICES,"items":schema_ref("IssuePropertyChoice")}),
       ),
@@ -98,6 +102,7 @@ pub(super) fn insert(schemas: &mut Map<String, Value>) {
   let defaults = octacity_server_application::IssuePropertyDefinitionSet::default();
   definition["properties"]["priorities"]["default"] = json!(defaults.priorities);
   definition["properties"]["types"]["default"] = json!(defaults.types);
+  definition["properties"]["sizes"]["default"] = json!(defaults.sizes);
   definition["description"] = json!(
     "Unique stable keys and kinds are retained; retire instead of removing. Reserved status/execution/authority setters are forbidden. Bounds and dates are validated by Project policy."
   );
@@ -107,7 +112,7 @@ pub(super) fn insert(schemas: &mut Map<String, Value>) {
     tagged("choice",[("value",key())],&["value"]),tagged("boolean",[("value",boolean())],&["value"]),tagged("number",[("value",number())],&["value"]),tagged("date",[("value",date())],&["value"])
   ]}));
   schemas.insert("IssuePlanning".into(),object([
-    ("component",nullable(key())),("type",nullable(key())),("size",nullable(string_enum(&["small","medium","large"]))),
+    ("component",nullable(key())),("type",nullable(key())),("size",nullable(key())),
     ("definition_version",non_negative_integer()),("assignee",nullable(label())),
     ("labels",json!({"type":"array","maxItems":MAX_ISSUE_LABELS,"uniqueItems":true,"items":key()})),
     ("due_date",nullable(date())),("parent_id",nullable(json!({"type":"string","format":"uuid"}))),
