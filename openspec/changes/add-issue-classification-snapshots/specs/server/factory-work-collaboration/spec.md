@@ -3,9 +3,9 @@
 ### Requirement: Issue classification is canonical task data with attributable history
 An Issue SHALL support effective classification values independently of a particular producer pipeline. Ordinary manual Issues SHALL remain valid without classification. Project property definitions and Project-owned Issue priority choices SHALL supply stable field/choice identities, types and versions shared by Issue editing, configured triage effects and execution inputs. Operators SHALL NOT have to repeat Project component, size or priority vocabularies as per-step result enums. Human-readable guidance SHALL remain distinguishable from mechanically validated field definitions.
 
-Classification SHALL remain an optional subset of Issue attributes. Priority, component, type and size SHALL be built-in attributes. Each Project SHALL publish its own bounded priority/component/type/size choices in the shared immutable definition catalog; selecting a built-in attribute SHALL NOT require a custom property or semantic binding. Priority SHALL initially offer `blocker`, `high`, `medium`, `low`. New selected actions SHALL store Project choice IDs in canonical `content.priority`; legacy numeric values and receipts SHALL keep their original encoding without an inferred rescale. Work scheduling SHALL remain a separate numeric contract mapped by an explicit admission policy. Component changes SHALL use the ordinary Issue planning mutation, exact catalog/current-version checks, field ownership and scoped replay. Existing Issues SHALL decode without a component. Prior custom component values/bindings SHALL retain their historical meaning without automatic copying into the built-in field. Ordinary Project-specific properties SHALL retain their supported text, choice, boolean, bounded integer and date types without requiring classification semantics. Definitions SHALL be shared within a Project while each Issue retains its own optional values. Remaining classification semantic bindings SHALL continue to reference distinct supported choice properties; custom fields SHALL NOT redefine built-in priority, component or execution authority.
+Classification SHALL remain an optional subset of Issue attributes. Priority, component, type and size SHALL be built-in attributes with Project-owned bounded immutable choice catalogs. Configured initial choices include priorities `blocker`, `high`, `medium`, `low`; default choices do not populate Issue values. Work scheduling SHALL remain separately and explicitly mapped. Custom fields SHALL retain supported text, choice, boolean, bounded integer and date kinds with shared Project definitions and optional per-Issue values. Field selections for filling and reading SHALL address fields directly by stable identity and exact definitions without fixed business roles. One current canonical representation SHALL replace superseded numeric-priority and fixed-slot development formats; no dual reader or compatibility adapter is required.
 
-Built-in Issue type SHALL use Project-specific versioned choices with initial IDs `defect` and `feature_request`. Built-in size SHALL use Project-specific ordered versioned choices, initially `small`, `medium`, `large`. The same stable identity, finite bounds, retirement, replay and history rules as component/type SHALL apply. Absent legacy size catalogs SHALL retain the original effective choices without changing serialized replay bytes. Type and size SHALL remain optional on ordinary and legacy Issues; available default choices SHALL NOT automatically classify an Issue. Earlier kind/size custom properties and semantic bindings SHALL remain historically readable without automatic promotion. New type choices SHALL NOT infer execution routing from names. The configured assessment `kind` SHALL address the built-in type for new explicitly selected applications.
+Built-in Issue type SHALL use Project-specific choices initially `defect` and `feature_request`; built-in size SHALL use ordered Project choices initially `small`, `medium`, `large`. The catalogs SHALL apply the same stable identity, finite bounds, retirement and new-model history/replay rules. Type and size SHALL remain optional values on ordinary Issues. Selected snapshot choice definitions SHALL be retained uniformly, including configured defaults, without special omitted-list/legacy-byte fallback behavior. Field/value names SHALL infer no route. An explicit source mapping SHALL select built-in type independently of the source alias.
 
 Changes SHALL retain actor or trusted source attribution, applicability to requirements and any relevant code/evidence subject, and an immutable history. An authorized manual edit SHALL use the same field ownership, value validation, current-version and replay rules; it SHALL NOT fabricate a triage Run or claim independently verified reproduction. Missing or unknown assessments SHALL remain explicit. Generic metadata fields named accepted, approved or ready SHALL NOT confer execution or verification authority.
 
@@ -31,7 +31,7 @@ The Issue SHALL expose whether selected classification data remains applicable t
 
 An assessment depending on selected comment/document materials SHALL retain those declared source identities/digests and report incompatibility when the relevant reviewed dependency changes. Unselected comments, unrelated property edits and new unselected document publications SHALL NOT renew or invalidate that assessment merely by appearing.
 
-Reproduced and not-reproduced claims SHALL retain references to independently applicable evidence; model text, arbitrary IDs, user-entered booleans and technical failures SHALL NOT establish those claims. Missing, inaccessible, expired, inconclusive or wrong-subject required evidence SHALL produce an actionable admission blocker or the target's explicitly supported unresolved route. Private evidence bodies and transcripts SHALL retain their existing independent access controls.
+Explicitly configured claim/value bindings SHALL require existing independently qualified observations for proof-dependent paths. Familiar field names or values SHALL confer no evidence semantics. Model text, arbitrary IDs, user booleans and technical failures SHALL NOT establish verified claims. Missing, inaccessible, expired, inconclusive or wrong-subject evidence SHALL block the configured path or follow its declared unresolved route. Existing readers SHALL retain independent body/transcript access; no separate general-purpose policy language is required.
 
 #### Scenario: Acceptance criteria change after triage
 - **WHEN** the Issue's expected implementation behavior changes after classification
@@ -95,6 +95,11 @@ Existing operator discussion SHALL remain the comment body owner; document publi
 - **WHEN** a mutation includes a hidden, cross-Issue or foreign source, forged owner, mismatched digest, duplicate entry or more than 32 selections
 - **THEN** it fails without a partial association, source-body disclosure or execution side effect
 
+## RENAMED Requirements
+
+- FROM: `### Requirement: Explicit triage classification can update local Issue planning`
+- TO: `### Requirement: Agent steps can fill selected Issue fields`
+
 ## MODIFIED Requirements
 
 ### Requirement: Comments cannot become Factory authority
@@ -150,16 +155,16 @@ An authorized execution request SHALL bind the reviewed Issue version and conten
 - **THEN** preparation reports a bounded material-specific blocker without guessing another source or fabricating empty text
 
 
-### Requirement: Explicit triage classification can update local Issue planning
+### Requirement: Agent steps can fill selected Issue fields
 
-An explicitly enabled triage action SHALL apply selected accepted classification fields to the exact associated Issue through existing guarded Issue mutation rules. Supported fields SHALL include kind, component, size, priority, severity, risk, recommended route and preliminary reproducibility with authorized dependency/evidence references. Effective values SHALL reuse the existing Issue content/planning fields and exact Project definitions; dedicated bounded classification metadata SHALL retain applicability and evidence without a competing mutable copy of those values. New selected priority applications SHALL use active Project priority choice IDs; existing numeric priority/size-label effects SHALL retain their legacy contract. Legacy size-label effects SHALL remain supported separately from a typed size property. A size label SHALL resolve to an existing active Project label through a reviewed mapping. The action SHALL preserve unrelated labels and SHALL replace only a prior size label owned by the same configured classification policy. Unknown assessments SHALL leave the corresponding field alone.
+Any ordinary agent step SHALL be able to fill a bounded selection of existing writable core and supported Project text/choice/boolean/bounded-integer/date fields. One selection of stable identities and exact definitions SHALL derive both the agent form and the permitted save set. No fixed business roles, manual source/destination mapping, copied schema or user-authored apply step SHALL be required. The trusted owner SHALL apply only the successful accepted form result for that invocation; arbitrary foreign result import, multi-source field merging and clear-operation configuration are outside scope.
 
-The mutation SHALL verify current Project and Issue write authority, requirements applicability, ordering and the current values of fields the action intends to change. A conflicting operator edit or newer applicable classification SHALL take precedence over a stale action. The selected valid changes SHALL commit together in one Issue revision with field attribution, requirements/definition versions, Run and outcome provenance and scoped idempotent replay. A conflict or missing authority SHALL leave the accepted assessment readable for an authorized viewer. This local action SHALL produce no external provider intent and SHALL preserve the original Work scheduling priority.
+The existing Issue mutation owner SHALL atomically enforce the trusted Issue association, authority/source ownership, exact definitions/types, invocation baseline, accepted form/result identity and scoped replay. Each changed field SHALL retain actual Run/node/attempt/result and definition provenance. Required values SHALL be present; omitted optional fields SHALL preserve current values. Invalid, unknown or unselected fields SHALL reject the application without partial writes or implicit clearing. Analysis acceptance and successful save SHALL remain distinguishable; only the server receipt establishes application. Lost-ack retries SHALL reuse the same accepted result/save receipt without another model invocation. System/control/evidence state keeps its separate typed owners; filling fields grants no provider write, scheduling change or downstream launch.
 
 #### Scenario: An authorized classification is delivered twice
 
-- **WHEN** an accepted classification with priority and a mapped size is applied and the same operation is retried
-- **THEN** the Issue retains one resulting revision, its priority and one owned size label, while unrelated labels are preserved
+- **WHEN** a successful generated field-form result selecting priority and size is applied and the same current-contract operation is retried
+- **THEN** the Issue retains one resulting revision and original receipt for those fields while all unrelated values are preserved
 
 #### Scenario: An operator changes priority during triage
 
@@ -168,7 +173,7 @@ The mutation SHALL verify current Project and Issue write authority, requirement
 
 #### Scenario: Triage returns an unknown priority
 
-- **WHEN** the accepted result has an unknown priority and a valid mapped size
+- **WHEN** the analyst cannot assess priority, priority is optional and omitted from the generated form result, while the selected size is valid
 - **THEN** the local action applies only the valid size update
 
 #### Scenario: One accepted assessment updates the Issue
@@ -178,3 +183,23 @@ The mutation SHALL verify current Project and Issue write authority, requirement
 #### Scenario: An older triage finishes after a newer assessment
 - **WHEN** a stale classification attempts to replace a newer applicable assessment or an intervening conflicting operator edit
 - **THEN** the Issue preserves the newer values and exposes the rejected application's conflict separately from the retained triage result
+
+#### Scenario: A non-triage pipeline fills supported fields
+- **WHEN** an operator selects core size and Project text/choice/boolean/integer/date fields on an ordinary agent step without role setup
+- **THEN** one generated form and guarded save retain their values and provenance without manual schema, source-path mapping or apply-node configuration
+
+#### Scenario: CI analysis supplies field values
+- **WHEN** an agent receives a retained CI report through its declared ordinary inputs and completes its selected-field form
+- **THEN** the same trusted save path records those field values without deriving a mapping from CI keys or making the assessment a substitute for the trusted CI verdict
+
+#### Scenario: A form contains invalid or unauthorized values
+- **WHEN** a result has an incompatible value, missing required field, unknown/unselected identity or an intervening conflicting edit
+- **THEN** no selected field is partially committed and the accepted analysis remains separately inspectable under ordinary access
+
+#### Scenario: An optional form value is omitted
+- **WHEN** a selected optional field is absent from an otherwise valid form result
+- **THEN** its current value is preserved without a clearing operation or fabricated assessment for that field
+
+#### Scenario: The model claims a save that did not commit
+- **WHEN** analysis succeeds but the server denies, delays or rejects its field application
+- **THEN** the Issue and execution view distinguish the accepted result from pending/failed application and never present model prose as a committed save

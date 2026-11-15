@@ -30,19 +30,25 @@ async fn apply_typed(
     priority: None,
     fields: Some(IssueClassificationUpdate {
       inputs: Default::default(),
-      selection: IssueClassificationFieldSelection {
+      selection: IssueFieldForm {
+        project_id: association.project_id,
         definition_version: 1,
-        priority: true,
-        component: false,
-        kind: false,
-        size: true,
-        properties: Default::default(),
+        fields: vec![
+          IssueFormField {
+            field: IssueFieldTarget::Priority,
+            required: true,
+          },
+          IssueFormField {
+            field: IssueFieldTarget::Size,
+            required: true,
+          },
+        ],
       },
-      priority: Some("high".into()),
-      component: None,
-      issue_type: None,
-      size: Some(String::from("small")),
-      properties: Default::default(),
+      values: [
+        ("priority".parse().unwrap(), serde_json::json!("high")),
+        ("size".parse().unwrap(), serde_json::json!("small")),
+      ]
+      .into(),
     }),
     size_label: None,
     managed_labels: Default::default(),

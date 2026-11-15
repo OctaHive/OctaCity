@@ -219,21 +219,18 @@ pub(crate) fn field_shape(
     max_bytes,
   };
   let choices = |choices: &[IssuePropertyChoice]| {
-    let values: Vec<_> = choices
-      .iter()
-      .filter(|choice| !choice.retired)
-      .map(|choice| serde_json::Value::String(choice.id.clone()))
-      .collect();
-    if values.is_empty() {
+    IssuePropertyKind::Choice {
+      choices: choices.to_vec(),
+    }
+    .value_schema()
+    .or_else(|| {
       // An optional empty choice list can only be omitted at preparation. Preserve
       // the canonical ID wire kind here; the exact catalog still permits no value.
       (!selection.required).then_some(FlowValueSchema::String {
         min_bytes: 1,
         max_bytes: MAX_ISSUE_PROPERTY_KEY_BYTES,
       })
-    } else {
-      Some(FlowValueSchema::Enum { values })
-    }
+    })
   };
   let id = match &selection.source {
     FlowIssueFieldSource::Title => {
@@ -286,19 +283,10 @@ pub(crate) fn field_shape(
     .properties
     .iter()
     .find(|property| property.id == id && !property.retired)?;
-  Some(match &property.kind {
-    IssuePropertyKind::Boolean => FlowValueSchema::Boolean,
-    IssuePropertyKind::Text { max_bytes } => text(usize::from(*max_bytes)),
-    IssuePropertyKind::Number { minimum, maximum } => FlowValueSchema::Integer {
-      minimum: *minimum,
-      maximum: *maximum,
-    },
-    IssuePropertyKind::Date => FlowValueSchema::String {
-      min_bytes: 10,
-      max_bytes: 10,
-    },
-    IssuePropertyKind::Choice { choices: values } => return choices(values),
-  })
+  match &property.kind {
+    IssuePropertyKind::Choice { choices: values } => choices(values),
+    kind => kind.value_schema(),
+  }
 }
 
 fn compatible(

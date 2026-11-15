@@ -166,28 +166,19 @@ async fn evaluate(
   ).bind(a.run_id.as_uuid()).bind(a.project_id.as_uuid()).bind(a.work_id.as_uuid())
     .fetch_optional(&mut *connection).await.map_err(unavailable)?.ok_or_else(conflict)?;
   let order = (admitted_at, a.run_id, request.accepted_at.unix_millis(), request.record);
-  if (request.priority.is_some()
-    || request.size_label.is_some()
-    || request
-      .fields
-      .as_ref()
-      .is_some_and(|fields| !fields.field_references().is_empty()))
-    && latest(connection, &current, Some(current.applicability_version), None, None)
-      .await?
-      .is_some_and(|prior| prior.order() >= order)
-  {
-    return Err(conflict());
-  }
 
   if request.priority.is_some() {
     let prior = latest(
       connection,
       &current,
       Some(current.applicability_version),
-      Some(ReceiptField::Canonical(IssueClassificationFieldIdentity::Priority)),
+      ReceiptField::Canonical(IssueClassificationFieldIdentity::Priority),
       None,
     )
     .await?;
+    if prior.as_ref().is_some_and(|prior| prior.order() >= order) {
+      return Err(conflict());
+    }
     let from = prior.map_or(baseline.version, |receipt| receipt.version.max(baseline.version));
     baseline.content.priority = issue::read(connection, a.project_id, a.issue_id, Some(from))
       .await?
@@ -215,10 +206,13 @@ async fn evaluate(
         connection,
         &current,
         Some(current.applicability_version),
-        Some(ReceiptField::Canonical(field.identity())),
+        ReceiptField::Canonical(field.identity()),
         None,
       )
       .await?;
+      if prior.as_ref().is_some_and(|prior| prior.order() >= order) {
+        return Err(conflict());
+      }
       let from = prior.map_or(baseline.version, |receipt| receipt.version.max(baseline.version));
       let reviewed = issue::read(connection, a.project_id, a.issue_id, Some(from)).await?;
       let (path, expected) = classification_field_baseline(&mut baseline, &reviewed, &field)?;
@@ -246,10 +240,16 @@ async fn evaluate(
       connection,
       &current,
       None,
-      Some(ReceiptField::SizeLabel),
+      ReceiptField::SizeLabel,
       Some(request.policy.as_str()),
     )
     .await?;
+    if prior
+      .as_ref()
+      .is_some_and(|prior| prior.applicability == current.applicability_version && prior.order() >= order)
+    {
+      return Err(conflict());
+    }
     let from = prior
       .as_ref()
       .filter(|p| p.applicability == current.applicability_version)
@@ -378,18 +378,18 @@ enum ReceiptField<'a> {
 
 // Read original durable receipts. Canonical field identity excludes the catalog
 // version: republishing definitions must not hide an earlier applied assessment.
+// Ordering is field-scoped so independent forms can finish in either Run order.
 // Legacy and typed priority effects address the same canonical field.
 async fn latest(
   connection: &mut PgConnection,
   issue: &IssueRevision,
   applicability: Option<IssueVersion>,
-  field: Option<ReceiptField<'_>>,
+  field: ReceiptField<'_>,
   policy: Option<&str>,
 ) -> Result<Option<ClassificationReceipt>, StoreError> {
   let (legacy, selected) = match field {
-    None => (None, None),
-    Some(ReceiptField::SizeLabel) => (Some("size_label"), None),
-    Some(ReceiptField::Canonical(identity)) => {
+    ReceiptField::SizeLabel => (Some("size_label"), None),
+    ReceiptField::Canonical(identity) => {
       let legacy = (identity == IssueClassificationFieldIdentity::Priority).then_some("priority");
       (legacy, Some(Json(json!([identity]))))
     }
@@ -398,8 +398,7 @@ async fn latest(
     "SELECT outcome #> '{classification}' AS receipt FROM idempotency_records
      WHERE scope=$1 AND outcome #>> '{value,issue,project_id}'=$2 AND outcome #>> '{value,issue,id}'=$3
        AND ($4::bigint IS NULL OR (outcome #>> '{classification,applicability}')::bigint=$4)
-       AND (($5::text IS NULL AND $7::jsonb IS NULL)
-         OR ($5::text IS NOT NULL AND (outcome #> '{classification}')->>$5 IS NOT NULL)
+       AND (($5::text IS NOT NULL AND (outcome #> '{classification}')->>$5 IS NOT NULL)
          OR ($7::jsonb IS NOT NULL AND outcome #> '{classification,fields}' @> $7::jsonb))
        AND ($6::text IS NULL OR outcome #>> '{classification,policy}'=$6)
        AND (outcome #>> '{classification,priority}' IS NOT NULL OR outcome #>> '{classification,size_label}' IS NOT NULL

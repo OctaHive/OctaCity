@@ -836,42 +836,74 @@ shared definition catalog owns bounded `priorities`, `components`, `types` and
 ordered `sizes` lists. Initial sizes are `small`, `medium`, `large`. Initial priorities are `blocker`, `high`,
 `medium`, `low`; initial types are `defect`, `feature_request`; components require
 the Project's own choices. Defaults populate available options, never Issue values.
-Omitted default lists preserve legacy publication/replay encoding; their effective
-defaults are advertised in OpenAPI from the same domain definitions.
+The current catalog serializes all three defaulted lists explicitly; selected snapshot
+definitions retain the selected size list even when it equals the initial defaults.
+Defaults are configuration data, not an omitted-wire compatibility mode.
 
-The installed `apply_issue_classification` action supports an explicit `fields`
-selection pinned to the Project definition version. It independently selects
-`priority`, `component`, `kind` (the assessment's value for built-in Issue type)
-and `size`; remaining semantic property targets use the existing bindings:
+Task 10.1 replaces the fixed-slot writer selection with `IssueFieldForm`: one
+Project ID, exact catalog version and bounded list of stable writable targets.
+The four core choices and up to 32 supported Project text/choice/boolean/integer/date
+properties use this contract without registering classification roles. For example:
 
 ```json
 {
+  "project_id": "11111111-1111-4111-8111-111111111111",
   "definition_version": 1,
-  "priority": true,
-  "component": true,
-  "kind": true,
-  "size": true,
-  "properties": { "reproducibility": "reproduction" }
+  "fields": [
+    { "field": { "kind": "priority" } },
+    { "field": { "kind": "size" } },
+    { "field": { "kind": "property", "id": "ci_passed" } },
+    { "field": { "kind": "property", "id": "analysis_note" }, "required": false }
+  ]
 }
 ```
 
-Only explicitly projected fields from the exact accepted producer can reach the
-existing authorized Issue command. The owner checks current definitions, active
-choices, selected-field baselines and source ownership under its Project/Issue
-transaction fences. All supplied effective values, field attribution and the
-original operation receipt commit together. Origins retain actual actor, Work/Run,
-accepted record, policy, action identity and assessed requirements/definition pins.
-An omitted/null value preserves its field and attribution; unrelated custom values,
-labels, requirements applicability and admitted Work remain unchanged. A priority-only
-application does not republish unrelated planning. Typed size has no label effect
-unless a legacy label mapping was also explicitly selected.
+`form_schema` derives the closed result shape from those exact Project definitions.
+Forms and snapshot readers reuse `IssuePropertyKind::value_schema` for scalar
+types, bounds and active choices. A choice catalog with no active values has no
+scalar shape. Snapshot readers separately retain their optional-omission policy;
+this transport allowance never makes an arbitrary choice ID valid.
+Selection defaults to required; an operator can explicitly mark a field optional.
+Generated keys use `priority`, `component`, `type`, `size` or `property.<stable_id>`;
+the property namespace avoids collisions with core fields. These keys are technical
+output identities, not another manually configured mapping. Display renames do not
+change them. No second type/choice schema, clear operation or arbitrary result import
+is accepted. The form supports the configured initial catalog at version zero.
 
-For typed actions, an absent assessment is represented by omission/null. Every
-non-null Project choice ID is validated against the catalog, including an ID
-named `unknown` if the Project publishes it. Legacy numeric actions keep their
-existing handling of nonnumeric unknown assessments. The Console preserves the
-distinction between a Project choice such as `"2"` and legacy numeric `2` when
-displaying and editing an existing priority.
+`complete` validates scalar form values; the existing Issue owner rechecks the same
+contract at mutation time and converts values to canonical `IssuePropertyValue`
+variants. It rejects duplicate/unknown/retired selections, foreign or stale catalogs,
+unknown/unselected result fields, absent required values, nulls, casts, incompatible
+types, out-of-bound values and invalid dates. Omitted optional fields preserve their
+value and attribution. A priority-only application preserves unselected planning.
+
+Only projected fields from the exact accepted producer can reach the existing
+authorized Issue command. Values, field attribution and the operation receipt use
+the existing atomic writer and source-ownership/baseline checks. Origins retain actual
+actor, Work/Run, accepted record, policy, action identity and assessed requirements/
+definition pins. Pipeline origins also retain `form`, the SHA-256 content identity
+of the canonical `IssueFieldForm` selection, including its Project, catalog version,
+stable field identities and requiredness. `IssueFieldForm::digest` computes this pin;
+the existing immutable Project publication supplies the exact types and bounds.
+This reference does not grant write or evidence authority. An ordinary custom
+property's later manual edit retains human attribution without requiring a
+classification role or renewing unrelated fields.
+The fixed-slot selection format is rejected, rather than translated by an adapter.
+
+Task 10.2 qualifies the current representation through the existing PostgreSQL
+Issue/history/receipt JSONB transaction; no table, migration or second store is
+needed. Round-trip and pool-restart tests retain all scalar kinds, untouched values,
+exact form/definition pins and original outcomes. Concurrent duplicates create one
+revision/audit/outbox event; conflicting manual edits cannot partially apply values
+or origins. Rejected applications retain their original conflict across restart.
+Changed reuse of a result or form conflicts; an exact retry returns its original
+receipt before checking newer definitions or an expired runtime claim. Development
+fixtures include the required current form pin, without an old-format reader.
+
+Ordinary agent automatic-save integration and generated REST/Console authoring are
+tracked separately in tasks 10.3–10.8. These persistence contracts do not expose the
+new UI controls. See the [task 10.2 verification report](../../openspec/changes/add-issue-classification-snapshots/verification-selected-field-persistence.md)
+for the observed Red/Green and disposable-PostgreSQL commands.
 
 Selected-field conflicts inspect intermediate Issue revisions, so changing a field
 manually and restoring its old value still blocks an assessment of the earlier
@@ -883,6 +915,12 @@ application. The accepted producer result remains inspectable, with no successfu
 action receipt, partial Issue revision or external outbox effect. Unselected
 planning edits remain compatible. An older delayed assessment cannot overwrite a
 newer applicable one, even when both propose identical values.
+
+Assessment ordering is checked only for fields actually supplied by the form.
+Independent forms from different Runs can finish in either Run order when they
+write disjoint fields; an omitted optional field preserves the other Run's value
+and origin. If any supplied field conflicts with a newer assessment, the entire
+form is rejected atomically. There is no Issue-wide last-writer barrier.
 
 Priority baseline lookup recognizes both legacy numeric receipts and typed
 Project-choice receipts as assessments of the same canonical field. A newer

@@ -22,7 +22,7 @@ pub struct FactoryIssueFieldChoices {
   pub definition_version: u64,
   /// Supported local-classification targets; no writer or automatic effect is implied.
   #[serde(skip_serializing_if = "Option::is_none")]
-  pub classification: Option<IssueClassificationFieldSelection>,
+  pub classification: Option<IssueFieldForm>,
   /// Available fields; source identity, never its display label, selects semantics.
   pub fields: Vec<FactoryIssueFieldChoice>,
 }

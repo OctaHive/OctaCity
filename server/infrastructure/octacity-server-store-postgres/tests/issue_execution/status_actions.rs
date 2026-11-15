@@ -7,6 +7,9 @@ mod classification_upgrade;
 #[path = "mixed_classification.rs"]
 mod mixed_classification;
 
+#[path = "selected_field_forms.rs"]
+mod selected_field_forms;
+
 #[tokio::test]
 #[ignore = "requires an explicitly configured disposable PostgreSQL service"]
 async fn pipeline_priority_choice_preserves_unselected_planning_and_records_its_catalog() {
@@ -38,19 +41,15 @@ async fn pipeline_priority_choice_preserves_unselected_planning_and_records_its_
     authority: None,
     fields: Some(IssueClassificationUpdate {
       inputs: Default::default(),
-      selection: IssueClassificationFieldSelection {
+      selection: IssueFieldForm {
+        project_id: original.project_id,
         definition_version: 1,
-        priority: true,
-        component: false,
-        kind: false,
-        size: false,
-        properties: Default::default(),
+        fields: vec![IssueFormField {
+          field: IssueFieldTarget::Priority,
+          required: true,
+        }],
       },
-      priority: Some("high".into()),
-      component: None,
-      issue_type: None,
-      size: None,
-      properties: Default::default(),
+      values: [("priority".parse().unwrap(), serde_json::json!("high"))].into(),
     }),
   };
   let applied = store

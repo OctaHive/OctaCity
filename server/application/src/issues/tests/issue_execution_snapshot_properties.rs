@@ -13,7 +13,11 @@ mod presence;
 fn ordinary_property_snapshot_freezes_native_scalar_values_and_exact_definitions() {
   run_ready(async {
     let (store, factory, issue, command) = ordinary_fixture().await;
-    assert!(issue.classification.fields.is_empty());
+    assert_eq!(issue.classification.fields.len(), 6);
+    assert!(issue.classification.fields.iter().all(|field| matches!(
+      field.origin,
+      octacity_server_store::IssueClassificationOrigin::Manual { .. }
+    )));
     assert!(issue.content.priority.is_none());
     assert!(issue.planning.size.is_none());
     assert!(
@@ -58,7 +62,11 @@ fn ordinary_property_snapshot_freezes_native_scalar_values_and_exact_definitions
       .unwrap();
     let snapshot = documents.issue_snapshot().unwrap();
     assert_eq!(snapshot.digest().unwrap(), request.snapshot_digest.unwrap());
-    assert!(snapshot.attribution.is_empty());
+    assert_eq!(snapshot.attribution.len(), 5);
+    assert!(snapshot.attribution.values().all(|field| matches!(
+      field.origin,
+      octacity_server_store::IssueClassificationOrigin::Manual { .. }
+    )));
     assert_eq!(
       snapshot.omissions.get(&"optional_context".parse().unwrap()),
       Some(&IssueSnapshotOmission::Missing)

@@ -247,19 +247,15 @@ async fn issue_snapshot_incompatible_code_subject_waits_with_existing_run_withou
     managed_labels: Default::default(),
     authority: None,
     fields: Some(IssueClassificationUpdate {
-      selection: IssueClassificationFieldSelection {
+      selection: IssueFieldForm {
+        project_id: issue.project_id,
         definition_version: 1,
-        priority: false,
-        component: false,
-        kind: false,
-        size: true,
-        properties: Default::default(),
+        fields: vec![IssueFormField {
+          field: IssueFieldTarget::Size,
+          required: true,
+        }],
       },
-      priority: None,
-      component: None,
-      issue_type: None,
-      size: Some(String::from("medium")),
-      properties: Default::default(),
+      values: [("size".parse().unwrap(), serde_json::json!("medium"))].into(),
       inputs: IssueClassificationAssessmentInputs {
         subject: Some(FactoryTaskSubject::Exact(ExactSubject::new(
           issue.project_id,

@@ -47,7 +47,7 @@ Activity SHALL combine bounded safe execution/synchronization event references a
 
 ### Requirement: Flow authors can enable a card from an outcome
 
-The outcome editor SHALL provide **Show on Issue** and use the supported outcome type to supply built-in titles, field labels and layout. For custom outcomes the editor SHALL allow a title and a brief conclusion field. The publication review SHALL show which slot and result fields will appear. A separate **Apply classification to Issue** setting SHALL default to off and SHALL show the selected Issue classification fields, current Project definitions and ownership constraints it can apply. Existing priority/size-label effects SHALL remain available for legacy publications. Supported field contracts SHALL be reusable without re-entering Project vocabularies as result enums. Project label mappings SHALL be reusable across Flows. The ordinary read-only display path SHALL require no mapping editor, additional graph step, provider connection or credentials.
+The outcome editor SHALL keep **Show on Issue** and existing display primitives separate from mutation. An ordinary agent step SHALL offer **Fill Issue fields**, default off, with one Project field selector. That selection SHALL derive its result form and automatic guarded save scope; no separate schema, source/destination table or manual apply node SHALL be required. Review SHALL show selected fields, types and write scope. Display/reporting grant no write authority, and plain result authoring remains usable without implicit Issue mutation.
 
 #### Scenario: An operator enables the standard triage card
 
@@ -62,12 +62,12 @@ The outcome editor SHALL provide **Show on Issue** and use the supported outcome
 ## ADDED Requirements
 
 ### Requirement: Project settings administer shared Issue field definitions
-Project settings SHALL provide authorized creation and compatible maintenance of Project-owned Issue property definitions using the existing versioned publication contract. Controls SHALL support text/choice/boolean/bounded-integer/date kinds, their authoritative bounds, choice IDs/display names, compatible display renames, retirement and optional classification semantic bindings. Priority, component, type and size SHALL be identified as built-in attributes; Project settings SHALL provide dedicated settings for the Project's own priority/component/type/size choices separately from custom property definitions. Classification SHALL remain an optional subset whose remaining semantic bindings target distinct supported choice properties. Operators SHALL not need hand-written JSON, duplicate per-pipeline vocabulary lists or per-Issue schema administration.
+Project settings SHALL administer Project-owned text/choice/boolean/bounded-integer/date fields, authoritative bounds, choice IDs/labels, compatible display renames and retirement through the existing versioned catalog. Priority/component/type/size SHALL remain dedicated built-in catalogs. Pipelines SHALL select supported core/custom fields directly; Project setup SHALL require no fixed risk/severity/route/reproducibility roles. Operators SHALL not need JSON, duplicate vocabulary lists or per-Issue schema administration. Superseded role-configuration controls SHALL be removed rather than retained as a legacy mode.
 
 Review SHALL show stable identities, Project-wide availability, exact current catalog version and the effect of additions/retirement. Existing keys/types and retained history SHALL remain explainable. Current-version conflicts and incompatible changes SHALL retain the draft and require renewed review; publication SHALL not silently rewrite Issue values or start execution. Issue value editing SHALL remain separate from Project administration. EN/RU, keyboard and narrow-layout support SHALL cover these controls.
 
 #### Scenario: An operator creates fields through Project settings
-- **WHEN** an authorized administrator creates an ordinary environment field and a size choice field with an optional semantic binding
+- **WHEN** an authorized administrator creates an ordinary environment field and a custom effort choice field without semantic-role registration
 - **THEN** both appear in Issue Properties from the shared catalog, individual Issues can leave them unset, and a pipeline author can select their contracts without retyping types or choices
 
 #### Scenario: A field is renamed or retired
@@ -102,7 +102,7 @@ Newer Issue or Project publications SHALL not silently replace selected referenc
 - **THEN** the Issue can review an explicit replacement while the old association history and admitted Run retain their original references/text
 
 ### Requirement: Issue snapshot authoring selects fields and text explicitly
-The Factory input editor SHALL offer built-in Issue fields, supported Project properties, classification semantics and explicit Issue material selections using authoritative definitions and bounded selectors. A required classification binding SHALL be distinguished from an ordinary property selection. Exact producer-result input SHALL remain an authorable alternative with its existing selectors. Unsupported competing sources for one input SHALL have actionable validation rather than inferred precedence.
+The ordinary Factory input editor SHALL offer built-in fields, arbitrary supported Project properties and explicit materials using authoritative definitions and bounded selectors. Each consumer SHALL select direct fields, local aliases, required/optional handling, applicable evidence checks and typed admission/value mappings without fixed Project roles. Existing condition controls SHALL support selected finite-choice rules/order/thresholds without a special pipeline kind. Producer-result input SHALL remain a current alternative; unsupported competing sources SHALL have actionable validation.
 
 The Issue start form SHALL show which comment/document sources are offered by the Issue and which subset the target will consume, with exact identity/digest, authorized text preview, required/optional status and count/byte limits. No whole discussion or newly posted comment SHALL be included by default. Automatic input setup SHALL separately review the published bounded material-selection policy. Each step SHALL explicitly choose its own projections; comment prose SHALL not appear as an approval, gate response or permission grant.
 
@@ -128,7 +128,7 @@ Execution detail SHALL show the exact Issue snapshot used by each Work/Run and i
 - **THEN** the card keeps the effective Issue values and exposes the separate application failure rather than presenting the proposed values as committed
 
 ### Requirement: Ordinary stand supports complete triage and delivery authoring through UI
-An operator on the ordinary stand SHALL be able to create, review and publish triage with explicit guarded local classification application and a separate Issue-snapshot Delivery pipeline through Console controls. Project field contracts SHALL supply result types and admission choice controls. The generic snapshot editor SHALL expose explicit priority-score, risk and allowed-type admission mappings and retain supported mappings and projections on reopen. The Delivery v2 example SHALL collect these inputs and open an ordinary editable Flow without requiring a producer Run or JSON editing. Existing exact-producer inputs SHALL remain available.
+An ordinary-stand operator SHALL create/review/publish triage using selected-field filling and an independent Issue-snapshot Delivery through the same Console. One Project selection SHALL generate the agent form and server save set. Existing input/admission/condition controls SHALL retain their supported settings on reopen. Optional templates SHALL produce ordinary editable Flows without fixed roles, a triage Run selector, manual field mapping, copied schemas, an apply-node setup or template-specific shared-code branches. Producer-result input remains a current independent capability.
 
 #### Scenario: Both pipelines are authored from an empty catalog
 - **WHEN** an operator uses the ordinary installed stand with no Flow or Configuration
@@ -141,3 +141,22 @@ Project Issue field settings SHALL administer ordered size choices alongside pri
 #### Scenario: Operator configures a custom size scale and threshold
 - **WHEN** an operator publishes custom ordered sizes and selects a Delivery threshold through Console controls
 - **THEN** Issue editing offers those sizes, the editable Delivery graph routes the selected suffix to specification authoring, and renaming display labels infers no behavior
+
+### Requirement: Any agent step can fill selected Issue fields without manual mapping
+The ordinary agent editor SHALL offer **Fill Issue fields**, default off, and one bounded selector for supported core/custom fields with readable labels/types/choices and existing required/optional controls. Selection SHALL generate one Project-derived typed result and the same permitted save set. Operators SHALL NOT author source paths, result-to-Issue maps, duplicated schemas/enums, cast/merge/clear operations or a separate apply step. Review SHALL expose the generated write scope; exact IDs/versions remain available as details. Reopen, step/outcome/field-label renames and catalog conflicts SHALL preserve selected identities/drafts and require explicit reconciliation when incompatible. EN/RU, keyboard and narrow layouts SHALL be covered.
+
+#### Scenario: An author selects fields once
+- **WHEN** an operator enables filling on an agent step and selects core size and supported custom scalar fields
+- **THEN** the form/result and automatic save use those Project contracts without a second field selection, schema editor, mapping table or apply-node authoring
+
+#### Scenario: Field definitions change during review
+- **WHEN** the pinned catalog changes or a selected field becomes incompatible/unavailable
+- **THEN** publication/application explains that field and preserves the draft instead of silently replacing its contract or widening writes
+
+#### Scenario: An unrelated pipeline analyzes CI results
+- **WHEN** an operator configures CI report input and an ordinary agent to fill selected text/choice/boolean/integer/date fields, then renames/reopens the process
+- **THEN** the same controls preserve and execute its field selection/provenance without special roles, source-to-Issue mapping, duplicated schemas or API-prepared business definitions
+
+#### Scenario: Analysis succeeded but saving failed
+- **WHEN** the server rejects or has not completed the automatic save of an accepted field-form result
+- **THEN** the Issue/Run view distinguishes accepted values from applied values and shows the pending/conflict/denied state rather than claiming fields were saved

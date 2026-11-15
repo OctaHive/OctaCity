@@ -1,6 +1,7 @@
 //! Bounded organizational metadata; values never grant execution or source authority.
 use crate::*;
 use octacity_server_domain::{IssueId, ProjectId, Timestamp};
+use octacity_server_factory::FlowValueSchema;
 use serde::{Deserialize, Serialize};
 use std::collections::{BTreeMap, BTreeSet};
 
@@ -107,6 +108,38 @@ pub enum IssuePropertyKind {
   /// Valid calendar date without time or timezone.
   Date,
 }
+impl IssuePropertyKind {
+  /// Shared scalar shape for selected-field forms and frozen Issue inputs.
+  /// Returns no shape when a choice catalog has no active values; callers own omission policy.
+  pub fn value_schema(&self) -> Option<FlowValueSchema> {
+    Some(match self {
+      Self::Text { max_bytes } => FlowValueSchema::String {
+        min_bytes: 0,
+        max_bytes: usize::from(*max_bytes),
+      },
+      Self::Choice { choices } => {
+        let values: Vec<_> = choices
+          .iter()
+          .filter(|c| !c.retired)
+          .map(|c| serde_json::json!(c.id))
+          .collect();
+        if values.is_empty() {
+          return None;
+        }
+        FlowValueSchema::Enum { values }
+      }
+      Self::Boolean => FlowValueSchema::Boolean,
+      Self::Number { minimum, maximum } => FlowValueSchema::Integer {
+        minimum: *minimum,
+        maximum: *maximum,
+      },
+      Self::Date => FlowValueSchema::String {
+        min_bytes: 10,
+        max_bytes: 10,
+      },
+    })
+  }
+}
 /// One Project-defined planning field, including optional type/component/size.
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
 #[serde(deny_unknown_fields)]
@@ -175,20 +208,17 @@ impl IssueClassificationBindings {
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
 #[serde(deny_unknown_fields)]
 pub struct IssuePropertyDefinitionSet {
-  /// Project-owned sizes ordered from smallest to largest; missing legacy lists retain defaults.
-  #[serde(default = "default_issue_sizes", skip_serializing_if = "standard_issue_sizes")]
+  /// Project-owned sizes ordered from smallest to largest; defaults seed initial configuration.
+  #[serde(default = "default_issue_sizes")]
   pub sizes: Vec<IssuePropertyChoice>,
   /// Project-specific choices for the built-in Issue component, separate from custom properties.
   #[serde(default, skip_serializing_if = "Vec::is_empty")]
   pub components: Vec<IssuePropertyChoice>,
-  /// Project-specific built-in types; absent legacy catalogs retain the standard choices.
-  #[serde(default = "default_issue_types", skip_serializing_if = "standard_issue_types")]
+  /// Project-specific built-in types, initialized from the configured defaults.
+  #[serde(default = "default_issue_types")]
   pub types: Vec<IssuePropertyChoice>,
   /// Project-specific Issue priorities; available defaults do not assign a value to new Issues.
-  #[serde(
-    default = "default_issue_priorities",
-    skip_serializing_if = "standard_issue_priorities"
-  )]
+  #[serde(default = "default_issue_priorities")]
   pub priorities: Vec<IssuePropertyChoice>,
   /// Bounded Project labels.
   pub labels: Vec<IssuePropertyChoice>,
@@ -221,9 +251,6 @@ fn default_issue_types() -> Vec<IssuePropertyChoice> {
     })
     .collect()
 }
-fn standard_issue_types(types: &[IssuePropertyChoice]) -> bool {
-  types == default_issue_types()
-}
 fn default_issue_priorities() -> Vec<IssuePropertyChoice> {
   [
     ("blocker", "Blocker"),
@@ -239,9 +266,6 @@ fn default_issue_priorities() -> Vec<IssuePropertyChoice> {
   })
   .collect()
 }
-fn standard_issue_priorities(priorities: &[IssuePropertyChoice]) -> bool {
-  priorities == default_issue_priorities()
-}
 fn default_issue_sizes() -> Vec<IssuePropertyChoice> {
   [("small", "Small"), ("medium", "Medium"), ("large", "Large")]
     .into_iter()
@@ -251,9 +275,6 @@ fn default_issue_sizes() -> Vec<IssuePropertyChoice> {
       retired: false,
     })
     .collect()
-}
-fn standard_issue_sizes(sizes: &[IssuePropertyChoice]) -> bool {
-  sizes == default_issue_sizes()
 }
 /// Retained exact catalog publication used to explain old Issue revisions.
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
@@ -594,7 +615,7 @@ impl IssuePlanning {
     Ok(())
   }
 }
-fn valid_date(s: &str) -> bool {
+pub(crate) fn valid_date(s: &str) -> bool {
   let bytes = s.as_bytes();
   if bytes.len() != 10
     || bytes[4] != b'-'

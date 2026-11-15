@@ -40,7 +40,7 @@ pub enum IssueSnapshotDefinitions {
     /// Present only when this publication supplies a selected built-in type.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     types: Option<Vec<IssuePropertyChoice>>,
-    /// Selected Project size catalog; omitted for the original default scale to preserve legacy digests.
+    /// Exact selected Project size catalog, including configured default choices.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     sizes: Option<Vec<IssuePropertyChoice>>,
     /// Only selected property IDs, sorted and deduplicated within this publication.
@@ -76,9 +76,7 @@ impl IssueSnapshotDefinitions {
         IssueClassificationFieldReference::Type { .. } => {
           types.get_or_insert_with(|| catalog.definition.types.clone());
         }
-        IssueClassificationFieldReference::Size { .. }
-          if catalog.definition.sizes != IssuePropertyDefinitionSet::default().sizes =>
-        {
+        IssueClassificationFieldReference::Size { .. } => {
           sizes.get_or_insert_with(|| catalog.definition.sizes.clone());
         }
         IssueClassificationFieldReference::Property { id, .. } => {

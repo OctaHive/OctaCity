@@ -211,7 +211,7 @@ pub struct FactoryIssueClassificationChoices {
 #[derive(Clone, Debug, serde::Serialize)]
 pub struct FactoryIssueClassificationFieldContract {
   /// Exact catalog pin, built-ins and stable semantic property bindings.
-  pub selection: octacity_server_store::IssueClassificationFieldSelection,
+  pub selection: octacity_server_store::IssueFieldForm,
   /// Optional values can be omitted; supplied values reuse the Project's active choices.
   pub schema: FlowDataSchema,
 }

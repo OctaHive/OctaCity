@@ -46,7 +46,7 @@ fn size_only_draft(
     }
     if node["key"] == "apply" {
       node["input_schema"] = serde_json::to_value(schema.reference()).unwrap();
-      node["action"]["parameters"]["fields"] = serde_json::json!({"definition_version":version,"size":true});
+      node["action"]["parameters"]["fields"] = serde_json::json!({"project_id":issue.project_id,"definition_version":version,"fields":[{"field":{"kind":"size"},"required":false}]});
     }
   }
   draft.root = serde_json::from_value(root).unwrap();

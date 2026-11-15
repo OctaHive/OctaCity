@@ -1,4 +1,6 @@
-This delta is applied after the implemented `add-factory-ticket-delivery-pipeline` capability has been synchronized to main specs. That change's added requirements are this delta's baseline; its historical artifacts and published executions are not rewritten.
+The archived `add-factory-ticket-delivery-pipeline` capability supplies this delta's baseline. Its planning history is not revised here.
+
+The predecessor is archived. These requirements describe an optional configurable Delivery template, not a special execution kind. Business fields, literal values/labels, step names and default branches below SHALL be template/Flow data editable through ordinary mechanisms. Superseded development publications/formats require no compatibility adapter. Immutable admitted inputs and exact replay remain requirements of the current model.
 
 ## RENAMED Requirements
 
@@ -11,9 +13,11 @@ This delta is applied after the implemented `add-factory-ticket-delivery-pipelin
 
 ### Requirement: Development consumes a frozen Issue snapshot
 
+The Issue can be prepared by any selected-field agent step, including CI analysis, or by authorized manual editing. Delivery SHALL require neither a manual producer-result-to-Issue map nor the identity of that writer.
+
 An explicit Issue execution request or separately enabled downstream intake SHALL obtain its implementation requirements, selected ordinary Project properties and classification from the canonical Issue and freeze them in a distinct Work and Run for the same Project and Issue. Its declared input contract SHALL also be able to consume explicitly selected same-Issue comments, exact Issue-owned document publications and separately linked exact Project document publications as bounded supplementary task context. Admission SHALL verify current authority, required field/definition compatibility, material availability, requirements applicability, supported dependency/evidence claims and the repository subject. It SHALL retain the exact Issue revision, classification provenance, property definitions, selected material bytes/source and owner/publication identities/digests, evidence identities and input-contract/policy versions. A producing triage Flow/version, terminal, outcome schema or Run SHALL NOT be a required consumer binding. A valid authorized manual assessment or a different triage implementation SHALL satisfy the same field contract without a fabricated predecessor.
 
-Free-text conclusions, Issue cards, external labels and Reporter receipts SHALL NOT confer admission or verification authority. Missing, stale, incompatible, inaccessible or policy-ineligible Issue data SHALL block admission with a reason. Repeated automatic observations SHALL preserve the existing stable input-scoped identity; a classification edit SHALL NOT create another cycle after admission. Existing predecessor-based publications and executions SHALL retain their original contract until an explicit replacement is published.
+Free-text conclusions, Issue cards, external labels and Reporter receipts SHALL NOT confer admission or verification authority. Missing, stale, incompatible, inaccessible or policy-ineligible data SHALL block admission with a reason. Repeated automatic observations SHALL preserve stable input identity; a field edit SHALL NOT create another cycle after admission. Explicit producer-result input SHALL remain a current supported mode independently of Issue snapshots, without requiring superseded wire formats.
 
 #### Scenario: Accepted ticket enters delivery once
 - **WHEN** an enabled downstream input repeatedly observes an Issue whose current classification satisfies its snapshot contract
@@ -88,7 +92,7 @@ The pipeline SHALL use the size frozen in its Issue snapshot and route sizes at 
 
 ### Requirement: Ticket delivery is authorable through the ordinary Factory editor
 
-An authorized operator SHALL be able to assemble ticket delivery from an empty visual Flow graph, publish an exact Flow version and select it in an ordinary Factory Configuration with pinned Project launch and access policies. Ordinary editor choices SHALL support the declared steps, branches, accepted inputs, requirements gate, Reporter actions and Delivery target. A new versioned `ticket-delivery` example SHALL select the Issue snapshot contract rather than require an accepted triage predecessor. The editor SHALL expose the selected Project fields, applicability/evidence checks and frozen input preview without requiring a producer Flow, terminal or Run. Existing examples and their pinned contracts SHALL remain recoverable. The versioned `ticket-delivery` preset SHALL be an optional starting point through the existing resolver and SHALL produce the same editable, validated definition. Existing readiness and validation SHALL identify unsupported or missing bindings before executable readiness is claimed. Automatic intake and external effects SHALL require explicit configuration. The successful path SHALL need no per-stage confirmation beyond configured requirements acceptance, reviewer quorum, model-scored acceptance or repeated general readiness stage.
+An authorized operator SHALL assemble ticket delivery from an empty ordinary Flow graph, publish an exact version and select it in a Configuration with pinned launch/access policies. Common editor choices SHALL support selected steps, accepted inputs, conditions/gates, Reporter actions and publication. The configured template SHALL bind direct Project fields and existing applicability/evidence checks without mandatory classification roles or a producer Run. It SHALL resolve through common template/parameter mechanisms to the same editable validated Flow. Unsupported/missing bindings SHALL have actionable readiness diagnostics. Automatic intake, effects and human approvals SHALL follow explicit configuration. Superseded development templates and request formats SHALL be replaced, not maintained through specialized editors or fallback branches.
 
 #### Scenario: An operator builds the flow from an empty graph
 
@@ -106,7 +110,7 @@ An authorized operator SHALL be able to assemble ticket delivery from an empty v
 
 
 #### Scenario: Operator opens the snapshot delivery example on an ordinary stand
-- **WHEN** an operator selects Delivery v2 and reviews Project-backed snapshot admission mappings, executors, commands and publication choices in the Console
+- **WHEN** an operator selects the configured Delivery example and reviews direct Project-field, snapshot admission, executor, command and publication choices in the Console
 - **THEN** the example resolves into an editable Flow that can be published with a Configuration entirely through UI, without API-prepared pipeline state, a triage Run selection or hand-written JSON
 
 #### Scenario: Independent review inspects an isolated candidate
@@ -134,8 +138,15 @@ Acceptance SHALL bind the authorized actor, exact requirements or contract diges
 ## ADDED Requirements
 
 ### Requirement: Delivery specification threshold is explicit and immutable
-New Issue-snapshot Delivery authoring SHALL offer a specification threshold from the ordered active Project size choices. The threshold and every greater active size SHALL route through specification authoring; lower sizes SHALL use the Accepted Work Contract. The resolver SHALL compile concrete stable choice IDs into the ordinary gate and pin the exact catalog snapshot. Catalog names SHALL NOT infer routing. Later additions, renames, reordering and retirement SHALL NOT reroute published Flows or admitted Runs. Unknown or inactive threshold values SHALL produce field-specific diagnostics. Legacy requests without this parameter SHALL preserve their three-size route only for a compatible standard catalog; custom catalogs SHALL require an explicit threshold. Earlier exact-producer publications SHALL remain unchanged.
+The Delivery template SHALL expose a configured specification threshold using the common finite-choice condition mechanism, defaulting its field selection to the Project size catalog. The selected threshold and greater active choices SHALL route through specification authoring; lower choices SHALL use the Accepted Work Contract. The reviewed field/order/IDs SHALL compile to ordinary gate rules without a known node alias or field name in shared resolution code. Later catalog edits SHALL NOT reroute a published graph or admitted Run. Unknown/inactive thresholds or a missing required selection SHALL have field-specific diagnostics. No implicit three-size fallback or old-template compatibility path SHALL be required.
 
 #### Scenario: Threshold routes custom sizes and survives catalog reordering
 - **WHEN** a Project orders `xs`, `s`, `m`, `l`, `xl` and Delivery is published with threshold `l`
 - **THEN** `l` and `xl` require specifications, `xs`, `s`, `m` use explicit acceptance, and later Project reordering leaves those published routes unchanged
+
+### Requirement: Delivery templates configure business behavior through common primitives
+Field aliases, allowed types, claim/value-to-observation checks, thresholds, human approval rules and executor requirements SHALL be explicitly selected template/Flow configuration. Shared authoring/runtime SHALL NOT assign Delivery behavior from its name, a fixed node key or a globally bound Issue role. The existing gate, accepted-data, trusted validation and publication owners SHALL enforce the configured path without another workflow/policy engine.
+
+#### Scenario: An operator changes field and step names
+- **WHEN** it binds Project fields with different names, renames nodes/outcomes and reviews the configured branches
+- **THEN** the same common mechanisms publish and execute those configured field/input/condition selections while isolated tests, exact candidate review and mandatory trusted validation/publication inputs remain enforced

@@ -6,6 +6,9 @@ use serde_json::{Value, json};
 #[path = "issue_classification_applicability_tests.rs"]
 mod applicability;
 
+#[path = "issue_field_form_tests.rs"]
+mod form;
+
 fn at(value: i64) -> Timestamp {
   Timestamp::from_unix_millis(value).unwrap()
 }
@@ -174,7 +177,7 @@ fn builtin_size_uses_ordered_project_choices_and_retains_history_and_replay() {
     assert_eq!(replay.disposition, MutationDisposition::Replayed);
     assert_eq!(replay.issue, selected);
     assert!(
-      !serde_json::to_value(IssuePropertyDefinitionSet::default())
+      serde_json::to_value(IssuePropertyDefinitionSet::default())
         .unwrap()
         .as_object()
         .unwrap()
@@ -287,7 +290,7 @@ fn builtin_component_uses_project_choices_independently_of_custom_properties() {
       IssuePropertyValue::Boolean(true)
     );
     assert_eq!(selected.applicability_version, original.applicability_version);
-    assert_eq!(selected.classification.fields.len(), 4);
+    assert_eq!(selected.classification.fields.len(), 5);
     assert!(
       selected
         .classification
@@ -492,7 +495,7 @@ fn assessment(project_id: ProjectId) -> Value {
   let mut field = manual_priority()["fields"][0].clone();
   field["field"] = json!({"kind":"property","id":"reproduction","definition_version":1});
   field["origin"] = json!({"kind":"pipeline", "actor":{"kind":"unauthenticated_management","identity":null},
-    "work_id":work_id,"run_id":run_id,"record":"b".repeat(64),"policy":"triage.classify","operation_id":"c".repeat(64)});
+    "work_id":work_id,"run_id":run_id,"record":"b".repeat(64),"form":"9".repeat(64),"policy":"triage.classify","operation_id":"c".repeat(64)});
   field["assessed_version"] = json!(2);
   field["assessed_at"] = json!(at(3));
   field["evidence"] = json!(["d".repeat(64)]);

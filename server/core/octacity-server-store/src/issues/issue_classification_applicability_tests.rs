@@ -219,19 +219,15 @@ fn classification_application_retains_declared_inputs_and_rejects_substituted_ma
       size_label: None,
       managed_labels: Default::default(),
       fields: Some(IssueClassificationUpdate {
-        selection: IssueClassificationFieldSelection {
+        selection: IssueFieldForm {
+          project_id: catalog.project_id,
           definition_version: catalog.version,
-          priority: false,
-          component: false,
-          kind: false,
-          size: true,
-          properties: Default::default(),
+          fields: vec![IssueFormField {
+            field: IssueFieldTarget::Size,
+            required: true,
+          }],
         },
-        priority: None,
-        component: None,
-        issue_type: None,
-        size: Some(String::from("small")),
-        properties: Default::default(),
+        values: [("size".parse().unwrap(), serde_json::json!("small"))].into(),
         inputs: inputs.clone(),
       }),
     };

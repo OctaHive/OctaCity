@@ -2,8 +2,8 @@
 use crate::*;
 use octacity_server_factory::*;
 use octacity_server_store::{
-  ApplyIssueClassification, FactoryRunStore, IssueClassificationAuthority, IssueClassificationFieldSelection,
-  IssueClassificationStore, IssueClassificationUpdate, IssueExecutionStore,
+  ApplyIssueClassification, FactoryRunStore, IssueClassificationAuthority, IssueClassificationStore,
+  IssueExecutionStore, IssueFieldForm,
 };
 use std::{collections::BTreeMap, sync::Arc};
 
@@ -79,7 +79,7 @@ pub(crate) struct Selection {
   #[serde(default)]
   pub(crate) size_labels: BTreeMap<FactoryKey, FactoryKey>,
   #[serde(default)]
-  pub(crate) fields: Option<IssueClassificationFieldSelection>,
+  pub(crate) fields: Option<IssueFieldForm>,
 }
 
 impl Selection {
@@ -220,30 +220,17 @@ impl<S: IssueClassificationStore, F: FactoryRunStore> FactoryFlowActionPlugin
       .and_then(|value| u8::try_from(value).ok())
       .filter(|value| *value <= MAX_WORK_PRIORITY);
     let fields = if let Some(selection) = &selected.fields {
-      let choice = |field: &str| -> Result<Option<String>, ApplicationError> {
-        let Some(value) = projected.get(field).filter(|value| !value.is_null()) else {
-          return Ok(None);
-        };
-        if accepted.get(field) != Some(value) {
-          return Err(invalid());
-        }
-        value.as_str().map(|s| Some(s.to_owned())).ok_or_else(invalid)
-      };
       priority = None;
-      let selected_priority = if selection.priority { choice("priority")? } else { None };
-      let component = if selection.component {
-        choice("component")?
-      } else {
-        None
-      };
-      let issue_type = if selection.kind { choice("kind")? } else { None };
-      let size = if selection.size { choice("size")? } else { None };
-      let mut properties = BTreeMap::new();
-      for (slot, id) in selection.properties.fields() {
-        if let Some(value) = choice(slot)? {
-          properties.insert(id.to_owned(), value);
-        }
-      }
+      let values: BTreeMap<FactoryKey, serde_json::Value> = projected
+        .iter()
+        .filter(|(field, _)| field.as_str() != "assessment_inputs")
+        .map(|(field, value)| {
+          if accepted.get(field) != Some(value) {
+            return Err(invalid());
+          }
+          Ok((FactoryKey::new(field.clone()).map_err(|_| invalid())?, value.clone()))
+        })
+        .collect::<Result<_, ApplicationError>>()?;
       // New publications may explicitly project exact assessment dependencies.
       // Earlier payloads retain empty pins and their original receipt encoding.
       if accepted.get("assessment_inputs") != projected.get("assessment_inputs") {
@@ -276,14 +263,10 @@ impl<S: IssueClassificationStore, F: FactoryRunStore> FactoryFlowActionPlugin
       } else {
         Default::default()
       };
-      Some(IssueClassificationUpdate {
-        inputs,
+      Some(octacity_server_store::IssueClassificationUpdate {
         selection: selection.clone(),
-        priority: selected_priority,
-        component,
-        issue_type,
-        size,
-        properties,
+        values,
+        inputs,
       })
     } else {
       None

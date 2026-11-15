@@ -145,8 +145,7 @@ impl IssueRevision {
       .collect();
     for id in ids {
       if self.planning.values.get(&id) != previous.and_then(|p| p.planning.values.get(&id)) {
-        let present = self.planning.values.contains_key(&id)
-          && catalog.definition.classification.fields().any(|(_, bound)| bound == id);
+        let present = self.planning.values.contains_key(&id);
         self.record_manual_field(
           assessed_version,
           Field::Property {
@@ -310,6 +309,8 @@ pub enum IssueClassificationOrigin {
     run_id: FactoryRunId,
     /// Exact accepted result record.
     record: FactoryDigest,
+    /// Exact Project-derived form selection used by the accepted field result.
+    form: FactoryDigest,
     /// Configured classification policy identity.
     policy: FactoryKey,
     /// Stable trusted action identity retained across replay.

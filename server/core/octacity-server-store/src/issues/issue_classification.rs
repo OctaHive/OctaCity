@@ -4,110 +4,33 @@ use octacity_server_domain::{EntityKind, Timestamp};
 use octacity_server_factory::{FactoryDigest, FactoryKey, MAX_WORK_PRIORITY};
 use std::collections::{BTreeMap, BTreeSet};
 
-/// Explicit new-style action selection. Custom fields reuse Project semantic bindings;
-/// priority and component remain independently selected built-in attributes.
-#[derive(Clone, Debug, serde::Deserialize, Eq, PartialEq, serde::Serialize)]
-#[serde(deny_unknown_fields)]
-pub struct IssueClassificationFieldSelection {
-  /// Exact reviewed Project definition publication.
-  pub definition_version: u64,
-  /// Whether the action can apply built-in priority.
-  #[serde(default)]
-  pub priority: bool,
-  /// Whether the action can apply built-in component.
-  #[serde(default)]
-  pub component: bool,
-  /// Whether the accepted assessment's kind can apply the built-in Issue type.
-  #[serde(default)]
-  pub kind: bool,
-  /// Whether the action can apply built-in size without label effects.
-  #[serde(default)]
-  pub size: bool,
-  /// Selected classification properties; arbitrary custom properties are not implicit targets.
-  #[serde(default)]
-  pub properties: IssueClassificationBindings,
-}
-impl IssueClassificationFieldSelection {
-  /// Validates exact current definitions without inventing a per-Flow vocabulary.
-  pub fn validate(&self, catalog: &PublishedIssueProperties) -> Result<(), StoreError> {
-    if self.definition_version == 0
-      || self.definition_version != catalog.version
-      || (!self.priority && !self.component && !self.kind && !self.size && self.properties.fields().next().is_none())
-      || self
-        .properties
-        .fields()
-        .any(|(slot, _)| matches!(slot, "component" | "kind" | "size"))
-      || self.properties.fields().any(|(slot, id)| {
-        !catalog
-          .definition
-          .classification
-          .fields()
-          .any(|pair| pair == (slot, id))
-          || !catalog.definition.properties.iter().any(|p| p.id == id && !p.retired)
-      })
-    {
-      return Err(StoreError::Conflict {
-        entity: EntityKind::Issue,
-      });
-    }
-    Ok(())
-  }
-}
-
-/// Validated selected values carried only by the trusted Issue command, not another value store.
-#[derive(Clone, Debug, Eq, PartialEq, serde::Serialize)]
+/// Values from the selected Project-derived form; not a second Issue value store.
+#[derive(Clone, Eq, PartialEq, serde::Serialize)]
 pub struct IssueClassificationUpdate {
-  /// Original explicit field/definition selection.
-  pub selection: IssueClassificationFieldSelection,
-  /// Assessed Project priority choice; never an implicit Work scheduling score.
-  pub priority: Option<String>,
-  /// Assessed built-in component; absence preserves the current field.
-  pub component: Option<String>,
-  /// Assessed built-in Issue type from the accepted kind; absence preserves the field.
-  pub issue_type: Option<String>,
-  /// Assessed built-in size; absence preserves the field.
-  pub size: Option<String>,
-  /// Assessed choice values by selected stable property ID; absence preserves that field.
-  pub properties: BTreeMap<String, String>,
-  /// Explicit assessment dependencies; omitted on earlier publications and receipts.
-  #[serde(skip_serializing_if = "IssueClassificationAssessmentInputs::is_empty")]
+  /// Exact form whose identities authorize the selected writes.
+  pub selection: IssueFieldForm,
+  /// Only supplied values, keyed by the form's generated stable identities.
+  pub values: BTreeMap<FactoryKey, serde_json::Value>,
+  /// Explicit immutable dependencies of this assessment.
   pub inputs: IssueClassificationAssessmentInputs,
 }
+impl std::fmt::Debug for IssueClassificationUpdate {
+  fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+    formatter
+      .debug_struct("IssueClassificationUpdate")
+      .finish_non_exhaustive()
+  }
+}
 impl IssueClassificationUpdate {
-  /// Canonical locations actually supplied by the accepted assessment.
+  /// Canonical locations actually supplied by the accepted form.
   pub fn field_references(&self) -> Vec<IssueClassificationFieldReference> {
-    let version = self.selection.definition_version;
-    let mut fields = Vec::new();
-    if self.priority.is_some() {
-      fields.push(IssueClassificationFieldReference::Priority {
-        definition_version: Some(version),
-      });
-    }
-    if self.component.is_some() {
-      fields.push(IssueClassificationFieldReference::Component {
-        definition_version: version,
-      });
-    }
-    if self.issue_type.is_some() {
-      fields.push(IssueClassificationFieldReference::Type {
-        definition_version: version,
-      });
-    }
-    if self.size.is_some() {
-      fields.push(IssueClassificationFieldReference::Size {
-        definition_version: Some(version),
-      });
-    }
-    fields.extend(
-      self
-        .properties
-        .keys()
-        .map(|id| IssueClassificationFieldReference::Property {
-          id: id.clone(),
-          definition_version: version,
-        }),
-    );
-    fields
+    self
+      .selection
+      .fields
+      .iter()
+      .filter(|selected| selected.field.key().is_ok_and(|key| self.values.contains_key(&key)))
+      .map(|selected| selected.field.reference(self.selection.definition_version))
+      .collect()
   }
 }
 
@@ -200,7 +123,7 @@ impl IssueRevision {
       }
     }
     if let Some(update) = &request.fields {
-      update.selection.validate(catalog)?;
+      let values = update.validated_values(catalog)?;
       if update.inputs.validate().is_err()
         || update
           .inputs
@@ -221,99 +144,50 @@ impl IssueRevision {
         })
         || catalog.project_id != self.project_id
         || request.priority.is_some()
-        || (update.priority.is_some()
-          && (!update.selection.priority
-            || self.content.priority != baseline.content.priority
-            || policy.source_owned.contains(&IssueField::Priority)))
-        || (update.component.is_some()
-          && (!update.selection.component
-            || self.planning.component != baseline.planning.component
-            || policy.source_owned.contains(&IssueField::Component)))
-        || (update.issue_type.is_some()
-          && (!update.selection.kind
-            || self.planning.issue_type != baseline.planning.issue_type
-            || policy.source_owned.contains(&IssueField::Type)))
-        || (update.size.is_some()
-          && (!update.selection.size
-            || self.planning.size != baseline.planning.size
-            || policy.source_owned.contains(&IssueField::Size)))
-        || (!update.properties.is_empty() && policy.source_owned.contains(&IssueField::Properties))
       {
         return Err(conflict());
       }
-      if let Some(priority) = &update.priority {
-        if !catalog
-          .definition
-          .priorities
-          .iter()
-          .any(|c| c.id == *priority && !c.retired)
-        {
+      for selected in &update.selection.fields {
+        let Some(value) = values.get(&selected.field.key()?) else {
+          continue;
+        };
+        let (unchanged, owned) = match &selected.field {
+          IssueFieldTarget::Priority => (self.content.priority == baseline.content.priority, IssueField::Priority),
+          IssueFieldTarget::Component => (
+            self.planning.component == baseline.planning.component,
+            IssueField::Component,
+          ),
+          IssueFieldTarget::Type => (
+            self.planning.issue_type == baseline.planning.issue_type,
+            IssueField::Type,
+          ),
+          IssueFieldTarget::Size => (self.planning.size == baseline.planning.size, IssueField::Size),
+          IssueFieldTarget::Property { id } => (
+            self.planning.values.get(id) == baseline.planning.values.get(id),
+            IssueField::Properties,
+          ),
+        };
+        if !unchanged || policy.source_owned.contains(&owned) {
           return Err(conflict());
         }
-        next.content.priority = Some(IssuePriority::Choice(priority.clone()));
-      }
-      if let Some(component) = &update.component {
-        if !catalog
-          .definition
-          .components
-          .iter()
-          .any(|c| c.id == *component && !c.retired)
-        {
-          return Err(conflict());
+        match (&selected.field, value) {
+          (IssueFieldTarget::Priority, IssuePropertyValue::Choice(value)) => {
+            next.content.priority = Some(IssuePriority::Choice(value.clone()))
+          }
+          (IssueFieldTarget::Component, IssuePropertyValue::Choice(value)) => {
+            next.planning.component = Some(value.clone())
+          }
+          (IssueFieldTarget::Type, IssuePropertyValue::Choice(value)) => next.planning.issue_type = Some(value.clone()),
+          (IssueFieldTarget::Size, IssuePropertyValue::Choice(value)) => next.planning.size = Some(value.clone()),
+          (IssueFieldTarget::Property { id }, value) => {
+            next.planning.values.insert(id.clone(), value.clone());
+          }
+          _ => return Err(conflict()),
         }
-        next.planning.component = Some(component.clone());
-      }
-      if let Some(issue_type) = &update.issue_type {
-        if !catalog
-          .definition
-          .types
-          .iter()
-          .any(|c| c.id == *issue_type && !c.retired)
-        {
-          return Err(conflict());
-        }
-        next.planning.issue_type = Some(issue_type.clone());
-      }
-      if let Some(size) = &update.size {
-        if !catalog.definition.sizes.iter().any(|c| c.id == *size && !c.retired) {
-          return Err(conflict());
-        }
-        next.planning.size = Some(size.clone());
-      }
-      for (id, value) in &update.properties {
-        let slot = update
-          .selection
-          .properties
-          .fields()
-          .find(|(_, selected)| *selected == id)
-          .map(|(slot, _)| slot)
-          .ok_or_else(conflict)?;
-        let valid = catalog.definition.properties.iter().any(|p| {
-          p.id == *id
-            && !p.retired
-            && matches!(&p.kind, IssuePropertyKind::Choice { choices }
-            if choices.iter().any(|c|c.id == *value && !c.retired))
-        });
-        if !valid
-          || self.planning.values.get(id) != baseline.planning.values.get(id)
-          || (slot == "reproducibility"
-            && crate::IssueReproductionClaim::from_choice(value)
-              .is_none_or(crate::IssueReproductionClaim::requires_verified_evidence))
-        {
-          return Err(conflict());
-        }
-        next
-          .planning
-          .values
-          .insert(id.clone(), IssuePropertyValue::Choice(value.clone()));
       }
       let fields = update.field_references();
       if !fields.is_empty() {
-        if update.component.is_some()
-          || update.issue_type.is_some()
-          || update.size.is_some()
-          || !update.properties.is_empty()
-        {
+        if values.keys().any(|key| key.as_str() != "priority") {
           next.planning.definition_version = catalog.version;
           next
             .planning
@@ -329,6 +203,7 @@ impl IssueRevision {
           work_id: association.work_id,
           run_id: association.run_id,
           record: request.record,
+          form: update.selection.digest()?,
           policy: request.policy.clone(),
           operation_id: request.operation_id,
         };

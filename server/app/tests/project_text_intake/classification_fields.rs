@@ -104,8 +104,10 @@ async fn classification_authoring_offers_project_field_contract_without_size_lab
   let contract = &classification["field_contract"];
   assert_eq!(contract["selection"]["definition_version"], 1);
   assert_eq!(
-    contract["selection"]["properties"],
-    serde_json::json!({"reproducibility":"repro"})
+    contract["selection"]["fields"],
+    serde_json::json!([{"field":{"kind":"priority"},"required":true},{"field":{"kind":"component"},"required":true},
+      {"field":{"kind":"type"},"required":true},{"field":{"kind":"size"},"required":true},
+      {"field":{"kind":"property","id":"repro"},"required":true}])
   );
   let fields = &contract["schema"]["shape"]["fields"];
   for (name, expected) in [
@@ -114,11 +116,11 @@ async fn classification_authoring_offers_project_field_contract_without_size_lab
       serde_json::json!(["blocker", "high", "medium", "low", "urgent_local"]),
     ),
     ("component", serde_json::json!(["compiler"])),
-    ("kind", serde_json::json!(["defect", "feature_request"])),
+    ("type", serde_json::json!(["defect", "feature_request"])),
     ("size", serde_json::json!(["small", "medium", "large"])),
-    ("reproducibility", serde_json::json!(["unknown", "needs_input"])),
+    ("property.repro", serde_json::json!(["unknown", "needs_input"])),
   ] {
-    assert_eq!(fields[name]["required"], false);
+    assert_eq!(fields[name]["required"], true);
     assert_eq!(
       fields[name]["value"]["values"], expected,
       "{name} uses Project-owned vocabulary"
@@ -142,7 +144,7 @@ fn typed_draft(issue: &IssueRevision, offered: &FactoryIssueClassificationChoice
   triage["outcomes"][0]["schema"] = serde_json::to_value(contract.schema.reference()).unwrap();
   triage["gate"] = serde_json::to_value(FlowGateProgram::new(vec![], "classified".parse().unwrap()).unwrap()
     .with_default_output_mapping(FlowDataMapping::new(FlowValueMapping::Constant {
-      value: serde_json::json!({"priority":"urgent_local","component":"compiler","kind":"feature_request","size":"medium","reproducibility":"needs_input"})
+      value: serde_json::json!({"priority":"urgent_local","component":"compiler","type":"feature_request","size":"medium","property.repro":"needs_input"})
     }).unwrap()).unwrap().binding().unwrap()).unwrap();
   let apply = nodes.iter_mut().find(|node| node["key"] == "apply").unwrap();
   apply["input_schema"] = serde_json::to_value(contract.schema.reference()).unwrap();
@@ -408,9 +410,7 @@ async fn typed_classification_publication_rejects_stale_unbound_and_substituted_
       .unwrap();
     match case {
       "catalog" => action["action"]["parameters"]["fields"]["definition_version"] = serde_json::json!(2),
-      "binding" => {
-        action["action"]["parameters"]["fields"]["properties"]["reproducibility"] = serde_json::json!("foreign")
-      }
+      "binding" => action["action"]["parameters"]["fields"]["fields"][4]["field"]["id"] = serde_json::json!("foreign"),
       "substitution" => {
         action["input_binding"]["mapping"]["value"] =
           serde_json::json!({"mapping":"constant","value":{"priority":"high"}})
@@ -451,7 +451,7 @@ async fn typed_classification_publication_rejects_stale_unbound_and_substituted_
       node["outcomes"][0]["schema"] = serde_json::to_value(wrong.reference()).unwrap();
       node["gate"] = serde_json::to_value(FlowGateProgram::new(vec![], "classified".parse().unwrap()).unwrap()
         .with_default_output_mapping(FlowDataMapping::new(FlowValueMapping::Constant {
-          value: serde_json::json!({"priority":"urgent_local","component":"foreign_component","kind":"feature_request","size":"medium","reproducibility":"needs_input"})
+          value: serde_json::json!({"priority":"urgent_local","component":"foreign_component","type":"feature_request","size":"medium","property.repro":"needs_input"})
         }).unwrap()).unwrap().binding().unwrap()).unwrap();
     }
     if node["key"] == "apply" {

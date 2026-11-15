@@ -25,7 +25,7 @@ fn retained_metadata(project: ProjectId) -> IssueClassificationMetadata {
       "assessed_version":1,"requirements_version":1,"assessed_at":at(2)},
     {"field":{"kind":"property","id":"effort","definition_version":1},
       "origin":{"kind":"pipeline","actor":{"kind":"unauthenticated_management","identity":null},
-        "work_id":work,"run_id":run,"record":"c".repeat(64),"policy":"triage","operation_id":"d".repeat(64)},
+        "work_id":work,"run_id":run,"record":"c".repeat(64),"form":"9".repeat(64),"policy":"triage","operation_id":"d".repeat(64)},
       "assessed_version":1,"requirements_version":1,"assessed_at":at(2),"evidence":records},
     {"field":{"kind":"dependencies"},"origin":{"kind":"source","actor":{"kind":"unauthenticated_management","identity":null},
       "mapping":pin(),"observation":"e".repeat(64),"native_correlation":"f".repeat(64)},

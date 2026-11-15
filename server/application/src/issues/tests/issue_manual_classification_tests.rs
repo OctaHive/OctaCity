@@ -69,8 +69,8 @@ fn manual_classification_planning_retains_human_origin_without_a_run() {
     let fields = &saved.classification.fields;
     assert_eq!(
       fields.len(),
-      7,
-      "only built-in and semantically bound fields receive classification origins"
+      8,
+      "all supplied core and ordinary Project fields retain their actual origin"
     );
     for field in [
       Field::Component { definition_version: 1 },
@@ -92,6 +92,10 @@ fn manual_classification_planning_retains_human_origin_without_a_run() {
       },
       Field::Property {
         id: "reproduction".into(),
+        definition_version: 1,
+      },
+      Field::Property {
+        id: "notes".into(),
         definition_version: 1,
       },
     ] {

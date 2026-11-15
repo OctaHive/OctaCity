@@ -147,7 +147,12 @@ async fn typed_classification_replay_after_later_edits_and_pool_restart_returns_
     applied.issue
   );
   let mut changed_reuse = command.clone();
-  changed_reuse.fields.as_mut().unwrap().size = Some(String::from("large"));
+  changed_reuse
+    .fields
+    .as_mut()
+    .unwrap()
+    .values
+    .insert("size".parse().unwrap(), serde_json::json!("large"));
   assert!(matches!(
     restarted
       .apply_issue_classification(management_mutation(changed_reuse))
