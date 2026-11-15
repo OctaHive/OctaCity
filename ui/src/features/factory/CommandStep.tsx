@@ -3,6 +3,7 @@ import type { components } from '../../../.generated/api/schema';
 import { usePresentation } from '../../app/presentation/PresentationProvider';
 import { SelectMenu } from '../../shared/SelectMenu';
 import { sourceReferenceKey } from '../../shared/sourceReferences';
+import { mergePermissions } from './flowRequirements';
 
 type Schema = components['schemas'];
 type Node = Schema['FactoryFlowNodeDefinition'];
@@ -94,10 +95,25 @@ export function CommandStep({
         disabled={!command || !outcome}
         onClick={() => {
           if (command && outcome) {
+            const permissions = command.permissions
+              ? mergePermissions(node.permissions, command.permissions)
+              : node.permissions;
             onChange(
               {
                 build: commandBuild(command, outcome.key),
                 profile_selection: null,
+                permissions,
+                budget: {
+                  ...node.budget,
+                  max_elapsed_millis: Math.max(
+                    node.budget.max_elapsed_millis,
+                    permissions.resources.elapsed_millis,
+                  ),
+                  max_output_bytes: Math.max(
+                    node.budget.max_output_bytes,
+                    permissions.outputs.max_artifact_bytes + permissions.outputs.max_report_bytes,
+                  ),
+                },
                 outcomes: node.outcomes.map((item) =>
                   item === outcome && definition ? { ...item, schema: definition.reference } : item,
                 ),

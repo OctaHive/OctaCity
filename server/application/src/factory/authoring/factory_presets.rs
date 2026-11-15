@@ -203,6 +203,11 @@ fn summary(
       name,
       budget: template.execution.budget(),
       max_active_nodes: template.execution.max_active_nodes(),
+      issue_snapshot_fields: if issue_snapshot {
+        issue_delivery::field_sources()
+      } else {
+        Default::default()
+      },
       steps: template
         .nodes
         .iter()
@@ -574,7 +579,13 @@ impl<S: FactoryConfigurationStore + octacity_server_store::FactoryRoleProfileSto
             .map_err(|_| FactoryValidationDiagnostics::invalid("/context"))?,
         );
       }
-      node.permissions = profile.definition().permissions.clone();
+      // A reusable profile is a ceiling across modes; the selected compiler
+      // owns this step's narrower request, just as in ordinary Flow authoring.
+      node.permissions = build
+        .execution_permissions
+        .as_deref()
+        .unwrap_or(&profile.definition().permissions)
+        .clone();
       node.budget = profile.definition().budget;
       node.build_profile = None;
       node.profile_selection = Some(FlowProfileSelectionBinding {

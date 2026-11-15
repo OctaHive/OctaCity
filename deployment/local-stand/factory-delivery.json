@@ -1,0 +1,9 @@
+{
+  "stage_budget": {
+    "max_attempts": 1,
+    "max_elapsed_millis": 300000,
+    "max_tokens": 1000000,
+    "max_cost_micro_units": 1000000,
+    "max_output_bytes": 67108864
+  }
+}

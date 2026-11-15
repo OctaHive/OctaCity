@@ -211,6 +211,25 @@ pub(super) fn bind_installed_steps(
       }
     }
     node.permissions = command.permissions.clone();
+    // The installed compiler's resource request must fit the authored node's
+    // budget; retain any larger limits already reviewed in the template.
+    let output_bytes = command
+      .permissions
+      .outputs()
+      .max_artifact_bytes()
+      .checked_add(command.permissions.outputs().max_report_bytes())
+      .ok_or_else(path)?;
+    node.budget = BudgetLimit::new(
+      node.budget.max_attempts(),
+      node
+        .budget
+        .max_elapsed_millis()
+        .max(command.permissions.resources().elapsed_millis()),
+      node.budget.max_tokens(),
+      node.budget.max_cost_micro_units(),
+      node.budget.max_output_bytes().max(output_bytes),
+    )
+    .map_err(|_| path())?;
     builds.insert(alias.clone(), command.build.clone());
   }
   let node = template

@@ -587,6 +587,27 @@ verification for its eligibility result; classification consumes that accepted
 handoff using its ordinary classification result contract. Applying that result
 to the Issue is a separately configured local action, not an implied side effect.
 
+#### Build both pipelines entirely through UI
+
+The ordinary stand installs the local classification capability, **Triage** and
+**Delivery** access profiles and the shared **Standard** launch policy. Updating
+with the original root/installation arguments preserves published pipelines and
+operator data. Classification application remains an explicit Flow setting.
+
+For a fresh installation whose Factory catalog must start empty, add
+`--no-example-pipeline` to `tools/factory-stand` and the usual source/Delivery
+arguments. This installs technical workers, Runtime, reusable agents/Profiles,
+Project documents and policies without creating a Factory Flow, Configuration or
+Source input. Restart retains this mode even when the flag is omitted. It does
+not delete an existing example; use a fresh disposable root for this qualification.
+The ordinary CI worker Pipeline is a technical executor and remains installed.
+
+Use the [UI authoring walkthrough](factory-pipeline-authoring.md#author-ticket-delivery)
+to create triage with Project-backed result fields and explicit local application,
+then independently create Delivery v2 with reviewed snapshot admission mappings.
+Publish each Flow and its own Configuration. Delivery reads the effective Issue
+snapshot and asks for no producing Run.
+
 #### Qualify Issue-snapshot delivery
 
 Use an isolated stand and an explicitly reviewed test repository/publication
@@ -602,17 +623,20 @@ the shared **Standard** launch policy; each step requests its own narrower scope
    `ticket-delivery/v2` example, also publish its required semantic fields from
    the [resolver prerequisites](../../config/factory/presets/ticket-delivery/README.md#current-v2-issue-snapshot-example).
 2. Prepare requirements/acceptance and classification in Issue **Properties**,
-   or explicitly install/configure
+   or explicitly configure
    [Apply classification to Issue](factory.md#explicit-local-issue-classification-actions)
-   on triage's accepted result. If the capability is unavailable, install its
-   reviewed principal/action rather than assume the bundled triage writes data.
+   on triage's accepted result. The ordinary installer supplies the guarded local
+   writer under its management principal and its explicit permission in the
+   installer-owned Triage access profile. Rerun the installer with the same root
+   to upgrade the catalog; a customized access profile remains subject to review.
+   Installation alone enables no classification effect.
    Confirm applied values, exact origin and freshness on the Issue.
 3. Publish an independent consumer with an Issue snapshot, reviewed admission
    mapping, required/optional fields and explicit per-step projections. Use the
    [operator walkthrough](factory-pipeline-authoring.md#author-ticket-delivery)
    and [headless sequence](../reference/issues.md#headless-issue-snapshot-sequence).
-   The generic editor handles simple field/material selection; resolving the
-   complete `v2` preset still needs the API. Keep automatic Source input and
+   The generic editor includes admission controls; **Start from an example →
+   Ticket delivery · v2** collects the same selections and opens an editable Flow. Keep automatic Source input and
    Reporter effects disabled for this manual trial.
 4. In **Documents**, create an Issue-owned publication and a new immutable
    version. Verify they are absent from Project documents/step selectors and
@@ -1431,6 +1455,11 @@ parent stay unchanged. The launcher installs matching plugin metadata under a
 new immutable native installation and publishes separate compatible Delivery
 profiles. Existing installation directories and published Flow definitions are
 retained. Select the new compatible profiles when publishing a new Flow version.
+Ordinary restart checks the installed Coder, Reviewer and Verifier instructions
+against their exact compiler bindings, even when the Delivery budget, guest and
+plugin are already current. Missing or older instructions select additive
+immutable updates; matching instructions keep restart a no-op. Previously
+published Profile and Flow pins retain their original instructions.
 The active compiler catalogue contains only bindings compatible with the current
 native plugin inventory. Before that selection, the updater retains the complete
 installation input under `evidence/factory-runtime-catalog-<sha256>.json`.

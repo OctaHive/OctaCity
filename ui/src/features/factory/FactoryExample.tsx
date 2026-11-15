@@ -10,6 +10,8 @@ import { catalogLabels } from './catalogLabels';
 import { commandBuild, commandOptions } from './CommandStep';
 import { emptyFactoryPermissions, emptyFlowDraft } from './emptyFlowDraft';
 import { ExecutorPicker } from './ExecutorPicker';
+import { IssueAdmission, validIssueAdmission, type IssueAdmissionPolicy } from './IssueAdmission';
+import { issueFieldLabel } from './IssueFieldContracts';
 import { FlowIncomingCompletion } from './FlowIncomingCompletion';
 import { publicationKey } from './PublicationStep';
 import { mergePermissions } from './flowRequirements';
@@ -88,6 +90,7 @@ function ExampleBindings({
   >({});
   const [commands, setCommands] = useState<Record<string, string>>({});
   const [target, setTarget] = useState('');
+  const [admission, setAdmission] = useState<IssueAdmissionPolicy>();
   const [issues, setIssues] = useState<S['FactoryPresetResolution']['diagnostics']>([]);
   const [error, setError] = useState<Error>();
   const [busy, setBusy] = useState(false);
@@ -99,7 +102,7 @@ function ExampleBindings({
   const reasoningSteps = editor.steps.filter((step) => step.kind === 'reasoning');
   const capabilities = useFactoryAuthoringCapabilities(
     { api, projectId },
-    commandSteps.length > 0 || needs('publication'),
+    commandSteps.length > 0 || needs('publication') || needs('issue_snapshot'),
   );
   const publications = (capabilities.data?.candidate_publications ?? []).filter(
     (choice) => choice.review_url,
@@ -125,9 +128,30 @@ function ExampleBindings({
   });
   const commandRequired = (step: Editor['steps'][number]) =>
     preset.parameters.some((item) => item.path === `/commands/${step.alias}` && item.required);
-  const unsupportedInput = needs('issue_snapshot');
+  const catalog = capabilities.data?.issue_fields;
+  const snapshotSources = Object.entries(editor.issue_snapshot_fields ?? {});
+  const snapshotFields = snapshotSources.flatMap(([alias, source]) => {
+    const field = catalog?.fields.find(
+      (field) =>
+        field.source.kind === source.kind &&
+        (source.kind !== 'classification' ||
+          (field.source.kind === 'classification' && field.source.slot === source.slot)) &&
+        (source.kind !== 'property' ||
+          (field.source.kind === 'property' && field.source.id === source.id)),
+    );
+    return field?.required_supported ? [{ alias, field, required: true }] : [];
+  });
+  const snapshotReady =
+    !needs('issue_snapshot') ||
+    (!!catalog &&
+      !capabilities.isFetching &&
+      !capabilities.error &&
+      snapshotSources.length > 0 &&
+      snapshotFields.length === snapshotSources.length &&
+      !!admission &&
+      validIssueAdmission(admission, snapshotFields, catalog.classification));
   const ready =
-    !unsupportedInput &&
+    snapshotReady &&
     (!needs('accepted_predecessor') || !!inputs.accepted_predecessor?.outcomes.length) &&
     (!needs('publication') || !!publisher) &&
     commandSteps.every(
@@ -174,6 +198,9 @@ function ExampleBindings({
           ),
           commands: Object.fromEntries(commandSelections),
           ...(publication ? { publication } : {}),
+          ...(needs('issue_snapshot') && catalog && admission
+            ? { issue_snapshot: { definition_version: catalog.definition_version, admission } }
+            : {}),
           ...(inputs.accepted_predecessor
             ? { accepted_predecessor: inputs.accepted_predecessor }
             : {}),
@@ -204,7 +231,29 @@ function ExampleBindings({
           empty={t('factory.exampleNeedsPredecessor')}
         />
       ) : null}
-      {unsupportedInput ? <p role="status">{t('factory.exampleInputUnsupported')}</p> : null}
+      {needs('issue_snapshot') ? (
+        <>
+          {catalog ? (
+            <p>{t('planning.definition', { version: catalog.definition_version })}</p>
+          ) : null}
+          <ul>
+            {snapshotFields.map(({ alias, field }) => (
+              <li key={alias}>
+                {issueFieldLabel(field, t)} · {alias}
+              </li>
+            ))}
+          </ul>
+          {snapshotFields.length !== snapshotSources.length || !snapshotSources.length ? (
+            <p role="alert">{t('factory.issueFieldsUnavailable')}</p>
+          ) : null}
+          <IssueAdmission
+            value={admission}
+            fields={snapshotFields}
+            classification={catalog?.classification}
+            onChange={setAdmission}
+          />
+        </>
+      ) : null}
       {reasoningSteps.map((step) => (
         <details key={step.alias}>
           <summary>

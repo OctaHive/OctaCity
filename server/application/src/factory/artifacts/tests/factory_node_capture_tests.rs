@@ -1126,6 +1126,34 @@ fn candidate_context_keeps_binary_source_inputs_out_of_declared_model_text() {
       .await
       .unwrap();
     assert_eq!(recovered.input_digest(), fixture.context.input_digest());
+    for (scope, expected_paths, complete) in [
+      (
+        serde_json::json!({"kind":"selected","entries":[{"kind":"path","path":"src"}]}),
+        vec!["src/retained-public.txt"],
+        true,
+      ),
+      (
+        serde_json::json!({"kind":"selected","entries":[{"kind":"path","path":"docs"}]}),
+        vec![],
+        false,
+      ),
+      (
+        serde_json::json!({"kind":"selected","entries":[{"kind":"range","path":"src/retained-public.txt","lines":{"first_line":1,"last_line":1}}]}),
+        vec![],
+        false,
+      ),
+    ] {
+      let scope: FlowCodeScope = serde_json::from_value(scope).unwrap();
+      let summary = serde_json::to_value(recovered.change_summary().unwrap().restrict(&scope)).unwrap();
+      let paths: Vec<_> = summary["changed_paths"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|path| path["path"].as_str().unwrap())
+        .collect();
+      assert_eq!(paths, expected_paths);
+      assert_eq!(summary["complete"], complete);
+    }
     assert_eq!(
       fixture.context.model_context(),
       &std::collections::BTreeMap::from([(fixture.text.record.identity().artifact_id, fixture.text.bytes)])

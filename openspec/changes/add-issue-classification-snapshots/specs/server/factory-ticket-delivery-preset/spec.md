@@ -105,6 +105,14 @@ An authorized operator SHALL be able to assemble ticket delivery from an empty v
 - **THEN** the delivery Flow remains usable without changing its input binding to name the replacement producer
 
 
+#### Scenario: Operator opens the snapshot delivery example on an ordinary stand
+- **WHEN** an operator selects Delivery v2 and reviews Project-backed snapshot admission mappings, executors, commands and publication choices in the Console
+- **THEN** the example resolves into an editable Flow that can be published with a Configuration entirely through UI, without API-prepared pipeline state, a triage Run selection or hand-written JSON
+
+#### Scenario: Independent review inspects an isolated candidate
+- **WHEN** a model reviews a verified candidate with an explicitly selected code scope
+- **THEN** it receives a bounded verified change summary restricted to whole files visible in that scope, with an explicit completeness flag, while binary bundles and raw capture manifests remain private controller inputs
+
 ### Requirement: Human acceptance follows requirements policy
 
 The pipeline SHALL support pinned requirements-acceptance rules combining component, size and priority from the admitted Issue snapshot. Matching rules SHALL request human acceptance of the exact prepared specification or Accepted Work Contract before test authoring; unmatched tickets SHALL continue automatically. Priority SHALL use the retained effective Issue priority under the pinned input mapping without a second agent assessment. Classification source attribution SHALL not by itself satisfy an independent human requirements-acceptance rule. A pending or rejected acceptance SHALL NOT permit downstream stages. A correction SHALL follow the declared requirements route and require acceptance of the new version when the rule applies.

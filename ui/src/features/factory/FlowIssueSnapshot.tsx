@@ -7,6 +7,7 @@ import type { FlowAuthoringServices } from './FlowPrimitives';
 import { useFactoryAuthoringCapabilities } from './useFactoryAuthoringCapabilities';
 import { issueFieldLabel, type IssueFieldChoice } from './IssueFieldContracts';
 import { assessmentMapping } from './issueClassification';
+import { IssueAdmission, validIssueAdmission, type IssueAdmissionPolicy } from './IssueAdmission';
 import { editableSnapshotFields } from './issueSnapshotBindings';
 import { equivalentFlowSchema, registerFlowSchemas } from './flowSchemas';
 
@@ -143,6 +144,9 @@ function SnapshotDraft({
   const [fields, setFields] = useState<Record<string, Selection>>(
     value.issue_snapshot?.fields ?? {},
   );
+  const [admission, setAdmission] = useState<IssueAdmissionPolicy | undefined>(
+    value.issue_snapshot?.admission,
+  );
   const [materials, setMaterials] = useState(!!value.issue_snapshot?.materials?.materials);
   const existingMaterial = value.issue_snapshot?.materials?.materials;
   const [entries, setEntries] = useState(
@@ -191,7 +195,6 @@ function SnapshotDraft({
       );
       return !owned && (!!consumed || previous);
     }) ||
-    !!value.issue_snapshot?.admission ||
     !!Object.keys(value.issue_snapshot?.evidence ?? {}).length ||
     Object.keys(value.issue_snapshot?.materials ?? {}).some((alias) => alias !== 'materials') ||
     (existingMaterial && existingMaterial.source.kind !== 'selected');
@@ -201,6 +204,15 @@ function SnapshotDraft({
     !query.error &&
     !stale &&
     !conflict &&
+    validIssueAdmission(
+      admission,
+      selected.map(({ alias, field, selection }) => ({
+        alias,
+        field,
+        required: selection.required,
+      })),
+      choices?.classification,
+    ) &&
     selected.length === Object.keys(fields).length &&
     selected.every(({ selection, field }) => !selection.required || field.required_supported) &&
     aliases.length > 0 &&
@@ -316,6 +328,7 @@ function SnapshotDraft({
               definition_version: choices.definition_version,
               schema: input.reference,
               fields,
+              ...(admission ? { admission } : {}),
               ...(materials
                 ? {
                     materials: {
@@ -436,6 +449,33 @@ function SnapshotDraft({
                               ]),
                             ),
                           );
+                          setAdmission((policy) =>
+                            policy
+                              ? {
+                                  ...policy,
+                                  priority: {
+                                    ...policy.priority,
+                                    field:
+                                      policy.priority.field === current.alias
+                                        ? alias
+                                        : policy.priority.field,
+                                  },
+                                  risk: {
+                                    ...policy.risk,
+                                    field:
+                                      policy.risk.field === current.alias
+                                        ? alias
+                                        : policy.risk.field,
+                                  },
+                                  allowed: Object.fromEntries(
+                                    Object.entries(policy.allowed ?? {}).map(([key, values]) => [
+                                      key === current.alias ? alias : key,
+                                      values,
+                                    ]),
+                                  ),
+                                }
+                              : undefined,
+                          );
                           setProjections(
                             Object.fromEntries(
                               Object.entries(projections).map(([key, names]) => [
@@ -513,6 +553,16 @@ function SnapshotDraft({
               </label>
             </>
           ) : null}
+          <IssueAdmission
+            value={admission}
+            classification={choices?.classification}
+            fields={selected.map(({ alias, field, selection }) => ({
+              alias,
+              field,
+              required: selection.required,
+            }))}
+            onChange={setAdmission}
+          />
           <fieldset>
             <legend>{t('factory.snapshotProjections')}</legend>
             {value.root.nodes.map((node) => (

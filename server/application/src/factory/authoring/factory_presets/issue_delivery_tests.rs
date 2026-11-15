@@ -123,6 +123,171 @@ fn issue_input() -> FactoryPresetIssueSnapshotSelection {
 }
 
 #[test]
+fn issue_delivery_command_budget_covers_its_selected_execution_request() {
+  run_ready(async {
+    let fixture = delivery_fixture().await;
+    let mut selection = issue_selection(&fixture).await;
+    selection.issue_snapshot = Some(issue_input());
+    let execution = selection.execution.as_ref().unwrap();
+    let mut permissions = serde_json::to_value(execution.permissions()).unwrap();
+    permissions["resources"]["elapsed_millis"] = serde_json::json!(180_000);
+    permissions["outputs"] = serde_json::json!({
+      "kinds":["report"], "max_artifact_count":1,"max_artifact_bytes":4_194_304,
+      "max_report_count":1,"max_report_bytes":1_048_576
+    });
+    let permissions: FactoryPermissionSet = serde_json::from_value(permissions).unwrap();
+    selection.execution =
+      Some(FlowExecutionPolicy::new(execution.budget(), permissions.clone(), execution.max_active_nodes()).unwrap());
+    selection.commands.get_mut(&key("tests_on_base")).unwrap().permissions = permissions;
+    let result = AuthorizedQueryHandler::new(
+      fixture.policy.clone(),
+      Arc::new(
+        FactoryPresetHandlers::new(fixture.store.clone(), fixture.policy.clone())
+          .with_repositories(fixture.reader.clone())
+          .with_issue_properties(properties(fixture.project).await),
+      ),
+    )
+    .handle_query(
+      &fixture.context,
+      ResolveFactoryPresetQuery {
+        project_id: fixture.project,
+        selection,
+      },
+    )
+    .await
+    .unwrap();
+    assert!(result.diagnostics.is_empty(), "{:?}", result.diagnostics);
+    let draft = result.flow.unwrap();
+    let command = draft
+      .root
+      .nodes
+      .iter()
+      .find(|node| node.key() == &key("tests_on_base"))
+      .unwrap();
+    assert_eq!(command.budget().max_elapsed_millis(), 180_000);
+    assert_eq!(
+      command.budget().max_output_bytes(),
+      5_242_880,
+      "ordinary Build admission reserves artifact and report ceilings together"
+    );
+    assert_eq!(command.budget().max_attempts(), 1);
+    assert_eq!(command.budget().max_tokens(), 0);
+  });
+}
+
+#[test]
+fn issue_delivery_uses_selected_step_permissions_with_a_reusable_profile() {
+  run_ready(async {
+    use octacity_server_store::FactoryRoleProfileStore;
+    let fixture = delivery_fixture().await;
+    let mut selection = issue_selection(&fixture).await;
+    selection.issue_snapshot = Some(issue_input());
+    let selected = selection.profiles.get_mut(&key("protected_tests")).unwrap();
+    let old = fixture
+      .store
+      .factory_role_profile(fixture.project, selected.profile.id, None)
+      .await
+      .unwrap();
+    let mut intent = role_profile_contract_intent(fixture.project);
+    intent.profiles.truncate(1);
+    let mut definition = old.definition().clone();
+    definition.execution_binding = FactoryRoleExecutionBinding::Step;
+    let mode_permissions = definition.permissions.clone();
+    let mut ceiling = serde_json::to_value(&definition.permissions).unwrap();
+    ceiling["network_hosts"] = serde_json::json!(["other-mode.example"]);
+    definition.permissions = serde_json::from_value(ceiling).unwrap();
+    intent.profiles[0].definition = definition.clone();
+    let published = AuthorizedCommandHandler::new(
+      fixture.policy.clone(),
+      Arc::new(FactoryRoleProfileHandlers::with_policy(
+        fixture.store.clone(),
+        fixture.policy.clone(),
+      )),
+    )
+    .handle_command(
+      &fixture.context,
+      PublishFactoryRoleProfilesCommand {
+        intent,
+        published_at: Timestamp::from_unix_millis(2).unwrap(),
+        idempotency_key: "reusable-delivery-profile".parse().unwrap(),
+      },
+    )
+    .await
+    .unwrap();
+    selected.role = published.role.unwrap().reference().clone();
+    selected.profile = published.profiles[0].reference().clone();
+    selected.build.as_mut().unwrap().execution_permissions = Some(Box::new(mode_permissions.clone()));
+    let mut choices = FactoryConfigurationChoices::try_new(fixture.installed.entries()).unwrap();
+    for contract in fixture.installed.build_pipeline_contracts() {
+      let mut contract = contract.clone();
+      if let Some(compiler) = &mut contract.compilation {
+        compiler.permissions = Some(mode_permissions.clone());
+      }
+      choices = choices.with_build_pipeline_contract(contract).unwrap();
+    }
+    for target in fixture.installed.candidate_publications() {
+      choices = choices.with_candidate_publication(target.clone()).unwrap();
+    }
+    for (alias, capability) in fixture.installed.role_profile_capabilities() {
+      choices = choices
+        .with_role_profile_capability(alias.clone(), capability.clone())
+        .unwrap();
+    }
+    let mut capability = fixture
+      .installed
+      .role_profile_capabilities()
+      .values()
+      .next()
+      .unwrap()
+      .clone();
+    capability.local_permissions = LocalPermissionCeiling::fully_enforced(definition.permissions.clone());
+    capability.ceiling = definition;
+    choices = choices
+      .with_reference_choice(FactoryReferenceChoice {
+        alias: key("reusable-delivery"),
+        kind: FactoryChoiceKind::NodeCapability,
+        reference: capability.ceiling.toolchain.executable.clone(),
+      })
+      .unwrap()
+      .with_role_profile_capability(key("reusable-delivery"), capability)
+      .unwrap();
+    fixture.store.enable_project(fixture.project, choices).unwrap();
+    let result = AuthorizedQueryHandler::new(
+      fixture.policy.clone(),
+      Arc::new(
+        FactoryPresetHandlers::new(fixture.store.clone(), fixture.policy.clone())
+          .with_repositories(fixture.reader.clone())
+          .with_issue_properties(properties(fixture.project).await),
+      ),
+    )
+    .handle_query(
+      &fixture.context,
+      ResolveFactoryPresetQuery {
+        project_id: fixture.project,
+        selection,
+      },
+    )
+    .await
+    .unwrap();
+    assert!(result.diagnostics.is_empty(), "{:?}", result.diagnostics);
+    let draft = result
+      .flow
+      .expect("a qualified execution mode must open an editable draft");
+    let node = draft
+      .root
+      .nodes
+      .iter()
+      .find(|node| node.key() == &key("protected_tests"))
+      .unwrap();
+    assert_eq!(
+      node.permissions(),
+      &mode_permissions,
+      "other execution modes grant no step authority"
+    );
+  });
+}
+
+#[test]
 fn issue_delivery_resolves_and_publishes_project_contract_without_any_producer() {
   run_ready(async {
     let fixture = delivery_fixture().await;

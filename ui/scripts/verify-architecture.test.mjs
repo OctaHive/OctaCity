@@ -325,20 +325,20 @@ test('admits Issue documents and rejects another KiB near aggregate ceilings', a
   assert.deepEqual(await verifyArchitecture(root, { distDirectory: 'dist' }), []);
   assert.deepEqual(policy.bundleBudgets, {
     entryJavaScriptBytes: 460_800,
-    totalJavaScriptBytes: 1_613_824,
+    totalJavaScriptBytes: 1_630_208,
     totalCssBytes: 91_136,
-    totalStaticBytes: 1_703_936,
+    totalStaticBytes: 1_720_320,
     assetCount: 59,
   });
   // Exercise both ceilings independently of the measured bundle's headroom:
-  // 1,613,312 JS bytes and 1,703,533 total bytes fit; one more KiB exceeds both.
+  // 1,629,696 JS bytes and 1,719,917 total bytes fit; one more KiB exceeds both.
   await write(
     root,
     'dist/index.html',
     '<script type="module" src="./assets/index.js"></script>'.padEnd(622, ' '),
   );
   await write(root, 'dist/assets/styles.css', 'x'.repeat(89_599));
-  await write(root, 'dist/assets/features.js', 'x'.repeat(1_307_742));
+  await write(root, 'dist/assets/features.js', 'x'.repeat(1_324_126));
   assert.deepEqual(await verifyArchitecture(root, { distDirectory: 'dist' }), []);
   await write(root, 'dist/assets/unplanned.js', 'x'.repeat(1_024));
   const rejected = await verifyArchitecture(root, { distDirectory: 'dist' });

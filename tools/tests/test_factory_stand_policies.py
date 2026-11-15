@@ -109,6 +109,35 @@ class FactoryStandPoliciesTests(unittest.TestCase):
         triage.provision_project_policies(self.client, self.project, self.namespace, self.catalog)
         self.assertEqual(self.client.get(self.base + '/defaults')['defaults'], original_defaults)
 
+    def test_installer_upgrades_only_its_original_triage_permissions_and_retains_history(self):
+        writer = {'identity': 'stand.issue-classification', 'version': 'v1',
+            'digest': hashlib.sha256(b'stand.issue-classification').hexdigest()}
+        original = copy.deepcopy(self.client.access)
+        triage.provision_project_policies(self.client, self.project, self.namespace, self.catalog)
+        previous = copy.deepcopy(self.client.defaults)
+        installed = self.installed['projects'][0]['references'][0]
+        installed['metadata'] = {'permission_declarations': {**self.permissions, 'plugins': [writer],
+            'secret_profiles': list(reversed(self.permissions['secret_profiles']))}}
+        self.catalog.write_text(json.dumps(self.installed))
+        receipt = triage.provision_project_policies(self.client, self.project, self.namespace, self.catalog)
+        current = receipt['defaults']['access_profile']
+        self.assertGreater(current['version'], previous['access_profile']['version'])
+        record = self.client.get(f"{self.base}/access/{current['id']}/versions/{current['version']}")
+        self.assertEqual(record['policy']['policy']['definition']['permissions']['plugins'], [writer])
+        self.assertEqual(record['policy']['policy']['definition']['permissions']['secret_profiles'], self.permissions['secret_profiles'])
+        self.assertEqual(self.client.get(f"{self.base}/access/{current['id']}/versions/1")['policy'], original)
+        triage.provision_project_policies(self.client, self.project, self.namespace, self.catalog)
+        self.assertEqual(self.client.defaults, receipt['defaults'])
+
+    def test_provisioning_preserves_an_operator_rename_even_with_unchanged_permissions(self):
+        triage.provision_project_policies(self.client, self.project, self.namespace, self.catalog)
+        current = self.client.publish('access', self.client.access['policy']['reference']['id'], {
+            'name': 'Standard', 'permissions': self.permissions})
+        before = copy.deepcopy(self.client.defaults)
+        triage.provision_project_policies(self.client, self.project, self.namespace, self.catalog)
+        self.assertEqual(self.client.get(self.base + '/defaults')['defaults'], before)
+        self.assertEqual(self.client.records[('access', current['policy']['reference']['id'])][-1], current)
+
     def test_delivery_adopts_existing_equivalent_permissions_without_republishing(self):
         plugins = [{'identity': name, 'version': 'v1', 'digest': digit * 64}
             for name, digit in [('codex', '1'), ('shell', '2')]]

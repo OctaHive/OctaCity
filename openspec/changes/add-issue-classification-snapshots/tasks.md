@@ -63,7 +63,18 @@
 - [x] 7.4 Update the operator walkthrough, headless API examples and stand qualification instructions for Project field administration, existing discussion, Issue-owned document creation/versioning versus explicit shared Project document linking, independent owner access, exact material/input selection, classification application, both execution input modes and rollback; validate links and document the required predecessor-spec synchronization order without rewriting either change's history.
 - [x] 7.5 Add and observe Red/Green in the existing packaged Issue journey: create ordinary/classification fields through Project settings, fill an Issue, create/version/select an Issue-owned document, separately link/select an exact shared Project document, post/select a comment and start a snapshot consumer. Verify task documents never enter Project catalogs/selectors, another same-Project Issue cannot consume them, newer publications/comments preserve admitted inputs, another stage receives no undeclared text and a new direct producer-result pipeline remains usable.
 
-## 8. Verification commands
+## 8. Complete ordinary-stand UI authoring
+
+The qualification in section 7 starts published pipelines prepared by the harness. It does not establish that an operator can author both pipelines through the Console. These follow-up tasks remain required for the original UI goal.
+
+- [x] 8.1 Add and observe an installer Red/Green test, then install the local Issue classification writer and its Project capability on the ordinary stand under the configured management principal. Publish the explicit plugin permission in the installer-owned Triage access profile, preserving custom reviewed policies, replay and existing publications. Installation must not enable classification effects or delivery intake automatically.
+- [x] 8.2 Add and observe Console Red/Green tests, then expose snapshot admission mappings and allowed values through Project-backed controls in the ordinary Flow editor. Preserve projections and supported existing policies on reopen, handle catalog conflicts, and retain advanced mappings without destructive normalization. Include EN/RU and keyboard coverage.
+- [x] 8.3 Add and observe Console Red/Green tests, then enable the Delivery v2 example with exact Project definitions and reviewed admission selections. Resolve into the ordinary editable Flow, support publication and Configuration creation through UI, and require no producer Run or hand-written JSON.
+- [x] 8.4 Qualify triage authoring through the ordinary UI using reusable Project field contracts, an explicitly enabled local classification action and reviewed launch/access policies supplied by the ordinary stand. No fixture-installed writer or manually copied classification enums may be required.
+- [x] 8.5 Add and observe a packaged browser/native end-to-end test that begins without a Flow or Configuration and creates, reviews and publishes both triage and Delivery through UI. Test-side API calls must not prepare pipelines, admission mappings, gates or configurations; normal technical installation is allowed and read-only observation may collect evidence. Execute triage, verify applied Issue fields, independently start Delivery without an upstream selector and retain mandatory protected validation and confirmed test PR evidence.
+- [x] 8.6 Update the operator walkthrough and qualification documentation with the complete UI path, remove superseded API-only workarounds, and record actual Red/Green commands and full qualification results. Preserve the historical section 7 reports and keep unobserved acceptance unchecked.
+
+## 9. Verification commands
 
 Each executable behavior above uses one public-boundary Red/Green cycle before moving to the next slice. Use the repository's existing fixtures and test contracts; a setup failure is not Red. Select the existing PostgreSQL/native qualification environment explicitly when those tests require it.
 

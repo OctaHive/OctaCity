@@ -418,6 +418,13 @@ pub(crate) async fn candidate_context_fixture_with_preparation(
   );
   let mut manifest: CapturedChangeSetManifestV1 = serde_json::from_slice(&outputs.documents[1].bytes).unwrap();
   manifest.candidate_revision = "0123456789abcdef0123456789abcdef0123456789".to_owned();
+  manifest.changed_paths = vec![CapturedChangeSetPathV1 {
+    status: "A".into(),
+    path: "src/retained-public.txt".into(),
+    old_mode: "000000".into(),
+    new_mode: "100644".into(),
+    content_sha256: Some("e".repeat(64)),
+  }];
   manifest.bundle.size_bytes = outputs.documents[0].bytes.len() as u64;
   manifest.bundle.sha256 = FactoryDigest::content_sha256(&outputs.documents[0].bytes).to_string();
   let mut encoded = serde_json::to_vec(&manifest).unwrap();

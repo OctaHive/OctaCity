@@ -28,6 +28,7 @@ pub(super) fn insert(schemas: &mut Map<String, Value>) {
         ("name", non_empty_string()),
         ("budget", schema_ref("FactoryBudget")),
         ("max_active_nodes", bounded_integer(1, b.active_nodes.into())),
+        ("issue_snapshot_fields", json!({"type":"object","maxProperties":b.schema_entries,"propertyNames":key(),"additionalProperties":schema_ref("FactoryFlowIssueFieldSource")})),
         (
           "steps",
           bounded_array(

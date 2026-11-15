@@ -673,3 +673,128 @@ it('reuses selected Project classification field contracts in an assessment resu
     },
   });
 });
+
+it.each(['classification', 'property'] as const)(
+  'authors and reopens admission using a %s source without losing snapshot projections',
+  async (source) => {
+    const user = userEvent.setup();
+    const capabilities = factoryIssueFieldsFixture();
+    if (source === 'property') {
+      capabilities.issue_fields.fields.push({
+        source: { kind: 'property', id: 'impact' },
+        property_id: 'impact',
+        name: 'Impact',
+        required_supported: true,
+        shape: { type: 'enum', values: ['major', 'minor'] },
+      });
+    }
+    const impactLabel = source === 'property' ? 'Project field: Impact' : 'Classification: Impact';
+    const impactAlias = source === 'property' ? 'impact' : 'severity';
+    const draft = emptyFlowDraft();
+    draft.root.nodes = [
+      {
+        ...configurationFixture().configuration.flow.closure.definitions[0]!.nodes[0]!,
+        key: 'coder',
+        input_schema: null,
+        input_binding: null,
+      },
+    ];
+    draft.root.entry = 'coder';
+    let selected = draft;
+    const api = {
+      ...factoryApi,
+      getAuthoringCapabilities: vi.fn<FactoryApi['getAuthoringCapabilities']>(
+        async () => capabilities,
+      ),
+      normalizeSchema: vi.fn<FactoryApi['normalizeSchema']>(async (body) => ({
+        reference: { identity: body.identity, version: body.version, digest: 'a'.repeat(64) },
+        shape: body.shape,
+      })),
+    };
+    function Harness() {
+      const [value, setValue] = useState(draft);
+      return (
+        <FlowIssueSnapshot
+          value={value}
+          services={{ api, projectId: 'delivery' }}
+          onChange={(next) => {
+            selected = next;
+            setValue(next);
+          }}
+          onEditingChange={() => {}}
+        />
+      );
+    }
+    render(
+      <QueryClientProvider client={createConsoleQueryClient()}>
+        <Harness />
+      </QueryClientProvider>,
+    );
+    await user.click(screen.getByRole('button', { name: 'Configure Issue snapshot' }));
+    const choose = async (name: string, option: string) => {
+      await user.click(screen.getByRole('combobox', { name }));
+      await user.click(screen.getByRole('option', { name: option }));
+    };
+    for (const name of ['Priority', 'Issue type', impactLabel]) {
+      await user.click(await screen.findByRole('checkbox', { name }));
+      await user.click(screen.getByRole('checkbox', { name: `Required: ${name}` }));
+      await user.click(screen.getByRole('checkbox', { name: `coder: ${name}` }));
+    }
+    await user.click(screen.getByRole('checkbox', { name: 'Map Issue fields to admission' }));
+    await choose('Admission priority field', 'Priority · priority');
+    await user.type(screen.getByRole('spinbutton', { name: 'Scheduling priority: urgent' }), '90');
+    await user.type(screen.getByRole('spinbutton', { name: 'Scheduling priority: routine' }), '20');
+    await choose('Admission risk field', `${impactLabel} · ${impactAlias}`);
+    await choose('Admission risk: major', 'High');
+    await choose('Admission risk: minor', 'Low');
+    await user.click(screen.getByRole('checkbox', { name: 'Allow type: defect' }));
+    await user.click(screen.getByRole('checkbox', { name: `Allow ${impactAlias}: major` }));
+    expect(screen.queryByRole('alert')).toBeNull();
+    await user.click(screen.getByRole('button', { name: 'Use Issue snapshot' }));
+    await waitFor(() =>
+      expect(selected.issue_snapshot?.admission).toEqual({
+        priority: { field: 'priority', values: { urgent: 90, routine: 20 } },
+        risk: { field: impactAlias, values: { major: 'high', minor: 'low' } },
+        allowed: { type: ['defect'], [impactAlias]: ['major'] },
+      }),
+    );
+    const previous = structuredClone(selected);
+    await user.click(screen.getByRole('button', { name: 'Configure Issue snapshot' }));
+    expect(
+      await screen.findByRole('spinbutton', { name: 'Scheduling priority: urgent' }),
+    ).toHaveProperty('value', '90');
+    expect(screen.queryByRole('alert')).toBeNull();
+    expect(screen.getByRole('checkbox', { name: 'coder: Priority' })).toHaveProperty(
+      'checked',
+      true,
+    );
+    expect(screen.getByRole('button', { name: 'Use Issue snapshot' })).toHaveProperty(
+      'disabled',
+      false,
+    );
+    await user.click(screen.getByRole('button', { name: 'Use Issue snapshot' }));
+    await waitFor(() => expect(selected.issue_snapshot).toEqual(previous.issue_snapshot));
+    expect(selected.root.nodes).toEqual(previous.root.nodes);
+    await user.click(screen.getByRole('button', { name: 'Configure Issue snapshot' }));
+    const alias = await screen.findByRole('textbox', { name: 'Input alias: Priority' });
+    await user.clear(alias);
+    await user.type(alias, 'urgency');
+    expect(screen.getByRole('button', { name: 'Use Issue snapshot' })).toHaveProperty(
+      'disabled',
+      false,
+    );
+    expect(screen.getByRole('spinbutton', { name: 'Scheduling priority: urgent' })).toHaveProperty(
+      'value',
+      '90',
+    );
+    await user.click(screen.getByRole('button', { name: 'Use Issue snapshot' }));
+    await waitFor(() => expect(selected.issue_snapshot?.admission?.priority.field).toBe('urgency'));
+    expect(selected.issue_snapshot?.fields.urgency).toEqual(
+      previous.issue_snapshot?.fields.priority,
+    );
+    expect(selected.issue_snapshot?.admission?.priority.values).toEqual({
+      urgent: 90,
+      routine: 20,
+    });
+  },
+);

@@ -22,6 +22,7 @@ import configure_local_stand_server as server_config
 API_VERSION = "2026-03-10"  # Same native adapter contract as octacity-github/README.md.
 SOURCE_POLICY = Path(__file__).resolve().parents[1] / "deployment/local-stand/source-policy.json"
 SOCKET = "/run/octacity-management/management.sock"
+MANAGEMENT_PRINCIPAL = "local-stand-gateway"
 STATE_ROOT = "/var/lib/octacity-integrations"
 MAX_REPOSITORY_LABELS = 128  # Installed Reporter and native mapping ceilings.
 
@@ -318,7 +319,7 @@ configuration_digest = "{profile_digest}"
 [integration_management]
 socket_path = "{SOCKET}"
 peer_uid = 101
-principal = "local-stand-gateway"
+principal = "{MANAGEMENT_PRINCIPAL}"
 catalog_file = "{installed_root}/catalog.json"
 '''.encode()
     bundle = root / "config/integrations"

@@ -26,3 +26,8 @@ For defects, a reproduced or not-reproduced claim SHALL require independent appl
 #### Scenario: Local application conflicts with an operator edit
 - **WHEN** the accepted assessment is retained but the Issue rejects its stale or conflicting field updates
 - **THEN** diagnostics distinguish triage completion from failed classification application and a consumer cannot treat the unapplied values as current Issue data
+
+#### Scenario: Ordinary stand advertises the guarded local writer
+- **WHEN** the ordinary stand installs its reviewed Factory catalog under its configured management principal
+- **THEN** the Project advertises the local Issue classification action and the installer-owned Triage access profile includes its explicit plugin permission
+- **AND** installation enables no classification effect or delivery intake, preserves custom reviewed policies and leaves previously published pipelines unchanged

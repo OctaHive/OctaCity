@@ -47,9 +47,10 @@ Source intake and Reporter effects remain separate opt-ins. The default snapshot
 selects no comment or document text. Add any required ordinary fields, explicit
 materials/evidence and per-step projections through the generic Flow contract;
 prose grants no evidence or approval authority. The generic Flow editor supports
-simple Issue field/material selection, but its **Start from an example** form
-does not yet collect this preset's required snapshot/admission parameters and
-disables opening `v2`. Use API resolution/publication for this preset; see the
+Issue field/material selections and explicit admission mappings. Its **Start from
+an example → Ticket delivery · v2** form collects the exact Project definitions,
+admission mappings, executor/command selections and publication target, then
+opens the same editable Flow. API resolution/publication remains available; see the
 [operator walkthrough](../../../../docs/operations/factory-pipeline-authoring.md#author-ticket-delivery).
 Choose `v1` only when the intended input is an exact producer result.
 

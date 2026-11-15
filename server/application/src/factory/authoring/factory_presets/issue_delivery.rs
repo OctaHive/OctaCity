@@ -30,25 +30,14 @@ pub(super) fn bind(
   {
     return Err(invalid_admission());
   }
-  let semantic = |slot| FlowIssueFieldSource::Classification { slot: key(slot) };
   let mut fields = BTreeMap::new();
   let mut shapes = BTreeMap::new();
-  for (alias, source) in [
-    ("priority", FlowIssueFieldSource::Priority),
-    ("component", FlowIssueFieldSource::Component),
-    ("work_kind", FlowIssueFieldSource::Type),
-    ("size", FlowIssueFieldSource::Size),
-    ("dependencies", FlowIssueFieldSource::Dependencies),
-    ("risk", semantic("risk")),
-    ("severity", semantic("severity")),
-    ("recommended_route", semantic("recommended_route")),
-    ("reproducibility", semantic("reproducibility")),
-  ] {
+  for (alias, source) in field_sources() {
     let selected = FlowIssueFieldSelection { source, required: true };
     let shape = crate::factory::issue_snapshot::field_shape(&selected, catalog)
       .ok_or_else(|| format!("/issue_snapshot/fields/{alias}"))?;
-    fields.insert(key(alias), selected);
-    shapes.insert(key(alias), FlowFieldSchema::required(shape));
+    fields.insert(alias.clone(), selected);
+    shapes.insert(alias, FlowFieldSchema::required(shape));
   }
   let schema = FlowDataSchema::new(
     key("factory.ticket-delivery.issue-input"),
@@ -131,4 +120,25 @@ pub(super) fn bind(
     materials: Default::default(),
     evidence: Default::default(),
   })
+}
+
+/// Release-owned aliases and source semantics shared by discovery and resolution.
+/// Project definitions continue to own the actual choices and bounds.
+pub(super) fn field_sources() -> BTreeMap<FactoryKey, FlowIssueFieldSource> {
+  let key = |value: &str| FactoryKey::new(value).expect("release key");
+  let semantic = |slot| FlowIssueFieldSource::Classification { slot: key(slot) };
+  [
+    ("priority", FlowIssueFieldSource::Priority),
+    ("component", FlowIssueFieldSource::Component),
+    ("work_kind", FlowIssueFieldSource::Type),
+    ("size", FlowIssueFieldSource::Size),
+    ("dependencies", FlowIssueFieldSource::Dependencies),
+    ("risk", semantic("risk")),
+    ("severity", semantic("severity")),
+    ("recommended_route", semantic("recommended_route")),
+    ("reproducibility", semantic("reproducibility")),
+  ]
+  .into_iter()
+  .map(|(alias, source)| (key(alias), source))
+  .collect()
 }

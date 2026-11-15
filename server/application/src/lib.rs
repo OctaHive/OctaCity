@@ -73,7 +73,7 @@ pub use factory::artifacts::factory_artifact_reader::{
   FactoryRetainedInput, ReadFactoryArtifact,
 };
 pub use factory::artifacts::factory_candidate_context::{
-  FactoryCandidateContext, FactoryCandidateContextSource, ReadFactoryCandidateContext,
+  FactoryCandidateChangeSummary, FactoryCandidateContext, FactoryCandidateContextSource, ReadFactoryCandidateContext,
 };
 pub use factory::artifacts::factory_candidate_deliverables::{
   VerifiedFactoryCandidateDeliverables, verify_factory_node_candidate_deliverables,

@@ -1,7 +1,7 @@
 //! Exact retained candidate inputs separated from declared textual model context.
 use crate::{
   ApplicationError, FactoryArtifactReader, FactoryManagedCandidateProof, FactoryNodeBuildOutputDocument,
-  ReadFactoryArtifact, restore_factory_node_change_set,
+  ReadFactoryArtifact,
 };
 use octacity_artifact_store::{ArtifactByteReader, MAX_ARTIFACT_READ_BYTES};
 use octacity_protocol::{CHANGE_SET_BUNDLE_OUTPUT, CHANGE_SET_MANIFEST_OUTPUT};
@@ -12,6 +12,42 @@ use octacity_server_factory::{
 };
 use octacity_server_store::{ArtifactRecord, ArtifactRecordStore, BuildQueryStore};
 use std::{collections::BTreeMap, sync::Arc};
+
+/// Verified source metadata for model review; capture bytes and producer details stay private.
+#[derive(Clone, serde::Serialize)]
+pub struct FactoryCandidateChangeSummary {
+  base_revision: String,
+  candidate_revision: String,
+  changed_paths: Vec<octacity_protocol::CapturedChangeSetPathV1>,
+  complete: bool,
+}
+impl FactoryCandidateChangeSummary {
+  /// Narrows an already verified view. Whole-file hashes/modes are omitted for
+  /// line-only grants; omitted changes never become authority for model review.
+  #[must_use]
+  pub fn restrict(&self, scope: &octacity_server_factory::FlowCodeScope) -> Self {
+    use octacity_server_factory::{FactoryRepositoryPath, FlowCodeScope, FlowCodeSelection};
+    let changed_paths: Vec<_> = self
+      .changed_paths
+      .iter()
+      .filter(|change| {
+        FactoryRepositoryPath::new(change.path.clone()).is_ok_and(|path| {
+          FlowCodeScope::Selected {
+            entries: [FlowCodeSelection::Path { path }].into(),
+          }
+          .is_within(scope)
+        })
+      })
+      .cloned()
+      .collect();
+    Self {
+      base_revision: self.base_revision.clone(),
+      candidate_revision: self.candidate_revision.clone(),
+      complete: self.complete && changed_paths.len() == self.changed_paths.len(),
+      changed_paths,
+    }
+  }
+}
 
 /// Exact selected candidate and its owner-retained producing facts.
 /// Producer records, intent and execution must come from the trusted store;
@@ -41,6 +77,7 @@ pub struct FactoryCandidateContext {
   bundle: ArtifactRecord,
   manifest: ArtifactRecord,
   model_context: BTreeMap<ArtifactId, Vec<u8>>,
+  change_summary: Option<FactoryCandidateChangeSummary>,
   retained_until: Option<Timestamp>,
 }
 impl FactoryCandidateContext {
@@ -63,6 +100,10 @@ impl FactoryCandidateContext {
   /// Only remaining explicitly selected UTF-8 artifacts, never capture bytes.
   pub const fn model_context(&self) -> &BTreeMap<ArtifactId, Vec<u8>> {
     &self.model_context
+  }
+  /// Bounded source metadata restricted to the frozen input's reviewed code scope.
+  pub const fn change_summary(&self) -> Option<&FactoryCandidateChangeSummary> {
+    self.change_summary.as_ref()
   }
   pub(crate) fn is_retained_at(&self, observed_at: Timestamp) -> bool {
     self.retained_until.is_none_or(|deadline| observed_at < deadline)
@@ -152,7 +193,7 @@ impl<A: ArtifactRecordStore, S: BuildQueryStore, B: ArtifactByteReader> FactoryC
       plugin: manifest_output.producer.plugin().clone(),
       data: None,
     };
-    let candidate = restore_factory_node_change_set(
+    let (candidate, manifest) = super::factory_node_capture::restore_factory_node_change_set_manifest(
       request.producer_record,
       request.producer_intent,
       request.producer_execution,
@@ -160,6 +201,31 @@ impl<A: ArtifactRecordStore, S: BuildQueryStore, B: ArtifactByteReader> FactoryC
       request.capture_tool,
     )
     .map_err(|_| invalid())?;
+    let change_summary = if include_model_context {
+      let repository_scope = octacity_server_factory::FlowCodeScope::Repository;
+      let scope = match request.input.code() {
+        Some(octacity_server_factory::FlowNodeCode::Source { scope, .. }) => scope,
+        None => &repository_scope,
+        Some(octacity_server_factory::FlowNodeCode::None) => return Err(invalid()),
+      };
+      Some(
+        FactoryCandidateChangeSummary {
+          base_revision: manifest
+            .cumulative_changes
+            .as_ref()
+            .map_or(&manifest.base_revision, |changes| &changes.base_revision)
+            .clone(),
+          candidate_revision: manifest.candidate_revision.clone(),
+          changed_paths: manifest
+            .cumulative_changes
+            .map_or(manifest.changed_paths, |changes| changes.changed_paths),
+          complete: true,
+        }
+        .restrict(scope),
+      )
+    } else {
+      None
+    };
     let proof = FactoryManagedCandidateProof::verify(
       request.input,
       candidate,
@@ -194,6 +260,7 @@ impl<A: ArtifactRecordStore, S: BuildQueryStore, B: ArtifactByteReader> FactoryC
       bundle,
       manifest: manifest_document.record,
       model_context,
+      change_summary,
       retained_until,
     })
   }

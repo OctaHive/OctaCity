@@ -1211,6 +1211,19 @@ fn delivery_discovery_offers_issue_snapshot_v2_without_a_required_producer() {
         .any(|p| p["path"] == "/issue_snapshot" && p["kind"] == "issue_snapshot" && p["required"] == true)
     );
     assert!(!delivery.parameters.iter().any(|p| p.path == "/accepted_predecessor"));
+    let editor = serde_json::to_value(&delivery.editor).unwrap();
+    assert_eq!(
+      editor["issue_snapshot_fields"]["work_kind"],
+      serde_json::json!({"kind":"type"})
+    );
+    assert_eq!(
+      editor["issue_snapshot_fields"]["priority"],
+      serde_json::json!({"kind":"priority"})
+    );
+    assert_eq!(
+      editor["issue_snapshot_fields"]["risk"],
+      serde_json::json!({"kind":"classification","slot":"risk"})
+    );
   });
 }
 

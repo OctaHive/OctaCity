@@ -193,7 +193,12 @@ The label-based mapping below remains available as **Legacy priority and size
 labels** when the installed writer advertises labels. Existing legacy steps
 retain their selected mode.
 
-The private Factory catalogue accepts an optional `issue_classification_actions`
+The ordinary `tools/factory-stand` installation supplies this local writer and
+its explicit permission in the installer-owned **Triage** access profile. Restart
+with the same root to upgrade the installation; effects remain disabled until
+configured in a Flow. Customized access policies require their own review.
+
+For a custom installation, the private Factory catalogue accepts an optional `issue_classification_actions`
 array. Each entry uses the same exact `identity` and verified `principal` fields
 as a local status action. A Flow selects the installed capability and declares
 `apply_issue_classification` as a trusted action. Its parameters identify the

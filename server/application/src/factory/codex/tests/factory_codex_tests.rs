@@ -1882,6 +1882,9 @@ fn codex_candidate_context_compiles_only_declared_text_with_the_exact_source_rev
     .unwrap();
     let prompt = std::str::from_utf8(compiled.document(FactoryProtectedDocumentKind::Prompt).bytes()).unwrap();
     assert!(prompt.contains("Declared public model task only."));
+    assert!(prompt.contains("Verified candidate change summary"));
+    assert!(prompt.contains("src/retained-public.txt"));
+    assert!(prompt.contains("\"complete\":true"));
     for document in compiled.documents() {
       let text = std::str::from_utf8(document.bytes()).unwrap();
       assert!(!text.contains("binary-private-bundle-canary"));

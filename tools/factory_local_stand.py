@@ -111,7 +111,7 @@ def run_triage_stand(root: Path, source: str | None, revision: str | None, *,
                      delivery_test_packs: list[Path] | None = None,
                      delivery_write_directories: list[str] | None = None,
                      delivery_target_branch: str | None = None,
-                     delivery_token_file: Path | None = None) -> dict:
+                     delivery_token_file: Path | None = None, seed_example: bool = True) -> dict:
     """Install the actual two-stage pipeline, leaving activation to ordinary review.
 
     Local files retain only installation receipts. Server remains the owner of
@@ -184,17 +184,19 @@ def run_triage_stand(root: Path, source: str | None, revision: str | None, *,
             raise ValueError("the triage installation has another selected GitHub repository")
         retained = _read_json(receipt_file)
         reference = retained["configuration"]
+        if not seed_example and reference is not None:
+            raise ValueError("this stand already has an example pipeline; use a fresh root for UI-only authoring")
 
         # A provisioning failure must leave the installation update retryable,
         # including the one-time recovery of exhausted Source scans.
         def prepare_project() -> None:
             client = integration.LocalStandClient(root, bootstrap.DEFAULT_ORIGIN)
-            configuration = _read_seed_configuration(client, retained["project"], reference["id"],
-                reference["version"], required=True)
-            if configuration["reference"] != reference:
+            configuration = (_read_seed_configuration(client, retained["project"], reference["id"],
+                reference["version"], required=True) if reference is not None else None)
+            if configuration is not None and configuration["reference"] != reference:
                 raise ValueError("stand Configuration differs from its retained identity")
             triage.provision_project_policies(client, retained["project"], namespace, catalog, configuration)
-            if upgraded_vcs:
+            if upgraded_vcs and reference is not None:
                 _resume_vcs_intake(client, retained["project"], reference["id"], namespace, vcs_digest)
 
         with tempfile.TemporaryDirectory(prefix=".factory-resume-", dir=root) as temporary:
@@ -202,6 +204,13 @@ def run_triage_stand(root: Path, source: str | None, revision: str | None, *,
             catalog = inputs["factory_profiles"]
             if catalog is None or inputs["factory_agent_profile"] is None:
                 raise ValueError("the retained triage installation is incomplete")
+            installed_catalog = _read_json(catalog)
+            triage.install_issue_classification(installed_catalog, retained["project"])
+            updated_catalog = Path(temporary) / "classification-profiles.json"
+            triage._publish(updated_catalog, installed_catalog)
+            upgraded_classification = _read_json(catalog) != installed_catalog
+            if upgraded_classification:
+                catalog = inputs["factory_profiles"] = updated_catalog
             arguments = ["up", "--root", str(root)]
             for name, path in inputs.items():
                 if path is not None and name != "vcs_integrations":
@@ -209,7 +218,7 @@ def run_triage_stand(root: Path, source: str | None, revision: str | None, *,
             arguments.extend(("--vcs-integrations", str(vcs)))
             installed_vcs = inputs["vcs_integrations"]
             upgraded_vcs = installed_vcs is None or installed_vcs.read_bytes() != vcs.read_bytes()
-            if upgraded_vcs:
+            if upgraded_vcs or upgraded_classification:
                 arguments.append("--update-factory-installation")
             launcher.up(launcher.parse_arguments(arguments), before_agent=prepare_project)
         install_delivery(retained["project"])
@@ -253,9 +262,11 @@ def run_triage_stand(root: Path, source: str | None, revision: str | None, *,
         defaults = client.get(f"/api/v1/projects/{resources['project']}/factory-policies/defaults")["defaults"]
         if defaults is None:
             raise ValueError("stand Configuration requires Project policy defaults")
-    selection = triage.pipeline_selection(client, resources, profiles, context, connection, namespace,
-        settings["permissions"], policy_defaults=defaults)
-    published = publish_triage(client, resources["project"], selection, namespace, retained_configuration=configuration)
+    published = {"flow": None, "configuration": None, "input": None}
+    if seed_example:
+        selection = triage.pipeline_selection(client, resources, profiles, context, connection, namespace,
+            settings["permissions"], policy_defaults=defaults)
+        published = publish_triage(client, resources["project"], selection, namespace, retained_configuration=configuration)
     receipt = {"schema_version": 1, "origin": bootstrap.DEFAULT_ORIGIN, "project": resources["project"],
         "profiles": profiles, "context": context, **published}
     _private_json(receipt_file, receipt)
@@ -325,8 +336,8 @@ def bootstrap_server(root: Path, native: Path):
             mounts.extend(["--mount", f"type=bind,src={source},dst=/run/secrets/{name},readonly"])
         mounts.extend(["--mount", f"type=bind,src={staging / 'pki/local-ca.pem'},dst=/etc/ssl/certs/octacity-local-ca.pem,readonly"])
         started = subprocess.run([
-            "docker", "run", "--detach", "--user", "0:0", "--network", "name=octacity-local_stand,alias=server",
-            "--network", "octacity-local_edge",
+            "docker", "run", "--detach", "--user", "0:0", "--network", f"name={launcher.PROJECT_NAME}_stand,alias=server",
+            "--network", f"{launcher.PROJECT_NAME}_edge",
             "--publish", "127.0.0.1::8080", "--read-only", "--tmpfs", "/run/octacity-secrets:mode=0700",
             "--security-opt", "no-new-privileges:true", "--cap-drop", "ALL",
             "--cap-add", "CHOWN", "--cap-add", "DAC_OVERRIDE", "--cap-add", "SETGID", "--cap-add", "SETUID",
@@ -339,7 +350,7 @@ def bootstrap_server(root: Path, native: Path):
             for name in ("gateway.pem", "gateway-key.pem"):
                 gateway_mounts.extend(["--mount", f"type=bind,src={staging / 'pki' / name},dst=/run/secrets/{name},readonly"])
             gateway = subprocess.run([
-                "docker", "run", "--detach", "--network", "octacity-local_stand", "--network-alias", "objects.localhost",
+                "docker", "run", "--detach", "--network", f"{launcher.PROJECT_NAME}_stand", "--network-alias", "objects.localhost",
                 "--read-only", "--tmpfs", "/tmp:mode=1777", "--cap-drop", "ALL",
                 "--security-opt", "no-new-privileges:true", *gateway_mounts, "octacity/gateway:local"],
                 capture_output=True, text=True, check=True, timeout=30).stdout.strip()
@@ -493,6 +504,8 @@ def main(arguments=None) -> int:
     parser.add_argument("--github-repository", help="explicit owner/repository to install as a ticket source")
     parser.add_argument("--github-token-file", type=Path,
                         help="explicit private PAT file for the selected GitHub integration")
+    parser.add_argument("--no-example-pipeline", action="store_true",
+                        help="install technical capabilities and profiles without authoring a Factory Flow or Configuration")
     parser.add_argument("--factory-profiles", type=Path,
                         help="complete private operator catalog; uses ordinary setup without seeding Runs")
     parser.add_argument("--factory-runtime-bundle", type=Path, help="private installed AI Runtime directory")
@@ -520,6 +533,8 @@ def main(arguments=None) -> int:
     if args.factory_profiles is None and (args.factory_runtime_bundle is not None or args.factory_agent_profile is not None or args.factory_issue_mcp_readers is not None):
         parser.error("explicit Factory runtime, Agent and MCP inputs require --factory-profiles")
     if args.factory_profiles is not None:
+        if args.no_example_pipeline:
+            parser.error("--no-example-pipeline requires the default Factory stand")
         if args.source_repository is not None or args.source_revision is not None:
             parser.error("default triage source options cannot be combined with --factory-profiles")
         target_project = None
@@ -558,6 +573,7 @@ def main(arguments=None) -> int:
             args.github_repository = policy["github_repository"]
         receipt = run_triage_stand(args.root, args.source_repository,
                             args.source_revision, github_repository=args.github_repository,
+                            **({"seed_example": False} if args.no_example_pipeline else {}),
                             **({"delivery_test_packs": args.delivery_test_pack,
                                 "delivery_write_directories": args.delivery_write_directory,
                                 "delivery_target_branch": args.delivery_target_branch,

@@ -23,6 +23,7 @@ import configure_local_stand_server as server
 import factory_local_runtime as runtime
 import local_stand_state as state
 import local_stand_build_inputs as build_inputs
+from factory_integrations import MANAGEMENT_PRINCIPAL
 
 POLICY = Path(__file__).resolve().parents[1] / "deployment/local-stand/factory-triage.json"
 # Installed identities are retained for compatibility with earlier stand publications.
@@ -195,6 +196,51 @@ def _reference(identity: str, version: str = "v1", digest: str | None = None) ->
             "digest": digest or hashlib.sha256(identity.encode()).hexdigest()}
 
 
+def install_issue_classification(catalog: dict, project: str) -> None:
+    """Install a Server-local writer, separate from Agent tools and Flow effects.
+
+    The runtime independently checks this principal against management config.
+    Only the Project ceiling grants the plugin; individual Flows must opt in.
+    Retain old ceilings so already published configurations remain resolvable.
+    """
+    writer = _reference("stand.issue-classification")
+    declaration = {"identity": writer, "principal": MANAGEMENT_PRINCIPAL}
+    actions = catalog.setdefault("issue_classification_actions", [])
+    if declaration not in actions:
+        if any(row["identity"]["identity"] == writer["identity"] for row in actions):
+            raise ValueError("installed classification writer differs from the reviewed declaration")
+        actions.append(declaration)
+    owner, = [row for row in catalog["projects"] if row["project_id"] == project]
+    capability = {"kind": "node_capability", "alias": writer["identity"], "reference": writer,
+        "metadata": {"node_kinds": ["trusted_action"], "signal_purposes": [], "enforcement": [],
+            "compatible_choices": [], "issue_classification": {"policy": "triage", "size_labels": {}}}}
+    if capability not in owner["references"]:
+        owner["references"].append(capability)
+    ceiling, = [row for row in owner["references"]
+        if row["kind"] == "permission_ceiling" and row["alias"] == _INSTALLED_ACCESS_DEFAULT]
+    permissions = copy.deepcopy(ceiling["metadata"]["permission_declarations"])
+    if writer in permissions["plugins"]:
+        return
+    permissions["plugins"].append(writer)
+    # The original digest remains addressable, while provisioning chooses the new declaration.
+    ceiling["alias"] += "-legacy-" + ceiling["reference"]["digest"][:12]
+    digest = hashlib.sha256(json.dumps(permissions, sort_keys=True, separators=(",", ":")).encode()).hexdigest()
+    owner["references"].append({**ceiling, "alias": _INSTALLED_ACCESS_DEFAULT,
+        "reference": _reference(_INSTALLED_ACCESS_DEFAULT, "v2", digest=digest),
+        "metadata": {**ceiling["metadata"], "permission_declarations": permissions}})
+
+
+def same_permissions(left: dict, right: dict) -> bool:
+    """Compare domain permission sets without treating transport ordering as a grant change."""
+    def canonical(grants):
+        result = {key: sorted(json.dumps(entry, sort_keys=True) for entry in value) if isinstance(value, list) else value
+            for key, value in grants.items()}
+        if "outputs" in result:
+            result["outputs"] = {**result["outputs"], "kinds": sorted(result["outputs"]["kinds"])}
+        return result
+    return canonical(left) == canonical(right)
+
+
 def provision_project_policies(client, project: str, namespace: uuid.UUID, catalog: Path,
                                retained: dict | None = None) -> dict:
     """Designate the reviewed installation ceiling and import only exact retained legacy pins."""
@@ -229,7 +275,11 @@ def provision_project_policies(client, project: str, namespace: uuid.UUID, catal
         raise ValueError(f"unresolved Factory policies: {pending}. Restore the exact installed declarations and retry.")
     original = receipt.get("provisioning", {}).get("standard_access")
     if original is not None:
-        _name_triage_access(client, base, namespace, original)
+        declaration = next((entry.get("metadata", {}).get("permission_declarations")
+            for owner in installed["projects"] if owner["project_id"] == project
+            for entry in owner["references"]
+            if entry["kind"] == "permission_ceiling" and entry["alias"] == _INSTALLED_ACCESS_DEFAULT), None)
+        _name_triage_access(client, base, namespace, original, declaration)
         receipt["defaults"] = client.get(f"{base}/defaults")["defaults"]
     return receipt
 
@@ -256,24 +306,33 @@ def publish_access_profile(client, base: str, namespace: uuid.UUID, draft: dict)
     return client.post(base, key, draft)["policy"]["policy"]["reference"]
 
 
-def _name_triage_access(client, base: str, namespace: uuid.UUID, original: dict) -> None:
+def _name_triage_access(client, base: str, namespace: uuid.UUID, original: dict,
+                       installed_permissions: dict | None = None) -> None:
     current = next((row["reference"]["reference"] for row in project_policies(client, base)
         if row["reference"]["kind"] == "access" and row["reference"]["reference"]["id"] == original["id"]), None)
     if current is None:
         raise ValueError("provisioned triage access profile is unavailable")
     path = f"{base}/access/{current['id']}/versions/"
     record = client.get(path + str(current["version"]) + "?" + urlencode({"digest": current["digest"]}))["policy"]["policy"]
-    if current == original and record["definition"]["name"] == "Standard":
-        current = publish_access_profile(client, base, namespace, {"kind": "access", "id": current["id"],
-            "expected_current": current, "definition": {**record["definition"], "name": "Triage"}})
-    elif record["definition"]["name"] != "Triage":
+    previous = client.get(path + str(original["version"]) + "?" + urlencode({"digest": original["digest"]}))["policy"]["policy"]
+    original_permissions = previous["definition"]["permissions"]
+    # Only an exact installer-owned declaration can advance automatically. An
+    # operator's reviewed version is never widened or selected as a new default.
+    expected = copy.deepcopy(original_permissions)
+    writer = _reference("stand.issue-classification")
+    if writer not in expected.get("plugins", []):
+        expected.setdefault("plugins", []).append(writer)
+    desired = expected if installed_permissions is not None and same_permissions(installed_permissions, expected) else original_permissions
+    owned = any(same_permissions(record["definition"]["permissions"], grants) for grants in (original_permissions, desired))
+    if not owned or (record["definition"]["name"] != "Triage" and
+            not (current == original and record["definition"]["name"] == "Standard")):
         return
-    else:
-        previous = client.get(path + str(original["version"]) + "?" + urlencode({"digest": original["digest"]}))["policy"]["policy"]
-        if record["definition"]["permissions"] != previous["definition"]["permissions"]:
-            return
+    if record["definition"] != {"name": "Triage", "permissions": desired}:
+        current = publish_access_profile(client, base, namespace, {"kind": "access", "id": current["id"],
+            "expected_current": current, "definition": {**record["definition"], "name": "Triage", "permissions": desired}})
     defaults = client.get(f"{base}/defaults")["defaults"]
-    if defaults is not None and defaults["access_profile"] == original and current != original:
+    owned_defaults = defaults is not None and defaults["access_profile"] in (original, record["reference"])
+    if owned_defaults and defaults["access_profile"] != current:
         request = {"expected_version": defaults["version"], "launch_policy": defaults["launch_policy"],
             "access_profile": current}
         key = str(uuid.uuid5(namespace, "triage-access-default/" + json.dumps(request, sort_keys=True)))
@@ -391,11 +450,13 @@ def prepare_runtime(root: Path, native: dict, resources: dict, client) -> dict:
     references.append({"kind": "node_capability", "alias": "triage-runtime", "reference": executable})
     references.append({"kind": "node_capability", "alias": policy["mcp_evidence_verifier"]["identity"],
                        "reference": policy["mcp_evidence_verifier"]})
-    permission_digest = hashlib.sha256(json.dumps(permissions, sort_keys=True, separators=(",", ":")).encode()).hexdigest()
+    access_permissions = copy.deepcopy(permissions)
+    access_permissions["plugins"].append(_reference("stand.issue-classification"))
+    permission_digest = hashlib.sha256(json.dumps(access_permissions, sort_keys=True, separators=(",", ":")).encode()).hexdigest()
     references.append({"kind": "permission_ceiling", "alias": _INSTALLED_ACCESS_DEFAULT,
-        "reference": _reference(_INSTALLED_ACCESS_DEFAULT, digest=permission_digest),
+        "reference": _reference(_INSTALLED_ACCESS_DEFAULT, "v2", digest=permission_digest),
         "metadata": {"node_kinds": [], "signal_purposes": [], "enforcement": [],
-            "compatible_choices": [], "permission_declarations": permissions}})
+            "compatible_choices": [], "permission_declarations": access_permissions}})
     catalog = {"version": 1, "projects": [{"project_id": resources["project"], "references": references,
         "build_configurations": [{"alias": "triage-worker", "reference": build}],
         "role_profiles": {"triage-runtime": {"ceiling": ceiling, "parameters": native["policy"]["parameters"],
@@ -408,6 +469,7 @@ def prepare_runtime(root: Path, native: dict, resources: dict, client) -> dict:
             "credential_purpose": "evaluator", "usage_policy": {"kind": "subscription"},
             "pipeline_node": resources["pipeline_node"], "parameters": {}, "project_permissions": permissions,
             "local_permissions": {"grants": permissions, "enforceable": native["policy"]["enforcement"]}}]}
+    install_issue_classification(catalog, resources["project"])
     profiles, agent_profile = root / "triage/factory-profiles.json", root / "triage/agent.toml"
     _publish(profiles, catalog)
     _publish(root / "triage/runtime-settings.json", settings)

@@ -45,6 +45,9 @@ pub struct FactoryPresetEditor {
   pub max_active_nodes: u16,
   /// Exact logical result slots that require installed executors.
   pub steps: Vec<FactoryPresetEditorStep>,
+  /// Release-owned snapshot aliases; shapes and active choices come from the Project catalog.
+  #[serde(skip_serializing_if = "std::collections::BTreeMap::is_empty")]
+  pub issue_snapshot_fields: std::collections::BTreeMap<FactoryKey, FlowIssueFieldSource>,
 }
 /// One independently reviewed executor selection.
 #[derive(Clone, Debug, Serialize)]

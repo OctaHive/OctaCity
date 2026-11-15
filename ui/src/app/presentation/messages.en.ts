@@ -380,6 +380,18 @@ export const enMessages = {
   'factory.bytes': 'bytes',
   'factory.projectionTooLarge':
     'This projection exceeds the input mapping limits. Select fewer optional fields or use the advanced input editor.',
+  'factory.snapshotAdmission': 'Snapshot admission',
+  'factory.snapshotAdmissionHelp':
+    'Map required classification fields explicitly. Unmapped values block admission; these rules do not grant launch or evidence authority.',
+  'factory.enableSnapshotAdmission': 'Map Issue fields to admission',
+  'factory.admissionPriorityField': 'Admission priority field',
+  'factory.admissionRiskField': 'Admission risk field',
+  'factory.schedulingPriority': 'Scheduling priority: {choice}',
+  'factory.admissionRisk': 'Admission risk: {choice}',
+  'factory.admissionAllowed': 'Allowed values: {field}',
+  'factory.admissionAllowChoice': 'Allow {field}: {choice}',
+  'factory.admissionInvalid':
+    'Select required classification fields and review valid mappings and allowed values.',
   'factory.issueSnapshotHelp':
     'Capture selected Issue fields at launch without requiring a triage Run. Exact producer-result input remains available in pipeline settings.',
   'factory.configureIssueSnapshot': 'Configure Issue snapshot',
@@ -402,7 +414,7 @@ export const enMessages = {
     'This source is unavailable in the current Project catalog. Remove this selection explicitly, then choose another available source if needed.',
   'factory.removeUnavailableSnapshotField': 'Remove unavailable field: {alias}',
   'factory.snapshotInputConflict':
-    'This input has a producer contract, mixed bindings or an advanced snapshot policy. Resolve the producer/bindings in pipeline settings; maintain admission, evidence or exact-reference policies through the management API. Existing input is preserved.',
+    'This input has a producer contract, mixed bindings or advanced evidence/material policies. Review those bindings separately before changing snapshot projections. Existing input is preserved.',
   'factory.classificationMappingChanged':
     'The Project mapping is missing or has changed. Review it again in the step before publishing.',
   'factory.classificationAccessHelp':

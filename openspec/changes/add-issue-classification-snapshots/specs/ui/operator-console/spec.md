@@ -126,3 +126,11 @@ Execution detail SHALL show the exact Issue snapshot used by each Work/Run and i
 #### Scenario: Triage proposes an update that was not applied
 - **WHEN** a triage result exists but its local classification action conflicted
 - **THEN** the card keeps the effective Issue values and exposes the separate application failure rather than presenting the proposed values as committed
+
+### Requirement: Ordinary stand supports complete triage and delivery authoring through UI
+An operator on the ordinary stand SHALL be able to create, review and publish triage with explicit guarded local classification application and a separate Issue-snapshot Delivery pipeline through Console controls. Project field contracts SHALL supply result types and admission choice controls. The generic snapshot editor SHALL expose explicit priority-score, risk and allowed-type admission mappings and retain supported mappings and projections on reopen. The Delivery v2 example SHALL collect these inputs and open an ordinary editable Flow without requiring a producer Run or JSON editing. Existing exact-producer inputs SHALL remain available.
+
+#### Scenario: Both pipelines are authored from an empty catalog
+- **WHEN** an operator uses the ordinary installed stand with no Flow or Configuration
+- **THEN** UI actions create and publish triage, apply its classification to an Issue, create and publish independent Delivery, and start it from the Issue snapshot without an upstream Run selector
+- **AND** packaged qualification prepares neither pipeline nor its gates/admission selections through test-side API calls, and retains protected validation and confirmed test PR evidence

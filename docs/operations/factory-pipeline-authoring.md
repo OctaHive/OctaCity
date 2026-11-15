@@ -86,8 +86,14 @@ step receives under **Issue input for each step**. Confirm **Use Issue snapshot*
 This selects no producer and does not give sibling steps access to undeclared
 text. The shared ceiling is 32 references / 1 MiB; narrower consumer and source
 limits still apply. Publishing newer documents or comments does not replace
-admitted inputs. Advanced admission/evidence or mixed mappings require API
-authoring; the simple editor preserves them rather than flattening their policy.
+admitted inputs. To derive scheduling from classification, enable **Map Issue
+fields to admission**. Select the required priority field and enter scheduling
+scores for the intended Project choices; select the risk field and map supported
+choices to admission risk. Select allowed type values explicitly. Unmapped
+choices block admission. These mappings grant no launch authority or evidence.
+The editor retains these settings and per-step projections when reopened or an
+input alias is renamed. Mixed bindings, evidence projections and exact-reference
+material policies remain preserved advanced contracts.
 
 ## Add and configure steps
 
@@ -136,7 +142,14 @@ For each reasoning step:
    Choose **Set manually** to override; changing Profiles or closing settings
    does not discard the override. Retry, required-branch and phase-pool controls
    remain under **Advanced step settings**. Reconcile unsupported resources
-   rather than relying on a sibling's selection.
+   against the selected executor's requirements.
+
+For a command step, **Use command** copies the installed compiler's permission
+request into the draft and ensures its elapsed-time and combined artifact/report
+limits fit the node budget. Existing grants and larger node limits are retained.
+The Delivery example applies the same budget rules during resolution. Review the
+resulting Flow and admission access before publication; selecting a compiler does
+not grant effective execution authority.
 
 For example, the following assignments need no specialized agent or stage name:
 
@@ -386,8 +399,8 @@ publish a consumer with an explicit Issue snapshot contract selecting its
 required kind, size, component, priority and applicable evidence. It consumes
 the applied Issue values, not a chosen assessment Run. Put the expected
 implementation behavior in the Issue's acceptance before starting Delivery.
-Use ordinary Flow authoring for a custom graph or resolve the released `v2`
-example through the API as described below. Keep **Incoming pipeline completion**
+Use ordinary Flow authoring for a custom graph or open the released `v2`
+example through **Start from an example** as described below. Keep **Incoming pipeline completion**
 for an intentionally authored exact producer-result consumer or retained `v1`.
 
 Build the routes in this order:
@@ -428,16 +441,75 @@ reviewed Issue snapshot and its attribution, operator decisions, Builds and
 publication receipt in the Run. Check the corresponding cards in the Issue's **Overview**. For a
 reproducible test environment, see [ticket delivery qualification](../testing/manual-factory-authoring.md#ticket-delivery-qualification).
 
-The optional `ticket-delivery/v2` example resolves through the preset
-API using an exact Project field-definition version and an explicit
-`issue_snapshot.admission` policy. It produces an editable Issue-snapshot Flow
-and, when requested, a disabled launch Configuration. It needs no triage Flow or
-Run selector. The generic editor supports simple Issue field/material selection,
-but **Start from an example** does not yet collect the `v2` resolver's required
-snapshot/admission parameters and therefore blocks opening that example. Resolve
-and publish `v2` through the ordinary API; do not substitute `v1` while claiming
-Issue-snapshot behavior. Both versions remain in the catalog. See the
-[example's prerequisites and request shape](../../config/factory/presets/ticket-delivery/README.md#current-v2-issue-snapshot-example).
+To use the optional example, choose **Add pipeline → Start from an example →
+Ticket delivery · v2**. The form shows the exact Project definition version and
+required Issue fields. Under **Snapshot admission**, map priority choices to
+scheduling scores, map risk choices, and allow the supported `work_kind` values
+(`defect` and/or `feature_request`). These are selections from the Project catalog;
+do not maintain another set of classification enums in step outputs.
+
+The ordinary snapshot editor also accepts a required choice property bound to a
+Project classification slot as a risk or allowed-values source. Its existing
+`property` source, admission mappings and step projections survive reopening;
+there is no need to replace it with a `classification` source. Unbound ordinary
+properties remain ineligible for admission mappings.
+Once the selected mappings are valid, the admission warning clears, including
+when reopening a snapshot that uses a classification-bound `property`.
+
+Select each reasoning step's agent/Profile and installed execution mode. Use
+**Tester · Delivery → Prepare protected tests** for protected test authoring.
+Give that step an explicit compact test assignment within the installed test
+bundle size limit. For repository-wide preservation checks, use an aggregate
+checksum rather than embedding thousands of baseline file entries in the script.
+Keep implementation assignments bounded as well. The native guest supplies
+POSIX shell and Node; workstation tools such as Python or ripgrep are not
+implicitly installed. Point the assignment at `/workspace/source`, batch small
+checks, and review the Profile token budget: usage includes input tokens over
+successive tool calls, including cached input, as well as output tokens.
+The ordinary stand's Delivery stage allowance is configured separately in
+`deployment/local-stand/factory-delivery.json` (1,000,000 tokens by default).
+Triage retains its own smaller allowance. Reinstallation publishes additional
+immutable Delivery bindings when the budget changes; retained Flows keep their
+original pins. A Profile edited in **AI agents** may request a lower budget
+within its installed capability ceiling.
+Select the compatible installed baseline/candidate verification commands and the
+reviewed publication target. Reproduction is optional only under the example's
+explicit unresolved-defect stop route. **Open example draft** resolves an ordinary
+editable Flow. Examples start with no code attached. In **Available code sources**,
+add the Project repository and reviewed revision, then set its access ceiling.
+Use **Code scope → Selected paths** to limit the available tree to the task's
+directories rather than giving every agent the entire repository.
+Attach the admitted base to protected test preparation and the baseline command
+with read-only access, and to implementation with read/write access within the
+installed capture policy. The installed Coder instructions explain that Agent
+captures source edits and generates the candidate artifacts after execution.
+The isolated source may omit `.git`; the agent works on the approved files and
+leaves capture artifacts and revision identity to the trusted controller.
+Independent review receives a verified candidate change summary with paths,
+statuses and file metadata restricted to its selected code scope. Its `complete`
+flag identifies whether all captured changes are visible. Line-only selections
+omit whole-file hashes and modes. The raw capture manifest and binary bundle
+remain private controller inputs. Retain public regression scripts in the
+candidate so review can rerun them using the installed guest tools.
+For review, protected validation, failure classification
+and candidate publication, select read-only **Accepted candidate from another
+step → implementation → observed**. Keep deterministic gates and PR metadata
+preparation without code. Review the requirements branch's source/capture scope
+as well, especially when admitting large work that needs specification changes.
+Under **Candidate capture → Require deliverables**, align permitted paths and
+required kinds/paths with the task on both implementation and protected
+validation. The example's documentation/test/script layout is a starting point;
+for a change confined to `tools`, select the corresponding required deliverable
+there and remove unrelated example requirements. Keep producer and validator
+policies identical.
+Review the requirements policy, instructions and publication settings, validate
+and set the publisher's **published → Edit result → Show on Issue → Pull request**
+to expose the confirmed PR in the Issue's Overview. Save the result, then validate
+and publish. Create a Configuration for this
+exact Flow with **Standard** launch policy and **Delivery** access profile, review
+and explicitly enable it. No triage Flow or Run is selected. `v1` remains available
+for intentional exact-producer use. The [headless resolver contract](../../config/factory/presets/ticket-delivery/README.md#current-v2-issue-snapshot-example)
+remains an alternative for API clients.
 
 Review/start the Issue against its current revision and returned snapshot
 digest. The normal snapshot path asks for no earlier Run and can serve a

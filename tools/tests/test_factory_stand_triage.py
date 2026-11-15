@@ -234,6 +234,19 @@ class FactoryStandTriageTests(unittest.TestCase):
                         "pipeline_node": "triage-agent"}, client)
                 self.assertEqual(result, again)
                 catalog = json.loads(Path(result["profiles"]).read_text())
+                writer, = catalog["issue_classification_actions"]
+                self.assertEqual(writer["principal"], "local-stand-gateway")
+                capability, = [entry for entry in catalog["projects"][0]["references"]
+                    if entry.get("metadata", {}).get("issue_classification")]
+                self.assertEqual(capability["reference"], writer["identity"])
+                self.assertEqual(capability["metadata"]["issue_classification"],
+                    {"policy": "triage", "size_labels": {}})
+                access, = [entry for entry in catalog["projects"][0]["references"]
+                    if entry["kind"] == "permission_ceiling"]
+                self.assertIn(writer["identity"], access["metadata"]["permission_declarations"]["plugins"])
+                self.assertNotIn(writer["identity"], catalog["codex"][0]["project_permissions"]["plugins"],
+                    "a local writer must not become an Agent tool")
+                self.assertNotIn("flows", catalog)
                 compiled, = catalog["codex"]
                 installed, = [entry for entry in catalog["projects"][0]["references"]
                     if entry["kind"] == "permission_ceiling"]

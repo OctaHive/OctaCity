@@ -8,6 +8,7 @@ import { createConsoleQueryClient } from '../../app/query';
 import { FactoryAuthoring } from './FactoryAuthoring';
 import { factoryApi, type FactoryApi } from './api';
 import { configurationFixture } from '../../../tests/fixtures/factory';
+import { factoryIssueFieldsFixture } from '../../../tests/fixtures/factoryIssueFields';
 import { projectDocumentsApi } from '../../api/projectDocuments';
 afterEach(cleanup);
 
@@ -307,205 +308,249 @@ it('retains concurrent graph edits after schema normalization', async () => {
   );
 });
 
-it.each([true, false])('publishes an example (reproduction required=%s)', async (required) => {
-  const { configuration } = configurationFixture();
-  const projectId = configuration.reference.project_id;
-  const original = configuration.flow;
-  const { reference: _reference, ...root } = original.closure.definitions[0]!;
-  void _reference;
-  const preset = { identity: 'ticket-delivery', version: 'v1', digest: '3'.repeat(64) };
-  const report = original.data_schemas[0]!;
-  const command = {
-    alias: 'Reviewed reproduction',
-    execution: {
-      build_configuration: {
-        project_id: projectId,
-        id: 'build',
-        version: 1,
-        definition_digest: '4'.repeat(64),
-      },
-      tool: preset,
-      plugin: preset,
-      model_or_tool: preset,
-      task_digest: `aaaaaaaa${'5'.repeat(56)}`,
-      result_output: 'reproduction.json',
-      result_output_kind: 'report' as const,
-    },
-    output_schema: report.reference,
-    output_definition: report,
-  };
-  const example = {
-    root: { ...root, name: 'Ticket delivery' },
-    limits: original.limits,
-    data_schemas: original.data_schemas,
-  };
-  const alternateCommand = {
-    ...command,
-    execution: {
-      ...command.execution,
-      task_digest: 'a'.repeat(64),
-    },
-  };
-  const legacyExample = {
-    reference: preset,
-    profile_aliases: [],
-    required_node_kinds: ['build_command' as const],
-    parameters: [{ path: '/commands/reproduction', kind: 'command' as const, required }],
-    editor: {
-      name: 'Ticket delivery',
-      budget: original.limits.budget,
-      max_active_nodes: 1,
-      steps: [
-        {
-          alias: 'reproduction',
-          kind: 'build_command' as const,
-          outcome: 'observed',
-          result: null,
+it.each([
+  { required: true, version: 'v1' },
+  { required: false, version: 'v1' },
+  { required: true, version: 'v2' },
+  { required: false, version: 'v2' },
+])(
+  'publishes an example ($version, reproduction required=$required)',
+  async ({ required, version }) => {
+    const { configuration } = configurationFixture();
+    const projectId = configuration.reference.project_id;
+    const original = configuration.flow;
+    const { reference: _reference, ...root } = original.closure.definitions[0]!;
+    void _reference;
+    const preset = { identity: 'ticket-delivery', version, digest: '3'.repeat(64) };
+    const report = original.data_schemas[0]!;
+    const command = {
+      alias: 'Reviewed reproduction',
+      execution: {
+        build_configuration: {
+          project_id: projectId,
+          id: 'build',
+          version: 1,
+          definition_digest: '4'.repeat(64),
         },
-      ],
-    },
-  };
-  const listPresets = vi.fn(async () => ({
-    items: [
-      legacyExample,
-      {
-        ...legacyExample,
-        reference: { ...preset, version: 'v2' },
-        parameters: [
-          ...legacyExample.parameters,
-          { path: '/issue_snapshot', kind: 'issue_snapshot' as const, required: true },
+        tool: preset,
+        plugin: preset,
+        model_or_tool: preset,
+        task_digest: `aaaaaaaa${'5'.repeat(56)}`,
+        result_output: 'reproduction.json',
+        result_output_kind: 'report' as const,
+      },
+      output_schema: report.reference,
+      output_definition: report,
+    };
+    const example = {
+      root: { ...root, name: 'Ticket delivery' },
+      limits: original.limits,
+      data_schemas: original.data_schemas,
+    };
+    const alternateCommand = {
+      ...command,
+      execution: {
+        ...command.execution,
+        task_digest: 'a'.repeat(64),
+      },
+    };
+    const legacyExample = {
+      reference: { ...preset, version: 'v1' },
+      profile_aliases: [],
+      required_node_kinds: ['build_command' as const],
+      parameters: [{ path: '/commands/reproduction', kind: 'command' as const, required }],
+      editor: {
+        name: 'Ticket delivery',
+        budget: original.limits.budget,
+        max_active_nodes: 1,
+        steps: [
+          {
+            alias: 'reproduction',
+            kind: 'build_command' as const,
+            outcome: 'observed',
+            result: null,
+          },
         ],
       },
-    ],
-    total: 2,
-    next_cursor: null,
-  }));
-  const resolvePreset = vi.fn<FactoryApi['resolvePreset']>(async () => ({
-    preset,
-    diagnostics: [],
-    flow: example,
-    configuration: null,
-    input: null,
-    dependencies: [],
-    completion: {
-      kind: 'draft',
-      project_id: projectId,
-      preset,
-      content: 'Retain the reviewed result.',
-    },
-  }));
-  const published = {
-    ...original,
-    closure: {
-      ...original.closure,
-      definitions: [{ ...original.closure.definitions[0]!, name: 'Ticket delivery' }],
-    },
-  };
-  const validateFlow = vi.fn<FactoryApi['validateFlow']>(async () => published);
-  const createFlow = vi.fn<FactoryApi['createFlow']>(async () => ({
-    disposition: 'applied',
-    resource: { flow: published, project_id: projectId, published_at_unix_ms: 1 },
-  }));
-  const api = {
-    ...factoryApi,
-    listPresets,
-    resolvePreset,
-    validateFlow,
-    createFlow,
-    listChoices: vi.fn(async () => ({ items: [], total: 0, next_cursor: null })),
-    listFlows: vi.fn(async () => ({ items: [], total: 0, next_cursor: null })),
-    getAuthoringCapabilities: vi.fn<FactoryApi['getAuthoringCapabilities']>(async () => ({
-      commands: required ? [command, alternateCommand] : [],
-      candidate_publications: [],
-      human_gates: [],
-      build_resource_modes: [],
-      source_free_incompatibility: null,
-      deterministic_gate: {
-        policy: preset,
-        parameter_contract: 'declarative_gate_v1',
-        max_parameter_bytes: 64,
-        resource_modes: [],
-      },
-    })),
-  };
-  render(
-    <QueryClientProvider client={createConsoleQueryClient()}>
-      <RouterProvider
-        router={createMemoryRouter([
-          {
-            path: '*',
-            element: (
-              <FactoryAuthoring api={api} projectId={projectId} kind="flow" onDiscard={() => {}} />
-            ),
-          },
-        ])}
-      />
-    </QueryClientProvider>,
-  );
-  expect(listPresets).not.toHaveBeenCalled();
-  await userEvent.click(await screen.findByText('Start from an example'));
-  await userEvent.click(await screen.findByRole('button', { name: 'Ticket delivery · v2' }));
-  expect(screen.getByRole('button', { name: 'Open example draft' })).toHaveProperty(
-    'disabled',
-    true,
-  );
-  expect(
-    screen.getByText(
-      'The required input settings for this version are not supported here. Choose another version.',
-    ),
-  ).toBeTruthy();
-  expect(resolvePreset).not.toHaveBeenCalled();
-  await userEvent.click(await screen.findByRole('button', { name: 'Ticket delivery · v1' }));
-  expect(screen.getByRole('button', { name: 'Open example draft' })).toHaveProperty(
-    'disabled',
-    required,
-  );
-  if (!required) {
-    expect(screen.getByRole('group', { name: 'Reproduction' }).textContent).toContain(
-      'Optional. Without a command, tickets that need this check are sent for review.',
-    );
-  }
-  if (required) {
-    await userEvent.click(await screen.findByRole('combobox', { name: 'Reproduction' }));
-    const options = screen.getAllByRole('option', { name: /Reviewed reproduction/ });
-    expect(new Set(options.map((option) => option.textContent)).size).toBe(2);
-    for (const option of options) {
-      expect(option.textContent).toContain('Reviewed reproduction');
-      expect(option.textContent).not.toMatch(/[0-9a-f]{20}/);
-    }
-    await userEvent.click(options[1]!);
-  }
-  await userEvent.click(screen.getByRole('button', { name: 'Open example draft' }));
-  const name = await screen.findByDisplayValue('Ticket delivery');
-  await userEvent.clear(name);
-  await userEvent.type(name, 'Reviewed delivery');
-  expect(resolvePreset).toHaveBeenCalledWith(
-    projectId,
-    expect.objectContaining({
-      preset,
-      flow_only: true,
-      flow_id: expect.any(String),
-      commands: required
-        ? {
-            reproduction: {
-              build: { ...alternateCommand.execution, result_outcome: 'observed' },
-              result: report,
-              permissions: expect.any(Object),
+    };
+    const listPresets = vi.fn<FactoryApi['listPresets']>(async () => ({
+      items: [
+        legacyExample,
+        {
+          ...legacyExample,
+          reference: { ...preset, version: 'v2' },
+          editor: {
+            ...legacyExample.editor,
+            issue_snapshot_fields: {
+              priority: { kind: 'priority' },
+              risk: { kind: 'classification', slot: 'severity' },
+              work_kind: { kind: 'type' },
             },
-          }
-        : {},
-    }),
-    expect.any(AbortSignal),
-  );
-  expect(createFlow).not.toHaveBeenCalled();
-  await userEvent.click(screen.getByRole('button', { name: 'Validate draft' }));
-  await screen.findByText('Authoritative validation passed.');
-  expect(validateFlow.mock.calls[0]?.[0].definition.root.name).toBe('Reviewed delivery');
-  await userEvent.click(screen.getByRole('button', { name: 'Review publication' }));
-  expect(createFlow).not.toHaveBeenCalled();
-  await userEvent.click(
-    within(await screen.findByRole('dialog')).getByRole('button', { name: 'Confirm publish' }),
-  );
-  expect(await screen.findByText('Immutable version published.')).toBeTruthy();
-  expect(createFlow.mock.calls[0]?.[0].definition.root.name).toBe('Reviewed delivery');
-});
+          },
+          parameters: [
+            ...legacyExample.parameters,
+            { path: '/issue_snapshot', kind: 'issue_snapshot' as const, required: true },
+          ],
+        },
+      ],
+      total: 2,
+      next_cursor: null,
+    }));
+    const resolvePreset = vi.fn<FactoryApi['resolvePreset']>(async () => ({
+      preset,
+      diagnostics: [],
+      flow: example,
+      configuration: null,
+      input: null,
+      dependencies: [],
+      completion: {
+        kind: 'draft',
+        project_id: projectId,
+        preset,
+        content: 'Retain the reviewed result.',
+      },
+    }));
+    const published = {
+      ...original,
+      closure: {
+        ...original.closure,
+        definitions: [{ ...original.closure.definitions[0]!, name: 'Ticket delivery' }],
+      },
+    };
+    const validateFlow = vi.fn<FactoryApi['validateFlow']>(async () => published);
+    const createFlow = vi.fn<FactoryApi['createFlow']>(async () => ({
+      disposition: 'applied',
+      resource: { flow: published, project_id: projectId, published_at_unix_ms: 1 },
+    }));
+    const api = {
+      ...factoryApi,
+      listPresets,
+      resolvePreset,
+      validateFlow,
+      createFlow,
+      listChoices: vi.fn(async () => ({ items: [], total: 0, next_cursor: null })),
+      listFlows: vi.fn(async () => ({ items: [], total: 0, next_cursor: null })),
+      getAuthoringCapabilities: vi.fn<FactoryApi['getAuthoringCapabilities']>(async () => ({
+        ...factoryIssueFieldsFixture(),
+        commands: required ? [command, alternateCommand] : [],
+        candidate_publications: [],
+        human_gates: [],
+        build_resource_modes: [],
+        source_free_incompatibility: null,
+        deterministic_gate: {
+          policy: preset,
+          parameter_contract: 'declarative_gate_v1',
+          max_parameter_bytes: 64,
+          resource_modes: [],
+        },
+      })),
+    };
+    render(
+      <QueryClientProvider client={createConsoleQueryClient()}>
+        <RouterProvider
+          router={createMemoryRouter([
+            {
+              path: '*',
+              element: (
+                <FactoryAuthoring
+                  api={api}
+                  projectId={projectId}
+                  kind="flow"
+                  onDiscard={() => {}}
+                />
+              ),
+            },
+          ])}
+        />
+      </QueryClientProvider>,
+    );
+    expect(listPresets).not.toHaveBeenCalled();
+    await userEvent.click(await screen.findByText('Start from an example'));
+    await userEvent.click(
+      await screen.findByRole('button', { name: `Ticket delivery · ${version}` }),
+    );
+    if (version === 'v2') {
+      const choose = async (name: string, option: string) => {
+        await userEvent.click(await screen.findByRole('combobox', { name }));
+        await userEvent.click(screen.getByRole('option', { name: option }));
+      };
+      await userEvent.click(
+        await screen.findByRole('checkbox', { name: 'Map Issue fields to admission' }),
+      );
+      await choose('Admission priority field', 'Priority · priority');
+      await userEvent.type(
+        screen.getByRole('spinbutton', { name: 'Scheduling priority: urgent' }),
+        '90',
+      );
+      await userEvent.type(
+        screen.getByRole('spinbutton', { name: 'Scheduling priority: routine' }),
+        '20',
+      );
+      await choose('Admission risk field', 'Classification: Impact · risk');
+      await choose('Admission risk: major', 'High');
+      await choose('Admission risk: minor', 'Low');
+      await userEvent.click(screen.getByRole('checkbox', { name: 'Allow work_kind: defect' }));
+      expect(screen.queryByRole('combobox', { name: /predecessor/i })).toBeNull();
+    }
+    if (!required) {
+      expect(screen.getByRole('group', { name: 'Reproduction' }).textContent).toContain(
+        'Optional. Without a command, tickets that need this check are sent for review.',
+      );
+    }
+    if (required) {
+      await userEvent.click(await screen.findByRole('combobox', { name: 'Reproduction' }));
+      const options = screen.getAllByRole('option', { name: /Reviewed reproduction/ });
+      expect(new Set(options.map((option) => option.textContent)).size).toBe(2);
+      for (const option of options) {
+        expect(option.textContent).toContain('Reviewed reproduction');
+        expect(option.textContent).not.toMatch(/[0-9a-f]{20}/);
+      }
+      await userEvent.click(options[1]!);
+    }
+    await userEvent.click(screen.getByRole('button', { name: 'Open example draft' }));
+    const name = await screen.findByDisplayValue('Ticket delivery');
+    await userEvent.clear(name);
+    await userEvent.type(name, 'Reviewed delivery');
+    expect(resolvePreset).toHaveBeenCalledWith(
+      projectId,
+      expect.objectContaining({
+        preset,
+        flow_only: true,
+        ...(version === 'v2'
+          ? {
+              issue_snapshot: {
+                definition_version: 7,
+                admission: {
+                  priority: { field: 'priority', values: { urgent: 90, routine: 20 } },
+                  risk: { field: 'risk', values: { major: 'high', minor: 'low' } },
+                  allowed: { work_kind: ['defect'] },
+                },
+              },
+            }
+          : {}),
+        flow_id: expect.any(String),
+        commands: required
+          ? {
+              reproduction: {
+                build: { ...alternateCommand.execution, result_outcome: 'observed' },
+                result: report,
+                permissions: expect.any(Object),
+              },
+            }
+          : {},
+      }),
+      expect.any(AbortSignal),
+    );
+    expect(createFlow).not.toHaveBeenCalled();
+    await userEvent.click(screen.getByRole('button', { name: 'Validate draft' }));
+    await screen.findByText('Authoritative validation passed.');
+    expect(validateFlow.mock.calls[0]?.[0].definition.root.name).toBe('Reviewed delivery');
+    await userEvent.click(screen.getByRole('button', { name: 'Review publication' }));
+    expect(createFlow).not.toHaveBeenCalled();
+    await userEvent.click(
+      within(await screen.findByRole('dialog')).getByRole('button', { name: 'Confirm publish' }),
+    );
+    expect(await screen.findByText('Immutable version published.')).toBeTruthy();
+    expect(createFlow.mock.calls[0]?.[0].definition.root.name).toBe('Reviewed delivery');
+  },
+);

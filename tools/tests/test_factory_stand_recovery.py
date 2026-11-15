@@ -50,7 +50,8 @@ class FactoryStandRecoveryTests(unittest.TestCase):
         self.policy_defaults = {"version": 4, "launch_policy": None, "access_profile": None}
         catalog = json.loads(self.profiles.read_text())
         catalog["projects"][0]["references"].append({"kind": "permission_ceiling", "alias": "triage-ceiling",
-            "reference": {"identity": "triage-ceiling", "version": "v1", "digest": "06" * 32}})
+            "reference": {"identity": "triage-ceiling", "version": "v1", "digest": "06" * 32},
+            "metadata": {"permission_declarations": {"plugins": []}}})
         self.profiles.write_text(json.dumps(catalog))
         self.provisioned_defaults = None
         self.unresolved_policy_receipts = {}
@@ -192,7 +193,7 @@ class FactoryStandRecoveryTests(unittest.TestCase):
         self.assertEqual(path, f"/api/v1/projects/{self.project}/factory-policies/provision")
         self.assertTrue(key)
         self.assertEqual(request["designated_access"]["identity"], "triage-ceiling")
-        self.assertEqual(request["designated_access"]["digest"], "06" * 32)
+        self.assertNotEqual(request["designated_access"]["digest"], "06" * 32)
         self.assertEqual(request["legacy_references"], [
             {"kind": "launch", "reference": self.retained_configuration["admission_policy"]},
             {"kind": "access", "reference": self.retained_configuration["permission_ceiling"]},
@@ -200,6 +201,42 @@ class FactoryStandRecoveryTests(unittest.TestCase):
         self.assertEqual((self.root / "evidence/factory-triage.json").read_bytes(), before)
         self.assertEqual(self.source_publications, [])
         self.assertEqual(self.policy_defaults, {"version": 4, "launch_policy": None, "access_profile": None})
+
+    def test_default_resume_installs_the_local_writer_without_republishing_pipeline_state(self):
+        catalog = json.loads(self.profiles.read_text())
+        ceiling, = [row for row in catalog['projects'][0]['references'] if row['alias'] == 'triage-ceiling']
+        ceiling['metadata'] = {'permission_declarations': {'plugins': []}}
+        self.profiles.write_text(json.dumps(catalog))
+        self._update(self.readers)
+        receipt = (self.root / 'evidence/factory-triage.json').read_bytes()
+        self._resume()
+        installed = json.loads((self.root / 'config/server/factory-profiles.json').read_text())
+        installed_ceilings = [row for row in installed['projects'][0]['references'] if row['kind'] == 'permission_ceiling']
+        current, = [row for row in installed_ceilings if row['alias'] == 'triage-ceiling']
+        self.assertNotEqual(current['reference']['version'], ceiling['reference']['version'])
+        self.assertIn(ceiling['reference'], [row['reference'] for row in installed_ceilings])
+        writer, = installed['issue_classification_actions']
+        self.assertEqual(writer['principal'], 'local-stand-gateway')
+        self.assertEqual((self.root / 'evidence/factory-triage.json').read_bytes(), receipt)
+        self.assertEqual(self.source_publications, [])
+        before = (self.root / 'config/server/factory-profiles.json').read_bytes()
+        self._resume()
+        self.assertEqual((self.root / 'config/server/factory-profiles.json').read_bytes(), before)
+
+    def test_bootstrap_uses_the_networks_owned_by_its_compose_project(self):
+        execute = subprocess.run
+        def spawn(arguments, **options):
+            if arguments[0] != 'docker':
+                return execute(arguments, **options)
+            self.assertEqual(arguments[:2], ['docker', 'run'])
+            self.assertIn('name=stand-contract_stand,alias=server', arguments)
+            self.assertIn('stand-contract_edge', arguments)
+            raise OSError('stop at the process boundary')
+        with mock.patch.object(stand.launcher, 'PROJECT_NAME', 'stand-contract'), \
+                mock.patch.object(subprocess, 'run', side_effect=spawn):
+            with self.assertRaisesRegex(OSError, 'stop at the process boundary'):
+                with stand.bootstrap_server(self.root, self.fixture.installation):
+                    self.fail('no bootstrap process was started')
 
     def test_default_resume_uses_the_retained_custom_code_repository(self):
         path = self.root / "evidence/factory-triage-installation.json"
@@ -258,7 +295,13 @@ class FactoryStandRecoveryTests(unittest.TestCase):
         self._resume()
         self.assertEqual(self.policy_requests[-1][1], self.policy_requests[0][1])
 
+    def test_technical_installation_leaves_pipeline_authoring_to_the_console(self):
+        self._first_publication(seed_example=False)
+
     def test_first_publication_starts_with_the_same_pinned_vcs_bundle_as_its_bootstrap(self):
+        self._first_publication(seed_example=True)
+
+    def _first_publication(self, *, seed_example):
         import tomllib
         (self.root / "evidence/factory-triage.json").unlink()
         # Resource preparation is resumable before the first pipeline publication.
@@ -279,7 +322,7 @@ class FactoryStandRecoveryTests(unittest.TestCase):
         value = json.loads(assets.read_text())
         value["runtime_settings"] = str(settings)
         assets.write_text(json.dumps(value))
-        published = {"configuration": self.receipt["configuration"]}
+        published = {"configuration": self.receipt["configuration"]} if seed_example else {"flow": None, "configuration": None, "input": None}
         self.receipt = {"schema_version": 1, "origin": stand.bootstrap.DEFAULT_ORIGIN,
             "project": self.project, "profiles": {}, "context": {}, **published}
         with mock.patch.object(stand, "install_repository", side_effect=lambda root, repository, **_:
@@ -289,11 +332,17 @@ class FactoryStandRecoveryTests(unittest.TestCase):
                 mock.patch.object(stand, "publish_triage_roles", return_value={}), \
                 mock.patch.object(stand, "publish_triage_context", return_value={}), \
                 mock.patch.object(stand.triage, "pipeline_selection", return_value={}) as select, \
-                mock.patch.object(stand, "publish_triage", return_value=published):
-            self._resume("--github-repository", "Example/Tickets")
-        self.assertEqual(len(self.policy_requests), 1)
+                mock.patch.object(stand, "publish_triage", return_value=published) as publish:
+            self._resume("--github-repository", "Example/Tickets", *([] if seed_example else ["--no-example-pipeline"]))
+            if not seed_example:
+                self._resume()
+        self.assertEqual(publish.call_count, 1 if seed_example else 0)
+        self.assertGreaterEqual(len(self.policy_requests), 1)
         self.assertEqual(self.policy_requests[0][2]["legacy_references"], [])
-        self.assertEqual(select.call_args.kwargs["policy_defaults"], self.policy_defaults)
+        if seed_example:
+            self.assertEqual(select.call_args.kwargs["policy_defaults"], self.policy_defaults)
+        else:
+            select.assert_not_called()
         configured = tomllib.loads((self.root / "config/server/server.toml").read_text())
         self.assertEqual(configured["vcs_integrations"][0]["integration_id"],
             str(uuid.uuid5(uuid.UUID(self.installation["namespace"]), "source")))
@@ -351,6 +400,7 @@ class FactoryStandRecoveryTests(unittest.TestCase):
 
     def test_default_resume_keeps_the_current_reviewed_installation_after_an_explicit_update(self):
         self._resume()
+        self.profiles.write_bytes((self.root / "config/server/factory-profiles.json").read_bytes())
         renewed = self._readers("renewed", "cd")
         updated_policy = self.policy.with_name("renewed-agent-policy.toml")
         updated_policy.write_text(self.policy.read_text().replace("mcp.example", "reviewed.mcp.example"))
@@ -368,9 +418,6 @@ class FactoryStandRecoveryTests(unittest.TestCase):
     def test_installation_update_rejects_redefining_an_exact_access_ceiling(self):
         catalog = json.loads(self.profiles.read_text())
         ceiling, = catalog["projects"][0]["references"]
-        ceiling["metadata"] = {"permission_declarations": {"network_hosts": ["old.example"]}}
-        self.profiles.write_text(json.dumps(catalog))
-        self._update(self.readers)
         ceiling["metadata"]["permission_declarations"]["network_hosts"] = ["new.example"]
         self.profiles.write_text(json.dumps(catalog))
         with self.assertRaisesRegex(stand.state.StateError, "access ceiling.*triage-ceiling"):

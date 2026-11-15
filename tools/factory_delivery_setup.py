@@ -17,6 +17,7 @@ import local_stand_state as state
 import factory_triage_setup as triage
 
 REPOSITORY = Path(__file__).resolve().parents[1]
+POLICY = REPOSITORY / "deployment/local-stand/factory-delivery.json"
 MODEL_CREDENTIAL = "delivery-model"
 CAPTURE_OUTPUT = "candidate_facts"
 TEST_INVENTORY_BYTE_RESERVE = 1024  # One file and its optional transcript reference.
@@ -27,15 +28,53 @@ TEST_AUTHOR_RUNTIME = "delivery-tester-assertions"
 TEST_VERIFIER_RUNTIME = "delivery-tester-verification"
 TESTER_PREPARE_MODE = "delivery-tester-prepare"
 TESTER_ANALYZE_MODE = "delivery-tester-analyze"
+CODER_INSTRUCTIONS = (
+    "Implement the reviewed task within the approved paths under /workspace/source. "
+    "Agent captures approved source edits after your execution and creates the change-set bundle, "
+    "manifest and candidate facts from those edits. Complete the source changes and public checks, "
+    "then return the required structured result. Do not fabricate revisions or create the capture artifacts. "
+    "The isolated source can omit .git metadata; its absence and the pending capture are expected "
+    "and do not indicate missing task requirements. Report only actual requirement defects."
+)
+REVIEWER_INSTRUCTIONS = (
+    "Review the selected read-only candidate snapshot under /workspace/source against the accepted task. "
+    "The frozen input identifies its revision and digest; the isolated source can omit .git metadata. "
+    "Read the verified candidate change summary to identify changes within the selected code scope. "
+    "Its complete flag states whether that scope covers all captured changes. The raw bundle and manifest "
+    "remain private controller inputs. If the result contract requests input_digest, copy the exact "
+    "input_digest from /octacity/protected/task-envelope.json; it identifies this invocation. "
+    "Never invent it, hash a different JSON value or reuse a producer digest. Run applicable public regression checks "
+    "and independently inspect the requested behavior using the installed POSIX shell or Node. "
+    "Python and ripgrep are not installed in the standard guest. Report only checks actually observed; "
+    "the field findings contains actionable defects only. Return an empty findings array when no defects "
+    "were found; successful observations are not findings. Keep unavailable checks indeterminate. "
+    "missing Git metadata alone does not make the retained candidate or its public checks unavailable. "
+    "Do not modify the candidate or replace the independent protected validation."
+)
 TEST_VERIFIER_INSTRUCTIONS = (
     "Factory starts the mandatory verification Build before this step. Read its retained result "
     "using the installed verify_candidate tool with action status. Summarize the runner verdict; "
     "a missing, failed or indeterminate check is not a pass. Your response cannot replace that verdict. "
     "The server selects the retained checks and reviewed candidate; do not replace either."
 )
+RUNTIME_INSTRUCTIONS = {
+    "delivery-coder": CODER_INSTRUCTIONS,
+    "delivery-reviewer": REVIEWER_INSTRUCTIONS,
+    TEST_VERIFIER_RUNTIME: TEST_VERIFIER_INSTRUCTIONS,
+}
 # Microsandbox allocates whole vCPUs to each isolated VM.
 READER_CPU_MILLIS = 1000
 SCOPED_TESTER_CPU_MILLIS = 2 * READER_CPU_MILLIS
+
+
+def _runtime_instructions_current(catalog: dict, runtime: dict, alias: str) -> bool:
+    """Installation and restart compare the same instructions on the exact compiler binding."""
+    instructions = RUNTIME_INSTRUCTIONS.get(alias)
+    ceiling = runtime["ceiling"]
+    return instructions is None or any(
+        row["toolchain"] == ceiling["toolchain"]
+        and row["build_configuration"] == ceiling["build_configuration"]
+        and row.get("instructions") == instructions for row in catalog["codex"])
 
 
 def install_controller(root: Path, agent_policy: dict, *, read=None) -> None:
@@ -180,6 +219,7 @@ def delivery_models(catalog: dict, project_id: str, capture_tool: dict, write_di
     runtimes = project["role_profiles"]
     original = runtimes["triage-runtime"]
     ceiling = original["ceiling"]
+    budget = json.loads(POLICY.read_text())["stage_budget"]
     observer, = (entry for entry in catalog["codex"] if entry["toolchain"] == ceiling["toolchain"]
                  and entry["build_configuration"] == ceiling["build_configuration"]
                  and entry["credential_purpose"] == "evaluator")
@@ -213,13 +253,13 @@ def delivery_models(catalog: dict, project_id: str, capture_tool: dict, write_di
         runtime_alias = alias
         selected_build = (scoped_build or observer["build_configuration"]) if alias == TEST_VERIFIER_RUNTIME else code_build
         plugin_changed = alias in runtimes and runtimes[alias]["ceiling"]["toolchain"]["plugin"] != selected_plugin
+        budget_changed = alias in runtimes and runtimes[alias]["ceiling"].get("budget") != budget
         cpu_changed = alias == TEST_VERIFIER_RUNTIME and alias in runtimes and (
             runtimes[alias]["ceiling"]["permissions"].get("resources", {}).get("cpu_millis", 0)
             < SCOPED_TESTER_CPU_MILLIS)
-        instructions_changed = alias == TEST_VERIFIER_RUNTIME and alias in runtimes and any(
-            row["toolchain"] == runtimes[alias]["ceiling"]["toolchain"]
-            and row.get("instructions") != TEST_VERIFIER_INSTRUCTIONS for row in catalog["codex"])
-        if alias in runtimes and (plugin_changed or cpu_changed or instructions_changed or
+        instructions = RUNTIME_INSTRUCTIONS.get(alias)
+        instructions_changed = alias in runtimes and not _runtime_instructions_current(catalog, runtimes[alias], alias)
+        if alias in runtimes and (plugin_changed or budget_changed or cpu_changed or instructions_changed or
                 (source_mode or alias == TEST_VERIFIER_RUNTIME) and runtimes[alias]["ceiling"]["build_configuration"] != selected_build):
             # Published profiles retain their exact compiler and guest. Install
             # a separate capability rather than silently replacing that binding.
@@ -227,7 +267,9 @@ def delivery_models(catalog: dict, project_id: str, capture_tool: dict, write_di
             if cpu_changed:
                 identity = [identity, {"cpu_millis": SCOPED_TESTER_CPU_MILLIS}]
             if instructions_changed:
-                identity = [identity, {"instructions": TEST_VERIFIER_INSTRUCTIONS}]
+                identity = [identity, {"instructions": instructions}]
+            if budget_changed:
+                identity = [identity, {"budget": budget}]
             runtime_alias += "-" + hashlib.sha256(_json(identity)).hexdigest()[:12]
         grants = copy.deepcopy(permissions)
         if plugin is not None:
@@ -242,6 +284,8 @@ def delivery_models(catalog: dict, project_id: str, capture_tool: dict, write_di
             "credentials": {**observer["credentials"], "model": MODEL_CREDENTIAL},
             "project_permissions": grants, "local_permissions": {**observer["local_permissions"], "grants": grants}}
         entry.pop("mcp_configurations", None)
+        if instructions is not None:
+            entry["instructions"] = instructions
         if source_mode:
             entry.update(build_configuration=code_build, candidate_capture_tool=capture_tool)
             _choice(project, "delivery-capture-" + capture_tool["digest"][:12], capture_tool)
@@ -271,7 +315,6 @@ def delivery_models(catalog: dict, project_id: str, capture_tool: dict, write_di
             entry["build_configuration"] = selected_build
             entry["execution_mode"] = "scoped_validation"
             entry["tool_response_limits"] = {"per_call_bytes": 16384, "total_bytes": 262144}
-            entry["instructions"] = TEST_VERIFIER_INSTRUCTIONS
             grants["tools"] = [triage._reference("factory-scoped-validation")]
             _choice(project, "factory-scoped-validation", grants["tools"][0])
         elif purpose == "model":
@@ -292,6 +335,7 @@ def delivery_models(catalog: dict, project_id: str, capture_tool: dict, write_di
         runtime = {key: copy.deepcopy(value) for key, value in original.items()
                    if key not in {"model_discovery", "settings_support"}}
         runtime["ceiling"].update(name=f"Delivery {role.title()}", toolchain=toolchain, credential_purpose=purpose,
+            budget=copy.deepcopy(budget),
             build_configuration=entry["build_configuration"], permissions=grants, context_requirements=["task"],
             execution={**ceiling["execution"], "environment": {}, "integrations": {}, "mcp_servers": {}})
         if runtime_alias in runtimes and runtimes[runtime_alias] != runtime:
@@ -690,7 +734,7 @@ def provision_access_profile(client, project: str, namespace, catalog_path: Path
     if candidates:
         current = candidates[0]["reference"]["reference"]
         record = client.get(f"{base}/access/{current['id']}/versions/{current['version']}?digest={current['digest']}")["policy"]["policy"]
-        if record["definition"]["name"] == "Delivery" and _same_permissions(record["definition"]["permissions"], permissions):
+        if record["definition"]["name"] == "Delivery" and triage.same_permissions(record["definition"]["permissions"], permissions):
             return
         if current["id"] != identity or record["definition"]["name"] != "Delivery":
             raise ValueError("Delivery access profile has operator changes; review the installed Delivery ceiling before retrying")
@@ -698,14 +742,6 @@ def provision_access_profile(client, project: str, namespace, catalog_path: Path
         "expected_current": current, "definition": {"name": "Delivery", "permissions": permissions}})
 
 
-def _same_permissions(left: dict, right: dict) -> bool:
-    def canonical(grants):
-        result = {key: sorted(json.dumps(entry, sort_keys=True) for entry in value) if isinstance(value, list) else value
-            for key, value in grants.items()}
-        if "outputs" in result:
-            result["outputs"] = {**result["outputs"], "kinds": sorted(result["outputs"]["kinds"])}
-        return result
-    return canonical(left) == canonical(right)
 
 
 def install_access_ceiling(catalog: dict, project: dict) -> None:
@@ -758,6 +794,9 @@ def stage(root: Path, directory: Path, installed: dict, project_id: str, reposit
         max_bytes=server.MAX_FACTORY_PROFILE_BYTES, modes=frozenset({0o600})), "Factory profile catalog")
     project, = (row for row in catalog["projects"] if row["project_id"] == project_id)
     runtimes = project["role_profiles"]
+    budget = json.loads(POLICY.read_text())["stage_budget"]
+    budget_roles = ("delivery-coder" if "delivery-coder" in runtimes else "delivery-coder-readonly",
+                    "delivery-reviewer", "delivery-devops", TESTER_PREPARE_MODE, TESTER_ANALYZE_MODE)
     image = triage.prepare_guest_image(root, native, delivery=True)
     octa = json.loads((native / "job-spec-policy.json").read_text())["octa"]
     installed_plugin = triage._reference("codex", octa["version"], octa["plugin_digests"]["codex"])
@@ -773,6 +812,10 @@ def stage(root: Path, directory: Path, installed: dict, project_id: str, reposit
             and any(row["kind"] == "permission_ceiling" and row["alias"].startswith("delivery-ceiling-")
                     for row in project["references"])
             and (root / "agent-validation/worker.json").is_file()
+            and all(any(row.get("ceiling", {}).get("budget") == budget
+                        and _runtime_instructions_current(catalog, row, kind) and
+                        (alias == kind or re.fullmatch(re.escape(kind) + r"-[0-9a-f]{12}", alias))
+                        for alias, row in runtimes.items()) for kind in budget_roles)
             and any(row.get("execution_mode") == "scoped_validation"
                     and row.get("instructions") == TEST_VERIFIER_INSTRUCTIONS
                     and row["toolchain"].get("plugin") == installed_plugin

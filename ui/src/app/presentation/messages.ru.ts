@@ -388,6 +388,18 @@ export const ruMessages = {
   'factory.bytes': 'байтов',
   'factory.projectionTooLarge':
     'Проекция превышает лимит входного mapping. Выберите меньше необязательных полей или используйте расширенный редактор входа.',
+  'factory.snapshotAdmission': 'Допуск по снимку',
+  'factory.snapshotAdmissionHelp':
+    'Явно сопоставьте обязательные поля классификации. Значения без сопоставления блокируют допуск; правила не дают прав запуска и не заменяют проверку свидетельств.',
+  'factory.enableSnapshotAdmission': 'Настроить допуск по полям Issue',
+  'factory.admissionPriorityField': 'Поле приоритета для допуска',
+  'factory.admissionRiskField': 'Поле риска для допуска',
+  'factory.schedulingPriority': 'Приоритет планирования: {choice}',
+  'factory.admissionRisk': 'Риск допуска: {choice}',
+  'factory.admissionAllowed': 'Разрешённые значения: {field}',
+  'factory.admissionAllowChoice': 'Разрешить {field}: {choice}',
+  'factory.admissionInvalid':
+    'Выберите обязательные поля классификации и проверьте сопоставления и разрешённые значения.',
   'factory.issueSnapshotHelp':
     'Выбранные поля Issue фиксируются при запуске без привязки к Run триажа. В настройках pipeline можно выбрать точный результат другого pipeline.',
   'factory.configureIssueSnapshot': 'Настроить снимок Issue',
@@ -410,7 +422,7 @@ export const ruMessages = {
     'Источник недоступен в текущем каталоге Project. Явно удалите его из входа и, если нужно, выберите другой доступный источник.',
   'factory.removeUnavailableSnapshotField': 'Удалить недоступное поле: {alias}',
   'factory.snapshotInputConflict':
-    'Вход содержит контракт producer, смешанные bindings или расширенную политику снимка. Producer и bindings настраиваются в pipeline; admission, evidence и точные ссылки — через management API. Текущий вход сохранён.',
+    'Вход содержит контракт producer, смешанные bindings или расширенные политики свидетельств и материалов. Проверьте эти привязки отдельно перед изменением проекций снимка. Текущий вход сохранён.',
   'factory.classificationMappingChanged':
     'Соответствие меток проекта изменилось или отсутствует. Проверьте его в шаге перед публикацией.',
   'factory.classificationAccessHelp':

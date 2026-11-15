@@ -12,6 +12,60 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 class FactoryDeliverySetupTests(unittest.TestCase):
     @unittest.skipUnless(os.name == "posix", "private profile catalogs require POSIX")
+    def test_standard_startup_upgrades_stale_coder_and_reviewer_instructions_with_current_budgets(self):
+        import tempfile
+        from unittest import mock
+        import factory_delivery_setup as setup
+        from factory_triage_setup import _reference
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            (root / "agent-validation").mkdir()
+            (root / "agent-validation/worker.json").write_text("{}")
+            native = root / "native"; native.mkdir()
+            plugin = _reference("codex", "v1", "a" * 64)
+            (native / "job-spec-policy.json").write_text(json.dumps({"octa": {
+                "version": "v1", "plugin_digests": {"codex": "a" * 64}}}))
+            budget = json.loads(setup.POLICY.read_text())["stage_budget"]
+            instructions = {"delivery-coder": setup.CODER_INSTRUCTIONS,
+                            "delivery-reviewer": setup.REVIEWER_INSTRUCTIONS,
+                            setup.TEST_VERIFIER_RUNTIME: setup.TEST_VERIFIER_INSTRUCTIONS}
+            runtimes, compilers = {}, []
+            for alias in ("delivery-coder", "delivery-reviewer", "delivery-devops", setup.TEST_AUTHOR_RUNTIME,
+                          setup.TEST_VERIFIER_RUNTIME, setup.TESTER_PREPARE_MODE, setup.TESTER_ANALYZE_MODE):
+                toolchain = {"plugin": plugin, "model": _reference(alias)}
+                build = {"project_id": "project", "id": alias, "version": 1}
+                runtimes[alias] = {"ceiling": {"budget": budget, "toolchain": toolchain,
+                                               "build_configuration": build}}
+                compilers.append({"toolchain": toolchain, "build_configuration": build,
+                                  "instructions": instructions.get(alias),
+                                  "project_permissions": {"resources": {"cpu_millis": 2000}}})
+            compilers[3]["protected_tests"] = {"files": []}
+            compilers[4]["execution_mode"] = "scoped_validation"
+            catalog = {"projects": [{"project_id": "project", "role_profiles": runtimes, "references": [
+                {"kind": "permission_ceiling", "alias": "delivery-ceiling-existing"}]}], "codex": compilers}
+            path = root / "catalog.json"
+            path.write_text(json.dumps(catalog)); path.chmod(0o600)
+            class Client:
+                def get(self, path):
+                    return {"definition": {"runtime": {"immutable_image": "qualified-guest", "cpu_millis": 2000}}}
+            def stage():
+                return setup.stage(root, root, {"factory_profiles": path, "factory_agent_profile": root / "agent.toml"},
+                                   "project", "repository", None, native, Client(), [], [])
+            with mock.patch.object(setup.triage, "prepare_guest_image", return_value="qualified-guest"), \
+                    mock.patch.object(setup, "_standard_verifiers_current", return_value=True), \
+                    mock.patch("configure_local_stand_agent.read_factory_agent_profile", return_value={}), \
+                    mock.patch.object(setup, "install_controller", side_effect=RuntimeError("instruction upgrade selected")):
+                self.assertEqual(stage(), {}, "an unchanged installation must remain a no-op")
+                for index in (0, 1):
+                    for stale in (None, "earlier retained instructions"):
+                        with self.subTest(role=compilers[index]["build_configuration"]["id"], stale=stale):
+                            retained = copy.deepcopy(catalog)
+                            retained["codex"][index]["instructions"] = stale
+                            path.write_text(json.dumps(retained))
+                            with self.assertRaisesRegex(RuntimeError, "instruction upgrade selected"):
+                                stage()
+
+    @unittest.skipUnless(os.name == "posix", "private profile catalogs require POSIX")
     def test_standard_startup_does_not_reuse_an_author_without_the_required_guest_sandbox(self):
         import tempfile
         import uuid
@@ -238,6 +292,9 @@ class FactoryDeliverySetupTests(unittest.TestCase):
             "authentication": "native_login_file", "credential_purpose": "evaluator", "project_permissions": grants,
             "local_permissions": {"grants": grants, "enforceable": []}, "pipeline_node": "worker"}
         runtime = {"ceiling": {"toolchain": toolchain, "build_configuration": build,
+                               "budget": {"max_attempts": 1, "max_elapsed_millis": 300000,
+                                          "max_tokens": 150000, "max_cost_micro_units": 1000000,
+                                          "max_output_bytes": 67108864},
                                "permissions": grants, "execution": {"environment": {"ISSUE_MCP_TOKEN": {}}}},
                    "settings_support": {"authenticated_mcp": {"issues": {"server": {"url": "https://issues.localhost/mcp"}}}}}
         catalog = {"version": 1, "projects": [{"project_id": project, "role_profiles": {"triage-runtime": runtime},
@@ -246,6 +303,10 @@ class FactoryDeliverySetupTests(unittest.TestCase):
 
         code_build = {**build, "id": "4b525743-53a3-4f58-a85a-6fd8381f4aec"}
         defaults = delivery_models(catalog, project, capture, [], code_build=code_build)
+        self.assertEqual(defaults["projects"][0]["role_profiles"]["delivery-coder-readonly"]["ceiling"]["budget"],
+                         {"max_attempts": 1, "max_elapsed_millis": 300000, "max_tokens": 1000000,
+                          "max_cost_micro_units": 1000000, "max_output_bytes": 67108864},
+                         "Delivery needs its own multi-call budget instead of the triage allowance")
         modes = [row["ceiling"] for row in defaults["projects"][0]["role_profiles"].values()
                  if row["ceiling"].get("execution_binding") == "step"]
         self.assertEqual(len(modes), 2, "both step execution modes must accept one reusable profile")
@@ -267,6 +328,45 @@ class FactoryDeliverySetupTests(unittest.TestCase):
         self.assertEqual(extended["codex"][1], default_coder)
         self.assertEqual(delivery_models(extended, project, capture, [], code_build=code_build), extended)
         additions = delivery_models(catalog, project, capture, ["tools", "tests"], code_build=code_build)
+        import tempfile
+        from unittest import mock
+        import factory_delivery_setup as setup
+        with tempfile.TemporaryDirectory() as directory:
+            policy = Path(directory) / "delivery.json"
+            budget = {"max_attempts": 1, "max_elapsed_millis": 300000, "max_tokens": 2000000,
+                      "max_cost_micro_units": 1000000, "max_output_bytes": 67108864}
+            policy.write_text(json.dumps({"stage_budget": budget}))
+            with mock.patch.object(setup, "POLICY", policy):
+                root = Path(directory) / "stand"
+                (root / "agent-validation").mkdir(parents=True)
+                (root / "agent-validation/worker.json").write_text("{}")
+                installed_catalog = root / "catalog.json"
+                retained_catalog = copy.deepcopy(additions)
+                retained_catalog["projects"][0]["references"].append({
+                    "kind": "permission_ceiling", "alias": "delivery-ceiling-existing"})
+                installed_catalog.write_text(json.dumps(retained_catalog))
+                installed_catalog.chmod(0o600)
+                native = root / "native"
+                native.mkdir()
+                (native / "job-spec-policy.json").write_text(json.dumps({"octa": {
+                    "version": "v1", "plugin_digests": {"codex": "d" * 64}}}))
+                class Client:
+                    def get(self, path):
+                        return {"definition": {"runtime": {"immutable_image": "qualified-guest", "cpu_millis": 2000}}}
+                with mock.patch.object(setup.triage, "prepare_guest_image", return_value="qualified-guest"), \
+                        mock.patch.object(setup, "_standard_verifiers_current", return_value=True), \
+                        mock.patch("configure_local_stand_agent.read_factory_agent_profile", return_value={}), \
+                        mock.patch.object(setup, "install_controller", side_effect=RuntimeError("budget upgrade selected")):
+                    with self.assertRaisesRegex(RuntimeError, "budget upgrade selected"):
+                        setup.stage(root, root, {"factory_profiles": installed_catalog,
+                            "factory_agent_profile": root / "agent.toml"}, project, "repository", None, native, Client(), [], [])
+                revised = delivery_models(additions, project, capture, ["tools", "tests"], code_build=code_build)
+                self.assertEqual(revised["codex"][:len(additions["codex"])], additions["codex"],
+                                 "budget changes must retain already published compiler bindings")
+                profiles = revised["projects"][0]["role_profiles"]
+                self.assertEqual(profiles["delivery-coder"], additions["projects"][0]["role_profiles"]["delivery-coder"])
+                self.assertTrue(any(row["ceiling"].get("budget") == budget for row in profiles.values()))
+                self.assertEqual(delivery_models(revised, project, capture, ["tools", "tests"], code_build=code_build), revised)
         legacy = copy.deepcopy(additions)
         legacy["codex"][5]["project_permissions"]["resources"]["cpu_millis"] = 1000
         legacy["codex"][5]["local_permissions"]["grants"]["resources"]["cpu_millis"] = 1000
@@ -285,6 +385,13 @@ class FactoryDeliverySetupTests(unittest.TestCase):
         self.assertEqual(additions["codex"][0], triage)
         self.assertEqual(additions["projects"][0]["role_profiles"]["triage-runtime"], runtime)
         coder, reviewer, devops, tester, verification = additions["codex"][1:6]
+        self.assertIn("Agent captures approved source edits after your execution", coder.get("instructions", ""))
+        self.assertIn("Do not fabricate revisions or create the capture artifacts", coder["instructions"])
+        self.assertIn("Review the selected read-only candidate snapshot", reviewer.get("instructions", ""))
+        self.assertIn("Read the verified candidate change summary", reviewer["instructions"])
+        self.assertIn("Run applicable public regression checks", reviewer["instructions"])
+        self.assertIn("input_digest from /octacity/protected/task-envelope.json", reviewer["instructions"])
+        self.assertIn("findings contains actionable defects only", reviewer["instructions"])
         scoped = additions["projects"][0]["role_profiles"].get("delivery-tester-verification")
         self.assertIsNotNone(scoped, "Delivery installs a separate Tester profile for invoking the retained checks")
         self.assertEqual(verification["execution_mode"], "scoped_validation")

@@ -242,6 +242,7 @@ pub fn factory_node_change_set(
     &bytes,
     record.payload().schema(),
   )
+  .map(|(candidate, _)| candidate)
 }
 
 /// Restores capture selected as additional private evidence beside a public result.
@@ -254,6 +255,18 @@ pub fn restore_factory_node_change_set(
   manifest: &crate::FactoryNodeBuildOutputDocument,
   capture_tool: &ImmutableReference,
 ) -> Result<ChangeSet, FactoryChangeSetError> {
+  restore_factory_node_change_set_manifest(record, intent, execution, manifest, capture_tool)
+    .map(|(candidate, _)| candidate)
+}
+
+/// Shares the already verified manifest with bounded candidate-context projections.
+pub(crate) fn restore_factory_node_change_set_manifest(
+  record: &FlowNodeRecord,
+  intent: &FlowBuildIntent,
+  execution: &FlowBuildExecution,
+  manifest: &crate::FactoryNodeBuildOutputDocument,
+  capture_tool: &ImmutableReference,
+) -> Result<(ChangeSet, CapturedChangeSetManifestV1), FactoryChangeSetError> {
   let invalid = || FactoryChangeSetError::InvalidEvidence;
   let proof = record
     .build_provenance()
@@ -295,7 +308,7 @@ fn recover_candidate(
   capture_tool: &ImmutableReference,
   bytes: &[u8],
   schema: &ImmutableReference,
-) -> Result<ChangeSet, FactoryChangeSetError> {
+) -> Result<(ChangeSet, CapturedChangeSetManifestV1), FactoryChangeSetError> {
   let invalid = || FactoryChangeSetError::InvalidEvidence;
   let provenance = record.build_provenance().ok_or_else(invalid)?;
   if record.input() != intent.input()
@@ -380,6 +393,7 @@ fn recover_candidate(
       manifest_output.artifact.content_digest(),
     ),
   )
+  .map(|candidate| (candidate, manifest))
 }
 
 fn captured_candidate(

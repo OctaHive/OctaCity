@@ -1,0 +1,343 @@
+import { expect } from '@playwright/test';
+import { test } from './sourceTest';
+import { retainJsonEvidence } from './retainedEvidence';
+import { choose, setChecked, t } from './manualAuthoringControls';
+import {
+  configuration,
+  deliveryAssignments,
+  deliveryCode,
+  executor,
+  projectFields,
+  publish,
+  read,
+  triage,
+} from './issue-delivery-authoring-controls';
+
+const spki = process.env.OCTACITY_RELEASE_TLS_SPKI;
+test.use({
+  launchOptions: { args: spki ? [`--ignore-certificate-errors-spki-list=${spki}`] : [] },
+});
+
+test('authors triage and Delivery through the ordinary stand Console without API pipeline setup', async ({
+  page,
+}) => {
+  test.setTimeout(900_000);
+  page.setDefaultTimeout(20_000);
+  const project = process.env.OCTACITY_RELEASE_PROJECT_ID!;
+  const revision = process.env.OCTACITY_RELEASE_CODE_REVISION!;
+  const path = process.env.OCTACITY_RELEASE_DELIVERY_FILE!;
+  const repository = process.env.OCTACITY_RELEASE_SOURCE_REPOSITORY!;
+  const directory = process.env.OCTACITY_RELEASE_DELIVERY_DIRECTORY!;
+  expect(project).toBeTruthy();
+  expect(revision).toBeTruthy();
+  expect(path).toBeTruthy();
+  expect(repository).toBeTruthy();
+  expect(directory).toBeTruthy();
+  await page.addInitScript(() =>
+    localStorage.setItem(
+      'octacity.console.preferences',
+      JSON.stringify({
+        version: 2,
+        language: 'en',
+        theme: 'light',
+        favorites: [],
+        recents: [],
+        expanded: [],
+        explorerOpen: false,
+        explorerWidth: 288,
+        notificationLastOpenedAt: null,
+      }),
+    ),
+  );
+  // The driver may observe the real server, but never seeds business definitions.
+  for (const collection of ['flow-definitions', 'factory-configurations', 'factory-runs'])
+    expect((await read(page, project, `${collection}?limit=100`)).items).toEqual([]);
+  const capabilities = await read(page, project, 'factory-authoring-capabilities');
+  expect(capabilities.issue_classification?.plugin.identity).toBe('stand.issue-classification');
+  await projectFields(page, project);
+  const triageTarget = await triage(page, project);
+
+  await page.goto(`/projects/${project}/issues`);
+  await page.getByRole('button', { name: 'Create task', exact: true }).click();
+  await page.getByRole('textbox', { name: 'Title', exact: true }).fill('UI pipeline qualification');
+  await page
+    .getByRole('textbox', { name: 'Description', exact: true })
+    .fill(
+      `Add ${path} containing the single line octacity-ui-delivery. This is a small feature request for the Console component, priority low. Keep the change within the approved directory.`,
+    );
+  await page
+    .getByRole('textbox', { name: 'Acceptance criteria', exact: true })
+    .fill(
+      `${path} exists with the exact UTF-8 content octacity-ui-delivery followed by a newline. Independently verify the file content.`,
+    );
+  await page.getByRole('button', { name: 'Review task', exact: true }).click();
+  const created = page.waitForResponse(
+    (response) =>
+      response.request().method() === 'POST' &&
+      new URL(response.url()).pathname === `/api/v1/projects/${project}/issues`,
+  );
+  await page.getByRole('dialog').getByRole('button', { name: 'Create task', exact: true }).click();
+  const issue = (await (await created).json()).resource;
+  await page.goto(`/projects/${project}/issues/${issue.id}`);
+  await launch(triageTarget, false);
+  const before = (await read(page, project, `issues/${issue.id}/executions`)).items;
+  expect(before).toHaveLength(1);
+  await settle(before[0].association.run_id);
+  const classified = await read(page, project, `issues/${issue.id}`);
+  expect(classified.content.priority).toBe('low');
+  expect(classified.classification.fields).toHaveLength(8);
+  for (const field of classified.classification.fields) {
+    expect(field.origin).toMatchObject({ kind: 'pipeline', run_id: before[0].association.run_id });
+  }
+  expect(classified.planning).toMatchObject({
+    component: 'console',
+    type: 'feature_request',
+    size: 'small',
+  });
+  await page.goto(`/factory?project_id=${project}`);
+  await page.getByRole('button', { name: t('factory.addPipeline'), exact: true }).click();
+  await page.getByText('Start from an example', { exact: true }).click();
+  await page.getByRole('button', { name: 'Ticket delivery · v2', exact: true }).click();
+  await setChecked(
+    page.getByRole('checkbox', { name: 'Map Issue fields to admission', exact: true }),
+  );
+  await choose(page, page, 'Admission priority field', 'Priority · priority');
+  for (const [value, score] of [
+    ['blocker', '100'],
+    ['high', '80'],
+    ['medium', '50'],
+    ['low', '20'],
+  ])
+    await page
+      .getByRole('spinbutton', { name: `Scheduling priority: ${value}`, exact: true })
+      .fill(score!);
+  await choose(page, page, 'Admission risk field', 'Classification: Delivery risk · risk');
+  await choose(page, page, 'Admission risk: low', 'Low');
+  await setChecked(
+    page.getByRole('checkbox', { name: 'Allow work_kind: feature_request', exact: true }),
+  );
+  const presets = (await read(page, project, 'factory-presets?limit=100')).items;
+  const preset = presets.find(
+    (item: { reference: { identity: string; version: string } }) =>
+      item.reference.identity === 'ticket-delivery' && item.reference.version === 'v2',
+  );
+  expect(preset).toBeTruthy();
+  for (const step of preset.editor.steps) {
+    if (step.kind !== 'reasoning') continue;
+    const name = step.alias.replace(/[._-]/g, ' ');
+    const label = name.charAt(0).toUpperCase() + name.slice(1);
+    await page.getByText(label, { exact: true }).click();
+    const scope = page
+      .getByRole('group', { name: 'Ticket delivery', exact: true })
+      .locator('details')
+      .filter({
+        has: page.locator('summary').filter({ hasText: new RegExp(`^${label}(?: · |$)`) }),
+      });
+    const [role, profile] =
+      step.alias === 'implementation'
+        ? ['Coder', 'Coder · Delivery']
+        : step.alias === 'protected_tests'
+          ? ['Tester', 'Tester · Delivery']
+          : step.alias === 'delivery_devops'
+            ? ['DevOps', 'DevOps · Delivery']
+            : ['Reviewer', 'Reviewer · Delivery'];
+    await executor(
+      page,
+      scope,
+      role!,
+      profile!,
+      step.alias === 'protected_tests' ? 'Prepare protected tests' : undefined,
+    );
+    // The shared Tester requires an explicit mode, scoped to this one step.
+  }
+  const commandChoices = await read(page, project, 'factory-authoring-capabilities');
+  for (const step of preset.editor.steps.filter(
+    (step: { kind: string }) => step.kind === 'build_command',
+  )) {
+    const parameter = preset.parameters.find(
+      (parameter: { path: string }) => parameter.path === `/commands/${step.alias}`,
+    );
+    if (!parameter?.required) continue;
+    const name = step.alias.replace(/[._-]/g, ' ');
+    const label = name.charAt(0).toUpperCase() + name.slice(1);
+    const select = page.getByRole('combobox', { name: label, exact: true });
+    await select.click();
+    // Compatibility is filtered by the product from installed typed report contracts.
+    const report = step.alias === 'tests_on_base' ? 'baseline.report' : 'validation_report';
+    const options = page.getByRole('option').filter({ hasText: ` · ${report} · ` });
+    expect(commandChoices.commands.length).toBeGreaterThan(0);
+    await expect(options).toHaveCount(1);
+    await options.click();
+  }
+  await page.getByRole('combobox', { name: t('factory.publicationTarget'), exact: true }).click();
+  await page
+    .getByRole('option')
+    .filter({ hasNotText: t('factory.chooseInput') })
+    .click();
+  const resolved = page.waitForResponse((response) =>
+    new URL(response.url()).pathname.endsWith('/factory-presets/resolve'),
+  );
+  await page.getByRole('button', { name: 'Open example draft', exact: true }).click();
+  const resolution = await resolved;
+  expect(resolution.ok(), await resolution.text()).toBe(true);
+  await expect(
+    page.getByRole('textbox', { name: t('factory.pipelineName'), exact: true }),
+  ).toHaveValue('Ticket delivery', { timeout: 20_000 });
+  await page
+    .getByRole('textbox', { name: t('factory.pipelineName'), exact: true })
+    .fill('UI Delivery');
+  await deliveryCode(page, revision, directory);
+  await deliveryAssignments(page, directory);
+  await publish(page);
+  const deliveryTarget = await configuration(page, project, 'UI Delivery', 'Delivery');
+  const flow = await (
+    await page.request.get(`/api/v1/factory-configurations/${deliveryTarget.id}/versions/1`)
+  ).json();
+  expect(flow.configuration.flow.accepted_predecessor).toBeUndefined();
+  expect(flow.configuration.flow.issue_snapshot.admission.allowed.work_kind).toEqual([
+    'feature_request',
+  ]);
+  expect(
+    flow.configuration.flow.closure.definitions.flatMap((root: { nodes: unknown[] }) => root.nodes)
+      .length,
+  ).toBeGreaterThan(5);
+  await page.goto(`/projects/${project}/issues/${issue.id}`);
+  await launch(deliveryTarget, true);
+  const executions = (await read(page, project, `issues/${issue.id}/executions`)).items;
+  expect(executions).toHaveLength(2);
+  const delivery = executions.find(
+    (execution: { association?: { run_id: string } }) =>
+      execution.association?.run_id !== before[0].association.run_id,
+  );
+  expect(delivery).toBeTruthy();
+  const snapshot = await read(
+    page,
+    project,
+    `issues/${issue.id}/executions/${delivery.id}/snapshot`,
+  );
+  expect(snapshot.snapshot.values).toMatchObject({
+    priority: 'low',
+    component: 'console',
+    work_kind: 'feature_request',
+    size: 'small',
+  });
+  expect(snapshot.snapshot.attribution).toBeTruthy();
+  for (const field of Object.values(snapshot.snapshot.attribution)) {
+    expect(field).toMatchObject({
+      origin: { kind: 'pipeline', run_id: before[0].association.run_id },
+    });
+  }
+  const run = delivery.association.run_id;
+  await settle(run);
+  const completions = await (
+    await page.request.get(`/api/v1/factory-runs/${run}/node-completions`)
+  ).json();
+  const nodes = completions.items.map(
+    (entry: { record: { node_key: string } }) => entry.record.node_key,
+  );
+  for (const required of [
+    'protected_tests',
+    'implementation',
+    'review',
+    'protected_validation',
+    'publish_pull_request',
+  ])
+    expect(nodes).toContain(required);
+  expect(completions.items).toEqual(
+    expect.arrayContaining([
+      expect.objectContaining({
+        record: expect.objectContaining({ node_key: 'publish_pull_request', outcome: 'published' }),
+      }),
+    ]),
+  );
+  await page.goto(`/projects/${project}/issues/${issue.id}`);
+  const pullRequest = page.getByRole('link', {
+    name: t('issueOutcomes.openPullRequest'),
+    exact: true,
+  });
+  await expect(pullRequest).toHaveAttribute('href', /^https:\/\/.+\/pull\/\d+$/);
+  const reviewUrl = new URL((await pullRequest.getAttribute('href'))!);
+  const sourceUrl = new URL(repository.replace(/\.git$/, ''));
+  expect(reviewUrl.origin).toBe(sourceUrl.origin);
+  expect(reviewUrl.pathname.replace(/\/pull\/\d+$/, '')).toBe(sourceUrl.pathname);
+  await retainJsonEvidence(test.info(), 'confirmed-delivery', {
+    run,
+    url: await pullRequest.getAttribute('href'),
+    completions,
+  });
+
+  async function settle(run: string) {
+    let terminal: { state: string; diagnostics?: unknown } | undefined;
+    await expect
+      .poll(
+        async () => {
+          const response = await page.request.get(`/api/v1/factory-runs/${run}`);
+          expect(response.ok()).toBe(true);
+          terminal = await response.json();
+          return terminal?.state;
+        },
+        { timeout: 480_000 },
+      )
+      .toMatch(/^(completed|stopped|cancelled)$/);
+    await test.info().attach(`run-${run}`, {
+      body: Buffer.from(JSON.stringify(terminal)),
+      contentType: 'application/json',
+    });
+    if (terminal?.state !== 'completed') {
+      for (const collection of ['node-attempts', 'node-stops', 'node-completions', 'builds']) {
+        const response = await page.request.get(
+          `/api/v1/factory-runs/${run}/${collection}?limit=100`,
+        );
+        const body = await response.text();
+        await test.info().attach(`${run}-${collection}`, {
+          body: Buffer.from(body),
+          contentType: 'application/json',
+        });
+        if (collection !== 'builds' || !response.ok()) continue;
+        for (const item of JSON.parse(body).items) {
+          const build = await (
+            await page.request.get(`/api/v1/builds/${item.record.build_id}`)
+          ).json();
+          if (!build.current_attempt?.id) continue;
+          const attempt = await (
+            await page.request.get(`/api/v1/attempts/${build.current_attempt.id}`)
+          ).json();
+          for (const job of attempt.jobs ?? []) {
+            const events = await page.request.get(
+              `/api/v1/jobs/${job.id}/events?after=0&limit=100&wait_ms=0`,
+            );
+            await test.info().attach(`job-${job.id}-events`, {
+              body: Buffer.from(await events.text()),
+              contentType: 'application/json',
+            });
+          }
+        }
+      }
+    }
+    expect(terminal?.state, JSON.stringify(terminal)).toBe('completed');
+  }
+
+  async function launch(target: { id: string; version: number }, snapshot: boolean) {
+    await page.getByRole('button', { name: 'Start pipeline', exact: true }).click();
+    await choose(
+      page,
+      page,
+      'Factory Configurations',
+      `Factory Configuration · v${target.version} · ${target.id}`,
+    );
+    await choose(page, page, 'Source', 'Exact revision');
+    await page.getByRole('textbox', { name: 'Exact revision', exact: true }).fill(revision);
+    await expect(
+      page.getByRole('combobox', { name: t('issues.predecessorRun'), exact: true }),
+    ).toHaveCount(0);
+    if (!snapshot)
+      await page.getByRole('spinbutton', { name: 'Work priority', exact: true }).fill('20');
+    await page.getByRole('button', { name: 'Review pipeline launch', exact: true }).click();
+    await page
+      .getByRole('dialog')
+      .getByRole('button', { name: 'Confirm pipeline launch', exact: true })
+      .click();
+    await expect(page.getByRole('dialog')).toContainText('Work and Run admitted.');
+    await page.getByRole('dialog').getByRole('button', { name: 'Close', exact: true }).click();
+  }
+});

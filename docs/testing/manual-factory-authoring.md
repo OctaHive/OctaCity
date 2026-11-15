@@ -396,6 +396,56 @@ qualification is described below.
 
 ## Ticket delivery qualification
 
+### Ordinary-stand UI authoring
+
+`tools/tests/test_factory_stand_native.py::test_console_authors_triage_and_delivery_without_api_pipeline_preparation`
+uses the normal installer with `--no-example-pipeline`. It asserts an empty
+Factory Flow/Configuration/Run catalog, then runs
+`ui/tests/released/issue-delivery-authoring.spec.ts` against the packaged Console.
+The browser creates Project classification fields, a typed triage with an explicit
+local write, both published Flows/Configurations and a manual Issue. It executes
+triage, checks the applied Issue classification, opens Delivery v2, reviews its
+admission mappings and starts Delivery without a predecessor selector. Completion
+requires protected authoring, implementation, review, mandatory validation and a
+confirmed trusted publication outcome. Test-side HTTP is read-only; it prepares
+neither pipeline nor gates/admission/configurations.
+
+Set `OCTACITY_TEST_FACTORY_STAND_UI_INPUT` to a private JSON installation-input file
+with `native_installation`, `source_tree`, `server_image`, `gateway_image`,
+`github_token_file`, `source_repository`, `source_revision`,
+`delivery_write_directory`, `delivery_file`, `delivery_target_branch` and
+`delivery_token_file`. Use current verified images/native assets, an exact
+published source revision, an unused file inside the approved write directory,
+and an explicitly selected test publication target/credential. Credentials stay
+in their selected files and normal private installation owners. The target gets
+a real draft PR. The test owns a unique Compose project and volumes, but the
+ordinary gateway port must be free. Cleanup resets only that disposable root and
+its own volumes and restores previous local image tags.
+Evidence collection errors (including disk exhaustion and Docker log timeouts)
+do not skip reset or image-tag restoration. Every cleanup operation is attempted
+even if another one fails. If the journey has already failed, secondary errors
+are attached to that original exception; otherwise evidence/cleanup errors fail
+the test as an exception group. These paths have an ordinary unit regression in
+`tools/tests/test_factory_stand_native_cleanup.py`, requiring no credentials,
+running Docker services or remote publication.
+
+Preserve `ui/test-results` with the optional private `evidence_directory` selected
+in the input file. A passing browser run writes `confirmed-delivery.json` with
+the Run, confirmed PR URL and mandatory completion records; it is retained as a
+private file even when the selected reporter discards in-memory attachments.
+The publication result is explicitly configured through **Show on Issue → Pull
+request**, and the journey requires the confirmed link in Issue Overview.
+
+```sh
+OCTACITY_TEST_FACTORY_STAND_UI_INPUT=/absolute/private/ui-input.json \
+  python3 -m unittest tools.tests.test_factory_stand_native.FactoryStandNativeTests.test_console_authors_triage_and_delivery_without_api_pipeline_preparation
+```
+
+The historical tasks 7.1–7.5 below establish packaged execution and material
+behavior from harness-authored definitions; they do not establish full UI
+pipeline authoring. Section 8's verification report records the new run separately.
+
+
 For new Issue-based consumers, use the
 [snapshot stand checklist](../operations/local-stand.md#qualify-issue-snapshot-delivery)
 and the [current authoring walkthrough](../operations/factory-pipeline-authoring.md#author-ticket-delivery).
