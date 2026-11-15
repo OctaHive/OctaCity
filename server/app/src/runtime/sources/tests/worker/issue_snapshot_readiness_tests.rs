@@ -247,6 +247,7 @@ async fn issue_snapshot_incompatible_code_subject_waits_with_existing_run_withou
     managed_labels: Default::default(),
     authority: None,
     fields: Some(IssueClassificationUpdate {
+      invocation: None,
       selection: IssueFieldForm {
         project_id: issue.project_id,
         definition_version: 1,

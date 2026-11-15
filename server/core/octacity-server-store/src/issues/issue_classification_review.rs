@@ -159,35 +159,7 @@ impl IssueRevision {
               evidence: vec![],
             };
           };
-          if field.requirements_version != self.applicability_version {
-            problems.push(IssueClassificationProblem::RequirementsChanged);
-          }
-          if let IssueClassificationFieldReference::Property { definition_version, .. } = &field.field
-            && assessment_catalogs
-              .get(definition_version)
-              .is_none_or(|catalog| catalog.project_id != self.project_id || catalog.version != *definition_version)
-          {
-            problems.push(IssueClassificationProblem::DefinitionUnavailable);
-          }
-          if let Some(expected) = &field.inputs.subject {
-            match subject {
-              None => problems.push(IssueClassificationProblem::CodeSubjectUnavailable),
-              Some(actual) if actual != expected => problems.push(IssueClassificationProblem::CodeSubjectChanged),
-              _ => {}
-            }
-          }
-          for reference in &field.inputs.materials {
-            if !self
-              .materials
-              .entries()
-              .iter()
-              .any(|entry| &entry.reference == reference)
-            {
-              problems.push(IssueClassificationProblem::MaterialChanged {
-                reference: reference.clone(),
-              });
-            }
-          }
+          problems.extend(self.assessment_problems(field, assessment_catalogs, subject));
           let reproduction = self.classification_reproduction_claim(&field.field, assessment_catalogs);
           let requires_verified_evidence = match reproduction {
             Some(claim) => match crate::IssueReproductionClaim::from_choice(claim) {
@@ -237,6 +209,47 @@ impl IssueRevision {
         })
         .collect(),
     }
+  }
+
+  /// Current applicability of one exact field assessment, independent of semantic roles or verdict names.
+  /// Observation qualification remains an explicit consumer requirement.
+  pub fn assessment_problems(
+    &self,
+    field: &crate::IssueClassificationAttribution,
+    assessment_catalogs: &std::collections::BTreeMap<u64, crate::PublishedIssueProperties>,
+    subject: Option<&octacity_server_factory::FactoryTaskSubject>,
+  ) -> Vec<IssueClassificationProblem> {
+    let mut problems = vec![];
+    if field.requirements_version != self.applicability_version {
+      problems.push(IssueClassificationProblem::RequirementsChanged);
+    }
+    if let IssueClassificationFieldReference::Property { definition_version, .. } = &field.field
+      && assessment_catalogs
+        .get(definition_version)
+        .is_none_or(|catalog| catalog.project_id != self.project_id || catalog.version != *definition_version)
+    {
+      problems.push(IssueClassificationProblem::DefinitionUnavailable);
+    }
+    if let Some(expected) = &field.inputs.subject {
+      match subject {
+        None => problems.push(IssueClassificationProblem::CodeSubjectUnavailable),
+        Some(actual) if actual != expected => problems.push(IssueClassificationProblem::CodeSubjectChanged),
+        _ => {}
+      }
+    }
+    for reference in &field.inputs.materials {
+      if !self
+        .materials
+        .entries()
+        .iter()
+        .any(|entry| &entry.reference == reference)
+      {
+        problems.push(IssueClassificationProblem::MaterialChanged {
+          reference: reference.clone(),
+        });
+      }
+    }
+    problems
   }
 
   /// Resolves a retained property's reproduction meaning from its exact original catalog.

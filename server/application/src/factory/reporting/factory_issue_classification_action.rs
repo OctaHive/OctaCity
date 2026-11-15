@@ -40,6 +40,10 @@ impl<S, F> FactoryIssueClassificationAction<S, F> {
   }
 }
 
+#[path = "factory_issue_field_writes.rs"]
+pub(crate) mod automatic;
+pub use automatic::FactoryIssueFieldWrites;
+
 pub(crate) const RECEIPT_EXAMPLE: FactoryDigest = FactoryDigest::from_bytes([0; 32]);
 
 fn receipt_payload(schema: &FlowDataSchema, operation: FactoryDigest) -> Result<FlowPayload, ApplicationError> {
@@ -265,6 +269,7 @@ impl<S: IssueClassificationStore, F: FactoryRunStore> FactoryFlowActionPlugin
       };
       Some(octacity_server_store::IssueClassificationUpdate {
         selection: selection.clone(),
+        invocation: None,
         values,
         inputs,
       })
@@ -337,7 +342,7 @@ impl<S: IssueClassificationStore, F: FactoryRunStore> FactoryFlowActionPlugin
       })
       .ok_or_else(invalid)?;
     let authority = IssueClassificationAuthority {
-      claim: claim.id,
+      claim: octacity_server_store::IssueClassificationClaim::Run(claim.id),
       deadline: std::time::Instant::now()
         .checked_add(std::time::Duration::from_millis(remaining))
         .ok_or_else(invalid)?,

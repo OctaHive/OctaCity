@@ -93,7 +93,7 @@ async fn selected_field_form_concurrent_save_and_restart_replay_preserve_the_ori
   let mut recovery = command.clone();
   recovery.applied_at = at(500);
   recovery.authority = Some(IssueClassificationAuthority {
-    claim: FactoryDigest::from_bytes([213; 32]),
+    claim: IssueClassificationClaim::Run(FactoryDigest::from_bytes([213; 32])),
     deadline: std::time::Instant::now() - std::time::Duration::from_secs(1),
   });
   let replay = restarted
@@ -186,7 +186,7 @@ async fn selected_field_form_atomic_rejection_and_original_conflict_survive_rest
   let mut retry = invalid.clone();
   retry.applied_at = at(500);
   retry.authority = Some(IssueClassificationAuthority {
-    claim: FactoryDigest::from_bytes([214; 32]),
+    claim: IssueClassificationClaim::Run(FactoryDigest::from_bytes([214; 32])),
     deadline: std::time::Instant::now() - std::time::Duration::from_secs(1),
   });
   assert!(
@@ -238,5 +238,74 @@ async fn selected_field_form_atomic_rejection_and_original_conflict_survive_rest
   assert_eq!(saved.issue.planning.values["failures"], IssuePropertyValue::Number(0));
   assert_eq!(saved.issue.version, baseline.version.next().unwrap());
   pool.close().await;
+  database.cleanup().await;
+}
+
+#[tokio::test]
+#[ignore = "requires an explicitly configured disposable PostgreSQL service"]
+async fn selected_field_invocations_cannot_rebase_over_a_competing_saved_result() {
+  let database = TestDatabase::migrated().await;
+  let store = PostgresStore::new(database.pool.clone());
+  let (baseline, _, mut first) = fixture(&store, &database.pool).await;
+  first.fields.as_mut().unwrap().invocation = Some(IssueFieldInvocation {
+    node: "analyze".parse().unwrap(),
+    attempt_id: NodeAttemptId::generate(),
+    baseline: baseline.version,
+  });
+  let mut second = first.clone();
+  second.record = FactoryDigest::from_bytes([217; 32]);
+  second.operation_id = FactoryDigest::from_bytes([218; 32]);
+  second.accepted_at = at(21);
+  second.applied_at = at(22);
+  second.fields.as_mut().unwrap().invocation.as_mut().unwrap().attempt_id = NodeAttemptId::generate();
+  second
+    .fields
+    .as_mut()
+    .unwrap()
+    .values
+    .insert("priority".parse().unwrap(), json!("low"));
+  let saved = store
+    .apply_issue_classification(management_mutation(first.clone()))
+    .await
+    .unwrap()
+    .issue;
+  assert_eq!(saved.content.priority, Some(IssuePriority::Choice("high".into())));
+  assert!(
+    matches!(
+      store
+        .apply_issue_classification(management_mutation(second.clone()))
+        .await,
+      Err(StoreError::Conflict {
+        entity: EntityKind::Issue
+      })
+    ),
+    "another accepted result assessed the same old Issue revision, not the first result"
+  );
+  assert_eq!(
+    store.issue(baseline.project_id, baseline.id, None).await.unwrap(),
+    saved
+  );
+  let restarted = PostgresStore::new(database.pool.clone());
+  assert!(
+    matches!(
+      restarted.apply_issue_classification(management_mutation(second)).await,
+      Err(StoreError::Conflict {
+        entity: EntityKind::Issue
+      })
+    ),
+    "conflict survives restart/replay"
+  );
+  assert_eq!(
+    restarted
+      .apply_issue_classification(management_mutation(first))
+      .await
+      .unwrap()
+      .disposition,
+    MutationDisposition::Replayed
+  );
+  assert_eq!(
+    restarted.issue(baseline.project_id, baseline.id, None).await.unwrap(),
+    saved
+  );
   database.cleanup().await;
 }

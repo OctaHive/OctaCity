@@ -655,3 +655,35 @@ fn publication_rejects_a_declarative_gate_without_explicit_result_data() {
     assert!(authoring_queries().handle_query(&context(), complete).await.is_ok());
   });
 }
+
+#[test]
+fn selected_issue_form_cannot_publish_without_an_installed_writer_and_project_catalog() {
+  run_ready(async {
+    let mut draft = layout_draft();
+    let project_id = ProjectId::generate();
+    let mut wire = serde_json::to_value(&draft).unwrap();
+    wire["root"]["nodes"][0]["outcomes"][0]["issue_fields"] = serde_json::json!({
+      "writer":draft.data_schemas[0].reference(), "policy":"issue-fields",
+      "form":{"project_id":project_id,"definition_version":0,
+        "fields":[{"field":{"kind":"priority"},"required":true}]}
+    });
+    draft = serde_json::from_value(wire).unwrap();
+    let result = authoring_queries()
+      .handle_query(
+        &context(),
+        crate::ValidateFactoryFlowDefinitionQuery {
+          id: FlowDefinitionId::generate(),
+          project_id,
+          draft,
+        },
+      )
+      .await;
+    assert!(
+      result.is_err(),
+      "field-write authority cannot be smuggled through an ordinary output schema"
+    );
+  });
+}
+
+#[path = "factory_issue_field_authoring_tests.rs"]
+mod issue_fields;

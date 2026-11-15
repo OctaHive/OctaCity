@@ -225,3 +225,53 @@ fn ordinary_property_snapshot_keeps_values_and_definitions_after_later_publicati
     assert_eq!(store.issue(issue.project_id, issue.id, None).await.unwrap(), later);
   });
 }
+
+#[test]
+fn direct_property_snapshot_requires_current_assessment_without_semantic_registration() {
+  run_ready(async {
+    let (store, factory, issue, mut command) = ordinary_fixture().await;
+    let issue = store
+      .edit_issue(management_mutation(EditIssue {
+        intent: EditIssueIntent {
+          project_id: issue.project_id,
+          id: issue.id,
+          expected_version: issue.version,
+          content: IssueContent {
+            description: "Changed requirements".into(),
+            ..issue.content
+          },
+        },
+        idempotency_key: key("direct-property-new-requirements"),
+        edited_at: at(39),
+      }))
+      .await
+      .unwrap()
+      .issue;
+    command.intent.expected_version = issue.version;
+    let policy = Arc::new(TrustedNetworkManagementPolicy);
+    let requests = AuthorizedCommandHandler::new(
+      policy.clone(),
+      Arc::new(IssueExecutionHandlers::new(store.clone(), factory.clone(), policy)),
+    );
+    let before = (
+      store.mutation_evidence_counts().await,
+      factory.mutation_evidence_counts().await,
+    );
+    let error = requests
+      .handle_command(&context(), command)
+      .await
+      .expect_err("direct custom field freshness does not depend on a role");
+    let Some(ApplicationError::FactoryValidation(report)) = error.application() else {
+      panic!("field diagnostics: {error:?}");
+    };
+    assert_eq!(report.errors[0].field, "/issue_snapshot/fields/date");
+    assert_eq!(report.errors[0].code, "issue_snapshot_inapplicable");
+    assert_eq!(
+      (
+        store.mutation_evidence_counts().await,
+        factory.mutation_evidence_counts().await
+      ),
+      before
+    );
+  });
+}

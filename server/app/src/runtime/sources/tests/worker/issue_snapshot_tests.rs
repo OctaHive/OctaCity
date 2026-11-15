@@ -149,6 +149,7 @@ fn snapshot_flow_with_inputs(required: bool, material: Option<FlowIssueMaterialS
       [(
         key("proof"),
         FlowIssueEvidenceSelection {
+          observation: None,
           field: key("size"),
           required: true,
           maximum: 1,

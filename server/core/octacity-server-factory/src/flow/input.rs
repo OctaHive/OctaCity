@@ -86,6 +86,8 @@ pub enum FlowNodeCode {
 #[derive(Clone, Debug, Eq, PartialEq, Serialize)]
 pub struct FlowNodeInput {
   schema_version: u16,
+  #[serde(skip_serializing_if = "Option::is_none")]
+  issue_field_baseline: Option<Box<crate::FlowIssueFieldBaseline>>,
   work_id: WorkEnvelopeId,
   work_digest: FactoryDigest,
   subject: crate::WorkSubject,
@@ -119,6 +121,28 @@ pub struct FlowNodeInput {
   profile_override: Option<crate::FlowProfileAdmissionOverride>,
 }
 impl FlowNodeInput {
+  /// Freeze the controller-owned Issue revision before creating an execution attempt.
+  /// Re-preparation and technical retries retain this baseline instead of reading a newer Issue.
+  pub fn with_issue_field_baseline(mut self, baseline: crate::FlowIssueFieldBaseline) -> Result<Self, FactoryError> {
+    if self
+      .issue_field_baseline
+      .as_deref()
+      .is_some_and(|frozen| frozen != &baseline)
+    {
+      return Err(invalid());
+    }
+    self.issue_field_baseline = Some(Box::new(baseline));
+    if self.bytes()?.len() > MAX_FLOW_DATA_BYTES {
+      return Err(invalid());
+    }
+    Ok(self)
+  }
+  /// Trusted invocation baseline; it is never decoded from the agent's result payload.
+  #[must_use]
+  pub fn issue_field_baseline(&self) -> Option<&crate::FlowIssueFieldBaseline> {
+    self.issue_field_baseline.as_deref()
+  }
+
   /// Verifies the exact execution owner before a capability consumes frozen data.
   pub fn verify_attempt(&self, attempt: &crate::NodeAttempt) -> Result<(), FactoryError> {
     attempt.validate_execution_window()?;
@@ -156,6 +180,7 @@ impl FlowNodeInput {
       sources,
       incoming_digest,
       caller_input_digest,
+      ..
     } = binding.project(&context)?;
     let candidate = Self::selected_candidate(&context)?;
     let mut expected = Self::new_with_candidate(
@@ -174,6 +199,7 @@ impl FlowNodeInput {
     // Execution generation is checked against full attempt history by the store
     // and journal; historical data projection uses only its frozen source snapshot.
     expected.generation = self.generation;
+    expected.issue_field_baseline = self.issue_field_baseline.clone();
     if let Some(manifest) = &self.context {
       expected = expected.with_context(manifest.clone(), self.retrieval.clone())?;
     }
@@ -200,6 +226,7 @@ impl FlowNodeInput {
       sources,
       incoming_digest,
       caller_input_digest,
+      ..
     } = binding.project(&context)?;
     let candidate = Self::selected_candidate(&context)?;
     let mut input = Self::new_with_candidate(
@@ -416,6 +443,7 @@ impl FlowNodeInput {
       .map(|_| acceptance.clone());
     let input = Self {
       schema_version: if code.is_some() { 2 } else { 1 },
+      issue_field_baseline: None,
       work_id: work.id(),
       work_digest: work_digest(work)?,
       subject: work.subject().clone(),
@@ -697,6 +725,9 @@ impl FlowNodeInput {
     // Historical inputs predate the separate signed mount for Work acceptance.
     if wire.get("work_acceptance").is_none() {
       input.work_acceptance = None;
+    }
+    if let Some(baseline) = wire.get("issue_field_baseline") {
+      input = input.with_issue_field_baseline(serde_json::from_value(baseline.clone()).map_err(|_| invalid())?)?;
     }
     if let Some(context) = wire.get("context") {
       let context = serde_json::from_value(context.clone()).map_err(|_| invalid())?;

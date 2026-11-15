@@ -111,3 +111,36 @@ pub(crate) fn contracts(catalog: &PublishedIssueProperties) -> FactoryIssueField
     fields,
   }
 }
+
+/// Compiles an inclusive threshold from one exact Project choice order into an ordinary predicate.
+/// The local input path is supplied by the consumer; later catalog edits do not alter the result.
+pub fn issue_choice_threshold(
+  catalog: &PublishedIssueProperties,
+  source: &FlowIssueFieldSource,
+  path: &str,
+  starting_at: &str,
+) -> Result<FlowPredicate, crate::ApplicationError> {
+  let Some(FlowValueSchema::Enum { values }) = crate::factory::issue_snapshot::field_shape(
+    &FlowIssueFieldSelection {
+      source: source.clone(),
+      required: true,
+    },
+    catalog,
+  ) else {
+    return Err(crate::ApplicationError::invalid());
+  };
+  let start = values
+    .iter()
+    .position(|value| value == starting_at)
+    .ok_or_else(crate::ApplicationError::invalid)?;
+  Ok(FlowPredicate::Any {
+    predicates: values[start..]
+      .iter()
+      .map(|value| FlowPredicate::Compare {
+        left: FlowOperand::Path { path: path.into() },
+        comparison: FlowComparison::Equal,
+        right: FlowOperand::Literal { value: value.clone() },
+      })
+      .collect(),
+  })
+}

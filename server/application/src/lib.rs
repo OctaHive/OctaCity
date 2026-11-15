@@ -87,6 +87,7 @@ pub use factory::artifacts::factory_execution_input_publisher::{
   FactoryExecutionDocument, FactoryExecutionInputPublisher,
 };
 pub use factory::artifacts::factory_execution_input_retention::FactoryExecutionInputRetentionWorker;
+pub use factory::artifacts::factory_issue_inputs::FactoryIssueInputs;
 pub use factory::artifacts::factory_stored_candidate_context::{
   FactoryNodeCandidateContextSource, FactoryRetainedCandidateContextSource, FactoryStoredCandidateContextSource,
 };
@@ -661,3 +662,5 @@ pub use factory::codex::factory_codex_mcp::{FactoryCodexMcpConfiguration, Factor
 pub use factory::profiles::factory_runtime_settings::*;
 
 pub use factory::authoring::factory_project_policies::*;
+
+pub use issues::issue_execution_observations::*;

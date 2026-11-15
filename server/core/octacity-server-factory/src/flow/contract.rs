@@ -50,6 +50,8 @@ pub struct FlowOutcomeDefinition {
   public_result: bool,
   #[serde(default, skip_serializing_if = "Option::is_none")]
   issue_presentation: Option<Box<crate::FlowIssuePresentation>>,
+  #[serde(default, skip_serializing_if = "Option::is_none")]
+  issue_fields: Option<Box<crate::FlowIssueFieldWrite>>,
 }
 
 impl FlowOutcomeDefinition {
@@ -62,6 +64,7 @@ impl FlowOutcomeDefinition {
       schema,
       public_result: false,
       issue_presentation: None,
+      issue_fields: None,
     }
   }
 
@@ -92,6 +95,17 @@ impl FlowOutcomeDefinition {
     self
   }
 
+  /// Selects the generated form and automatic guarded Issue application for this outcome.
+  #[must_use]
+  pub fn with_issue_fields(mut self, fields: Option<crate::FlowIssueFieldWrite>) -> Self {
+    self.issue_fields = fields.map(Box::new);
+    self
+  }
+  /// Exact reviewed write selection; absence grants no Issue field authority.
+  #[must_use]
+  pub fn issue_fields(&self) -> Option<&crate::FlowIssueFieldWrite> {
+    self.issue_fields.as_deref()
+  }
   /// Returns the finite outcome key.
   #[must_use]
   pub const fn key(&self) -> &FactoryKey {

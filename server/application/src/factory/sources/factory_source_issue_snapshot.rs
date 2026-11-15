@@ -32,6 +32,7 @@ pub struct IssueSourceSnapshotReader<I> {
   issues: Arc<I>,
   policy: Arc<dyn ManagementAuthorizationPolicy>,
   materials: Option<Arc<crate::IssueSnapshotMaterialReaders>>,
+  observations: Option<Arc<crate::IssueSnapshotObservations>>,
 }
 impl<I> IssueSourceSnapshotReader<I> {
   /// Starts with body reads disabled, independently of Issue visibility.
@@ -40,7 +41,13 @@ impl<I> IssueSourceSnapshotReader<I> {
       issues,
       policy,
       materials: None,
+      observations: None,
     }
+  }
+  /// Installs the same independently authorized command observations as manual execution.
+  pub fn with_observations(mut self, observations: Arc<crate::IssueSnapshotObservations>) -> Self {
+    self.observations = Some(observations);
+    self
   }
   /// Installs owner-aware readers; only the published Flow's bounded material contract consumes them.
   pub fn with_materials(mut self, readers: Arc<crate::IssueSnapshotMaterialReaders>) -> Self {
@@ -96,6 +103,7 @@ impl<I: IssueSourceStore + IssuePropertyStore> FactorySourceIssueSnapshots for I
         policy: self.policy.as_ref(),
         context: &authorized.context,
         materials: self.materials.as_deref(),
+        observations: self.observations.as_deref(),
       },
       &issue,
       &target,

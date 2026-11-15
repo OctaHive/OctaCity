@@ -9,9 +9,9 @@ use std::{collections::BTreeMap, sync::Arc};
 /// Independent reporting-worker settings; no setting chooses a Flow transition.
 #[derive(Clone, Debug)]
 pub struct FactoryReporterWorkerSettings {
-  owner: FactoryKey,
-  claim_millis: u64,
-  limit: u16,
+  pub(crate) owner: FactoryKey,
+  pub(crate) claim_millis: u64,
+  pub(crate) limit: u16,
 }
 impl FactoryReporterWorkerSettings {
   /// Validates a bounded dispatch window and batch size.

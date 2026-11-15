@@ -17,3 +17,5 @@ pub mod issue_test_support;
 pub(crate) mod issue_workflow;
 #[cfg(test)]
 pub(crate) mod tests;
+
+pub(crate) mod issue_execution_observations;

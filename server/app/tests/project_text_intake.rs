@@ -676,6 +676,12 @@ async fn native_resources_publish_and_read_project_inputs_through_the_shared_mec
   ))
   .unwrap();
   let resources = octacity_server::FactoryRuntimeResources {
+    local_effects: octacity_server_application::FactoryReporterWorkerSettings::new(
+      "test-local-effects".parse().unwrap(),
+      1000,
+      4,
+    )
+    .unwrap(),
     runs: store.clone(),
     builds: Arc::new(PostgresAuthoritativeStore::new(
       database.pool.clone(),

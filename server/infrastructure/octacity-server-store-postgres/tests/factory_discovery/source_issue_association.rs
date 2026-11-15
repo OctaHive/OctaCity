@@ -260,6 +260,7 @@ async fn native_source_admission_retains_the_matching_linked_issue_revision() {
       operation_id: digest(42),
       priority: None,
       fields: Some(octacity_server_store::IssueClassificationUpdate {
+        invocation: None,
         selection: serde_json::from_value(
           serde_json::json!({"project_id":input.project_id(),"definition_version":1,
           "fields":[{"field":{"kind":"size"}}]}),

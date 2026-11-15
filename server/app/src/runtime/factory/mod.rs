@@ -25,6 +25,8 @@ use std::sync::Arc;
 /// Runtime-owned resources supplied to trusted installed capability compilers.
 /// No task-authored routing or mutable provider aliases select an installation.
 pub struct FactoryRuntimeResources {
+  /// Existing Factory worker claim and batch bounds for deferred local effects.
+  pub local_effects: octacity_server_application::FactoryReporterWorkerSettings,
   /// Common durable Run, configuration, input and result journal.
   pub runs: Arc<PostgresStore>,
   /// Ordinary atomic signed Build execution and cancellation.
@@ -92,21 +94,30 @@ impl FactoryRuntimeResources {
     policy: Arc<dyn octacity_server_application::ManagementAuthorizationPolicy>,
     clock: Arc<dyn octacity_server_application::FactoryExecutionClock>,
   ) -> FactoryNodeExecutorBinding {
-    use octacity_server_application::{FactoryFlowActionAdapter, FactoryIssueClassificationAction};
-    let action = FactoryIssueClassificationAction::new(
-      identity.clone(),
+    use octacity_server_application::FactoryFlowActionAdapter;
+    let action = self.issue_classification_action(identity.clone(), context, policy, clock);
+    (
+      octacity_server_factory::FlowNodeKind::TrustedAction,
+      octacity_server_factory::NodeExecutionIdentity::External(identity),
+      Arc::new(FactoryFlowActionAdapter::new(action)),
+    )
+  }
+  fn issue_classification_action(
+    &self,
+    identity: octacity_server_factory::ImmutableReference,
+    context: octacity_server_application::ManagementRequestContext,
+    policy: Arc<dyn octacity_server_application::ManagementAuthorizationPolicy>,
+    clock: Arc<dyn octacity_server_application::FactoryExecutionClock>,
+  ) -> Arc<octacity_server_application::FactoryIssueClassificationAction<PostgresStore, PostgresStore>> {
+    Arc::new(octacity_server_application::FactoryIssueClassificationAction::new(
+      identity,
       self.runs.clone(),
       self.runs.clone(),
       self.runs.clone(),
       context,
       policy,
       clock,
-    );
-    (
-      octacity_server_factory::FlowNodeKind::TrustedAction,
-      octacity_server_factory::NodeExecutionIdentity::External(identity),
-      Arc::new(FactoryFlowActionAdapter::new(Arc::new(action))),
-    )
+    ))
   }
   /// Supplies ordinary outputs and private Source/Project inputs to every native compiler.
   pub fn retained_artifact_reader(
@@ -749,9 +760,21 @@ pub(super) async fn prepare(
 ) -> Result<Option<FactoryRuntimeInstallation>, super::ServerRuntimeError> {
   use super::ServerRuntimeError;
   let installed = match (config.factory(), installer) {
-    (Some(_), Some(installer)) => match tokio::time::timeout(
+    (Some(policy), Some(installer)) => match tokio::time::timeout(
       config.readiness_check_timeout(),
       installer.install(FactoryRuntimeResources {
+        local_effects: octacity_server_application::FactoryReporterWorkerSettings::new(
+          "factory.local-effects"
+            .parse()
+            .map_err(|_| ServerRuntimeError::InvalidFactoryInstallation)?,
+          policy
+            .claim_lifetime()
+            .as_millis()
+            .try_into()
+            .map_err(|_| ServerRuntimeError::InvalidFactoryInstallation)?,
+          policy.batch_size(),
+        )
+        .map_err(|_| ServerRuntimeError::InvalidFactoryInstallation)?,
         runs: Arc::new(PostgresStore::new(resources.postgres.clone())),
         builds: placement_store.clone(),
         objects: resources.object_storage.clone(),

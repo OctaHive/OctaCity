@@ -816,7 +816,7 @@ impl WorkSourcePreparation {
       return Err(source_conflict());
     }
     if self.admission.is_none() {
-      self.validate_issue_input(request)?;
+      self.validate_issue_input(request, guard.now)?;
     }
     Ok(())
   }

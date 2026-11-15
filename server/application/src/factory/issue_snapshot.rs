@@ -308,21 +308,14 @@ fn compatible(
   })
 }
 
-// Policy aliases must name required canonical classification, not arbitrary prose or
-// an editable ordinary `accepted` property. Catalogs remain the choice/type owner.
+// Admission converts required Project choice IDs into typed Work scheduling values.
+// Field names and classification roles supply no authority; the catalog owns the domain.
 fn validate_admission_policy(
   input: &FlowIssueSnapshotInput,
   policy: &FlowIssueAdmissionPolicy,
   catalog: &PublishedIssueProperties,
 ) -> Result<(), ApplicationError> {
   let invalid = || FactoryValidationDiagnostics::invalid("/issue_snapshot/admission");
-  if !input
-    .fields
-    .get(&policy.priority.field)
-    .is_some_and(|s| matches!(s.source, FlowIssueFieldSource::Priority))
-  {
-    return Err(invalid());
-  }
   let mappings = std::iter::once((
     &policy.priority.field,
     policy.priority.values.keys().collect::<Vec<_>>(),
@@ -339,22 +332,14 @@ fn validate_admission_policy(
   );
   for (field, values) in mappings {
     let selection = input.fields.get(field).ok_or_else(invalid)?;
-    let classified = match &selection.source {
-      FlowIssueFieldSource::Priority
-      | FlowIssueFieldSource::Component
-      | FlowIssueFieldSource::Type
-      | FlowIssueFieldSource::Size
-      | FlowIssueFieldSource::Classification { .. } => true,
-      FlowIssueFieldSource::Property { id } => catalog.definition.classification.fields().any(|(_, bound)| bound == id),
-      _ => false,
-    };
-    if !selection.required || !classified || values.is_empty() || values.len() > MAX_FLOW_SCHEMA_ENTRIES {
+    if !selection.required || values.is_empty() || values.len() > MAX_FLOW_SCHEMA_ENTRIES {
       return Err(invalid());
     }
     let shape = field_shape(selection, catalog).ok_or_else(invalid)?;
-    if values
-      .iter()
-      .any(|v| !shape.accepts_value(&serde_json::Value::String((*v).clone())))
+    if !matches!(shape, FlowValueSchema::Enum { .. })
+      || values
+        .iter()
+        .any(|v| !shape.accepts_value(&serde_json::Value::String((*v).clone())))
     {
       return Err(invalid());
     }

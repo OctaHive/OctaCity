@@ -164,17 +164,7 @@ fn required_fields(
     .collect()
 }
 
-/// A completed observation can match, not match or remain indeterminate.
-#[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq, Serialize)]
-#[serde(rename_all = "snake_case")]
-pub enum FactoryCommandFinding {
-  /// The completed criterion was observed.
-  Matched,
-  /// Complete applicable observations independently rule out that criterion.
-  NotMatched,
-  /// Missing coverage or execution conditions establish neither finding.
-  Indeterminate,
-}
+pub use octacity_server_factory::FactoryCommandFinding;
 
 /// Safe immutable primary-report choice, without program, parameters or credentials.
 /// This describes the declared contract; Agent/runtime qualification stays separate.

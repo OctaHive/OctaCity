@@ -91,11 +91,12 @@ fn authoring_offers_project_issue_field_contracts_without_a_classification_write
       .unwrap();
     let wire = serde_json::to_value(result).unwrap();
     assert_eq!(wire["issue_fields"]["definition_version"], 1);
-    assert_eq!(
-      wire["issue_fields"]["classification"]["properties"]["severity"],
-      "impact"
-    );
-    assert_eq!(wire["issue_fields"]["classification"]["component"], true);
+    let selection = &wire["issue_fields"]["classification"];
+    assert_eq!(selection["project_id"], serde_json::json!(project));
+    assert_eq!(selection["definition_version"], 1);
+    let selected = selection["fields"].as_array().expect("Project-derived field selection");
+    assert!(selected.contains(&serde_json::json!({"field":{"kind":"property","id":"impact"},"required":true})));
+    assert!(selected.contains(&serde_json::json!({"field":{"kind":"component"},"required":true})));
     let fields = wire["issue_fields"]["fields"]
       .as_array()
       .expect("bounded server-derived field contracts");

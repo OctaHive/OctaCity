@@ -52,6 +52,7 @@ mod evidence;
 mod evidence_tests;
 mod execution;
 mod flow;
+pub use flow::{FlowIssueFieldBaseline, FlowIssueFieldWrite, IssueFieldForm, IssueFieldTarget, IssueFormField};
 #[cfg(test)]
 mod flow_action_tests;
 #[cfg(test)]
@@ -337,3 +338,7 @@ pub use runtime_settings::*;
 
 #[cfg(test)]
 mod triage_template_tests;
+
+pub use issue_snapshot::{FactoryCommandFinding, FlowIssueObservation};
+
+pub use flow::FlowInputRead;

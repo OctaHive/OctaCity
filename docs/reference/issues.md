@@ -877,13 +877,13 @@ unknown/unselected result fields, absent required values, nulls, casts, incompat
 types, out-of-bound values and invalid dates. Omitted optional fields preserve their
 value and attribution. A priority-only application preserves unselected planning.
 
-Only projected fields from the exact accepted producer can reach the existing
+Only selected fields from the exact accepted producer can reach the existing
 authorized Issue command. Values, field attribution and the operation receipt use
 the existing atomic writer and source-ownership/baseline checks. Origins retain actual
 actor, Work/Run, accepted record, policy, action identity and assessed requirements/
 definition pins. Pipeline origins also retain `form`, the SHA-256 content identity
 of the canonical `IssueFieldForm` selection, including its Project, catalog version,
-stable field identities and requiredness. `IssueFieldForm::digest` computes this pin;
+stable field identities and requiredness. `IssueFieldFormContract::digest` computes this pin;
 the existing immutable Project publication supplies the exact types and bounds.
 This reference does not grant write or evidence authority. An ordinary custom
 property's later manual edit retains human attribution without requiring a
@@ -900,10 +900,75 @@ Changed reuse of a result or form conflicts; an exact retry returns its original
 receipt before checking newer definitions or an expired runtime claim. Development
 fixtures include the required current form pin, without an old-format reader.
 
-Ordinary agent automatic-save integration and generated REST/Console authoring are
-tracked separately in tasks 10.3–10.8. These persistence contracts do not expose the
-new UI controls. See the [task 10.2 verification report](../../openspec/changes/add-issue-classification-snapshots/verification-selected-field-persistence.md)
-for the observed Red/Green and disposable-PostgreSQL commands.
+See the [task 10.2 verification report](../../openspec/changes/add-issue-classification-snapshots/verification-selected-field-persistence.md)
+for persistence Red/Green and disposable-PostgreSQL commands.
+
+Task 10.3 connects an ordinary successful agent outcome to this writer through its
+optional `issue_fields` binding: exact installed `writer`, ownership `policy` and
+one `form` selection. Publication requires the Project-derived result schema to
+match that selection exactly, a successful reasoning outcome, the installed writer
+and the node's explicit permission for it. The operator authors no apply node or
+result-to-field mapping. The selection DTOs live with the Flow contract; the store's
+`IssueFieldFormContract` and `IssueFieldTargetContract` retain Project catalog and
+canonical Issue validation, without a dependency cycle or duplicate field enum.
+
+Before acquiring Context or starting the agent, the common read-only
+`FactoryIssueInputs` owner reads the Work's authoritative Issue association and
+freezes its current Issue ID/version in the node input digest. This applies to
+ordinary producers independently of `Fill Issue fields`, writer installation and
+write permissions. The captured origin grants no write authority. Ordinary Work
+without an Issue association continues through the underlying input owner.
+A selected-field node cannot start a Build without this baseline. Re-preparation,
+restart and technical retries retain it. The guarded transaction compares selected
+fields against that invocation revision while retaining the original Work's
+requirements-applicability guard. A later save from another pipeline cannot rebase
+an automatic invocation onto its receipt: two results assessed at the same revision
+conflict if the first changes a selected field. Exact operation replay still returns
+the original receipt before current-state checks. Field origins additionally retain `invocation`:
+the actual node key, producing node-attempt ID and captured baseline. The exact
+accepted record already binds the admitted definition, form schema and ordinary
+Build output provenance. The model supplies values, never these identities.
+
+Automatic assessment origins also retain exact consumed material references. The
+writer follows the frozen input's actual projections and active branches, selected
+record/parent inputs and immutable Context. Issue-snapshot aliases and array positions
+resolve against the original Issue revision and exact Configuration; no current
+“latest document” or body lookup supplies provenance. Result dependencies include the
+producer's consumed content. Context backed by a captured producer baseline resolves
+against that producer's original Issue revision, including documents removed before
+the consuming agent starts. The consumer's newer baseline remains the destination
+write fence and must not replace the producer's source revision. Nonempty Context
+without a captured origin is rejected rather than attributed to the consumer's
+revision. A missing consumed document stays in the dependency set so the existing
+transaction rejects the save.
+For a result returned by a nested Flow, the payload's producer is resolved through
+the exact retained `subflow_source` references, including successive nested returns.
+The call step's input does not substitute for the child's producing input. Selecting
+the call's raw input still follows only that input's declared projection.
+Selecting a producer's raw input payload follows only that subtree and does not
+inherit its Context. Unselected Issue materials remain unrelated.
+The existing Issue transaction rejects a removed/replaced dependency during analysis;
+a later change makes the saved assessment inapplicable through the common review.
+
+The common result transaction records the accepted analysis and its pending local
+write together in the existing Factory outbox. Analysis success and save status
+are independent: `pending`/`claimed` do not mean applied; `delivered` confirms the
+local receipt; failed entries retain `conflict`, `forbidden` or unsupported-input
+reasons. A transient store failure leaves a recoverable claim. Retrying after its
+expiry reuses the accepted record and operation receipt without invoking the model
+or creating another Build. A lost acknowledgement can therefore recover after a
+catalog edit or human correction without overwriting that later correction.
+
+The common runtime installs read-only input capture even without a writer. The
+file-profile installer separately connects deferred delivery to the installed
+trusted action and management principal; that dispatcher does not prepare inputs.
+It reuses the configured Factory worker claim lifetime and batch size; no separate scheduler,
+MCP write tool or local-effect timing configuration is introduced. The outbox
+contains the accepted record digest, not another copy of private result values.
+Generated REST/Console controls and template migration remain tasks 10.4–10.8;
+this runtime integration alone does not expose the field selector in the UI.
+See the [task 10.3 verification report](../../openspec/changes/add-issue-classification-snapshots/verification-automatic-issue-fields.md)
+for application, installation and PostgreSQL recovery tests.
 
 Selected-field conflicts inspect intermediate Issue revisions, so changing a field
 manually and restoring its old value still blocks an assessment of the earlier
@@ -1171,8 +1236,12 @@ A snapshot can select an ordinary Project property by stable ID using
 `source: {"kind": "property", "id": "environment"}`. The property's exact
 catalog publication supplies its type, text/integer bounds and choice IDs.
 Supported values are text, boolean, bounded integer, date (`YYYY-MM-DD`) and
-choice ID. No classification slot, classification attribution, built-in
-priority/size or producing Run is required for these contextual properties.
+choice ID. No classification role, built-in priority/size or producing Run
+is required. A selected non-text field retains its own manual/automatic assessment
+attribution and must still be applicable to the current requirements, exact code
+and selected material pins. Required stale assessments block preparation; optional
+stale assessments are explicitly omitted as `Inapplicable`. Catalog role changes
+do not reinterpret a stable property ID.
 Consumer scalar schemas may be broader than the published property contract;
 the pinned Project definition still validates each supplied value.
 
@@ -1193,11 +1262,11 @@ already admitted Incoming values, definitions, omissions and Work/Run identity.
 ### Pinned Issue admission mapping
 
 A producer-independent `FlowIssueSnapshotInput` can pin an `admission` policy
-inside the immutable Flow/Configuration. Its `priority` mapping names a required
-built-in Issue priority selection and explicitly translates Project choice IDs
-to numeric `WorkPriority`. Its `risk` mapping names a required classification
-selection and translates its choices to `RiskClass`. Optional `allowed` choice
-sets add conjunctive readiness checks. For example, with required `priority`
+inside the immutable Flow/Configuration. Its `priority` mapping names any required
+selected core or custom choice field and explicitly translates Project choice IDs
+to numeric `WorkPriority`. Its `risk` mapping independently translates a required
+choice selection to `RiskClass`. Neither requires a classification role or a
+particular field name. Optional `allowed` choice sets add conjunctive readiness checks. For example, with required `priority`
 and `size` aliases:
 
 ```json
@@ -1210,9 +1279,9 @@ and `size` aliases:
 
 These numbers and risk assignments are authored policy, not built-in defaults.
 Publication validates each alias, required selection and choice against the
-pinned Project catalog. Ordinary unclassified properties and requirements prose
-cannot drive admission rules. Missing, stale or evidence-ineligible selected
-fields still fail their independent checks. A valid but unmapped/disallowed
+pinned Project catalog. Free-form prose cannot drive typed admission rules;
+ordinary custom choices can. Missing or stale selected fields and explicitly
+required unqualified observations still fail their independent checks. A valid but unmapped/disallowed
 choice returns `issue_snapshot_policy_ineligible` at
 `/issue_snapshot/admission/{alias}` without reserving execution.
 
@@ -1226,6 +1295,65 @@ classification. Contracts without `admission` retain their explicit reviewed
 classification and original wire/digest; adopting a policy requires a new
 publication. Project launch/access policies and later requirements gates remain
 independent.
+
+
+### Explicit observations and finite choice conditions
+
+Task 10.4 removes role/verdict inference from snapshot consumers. A scalar such as
+`reproduced`, `accepted` or `ci_passed` is ordinary data. It grants no proof,
+approval or execution authority. A consumer that needs independently observed
+facts explicitly selects an evidence alias linked to one selected field alias:
+
+```json
+{
+  "proof": {
+    "field": "ci_result",
+    "required": true,
+    "maximum": 1,
+    "observation": {
+      "environment": {"identity": "ci-environment", "version": "1", "digest": "<sha256>"},
+      "criterion": {"identity": "ci-criterion", "version": "1", "digest": "<sha256>"},
+      "finding": "matched"
+    }
+  }
+}
+```
+
+The environment/criterion are exact installed `ImmutableReference` values; the
+example digest placeholders are explanatory, not runnable configuration. Bind the
+required field value through the existing `admission.allowed` or an ordinary gate.
+`IssueSnapshotObservations` composes the existing retained-command evidence reader
+and trusted clock. It checks the accepted command result, original subject, exact
+observation contract, expected finding, freshness and independent Artifact read
+authority. No reader or no qualifying records means unavailable evidence, never
+an inferred success. Optional unavailable evidence is explicitly omitted.
+
+The snapshot retains exact qualified references beside its digest-only Incoming
+projection. Manual publication and Source admission recheck those original
+references before admitting Work; they do not select replacements. Final admission
+also fences freshness, attribution, projected record digests and the resolved exact
+subject. Freshness uses the current trusted admission guard after asynchronous reads,
+not the original `reserved_at`/`admitted_at` used for stable identity. Both manual and
+Source owners pass that observation time explicitly to the common snapshot validator. Once admitted, replay retains the same Work, snapshot and evidence instead
+of refreshing them after an Issue edit or grant change. Host composition must install
+the same reader for preparation and admission. Template/runtime catalog migration
+and Console controls are tracked separately in tasks 10.5–10.8.
+
+`issue_choice_threshold` compiles a selected core/custom choice and its inclusive
+starting choice from the reviewed active Project order into an ordinary
+`FlowPredicate`. The consumer supplies its local input path and normal gate
+outcomes. Size uses this same compiler; there is no special Size comparison or
+execution-time catalog lookup. Unknown/retired thresholds and non-choice fields
+are rejected. The compiled predicate freezes concrete choices, so subsequent
+reordering or label changes affect only a newly compiled publication.
+
+CI reports remain ordinary configured command-result inputs. A finite Decision
+Signal may route before or after a selected-field agent step using existing input
+projections; neither mechanism writes Issue fields by itself. Accepted
+producer-result input remains supported. This adds no provider adapter, live-model
+qualification, mapping editor or new rules language.
+
+See [task 10.4 verification](../../openspec/changes/add-issue-classification-snapshots/verification-direct-issue-consumers.md).
 
 ## Shared Project text publication
 
@@ -3156,3 +3284,7 @@ Capture/restore the complete database and original object-store consistency unit
 see [backup and restore](../operations/backup-restore.md#task-and-collaboration-recovery).
 The [section 8 verification](../../openspec/changes/archive/2026-10-22-add-factory-work-card/verification-8.md)
 records Red/Green, PostgreSQL/browser pilots and remaining live-adapter limits.
+
+
+Review corrections for tasks 10.3–10.4, with regressions and observed Red/Green:
+[verification report](../../openspec/changes/add-issue-classification-snapshots/verification-10.3-10.4-review.md).

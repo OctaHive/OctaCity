@@ -22,6 +22,7 @@ pub struct ProjectTextIntake<S, B> {
   repositories: Option<Arc<dyn octacity_server_store::ConfigurationStore>>,
   issues: Option<Arc<dyn octacity_server_store::IssueStore>>,
   issue_materials: Option<Arc<IssueSnapshotMaterialReaders>>,
+  issue_observations: Option<Arc<IssueSnapshotObservations>>,
   policy: Arc<dyn ManagementAuthorizationPolicy>,
   clock: Arc<dyn FactoryExecutionClock>,
 }
@@ -41,6 +42,7 @@ impl<S: ProjectTextInputStore + 'static, B: ArtifactBytePublisher + ArtifactByte
       repositories: None,
       issues: None,
       issue_materials: None,
+      issue_observations: None,
       policy,
       clock,
     }
@@ -58,6 +60,11 @@ impl<S: ProjectTextInputStore + 'static, B: ArtifactBytePublisher + ArtifactByte
   /// Installed by the Issue adapter for current exact-source access before admission.
   pub(crate) fn with_issue_materials(mut self, readers: Arc<IssueSnapshotMaterialReaders>) -> Self {
     self.issue_materials = Some(readers);
+    self
+  }
+  /// Reuses current observation authority at the existing final admission boundary.
+  pub(crate) fn with_issue_observations(mut self, readers: Arc<IssueSnapshotObservations>) -> Self {
+    self.issue_observations = Some(readers);
     self
   }
   /// Publishes one exact pair and admits one original ordinary Work/Run.
@@ -310,6 +317,12 @@ impl<S: ProjectTextInputStore + 'static, B: ArtifactBytePublisher + ArtifactByte
         .map_err(|_| ApplicationError::invalid())?
     };
     if let Some(snapshot) = documents.issue_snapshot() {
+      crate::issues::issue_execution_observations::require_available(
+        self.issue_observations.as_deref(),
+        context,
+        snapshot,
+      )
+      .await?;
       crate::issues::issue_execution_snapshot_materials::require_available(
         self.issue_materials.as_deref(),
         context,

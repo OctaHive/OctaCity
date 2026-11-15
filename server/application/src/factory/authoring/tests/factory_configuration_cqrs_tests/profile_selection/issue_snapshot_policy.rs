@@ -87,3 +87,55 @@ fn issue_snapshot_policy_publication_rejects_missing_mapping_fields() {
     }
   });
 }
+
+#[test]
+fn issue_snapshot_admission_uses_direct_project_choice_fields_without_fixed_roles() {
+  run_ready(async {
+    let project = ProjectId::generate();
+    let properties = properties(project).await;
+    let mut catalog = properties.issue_properties(project, None).await.unwrap();
+    catalog.definition.classification = Default::default();
+    catalog.definition.properties.push(IssuePropertyDefinition {
+      id: "queue_bucket".into(),
+      name: "Queue bucket".into(),
+      retired: false,
+      kind: IssuePropertyKind::Choice {
+        choices: vec![IssuePropertyChoice {
+          id: "expedite".into(),
+          name: "Expedite".into(),
+          retired: false,
+        }],
+      },
+    });
+    let catalog = properties
+      .publish_issue_properties(octacity_server_store::testing::management_mutation(
+        PublishIssueProperties {
+          intent: PublishIssuePropertiesIntent {
+            project_id: project,
+            expected_version: catalog.version,
+            definition: catalog.definition,
+          },
+          idempotency_key: "direct-choice-catalog".parse().unwrap(),
+          published_at: time(3),
+        },
+      ))
+      .await
+      .unwrap()
+      .resource;
+    let (fixture, mut wire) = policy_draft(project);
+    wire["issue_snapshot"]["definition_version"] = catalog.version.into();
+    wire["issue_snapshot"]["fields"]["visible"]["source"] = serde_json::json!({"kind":"property","id":"queue_bucket"});
+    wire["issue_snapshot"]["admission"] = serde_json::json!({
+      "priority":{"field":"visible","values":{"expedite":72}},
+      "risk":{"field":"visible","values":{"expedite":"high"}},
+      "allowed":{"visible":["expedite"]}
+    });
+    let published = publish(project, fixture, wire.clone(), Some(properties))
+      .await
+      .expect("any selected Project choice can supply an explicit typed admission conversion");
+    assert_eq!(
+      serde_json::to_value(published).unwrap()["issue_snapshot"]["admission"],
+      wire["issue_snapshot"]["admission"]
+    );
+  });
+}

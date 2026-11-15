@@ -454,10 +454,37 @@ pub(crate) fn public_result_execution_fixture(
   )
 }
 
+#[allow(dead_code)] // Shared selected-field fixture used by application/store qualification.
+pub(crate) fn issue_field_execution_fixture(
+  work: WorkEnvelope,
+  schema: FlowDataSchema,
+  fields: FlowIssueFieldWrite,
+) -> (WorkEnvelope, AdmittedFlow, FlowDataSchema, FlowNodeInput, NodeAttempt) {
+  let selection = binding(work.subject().project_id());
+  let permissions = FactoryPermissionSet::try_new(FactoryPermissionDraft {
+    plugins: vec![fields.writer.clone()],
+    ..Default::default()
+  })
+  .unwrap();
+  execution_fixture_with_authority(
+    FlowNodeKind::Reasoning,
+    work,
+    selection,
+    None,
+    Some(schema),
+    ExecutionFixtureOptions {
+      issue_fields: Some(fields),
+      ..Default::default()
+    },
+    permissions,
+  )
+}
+
 #[derive(Default)]
 struct ExecutionFixtureOptions {
   maximum: u16,
   public_result: bool,
+  issue_fields: Option<FlowIssueFieldWrite>,
   step_task: Option<String>,
   source_free: bool,
   code_scope: Option<FlowCodeScope>,
@@ -505,7 +532,8 @@ fn execution_fixture_with_authority(
         FlowOutcomeKind::Success,
         output_schema.reference().clone(),
       )
-      .with_public_result(options.public_result),
+      .with_public_result(options.public_result)
+      .with_issue_fields(options.issue_fields),
     ],
     budget,
     permissions: permissions.clone(),

@@ -43,7 +43,7 @@ pub(crate) async fn require_current(
       .map_err(unavailable)?
       .ok_or_else(conflict)?;
   let snapshot = documents.issue_snapshot().ok_or_else(conflict)?;
-  snapshot.validate_prepared_admission(preparation, request)?;
+  snapshot.validate_prepared_admission(preparation, request, now)?;
   if configuration.flow().issue_snapshot.as_ref() != Some(&snapshot.input) {
     return Err(conflict());
   }
@@ -144,7 +144,7 @@ async fn require_source_current(
   configuration: &FactoryConfiguration,
   now: octacity_server_domain::Timestamp,
 ) -> Result<(), StoreError> {
-  preparation.validate_issue_input(request)?;
+  preparation.validate_issue_input(request, now)?;
   let snapshot = preparation
     .issue_input
     .as_ref()

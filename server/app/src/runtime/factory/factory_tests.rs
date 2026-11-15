@@ -32,6 +32,12 @@ pub(in crate::runtime) fn resources() -> FactoryRuntimeResources {
   })
   .unwrap();
   FactoryRuntimeResources {
+    local_effects: octacity_server_application::FactoryReporterWorkerSettings::new(
+      "test-local-effects".parse().unwrap(),
+      1000,
+      4,
+    )
+    .unwrap(),
     runs: Arc::new(octacity_server_store_postgres::PostgresStore::new(pool.clone())),
     builds: Arc::new(octacity_server_store_postgres::PostgresAuthoritativeStore::new(
       pool,

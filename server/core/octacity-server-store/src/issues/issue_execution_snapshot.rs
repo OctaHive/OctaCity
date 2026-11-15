@@ -52,6 +52,9 @@ pub struct IssueExecutionSnapshot {
   /// Exact selected source lineage; material text occurs once in `values`.
   #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
   pub materials: BTreeMap<FactoryKey, Vec<IssueSnapshotMaterial>>,
+  /// Exact independently qualified observations, never report bodies or a mutable verified flag.
+  #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+  pub evidence: BTreeMap<FactoryKey, Vec<IssueClassificationEvidenceReference>>,
 }
 impl std::fmt::Debug for IssueExecutionSnapshot {
   fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
@@ -76,8 +79,9 @@ impl IssueExecutionSnapshot {
     &self,
     preparation: &ProjectTextPreparation,
     request: &AdmitFactoryWork,
+    now: octacity_server_domain::Timestamp,
   ) -> Result<(), StoreError> {
-    self.validate_admitted_input(request)?;
+    self.validate_admitted_input(request, now)?;
     let target = &preparation.intent.target;
     if self
       .admission_classification
@@ -97,7 +101,12 @@ impl IssueExecutionSnapshot {
     Ok(())
   }
   /// Shared Incoming, policy and exact-subject validation for manual and Source owners.
-  pub fn validate_admitted_input(&self, request: &AdmitFactoryWork) -> Result<(), StoreError> {
+  /// Freshness uses the current trusted admission guard, never the original reservation time.
+  pub fn validate_admitted_input(
+    &self,
+    request: &AdmitFactoryWork,
+    now: octacity_server_domain::Timestamp,
+  ) -> Result<(), StoreError> {
     let schema = request
       .flow
       .data_schema(&self.input.schema)
@@ -114,6 +123,7 @@ impl IssueExecutionSnapshot {
           || expected.risk() != request.work.risk()
           || expected.metadata() != request.work.metadata()
       })
+      || !self.evidence_current_at(now)
       || request.incoming.as_ref() != Some(&self.incoming(&request.work, &request.flow, schema)?)
       || self
         .incompatible_subject_field(&octacity_server_factory::FactoryTaskSubject::Exact(
@@ -130,20 +140,61 @@ impl IssueExecutionSnapshot {
     }
     Ok(())
   }
+  fn evidence_current_at(&self, at: octacity_server_domain::Timestamp) -> bool {
+    self.input.evidence.iter().all(|(alias, selection)| {
+      self.evidence.contains_key(alias) || (!selection.required && !self.values.contains_key(alias))
+    }) && self.evidence.iter().all(|(alias, references)| {
+      let Some(selection) = self.input.evidence.get(alias) else {
+        return false;
+      };
+      let Some(expected) = &selection.observation else {
+        return false;
+      };
+      let Some(assessment) = self.attribution.get(&selection.field) else {
+        return false;
+      };
+      !references.is_empty()
+        && references.len() <= usize::from(selection.maximum)
+        && self.values.get(alias)
+          == Some(&serde_json::json!(
+            references.iter().map(|reference| reference.record).collect::<Vec<_>>()
+          ))
+        && references.iter().all(|reference| {
+          at >= reference.observed_at
+            && at < reference.fresh_until
+            && reference.environment == expected.environment
+            && reference.criterion == expected.criterion
+            && expected.finding != octacity_server_factory::FactoryCommandFinding::Indeterminate
+            && assessment.evidence.contains(&reference.record)
+        })
+    })
+  }
   /// Identifies the first selected assessment tied to another exact code subject.
   /// Fields with no code dependency remain applicable without inventing a subject pin.
   pub fn incompatible_subject_field(
     &self,
     subject: &octacity_server_factory::FactoryTaskSubject,
   ) -> Option<&FactoryKey> {
-    self.attribution.iter().find_map(|(alias, assessment)| {
-      assessment
-        .inputs
-        .subject
-        .as_ref()
-        .is_some_and(|expected| expected != subject)
-        .then_some(alias)
-    })
+    self
+      .attribution
+      .iter()
+      .find_map(|(alias, assessment)| {
+        assessment
+          .inputs
+          .subject
+          .as_ref()
+          .is_some_and(|expected| expected != subject)
+          .then_some(alias)
+      })
+      .or_else(|| {
+        self.evidence.iter().find_map(|(alias, references)| {
+          references
+            .iter()
+            .any(|reference| &reference.subject != subject)
+            .then(|| self.input.evidence.get(alias).map(|selection| &selection.field))
+            .flatten()
+        })
+      })
   }
   /// Freezes selected values and their reference under the exact resolved Work/Run.
   pub fn incoming(

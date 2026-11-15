@@ -135,7 +135,7 @@ async fn typed_classification_replay_after_later_edits_and_pool_restart_returns_
   let mut recovered = command.clone();
   recovered.applied_at = at(500);
   recovered.authority = Some(IssueClassificationAuthority {
-    claim: FactoryDigest::from_bytes([203; 32]),
+    claim: IssueClassificationClaim::Run(FactoryDigest::from_bytes([203; 32])),
     deadline: std::time::Instant::now() - std::time::Duration::from_secs(1),
   });
   assert_eq!(
@@ -264,7 +264,7 @@ async fn rejected_typed_classification_replays_its_original_conflict_after_resta
   let before = probe.mutation_evidence_counts().await;
   command.applied_at = at(500);
   command.authority = Some(IssueClassificationAuthority {
-    claim: FactoryDigest::from_bytes([206; 32]),
+    claim: IssueClassificationClaim::Run(FactoryDigest::from_bytes([206; 32])),
     deadline: std::time::Instant::now() - std::time::Duration::from_secs(1),
   });
   for _ in 0..2 {

@@ -86,6 +86,17 @@ impl FlowDataMapping {
     self.value.selects_only(path, check)
   }
 
+  /// Exact source pointers copied into a selected output subtree, following only active branches.
+  /// Constants and presence tests introduce no copied-content dependency.
+  pub fn selected_source_paths(&self, input: &Value, path: &str) -> Vec<String> {
+    let mut paths = Vec::new();
+    self.value.visit_sources(path, Some(input), &mut |source| {
+      paths.push(source.to_owned());
+      true
+    });
+    paths
+  }
+
   /// Projects only configured fields and validates the complete target contract.
   ///
   /// Missing data fails closed. Projection grants no acceptance or execution authority.
@@ -123,23 +134,44 @@ impl FlowDataMapping {
 }
 impl FlowValueMapping {
   fn selects_only(&self, path: &str, check: &mut impl FnMut(&str) -> bool) -> bool {
+    self.visit_sources(path, None, check)
+  }
+  fn visit_sources(&self, path: &str, input: Option<&Value>, check: &mut impl FnMut(&str) -> bool) -> bool {
     match self {
       Self::Pointer { path: source } => check(&format!("{source}{path}")),
-      Self::IfPresent { then, otherwise, .. } => then.selects_only(path, check) && otherwise.selects_only(path, check),
+      Self::IfPresent {
+        path: condition,
+        then,
+        otherwise,
+      } => match input {
+        Some(root) => if root.pointer(condition).is_some() {
+          then
+        } else {
+          otherwise
+        }
+        .visit_sources(path, input, check),
+        None => then.visit_sources(path, None, check) && otherwise.visit_sources(path, None, check),
+      },
+      Self::Object { fields } if path.is_empty() && input.is_some() => {
+        fields.values().all(|value| value.visit_sources("", input, check))
+      }
+      Self::Array { items } if path.is_empty() && input.is_some() => {
+        items.iter().all(|value| value.visit_sources("", input, check))
+      }
       Self::Object { fields } => projection_segment(path).is_some_and(|(key, tail)| {
         fields
           .iter()
           .find(|(name, _)| name.as_str() == key)
-          .is_some_and(|(_, value)| value.selects_only(tail, check))
+          .is_some_and(|(_, value)| value.visit_sources(tail, input, check))
       }),
       Self::Array { items } => projection_segment(path).is_some_and(|(index, tail)| {
         index
           .parse::<usize>()
           .ok()
           .and_then(|index| items.get(index))
-          .is_some_and(|value| value.selects_only(tail, check))
+          .is_some_and(|value| value.visit_sources(tail, input, check))
       }),
-      Self::Constant { .. } => false,
+      Self::Constant { .. } => input.is_some(),
     }
   }
 

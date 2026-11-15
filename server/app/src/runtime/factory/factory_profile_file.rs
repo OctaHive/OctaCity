@@ -171,18 +171,27 @@ impl crate::runtime::FactoryRuntimeInstaller for FileProfileInstaller {
         std::sync::Arc::new(octacity_server_application::SystemFactoryExecutionClock),
       ));
     }
+    let mut issue_writers = vec![];
     for action in &self.bindings.issue_classification_actions {
       let principal = self
         .management_principal
         .as_deref()
         .filter(|principal| *principal == action.principal)
         .ok_or(FactoryRuntimeInstallationError::Invalid)?;
-      catalog.executors.push(resources.issue_classification_executor(
+      let writer = resources.issue_classification_action(
         action.identity.clone(),
         crate::runtime::integrations::integration_management::request_context(principal),
         crate::runtime::integrations::integration_management::management_policy(self.management_principal.as_deref()),
         std::sync::Arc::new(octacity_server_application::SystemFactoryExecutionClock),
+      );
+      catalog.executors.push((
+        FlowNodeKind::TrustedAction,
+        NodeExecutionIdentity::External(action.identity.clone()),
+        std::sync::Arc::new(octacity_server_application::FactoryFlowActionAdapter::new(
+          writer.clone(),
+        )),
       ));
+      issue_writers.push(writer);
     }
     for binding in &self.bindings.protected_validation_evidence {
       catalog.executors.push(resources.protected_validation_evidence_executor(
@@ -294,10 +303,20 @@ impl crate::runtime::FactoryRuntimeInstaller for FileProfileInstaller {
       }
       catalog.executors.push(executor);
     }
+    let issues = resources.runs.clone();
+    let settings = resources.local_effects.clone();
     let mut installed = crate::runtime::FactoryProfileRuntimeInstaller::new(catalog, readiness, vec![])?
       .with_model_discovery(self.model_discovery()?)
       .install(resources)
       .await?;
+    for writer in issue_writers {
+      let automatic = std::sync::Arc::new(octacity_server_application::FactoryIssueFieldWrites::new(
+        writer,
+        issues.clone(),
+        settings.clone(),
+      ));
+      installed.outbox_dispatchers.push(automatic);
+    }
     installed.output_finalizer = output_finalizer;
     Ok(installed)
   }

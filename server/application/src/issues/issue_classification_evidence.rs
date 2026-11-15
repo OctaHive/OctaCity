@@ -34,6 +34,18 @@ impl VerifiedIssueClassificationEvidence {
   pub const fn finding(&self) -> FactoryCommandFinding {
     self.finding
   }
+  /// Exact consumer-selected observation, independent of Issue role names or scalar verdicts.
+  pub(crate) fn matches_observation(
+    &self,
+    reference: &IssueClassificationEvidenceReference,
+    expected: &FlowIssueObservation,
+  ) -> bool {
+    &self.reference == reference
+      && reference.environment == expected.environment
+      && reference.criterion == expected.criterion
+      && expected.finding != FactoryCommandFinding::Indeterminate
+      && self.finding == expected.finding
+  }
   /// Compares a claim without granting execution or changing its unresolved route.
   pub fn review_claim(
     &self,

@@ -104,6 +104,11 @@ async fn file_issue_classification_installs_an_explicit_local_writer() {
     .install(crate::runtime::factory::factory_tests::resources())
     .await
     .unwrap();
+  assert_eq!(
+    installed.outbox_dispatchers.len(),
+    1,
+    "an installed writer must automatically resume accepted ordinary forms on the normal stand"
+  );
   assert_eq!(installed.executors.len(), 1);
   assert_eq!(installed.executors[0].0, FlowNodeKind::TrustedAction);
   assert_eq!(

@@ -620,6 +620,34 @@ impl<S: FactoryRunStore, E: FactoryNodeExecutor> FactoryNodeRunner<S, E> {
           at,
         ));
       }
+      if let Some(write) = node
+        .outcome(record.outcome())
+        .and_then(FlowOutcomeDefinition::issue_fields)
+      {
+        if node.kind() != FlowNodeKind::Reasoning
+          || node
+            .outcome(record.outcome())
+            .is_none_or(|outcome| outcome.kind() != FlowOutcomeKind::Success)
+          || frozen.issue_field_baseline().is_none()
+          || !snapshot
+            .admitted_flow
+            .execution_permissions(node.permissions())
+            .plugins()
+            .any(|allowed| allowed == &write.writer)
+        {
+          return Err(ApplicationError::invalid());
+        }
+        let effect =
+          crate::factory::reporting::factory_issue_classification_action::automatic::accepted_effect(&record, write)?;
+        outbox.push(FactoryOutboxRecord::pending(
+          effect.operation_id,
+          snapshot.run.id(),
+          effect.kind,
+          input_digest,
+          at,
+          at,
+        ));
+      }
       self
         .commit_progress(&snapshot, append, at, GraphDisposition::Running, outbox)
         .await?;
@@ -636,6 +664,10 @@ impl<S: FactoryRunStore, E: FactoryNodeExecutor> FactoryNodeRunner<S, E> {
         .unwrap_or_else(|| Self::prepare_input(&snapshot, &target))?
     };
     if input.flow_run_id() != flow.id() || input.cycle_id() != cycle.id() || input.node() != &target.node {
+      return Err(ApplicationError::invalid());
+    }
+    if node.outcomes().iter().any(|outcome| outcome.issue_fields().is_some()) && input.issue_field_baseline().is_none()
+    {
       return Err(ApplicationError::invalid());
     }
     let number = snapshot

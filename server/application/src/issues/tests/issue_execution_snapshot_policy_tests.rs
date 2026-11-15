@@ -143,7 +143,7 @@ fn issue_snapshot_policy_rejects_a_rescored_envelope_at_the_final_admission_boun
     };
     assert!(
       matches!(
-        snapshot.validate_prepared_admission(&preparation, &admission),
+        snapshot.validate_prepared_admission(&preparation, &admission, admission.admitted_at),
         Err(StoreError::Conflict { .. })
       ),
       "a consistently forged envelope must not override the frozen policy decision"

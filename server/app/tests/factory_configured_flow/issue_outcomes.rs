@@ -1897,3 +1897,6 @@ async fn check_native_triage_handoff(
     selection,
   })
 }
+
+#[path = "automatic_issue_fields.rs"]
+mod automatic_fields;

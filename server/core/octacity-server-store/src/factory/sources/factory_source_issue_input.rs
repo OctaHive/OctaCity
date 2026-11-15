@@ -40,7 +40,11 @@ impl WorkSourcePreparation {
   }
 
   /// Verifies exact frozen input rather than accepting caller-supplied Incoming or Work text.
-  pub fn validate_issue_input(&self, request: &AdmitFactoryWork) -> Result<(), StoreError> {
+  pub fn validate_issue_input(
+    &self,
+    request: &AdmitFactoryWork,
+    now: octacity_server_domain::Timestamp,
+  ) -> Result<(), StoreError> {
     let Some(documents) = &self.issue_input else {
       if request
         .incoming
@@ -66,6 +70,6 @@ impl WorkSourcePreparation {
     {
       return Err(source_conflict());
     }
-    snapshot.validate_admitted_input(request)
+    snapshot.validate_admitted_input(request, now)
   }
 }

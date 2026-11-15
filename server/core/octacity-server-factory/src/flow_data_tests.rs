@@ -960,6 +960,17 @@ fn configured_node_can_select_arbitrary_incoming_data_with_an_exact_retained_ide
   let input = prepare(Some(&incoming)).unwrap();
   assert_eq!(input.payload().value(), &serde_json::json!({"count":42}));
   assert_eq!(input.incoming_digest(), Some(incoming.digest().unwrap()));
+  let journal = FlowDataHistory {
+    incoming: vec![incoming.clone()],
+    inputs: vec![input.clone()],
+    ..Default::default()
+  };
+  let reads = journal
+    .input_reads(&work, &admitted, history(&admitted, &[], &[]), &input, "/count")
+    .unwrap();
+  assert!(matches!(reads.as_slice(), [FlowInputRead::Incoming { digest, path }]
+    if *digest == incoming.digest().unwrap() && path == "/score"));
+
   assert!(prepare(None).is_err());
   let other_work = crate::flow_test_support::work();
   let unrelated = FlowIncomingData::new(&other_work, &admitted, incoming.payload().clone()).unwrap();
@@ -1322,6 +1333,23 @@ fn verify_record_source(source: FlowInputSource, expected: i64) {
   assert_eq!(input.sources().len(), 1);
   assert_eq!(input.sources()[0].node_attempt_id(), attempts[0].id());
   assert_eq!(input.sources()[0].digest(), records[0].digest().unwrap());
+  let journal = FlowDataHistory {
+    inputs: vec![input.clone()],
+    records: records.to_vec(),
+    ..Default::default()
+  };
+  let reads = journal
+    .input_reads(
+      &work,
+      &admitted,
+      history(&admitted, &attempts, &completions),
+      &input,
+      "/count",
+    )
+    .unwrap();
+  assert!(matches!(reads.as_slice(), [FlowInputRead::Record { reference, .. }]
+    if reference.digest() == records[0].digest().unwrap()));
+
   let bytes = serde_json::to_vec(&input).unwrap();
   assert_eq!(
     FlowNodeInput::restore(
@@ -1482,4 +1510,90 @@ fn configured_schema_compatibility_covers_the_complete_producer_contract() {
   )
   .unwrap();
   assert!(target_text.accepts_all(&source_enum));
+}
+
+#[test]
+fn ordinary_outcome_retains_selected_issue_form_as_part_of_the_execution_contract() {
+  let schema = FlowDataSchema::new(key("selected-fields"), key("1"), FlowValueSchema::Boolean).unwrap();
+  let outcome = FlowOutcomeDefinition::new(key("filled"), FlowOutcomeKind::Success, schema.reference().clone());
+  let mut wire = serde_json::to_value(&outcome).unwrap();
+  wire["issue_fields"] = serde_json::json!({
+    "writer": schema.reference(), "policy":"issue-fields",
+    "form":{"project_id":uuid::Uuid::from_u128(1).to_string(),"definition_version":1,
+      "fields":[{"field":{"kind":"priority"},"required":true}]}
+  });
+  let restored: FlowOutcomeDefinition = serde_json::from_value(wire.clone()).unwrap();
+  assert_eq!(serde_json::to_value(&restored).unwrap(), wire);
+  assert_ne!(
+    outcome, restored,
+    "an enabled Issue effect changes the immutable outcome definition"
+  );
+}
+
+#[test]
+fn issue_field_baseline_is_frozen_in_the_invocation_digest_and_restored_without_refresh() {
+  let (work, admitted, schema) = node_fixture_with_gate(None);
+  let input = FlowNodeInput::new(
+    &work,
+    &admitted,
+    admitted.root_run(),
+    admitted.initial_cycle(),
+    key("accessibility_audit"),
+    FlowPayload::new(&schema, serde_json::json!({"count":3})).unwrap(),
+  )
+  .unwrap();
+  let baseline = FlowIssueFieldBaseline {
+    issue_id: octacity_server_domain::IssueId::generate(),
+    version: octacity_server_domain::IssueVersion::new(1).unwrap(),
+  };
+  let frozen = input.clone().with_issue_field_baseline(baseline.clone()).unwrap();
+  assert_ne!(input.digest().unwrap(), frozen.digest().unwrap());
+  assert!(
+    frozen
+      .clone()
+      .with_issue_field_baseline(FlowIssueFieldBaseline {
+        issue_id: baseline.issue_id,
+        version: baseline.version.next().unwrap(),
+      })
+      .is_err(),
+    "a prepared invocation cannot silently refresh its baseline"
+  );
+  let restored = FlowNodeInput::restore(
+    &serde_json::to_vec(&frozen).unwrap(),
+    &work,
+    &admitted,
+    admitted.root_run(),
+    admitted.initial_cycle(),
+    &schema,
+    frozen.digest().unwrap(),
+  )
+  .unwrap();
+  assert_eq!(restored.issue_field_baseline(), Some(&baseline));
+  assert_eq!(restored.retry().unwrap().issue_field_baseline(), Some(&baseline));
+}
+
+#[test]
+fn projection_dependencies_follow_only_active_selected_material_paths() {
+  let mapping = FlowDataMapping::new(
+    serde_json::from_value(serde_json::json!({
+      "mapping":"object","fields":{
+        "title":{"mapping":"pointer","path":"/issue/title"},
+        "note":{"mapping":"if_present","path":"/issue/primary",
+          "then":{"mapping":"pointer","path":"/issue/primary/0"},
+          "otherwise":{"mapping":"pointer","path":"/issue/fallback/1"}}
+      }
+    }))
+    .unwrap(),
+  )
+  .unwrap();
+  let root = serde_json::json!({"issue":{"title":"Task", "primary":["selected"],"fallback":["a","unselected"]}});
+  assert_eq!(mapping.selected_source_paths(&root, "/title"), vec!["/issue/title"]);
+  assert_eq!(mapping.selected_source_paths(&root, "/note"), vec!["/issue/primary/0"]);
+  let mut absent = root;
+  absent["issue"].as_object_mut().unwrap().remove("primary");
+  assert_eq!(
+    mapping.selected_source_paths(&absent, "/note"),
+    vec!["/issue/fallback/1"]
+  );
+  assert!(mapping.selected_source_paths(&absent, "/missing").is_empty());
 }

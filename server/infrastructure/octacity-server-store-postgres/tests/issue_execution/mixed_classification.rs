@@ -29,6 +29,7 @@ async fn apply_typed(
     applied_at: at(20),
     priority: None,
     fields: Some(IssueClassificationUpdate {
+      invocation: None,
       inputs: Default::default(),
       selection: IssueFieldForm {
         project_id: association.project_id,

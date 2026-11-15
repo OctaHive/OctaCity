@@ -4,11 +4,26 @@ use octacity_server_domain::{EntityKind, Timestamp};
 use octacity_server_factory::{FactoryDigest, FactoryKey, MAX_WORK_PRIORITY};
 use std::collections::{BTreeMap, BTreeSet};
 
+/// Actual accepted invocation that filled a Project-derived form.
+#[derive(Clone, Debug, Eq, PartialEq, serde::Serialize, serde::Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct IssueFieldInvocation {
+  /// Operator-owned node identity in the exact admitted definition.
+  pub node: FactoryKey,
+  /// Exact producing attempt; Build retries cannot substitute another accepted result.
+  pub attempt_id: octacity_server_factory::NodeAttemptId,
+  /// Issue revision captured before analysis.
+  pub baseline: octacity_server_domain::IssueVersion,
+}
+
 /// Values from the selected Project-derived form; not a second Issue value store.
 #[derive(Clone, Eq, PartialEq, serde::Serialize)]
 pub struct IssueClassificationUpdate {
   /// Exact form whose identities authorize the selected writes.
   pub selection: IssueFieldForm,
+  /// Controller-owned provenance; absent on an explicitly projected action input.
+  #[serde(skip_serializing_if = "Option::is_none")]
+  pub invocation: Option<IssueFieldInvocation>,
   /// Only supplied values, keyed by the form's generated stable identities.
   pub values: BTreeMap<FactoryKey, serde_json::Value>,
   /// Explicit immutable dependencies of this assessment.
@@ -61,11 +76,19 @@ pub struct ApplyIssueClassification {
   pub authority: Option<IssueClassificationAuthority>,
 }
 
-/// Bounds an in-process write to the current Run claim and its original deadline.
+/// Existing journal fence authorizing the local effect.
+#[derive(Clone, Debug)]
+pub enum IssueClassificationClaim {
+  /// A live explicit trusted-action node owner.
+  Run(FactoryDigest),
+  /// A live deferred write claim for this exact accepted result and operation.
+  Outbox(FactoryDigest),
+}
+/// Bounds an in-process write to its current journal fence and original deadline.
 #[derive(Clone, Debug)]
 pub struct IssueClassificationAuthority {
   /// Claim accepted by the action adapter.
-  pub claim: FactoryDigest,
+  pub claim: IssueClassificationClaim,
   /// Monotonic deadline derived from the attempt, claim and remaining budget.
   pub deadline: std::time::Instant,
 }
@@ -204,6 +227,7 @@ impl IssueRevision {
           run_id: association.run_id,
           record: request.record,
           form: update.selection.digest()?,
+          invocation: update.invocation.clone(),
           policy: request.policy.clone(),
           operation_id: request.operation_id,
         };

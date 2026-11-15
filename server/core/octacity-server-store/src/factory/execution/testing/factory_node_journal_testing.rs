@@ -56,6 +56,39 @@ pub fn factory_public_result_journal_fixture(
 ) -> FactoryNodeJournalContractFixture {
   journal_fixture(public_result_execution_fixture(schema, public))
 }
+/// Ordinary agent writing one Project-derived form, with no manually authored action node.
+#[must_use]
+pub fn factory_issue_field_journal_fixture() -> FactoryNodeJournalContractFixture {
+  factory_issue_field_journal_fixture_for_work(work())
+}
+/// Same ordinary form over a reviewed Issue Work identity.
+#[must_use]
+pub fn factory_issue_field_journal_fixture_for_work(work: WorkEnvelope) -> FactoryNodeJournalContractFixture {
+  let form = IssueFieldForm {
+    project_id: work.subject().project_id(),
+    definition_version: 0,
+    fields: vec![IssueFormField {
+      field: IssueFieldTarget::Priority,
+      required: true,
+    }],
+  };
+  let catalog = PublishedIssueProperties {
+    project_id: form.project_id,
+    version: 0,
+    definition: IssuePropertyDefinitionSet::default(),
+    published_at: time(1),
+  };
+  let schema = FlowDataSchema::new(key("selected.priority"), key("1"), form.form_schema(&catalog).unwrap()).unwrap();
+  journal_fixture(issue_field_execution_fixture(
+    work,
+    schema,
+    FlowIssueFieldWrite {
+      writer: reference("issue-fields.writer"),
+      policy: key("issue-fields"),
+      form,
+    },
+  ))
+}
 /// Constructs the existing typed verification contract for projection qualification.
 #[must_use]
 pub fn factory_verification_journal_contract_fixture() -> FactoryNodeJournalContractFixture {

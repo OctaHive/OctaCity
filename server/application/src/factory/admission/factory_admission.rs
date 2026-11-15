@@ -69,6 +69,7 @@ pub struct FactoryAdmissionHandlers<S> {
   pub(crate) revisions: Arc<dyn RevisionResolver>,
   repositories: Option<Arc<dyn octacity_server_store::ConfigurationStore>>,
   verification_inputs: Option<Arc<dyn octacity_server_store::ProjectInputQueryStore>>,
+  issue_observations: Option<Arc<crate::IssueSnapshotObservations>>,
   policy: Arc<dyn crate::ManagementAuthorizationPolicy>,
 }
 
@@ -91,10 +92,17 @@ impl<S> FactoryAdmissionHandlers<S> {
       revisions,
       repositories: None,
       verification_inputs: None,
+      issue_observations: None,
       policy,
     }
   }
 
+  /// Reuses the current independent observation owner for Source snapshot admission.
+  #[must_use]
+  pub fn with_issue_observations(mut self, observations: Arc<crate::IssueSnapshotObservations>) -> Self {
+    self.issue_observations = Some(observations);
+    self
+  }
   /// Reuses the Project Repository owner for explicitly declared Flow resources.
   #[must_use]
   pub fn with_repositories(mut self, repositories: Arc<dyn octacity_server_store::ConfigurationStore>) -> Self {
@@ -451,6 +459,12 @@ impl<S: FactoryAdmissionStore + 'static> FactoryAdmissionHandlers<S> {
       .map_err(|_| ApplicationError::invalid())?;
     admission.incoming = if let Some(documents) = issue_input {
       let snapshot = documents.issue_snapshot().ok_or_else(ApplicationError::invalid)?;
+      crate::issues::issue_execution_observations::require_available(
+        self.issue_observations.as_deref(),
+        context,
+        snapshot,
+      )
+      .await?;
       let subject = octacity_server_factory::FactoryTaskSubject::Exact(
         admission
           .work

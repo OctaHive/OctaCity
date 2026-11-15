@@ -77,6 +77,34 @@ pub enum FlowInputSource {
   },
 }
 
+/// Exact immutable content source read by one selected input projection.
+#[derive(Clone, Debug)]
+pub enum FlowInputRead {
+  /// Selected Incoming subtree; the envelope retains its Issue snapshot identity.
+  Incoming {
+    /// Exact owner-retained envelope.
+    digest: crate::FactoryDigest,
+    /// RFC 6901 selection within that envelope.
+    path: String,
+  },
+  /// Selected accepted result or frozen producer input, never the current latest result.
+  Record {
+    /// Exact accepted producing record.
+    reference: FlowRecordReference,
+    /// Configured payload or input view.
+    view: FlowRecordView,
+    /// RFC 6901 selection within the selected view.
+    path: String,
+  },
+  /// Exact frozen parent-call input subtree.
+  Caller {
+    /// Frozen calling input identity.
+    digest: crate::FactoryDigest,
+    /// RFC 6901 selection in that input's payload.
+    path: String,
+  },
+}
+
 /// Operator-owned source aliases and mapping into one node's declared input schema.
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
 #[serde(try_from = "BindingWire")]
@@ -102,6 +130,7 @@ pub(super) struct ProjectedInput {
   pub sources: Vec<FlowRecordReference>,
   pub incoming_digest: Option<crate::FactoryDigest>,
   pub caller_input_digest: Option<crate::FactoryDigest>,
+  source_values: Value,
 }
 impl FlowInputBinding {
   /// Qualifies this Incoming channel's paths, types and optional-presence guards.
@@ -239,6 +268,58 @@ impl FlowInputBinding {
     }
     Ok(binding)
   }
+  pub(super) fn selected_reads(
+    &self,
+    context: &FlowInputPreparation<'_>,
+    path: &str,
+  ) -> Result<Vec<FlowInputRead>, FactoryError> {
+    let projected = self.project(context)?;
+    let mut reads = Vec::new();
+    for pointer in self.mapping.selected_source_paths(&projected.source_values, path) {
+      let selections: Vec<_> = if pointer.is_empty() {
+        self.sources.values().map(|source| (source, String::new())).collect()
+      } else {
+        let (alias, tail) = super::mapping::projection_segment(&pointer).ok_or_else(invalid)?;
+        let source = self
+          .sources
+          .iter()
+          .find(|(name, _)| name.as_str() == alias)
+          .ok_or_else(invalid)?
+          .1;
+        vec![(source, tail.to_owned())]
+      };
+      for (source, tail) in selections {
+        let read = match source {
+          FlowInputSource::Incoming { path, .. } => FlowInputRead::Incoming {
+            digest: projected.incoming_digest.ok_or_else(invalid)?,
+            path: format!("{path}{tail}"),
+          },
+          FlowInputSource::CallerInput { path } => FlowInputRead::Caller {
+            digest: projected.caller_input_digest.ok_or_else(invalid)?,
+            path: format!("{path}{tail}"),
+          },
+          FlowInputSource::Record {
+            node,
+            outcome,
+            view,
+            path,
+          } => FlowInputRead::Record {
+            reference: FlowRecordReference::from_record(select_record(context, node, outcome)?)?,
+            view: *view,
+            path: format!("{path}{tail}"),
+          },
+          FlowInputSource::Predecessor { view, path } => FlowInputRead::Record {
+            reference: FlowRecordReference::from_record(record_for_attempt(context, predecessor(context)?)?)?,
+            view: *view,
+            path: format!("{path}{tail}"),
+          },
+          FlowInputSource::Work { .. } | FlowInputSource::NodeConfiguration { .. } => continue,
+        };
+        reads.push(read);
+      }
+    }
+    Ok(reads)
+  }
   pub(super) fn project(&self, context: &FlowInputPreparation<'_>) -> Result<ProjectedInput, FactoryError> {
     let work = serde_json::to_value(context.work).map_err(|_| invalid())?;
     let mut remaining = MAX_FLOW_DATA_BYTES;
@@ -313,10 +394,10 @@ impl FlowInputBinding {
         Ok((alias.as_str().to_owned(), copy_bounded(value, &mut remaining)?))
       })
       .collect::<Result<serde_json::Map<_, _>, _>>()?;
+    let source_values = Value::Object(sources);
     Ok(ProjectedInput {
-      payload: self
-        .mapping
-        .project_value(&serde_json::Value::Object(sources), context.schema)?,
+      payload: self.mapping.project_value(&source_values, context.schema)?,
+      source_values,
       sources: references.into_values().collect(),
       incoming_digest,
       caller_input_digest: caller_digest,

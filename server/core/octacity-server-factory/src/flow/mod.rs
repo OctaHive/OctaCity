@@ -1,3 +1,5 @@
+mod issue_fields;
+pub use issue_fields::{FlowIssueFieldBaseline, FlowIssueFieldWrite, IssueFieldForm, IssueFieldTarget, IssueFormField};
 mod discovery;
 pub use discovery::{FlowDiscoveryFacts, FlowDiscoveryKind};
 mod rejection;
@@ -103,3 +105,5 @@ pub use runtime::{
 pub use validation::ValidatedFlowDefinitionClosure;
 
 pub(crate) use runtime::validate_data_catalogue;
+
+pub use input_binding::FlowInputRead;

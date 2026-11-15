@@ -223,6 +223,12 @@ fn resources(store: Arc<PostgresStore>, pool: sqlx::PgPool) -> octacity_server::
   ))
   .unwrap();
   octacity_server::FactoryRuntimeResources {
+    local_effects: octacity_server_application::FactoryReporterWorkerSettings::new(
+      "test-local-effects".parse().unwrap(),
+      1000,
+      4,
+    )
+    .unwrap(),
     runs: store.clone(),
     builds: Arc::new(PostgresAuthoritativeStore::new(pool, postgres::test_signer())),
     objects: Arc::new(objects),

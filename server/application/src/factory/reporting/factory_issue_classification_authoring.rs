@@ -6,7 +6,7 @@ use octacity_server_factory::{
   FactoryConfigurationChoices, FactoryFlowConfiguration, FlowDataSchema, FlowFieldSchema, FlowOutcomeKind,
   FlowValueMapping, FlowValueSchema,
 };
-use octacity_server_store::{IssuePropertyStore, PublishedIssueProperties};
+use octacity_server_store::{IssueFieldFormContract, IssuePropertyStore, PublishedIssueProperties};
 use std::collections::BTreeSet;
 
 /// One authorized catalog read feeds both preview and selected-field publication checks.
@@ -80,6 +80,41 @@ pub(crate) async fn validate_publication(
   context: &ManagementRequestContext,
   project: ProjectId,
 ) -> Result<(), ApplicationError> {
+  let selected = flow
+    .closure
+    .definitions()
+    .iter()
+    .flat_map(|definition| {
+      definition.nodes().iter().flat_map(move |node| {
+        node
+          .outcomes()
+          .iter()
+          .filter_map(move |outcome| outcome.issue_fields().map(|fields| (definition, node, outcome, fields)))
+      })
+    })
+    .collect::<Vec<_>>();
+  if !selected.is_empty() {
+    let resolved = current_choices(choices, properties, policy, context, project).await?;
+    for (definition, node, outcome, fields) in selected {
+      let invalid =
+        || FactoryValidationDiagnostics::invalid_binding(definition.reference(), node.key(), "/outcomes/issue_fields");
+      let current = resolved.as_ref().ok_or_else(invalid)?;
+      let shape = fields.form.form_schema(&current.catalog).map_err(|_| invalid())?;
+      if node.kind() != octacity_server_factory::FlowNodeKind::Reasoning
+        || outcome.kind() != FlowOutcomeKind::Success
+        || fields.writer != current.choices.plugin
+        || fields.policy != current.choices.policy
+        || !node.permissions().plugins().any(|allowed| allowed == &fields.writer)
+        || flow
+          .data_schemas
+          .iter()
+          .find(|schema| schema.reference() == outcome.schema())
+          .is_none_or(|schema| schema.shape() != &shape)
+      {
+        return Err(invalid());
+      }
+    }
+  }
   let mut actions = Vec::new();
   for definition in flow.closure.definitions() {
     for node in definition.nodes() {

@@ -72,6 +72,8 @@ impl IssueClassificationMetadata {
         !valid_version
           || !fields.insert(identity)
           || field.requirements_version > field.assessed_version
+          || matches!(&field.origin, IssueClassificationOrigin::Pipeline {invocation:Some(invocation),..}
+            if invocation.baseline != field.assessed_version)
           || field.inputs.validate().is_err()
           || crate::management_mutation::validate_management_actor(actor).is_err()
           || field.evidence.len() > MAX_ISSUE_CLASSIFICATION_REFERENCES
@@ -311,6 +313,9 @@ pub enum IssueClassificationOrigin {
     record: FactoryDigest,
     /// Exact Project-derived form selection used by the accepted field result.
     form: FactoryDigest,
+    /// Actual ordinary invocation and baseline, when the result fills selected Issue fields.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    invocation: Option<crate::IssueFieldInvocation>,
     /// Configured classification policy identity.
     policy: FactoryKey,
     /// Stable trusted action identity retained across replay.

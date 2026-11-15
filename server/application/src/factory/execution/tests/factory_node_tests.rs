@@ -295,3 +295,6 @@ fn an_async_executor_cannot_publish_or_acknowledge_progress_after_its_observer_c
 }
 
 pub(crate) mod profile_selection;
+
+#[path = "factory_node_issue_fields_tests.rs"]
+mod issue_fields;

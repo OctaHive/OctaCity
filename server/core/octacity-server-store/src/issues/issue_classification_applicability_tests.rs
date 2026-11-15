@@ -219,6 +219,7 @@ fn classification_application_retains_declared_inputs_and_rejects_substituted_ma
       size_label: None,
       managed_labels: Default::default(),
       fields: Some(IssueClassificationUpdate {
+        invocation: None,
         selection: IssueFieldForm {
           project_id: catalog.project_id,
           definition_version: catalog.version,

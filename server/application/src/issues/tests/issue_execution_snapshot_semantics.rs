@@ -1,30 +1,5 @@
-//! A consumer cannot reuse a property's value under another assessment meaning.
+//! Direct consumer identities retain field history independently of optional catalog roles.
 use super::*;
-
-#[test]
-fn snapshot_rejects_reproduction_reinterpreted_from_a_new_risk_binding() {
-  run_ready(async {
-    let (store, factory, _, command) = property_snapshot_fixture(true, "reproduced").await;
-    let policy = Arc::new(TrustedNetworkManagementPolicy);
-    let requests = AuthorizedCommandHandler::new(
-      policy.clone(),
-      Arc::new(IssueExecutionHandlers::new(store.clone(), factory.clone(), policy)),
-    );
-    let before = store.mutation_evidence_counts().await;
-    let factory_before = factory.mutation_evidence_counts().await;
-    let error = requests
-      .handle_command(&context(), command)
-      .await
-      .expect_err("risk cannot establish reproduction in an older consumer");
-    let Some(ApplicationError::FactoryValidation(report)) = error.application() else {
-      panic!("expected field diagnostics: {error:?}");
-    };
-    assert_eq!(report.errors[0].field, "/issue_snapshot/fields/reproduction");
-    assert_eq!(report.errors[0].code, "issue_snapshot_semantic_binding_changed");
-    assert_eq!(store.mutation_evidence_counts().await, before);
-    assert_eq!(factory.mutation_evidence_counts().await, factory_before);
-  });
-}
 
 /// Restores the same semantics in a newer catalog or deliberately rebinds them.
 async fn property_snapshot_fixture(rebind: bool, value: &str) -> Fixture {
@@ -112,8 +87,8 @@ async fn property_snapshot_fixture(rebind: bool, value: &str) -> Fixture {
     [(
       "reproduction".parse().unwrap(),
       FlowIssueFieldSelection {
-        source: FlowIssueFieldSource::Classification {
-          slot: "reproducibility".parse().unwrap(),
+        source: FlowIssueFieldSource::Property {
+          id: "assessment_a".into(),
         },
         required: true,
       },
@@ -176,6 +151,61 @@ fn snapshot_keeps_compatible_assessment_meaning_across_catalog_versions() {
         id: "assessment_a".into(),
         definition_version: 2
       }
+    );
+  });
+}
+
+#[test]
+fn direct_snapshot_identity_survives_role_reassignment_without_claiming_observation_proof() {
+  run_ready(async {
+    let (store, factory, issue, mut command) = property_snapshot_fixture(true, "reproduced").await;
+    let id = FactoryConfigurationId::generate();
+    let configuration = snapshot_configuration_with_text_fields(
+      issue.project_id,
+      id,
+      1,
+      [(
+        "signal".parse().unwrap(),
+        FlowIssueFieldSelection {
+          source: FlowIssueFieldSource::Property {
+            id: "assessment_a".into(),
+          },
+          required: true,
+        },
+      )]
+      .into(),
+    );
+    crate::factory::admission::tests::factory_admission_tests::seed_permitted_configuration(
+      &factory,
+      PublishedFactoryConfiguration {
+        configuration,
+        published_at: at(35),
+      },
+    )
+    .unwrap();
+    command.intent.target.configuration_id = id;
+    let policy = Arc::new(TrustedNetworkManagementPolicy);
+    let requests = AuthorizedCommandHandler::new(
+      policy.clone(),
+      Arc::new(IssueExecutionHandlers::new(store.clone(), factory.clone(), policy)),
+    );
+    let request = requests
+      .handle_command(&context(), command)
+      .await
+      .expect("stable property identity does not acquire meaning from a catalog role")
+      .request;
+    let published = publish_snapshot_request(store, factory.clone(), &request).await;
+    let run = factory
+      .factory_run_snapshot(published.association.unwrap().run_id)
+      .await
+      .unwrap();
+    assert_eq!(
+      run.flow.data.incoming[0].payload().value(),
+      &serde_json::json!({"signal":"reproduced"})
+    );
+    assert!(
+      run.flow.data.records.is_empty(),
+      "a scalar creates no qualified observation or execution result"
     );
   });
 }

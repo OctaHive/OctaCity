@@ -92,7 +92,7 @@ pub enum FlowIssueFieldSource {
   Component,
   /// Built-in Project type choice.
   Type,
-  /// Fixed built-in size.
+  /// Built-in Project size choice, using its published order.
   Size,
   /// Existing bounded exact Work/Run dependencies; never a new scheduling graph.
   Dependencies,
@@ -166,16 +166,19 @@ pub struct FlowIssueEvidenceSelection {
   pub required: bool,
   /// Inclusive reference count ceiling; no report bytes are projected.
   pub maximum: u16,
+  /// Exact trusted observation contract. Absence supplies no verification authority.
+  #[serde(default, skip_serializing_if = "Option::is_none")]
+  pub observation: Option<FlowIssueObservation>,
 }
 
-/// Deterministic admission rules over selected canonical classification, never model output.
+/// Deterministic admission rules over selected canonical Issue choices.
 /// Missing mappings deny admission; there is no inferred numeric priority or risk default.
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
 #[serde(deny_unknown_fields)]
 pub struct FlowIssueAdmissionPolicy {
-  /// Explicit translation of Project priority choice IDs to Work scheduling priorities.
+  /// Explicit translation of selected core/custom choice IDs to Work scheduling priorities.
   pub priority: FlowIssueAdmissionMapping<crate::WorkPriority>,
-  /// Explicit translation of an assessed classification field to admission risk.
+  /// Explicit translation of a selected core/custom choice to admission risk.
   pub risk: FlowIssueAdmissionMapping<crate::RiskClass>,
   /// Additional exact choice allowlists; all must match after applicability/evidence checks.
   #[serde(default)]
@@ -185,7 +188,7 @@ pub struct FlowIssueAdmissionPolicy {
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
 #[serde(deny_unknown_fields)]
 pub struct FlowIssueAdmissionMapping<T> {
-  /// Required selected classification field, not a path into arbitrary metadata.
+  /// Required selected choice field, not a path into arbitrary metadata.
   pub field: FactoryKey,
   /// Explicit supported choices only; unmapped choices block admission.
   pub values: BTreeMap<String, T>,
@@ -224,4 +227,28 @@ fn mapped<'a, T>(
     .and_then(serde_json::Value::as_str)
     .and_then(|v| mapping.values.get(v))
     .ok_or_else(|| mapping.field.clone())
+}
+
+/// A completed observation can match, not match or remain indeterminate.
+#[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum FactoryCommandFinding {
+  /// The completed criterion was observed.
+  Matched,
+  /// Complete applicable observations independently rule out that criterion.
+  NotMatched,
+  /// Missing coverage or execution conditions establish neither finding.
+  Indeterminate,
+}
+
+/// Explicit trusted observation expected by a direct field consumer.
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(deny_unknown_fields)]
+pub struct FlowIssueObservation {
+  /// Reviewed environment contract, independent of display labels.
+  pub environment: ImmutableReference,
+  /// Reviewed independently evaluated command criterion.
+  pub criterion: ImmutableReference,
+  /// Expected qualified finding; indeterminate cannot establish proof.
+  pub finding: FactoryCommandFinding,
 }

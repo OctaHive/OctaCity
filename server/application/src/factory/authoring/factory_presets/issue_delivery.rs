@@ -138,21 +138,12 @@ fn bind_size_threshold(
       Err(invalid())
     };
   };
-  let start = sizes.iter().position(|c| c.id == threshold).ok_or_else(invalid)?;
   let key = |value: &str| FactoryKey::new(value).expect("release key");
-  let rules = sizes[start..]
-    .iter()
-    .map(|size| FlowGateRule {
-      when: FlowPredicate::Compare {
-        left: FlowOperand::Path { path: "/size".into() },
-        comparison: FlowComparison::Equal,
-        right: FlowOperand::Literal {
-          value: serde_json::Value::String(size.id.clone()),
-        },
-      },
-      outcome: key("specification"),
-    })
-    .collect();
+  let rules = vec![FlowGateRule {
+    when: crate::issue_choice_threshold(catalog, &FlowIssueFieldSource::Size, "/size", threshold)
+      .map_err(|_| invalid())?,
+    outcome: key("specification"),
+  }];
   let program = FlowGateProgram::new(rules, key("prepared"))
     .and_then(|p| {
       p.with_default_output_mapping(FlowDataMapping::new(FlowValueMapping::Pointer { path: String::new() })?)

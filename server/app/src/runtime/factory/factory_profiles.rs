@@ -349,9 +349,13 @@ impl FactoryRuntimeInstaller for FactoryProfileRuntimeInstaller {
     Ok(FactoryRuntimeInstallation {
       capabilities,
       executors,
-      inputs: Arc::new(FactoryArtifactFlowInputs::new(
-        reader,
-        Arc::new(SystemFactoryExecutionClock),
+      inputs: Arc::new(FactoryIssueInputs::new(
+        resources.runs.clone(),
+        resources.runs.clone(),
+        Arc::new(FactoryArtifactFlowInputs::new(
+          reader,
+          Arc::new(SystemFactoryExecutionClock),
+        )),
       )),
       readiness: self.readiness.clone(),
       outbox_dispatchers: self.outbox.clone(),

@@ -9,6 +9,7 @@ pub(crate) struct IssueSnapshotReadContext<'a> {
   pub policy: &'a dyn ManagementAuthorizationPolicy,
   pub context: &'a ManagementRequestContext,
   pub materials: Option<&'a IssueSnapshotMaterialReaders>,
+  pub observations: Option<&'a IssueSnapshotObservations>,
 }
 /// A retained digest permits only an exact pre-format reservation to keep its legacy bytes.
 pub(crate) async fn select(
@@ -23,6 +24,7 @@ pub(crate) async fn select(
     policy,
     context,
     materials,
+    observations,
   } = read;
   let input = flow.issue_snapshot.as_ref().ok_or_else(ApplicationError::invalid)?;
   if target.predecessor_run.is_some() || !issue.content_available {
@@ -56,7 +58,6 @@ pub(crate) async fn select(
       entry.insert(store.issue_properties(issue.project_id, Some(version)).await?);
     }
   }
-  let review = issue.review_classification(&catalog, &definitions, None, issue.updated_at);
   let mut snapshot = IssueExecutionSnapshot {
     admission_classification: None,
     project_id: issue.project_id,
@@ -76,6 +77,7 @@ pub(crate) async fn select(
     attribution: BTreeMap::new(),
     omissions: BTreeMap::new(),
     materials: BTreeMap::new(),
+    evidence: BTreeMap::new(),
   };
   for (alias, selection, (value, field)) in selected {
     let Some(value) = value else {
@@ -108,27 +110,14 @@ pub(crate) async fn select(
         .iter()
         .find(|a| a.field.identity() == field.identity())
     });
-    if assessment.is_some_and(|assessment| !same_semantic_binding(assessment, &catalog, &definitions)) {
-      return Err(FactoryValidationDiagnostics::unavailable_with_code(
-        format!("/issue_snapshot/fields/{alias}"),
-        "issue_snapshot_semantic_binding_changed",
-      ));
-    }
-    let applicable = field.as_ref().is_none_or(|field| {
-      // Ordinary properties need no classification origin. Semantic bindings and built-ins do.
-      let classified = !matches!(field, IssueClassificationFieldReference::Property { id, .. }
-        if !catalog.definition.classification.fields().any(|(_, bound)| bound == id));
-      !classified
-        || review
-          .fields
+    let applicable = field.as_ref().is_none_or(|_| {
+      assessment.is_some_and(|assessment| {
+        issue
+          .assessment_problems(assessment, &definitions, None)
           .iter()
-          .find(|r| r.field.identity() == field.identity())
-          .is_some_and(|r| {
-            r.problems
-              .iter()
-              .all(|p| matches!(p, IssueClassificationProblem::CodeSubjectUnavailable))
-              && !r.requires_verified_evidence
-          })
+          // Exact code is resolved by the shared intake, then fenced again at admission.
+          .all(|problem| matches!(problem, IssueClassificationProblem::CodeSubjectUnavailable))
+      })
     });
     if !applicable {
       if selection.required {
@@ -149,18 +138,7 @@ pub(crate) async fn select(
   }
 
   crate::issues::issue_execution_snapshot_materials::freeze(materials, context, issue, &mut snapshot).await?;
-  // Evidence remains independently qualified, never inferred from selected prose.
-  for (alias, selection) in &input.evidence {
-    if selection.required {
-      return Err(FactoryValidationDiagnostics::unavailable_with_code(
-        format!("/issue_snapshot/evidence/{alias}"),
-        "issue_snapshot_evidence_unavailable",
-      ));
-    }
-    snapshot
-      .omissions
-      .insert(alias.clone(), IssueSnapshotOmission::Unavailable);
-  }
+  crate::issues::issue_execution_observations::freeze(observations, context, issue, &mut snapshot).await?;
   references.extend(snapshot.attribution.values().map(|assessment| assessment.field.clone()));
   for (&version, definition) in &definitions {
     if version == input.definition_version
@@ -276,32 +254,6 @@ fn matches_reviewed_digest(snapshot: &mut IssueExecutionSnapshot, expected: Fact
   }
   *snapshot = legacy;
   true
-}
-
-// A value assessed as risk cannot become reproduction merely because an older
-// consumer selects the same property ID. Compatible catalog revisions remain usable.
-fn same_semantic_binding(
-  assessment: &IssueClassificationAttribution,
-  consumer: &PublishedIssueProperties,
-  definitions: &BTreeMap<u64, PublishedIssueProperties>,
-) -> bool {
-  let IssueClassificationFieldReference::Property { id, definition_version } = &assessment.field else {
-    return true;
-  };
-  consumer
-    .definition
-    .classification
-    .fields()
-    .find(|(_, bound)| *bound == id)
-    .is_none_or(|(slot, _)| {
-      definitions.get(definition_version).is_some_and(|origin| {
-        origin
-          .definition
-          .classification
-          .fields()
-          .any(|(original_slot, bound)| original_slot == slot && bound == id)
-      })
-    })
 }
 
 fn field_value(

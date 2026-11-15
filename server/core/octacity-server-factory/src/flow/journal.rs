@@ -27,6 +27,57 @@ pub struct FlowDataHistory {
   pub build_executions: Vec<crate::FlowBuildExecution>,
 }
 impl FlowDataHistory {
+  /// Resolves content reads against the same frozen source history used by journal validation.
+  /// This reads provenance only; it adds no payload, dependency lookup or mutable latest selection.
+  pub fn input_reads(
+    &self,
+    work: &WorkEnvelope,
+    admitted: &AdmittedFlow,
+    history: FlowRuntimeHistory<'_>,
+    input: &FlowNodeInput,
+    path: &str,
+  ) -> Result<Vec<crate::FlowInputRead>, FactoryError> {
+    let node = admitted
+      .closure()
+      .definition(input.definition())
+      .and_then(|definition| definition.node(input.node()))
+      .ok_or_else(invalid)?;
+    let Some(binding) = node.input_binding() else {
+      return Ok(Vec::new());
+    };
+    let flow = history
+      .flow_runs
+      .iter()
+      .find(|flow| flow.id() == input.flow_run_id())
+      .ok_or_else(invalid)?;
+    let cycle = history
+      .cycles
+      .iter()
+      .find(|cycle| cycle.id() == input.cycle_id())
+      .ok_or_else(invalid)?;
+    let attempts = frozen_source_attempts(history, input, flow, cycle);
+    binding.selected_reads(
+      &crate::FlowInputPreparation {
+        work,
+        admitted,
+        flow,
+        cycle,
+        node: input.node().clone(),
+        schema: admitted.data_schema(input.payload().schema()).ok_or_else(invalid)?,
+        history: FlowRuntimeHistory {
+          attempts: &attempts,
+          ..history
+        },
+        records: &self.records,
+        inputs: &self.inputs,
+        incoming: self
+          .incoming
+          .iter()
+          .find(|row| row.digest().ok() == input.incoming_digest()),
+      },
+      path,
+    )
+  }
   /// Holds each unresolved provider ceiling once, regardless of retained revision count.
   pub fn pending_profile_signal_usage(&self) -> Result<crate::BudgetUsage, FactoryError> {
     self
@@ -212,29 +263,7 @@ impl FlowDataHistory {
         // Restore the immutable source snapshot, rather than interpreting old
         // inputs against results appended after they were frozen. New inputs
         // are separately checked against the current full history on append.
-        let source_ceiling = history
-          .attempts
-          .iter()
-          .filter(|attempt| {
-            input
-              .sources()
-              .iter()
-              .any(|source| source.node_attempt_id() == attempt.id())
-          })
-          .map(|attempt| attempt.number())
-          .max();
-        let attempts = history
-          .attempts
-          .iter()
-          .filter(|attempt| {
-            source_ceiling.is_none_or(|ceiling| {
-              attempt.flow_run_id() != flow.id()
-                || attempt.workflow_cycle_id() != cycle.id()
-                || attempt.number() <= ceiling
-            })
-          })
-          .cloned()
-          .collect::<Vec<_>>();
+        let attempts = frozen_source_attempts(history, input, flow, cycle);
         input.verify_preparation(crate::FlowInputPreparation {
           work,
           admitted,
@@ -546,4 +575,33 @@ fn invalid() -> FactoryError {
   FactoryError::InvalidConfiguration {
     field: "Flow data history",
   }
+}
+
+fn frozen_source_attempts(
+  history: FlowRuntimeHistory<'_>,
+  input: &FlowNodeInput,
+  flow: &crate::FlowRun,
+  cycle: &crate::WorkflowCycle,
+) -> Vec<crate::NodeAttempt> {
+  let source_ceiling = history
+    .attempts
+    .iter()
+    .filter(|attempt| {
+      input
+        .sources()
+        .iter()
+        .any(|source| source.node_attempt_id() == attempt.id())
+    })
+    .map(|attempt| attempt.number())
+    .max();
+  history
+    .attempts
+    .iter()
+    .filter(|attempt| {
+      source_ceiling.is_none_or(|ceiling| {
+        attempt.flow_run_id() != flow.id() || attempt.workflow_cycle_id() != cycle.id() || attempt.number() <= ceiling
+      })
+    })
+    .cloned()
+    .collect::<Vec<_>>()
 }

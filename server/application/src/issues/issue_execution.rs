@@ -59,6 +59,7 @@ pub struct IssueExecutionHandlers<S, F> {
   factory: Arc<F>,
   policy: Arc<dyn ManagementAuthorizationPolicy>,
   materials: Option<Arc<IssueSnapshotMaterialReaders>>,
+  observations: Option<Arc<IssueSnapshotObservations>>,
 }
 impl<S, F> IssueExecutionHandlers<S, F> {
   /// Keeps optional execution dependencies outside manual Issue handlers.
@@ -68,7 +69,13 @@ impl<S, F> IssueExecutionHandlers<S, F> {
       factory,
       policy,
       materials: None,
+      observations: None,
     }
+  }
+  /// Installs the existing independent observation reader and its trusted clock.
+  pub fn with_observations(mut self, observations: Arc<IssueSnapshotObservations>) -> Self {
+    self.observations = Some(observations);
+    self
   }
   /// Installs independently authorized source readers; absence keeps materials unavailable.
   pub fn with_materials(mut self, readers: Arc<IssueSnapshotMaterialReaders>) -> Self {
@@ -223,6 +230,7 @@ impl<
             policy: self.policy.as_ref(),
             context,
             materials: self.materials.as_deref(),
+            observations: self.observations.as_deref(),
           },
           &issue,
           target,

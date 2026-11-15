@@ -36,6 +36,7 @@ pub struct IssueExecutionPublisher<S, F, B> {
   intake: ProjectTextIntake<F, B>,
   policy: Arc<dyn ManagementAuthorizationPolicy>,
   materials: Option<Arc<IssueSnapshotMaterialReaders>>,
+  observations: Option<Arc<IssueSnapshotObservations>>,
 }
 impl<S, F: ProjectTextInputStore + 'static, B: ArtifactBytePublisher + ArtifactByteReader>
   IssueExecutionPublisher<S, F, B>
@@ -56,7 +57,14 @@ impl<S, F: ProjectTextInputStore + 'static, B: ArtifactBytePublisher + ArtifactB
       intake,
       policy,
       materials: None,
+      observations: None,
     }
+  }
+  /// Shares exact observation qualification with review and the final admission owner.
+  pub fn with_observations(mut self, observations: Arc<IssueSnapshotObservations>) -> Self {
+    self.intake = self.intake.with_issue_observations(observations.clone());
+    self.observations = Some(observations);
+    self
   }
   /// Uses the same independent source readers as the request reviewer.
   pub fn with_materials(mut self, readers: Arc<IssueSnapshotMaterialReaders>) -> Self {
@@ -196,6 +204,7 @@ impl<
               policy: self.policy.as_ref(),
               context,
               materials: self.materials.as_deref(),
+              observations: self.observations.as_deref(),
             },
             &revision,
             target,

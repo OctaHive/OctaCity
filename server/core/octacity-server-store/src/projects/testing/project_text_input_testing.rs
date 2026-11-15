@@ -179,7 +179,7 @@ impl ProjectTextInputStore for crate::testing::InMemoryFactoryConfigurationStore
       && let Some(snapshot) = documents.issue_snapshot()
     {
       let preparation = state.project_text.records[&guard.id].work()?;
-      snapshot.validate_prepared_admission(preparation, request.mutation())?;
+      snapshot.validate_prepared_admission(preparation, request.mutation(), guard.now)?;
     }
     let outcome = crate::factory::authoring::testing::factory_configuration_testing::admit_factory_work_locked(
       &mut state, request,

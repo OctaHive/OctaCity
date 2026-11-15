@@ -65,8 +65,27 @@ impl IssueClassificationStore for PostgresStore {
       if std::time::Instant::now() >= authority.deadline {
         return Err(StoreError::Unavailable);
       }
-      crate::factory::execution::factory_run::verify_issue_classification_claim(&mut tx, a.run_id, authority.claim)
-        .await?;
+      match authority.claim {
+        IssueClassificationClaim::Run(claim) => {
+          crate::factory::execution::factory_run::verify_issue_classification_claim(&mut tx, a.run_id, claim).await?
+        }
+        IssueClassificationClaim::Outbox(claim) => {
+          let row = crate::factory::execution::factory_run::latest_outbox(&mut tx, request.operation_id)
+            .await?
+            .ok_or_else(conflict)?;
+          crate::factory::execution::factory_run::lock_outbox_subject(&mut tx, row.subject).await?;
+          let row = crate::factory::execution::factory_run::latest_outbox(&mut tx, request.operation_id)
+            .await?
+            .ok_or_else(conflict)?;
+          if row.id != claim
+            || row.state != FactoryOutboxState::Claimed
+            || row.subject.run_id() != Some(a.run_id)
+            || row.input_digest != request.record
+          {
+            return Err(conflict());
+          }
+        }
+      }
       identity.deadline = Some(authority.deadline);
     }
     let (current, next, admitted_at, owned) = match evaluated {
@@ -161,6 +180,15 @@ async fn evaluate(
   if baseline.applicability_version != current.applicability_version {
     return Err(conflict());
   }
+  if let Some(invocation) = request.fields.as_ref().and_then(|fields| fields.invocation.as_ref()) {
+    if invocation.baseline < baseline.version {
+      return Err(conflict());
+    }
+    baseline = issue::read(connection, a.project_id, a.issue_id, Some(invocation.baseline)).await?;
+    if baseline.applicability_version != current.applicability_version {
+      return Err(conflict());
+    }
+  }
   let admitted_at: i64 = sqlx::query_scalar(
     "SELECT (EXTRACT(EPOCH FROM admitted_at) * 1000)::bigint FROM factory_runs WHERE id=$1 AND project_id=$2 AND work_envelope_id=$3",
   ).bind(a.run_id.as_uuid()).bind(a.project_id.as_uuid()).bind(a.work_id.as_uuid())
@@ -213,7 +241,13 @@ async fn evaluate(
       if prior.as_ref().is_some_and(|prior| prior.order() >= order) {
         return Err(conflict());
       }
-      let from = prior.map_or(baseline.version, |receipt| receipt.version.max(baseline.version));
+      // An automatic invocation assessed exactly this revision. A later pipeline receipt
+      // must not silently renew its selected-field baseline; receipt replay ran above.
+      let from = if update.invocation.is_some() {
+        baseline.version
+      } else {
+        prior.map_or(baseline.version, |receipt| receipt.version.max(baseline.version))
+      };
       let reviewed = issue::read(connection, a.project_id, a.issue_id, Some(from)).await?;
       let (path, expected) = classification_field_baseline(&mut baseline, &reviewed, &field)?;
       let changed: bool = sqlx::query_scalar(

@@ -1,64 +1,34 @@
 //! One Project-derived contract for an agent's form and its permitted Issue write set.
 use crate::*;
-use octacity_server_domain::ProjectId;
 use octacity_server_factory::{FactoryDigest, FactoryKey, FlowFieldSchema, FlowValueSchema};
-use serde::{Deserialize, Serialize};
 use std::collections::BTreeSet;
 
-/// Writable scalar location; control, requirements and evidence keep their separate commands.
-#[derive(Clone, Debug, Deserialize, Eq, Ord, PartialEq, PartialOrd, Serialize)]
-#[serde(tag = "kind", rename_all = "snake_case", deny_unknown_fields)]
-pub enum IssueFieldTarget {
-  /// Project priority choice, independent of Work scheduling.
-  Priority,
-  /// Project component choice.
-  Component,
-  /// Project Issue type choice.
-  Type,
-  /// Ordered Project size choice.
-  Size,
-  /// Supported scalar Project property, without semantic-role registration.
-  Property {
-    /// Stable property identity within the selected Project.
-    id: String,
-  },
-}
+pub use octacity_server_factory::{IssueFieldForm, IssueFieldTarget, IssueFormField};
 
-/// One field selected once for both the result form and guarded application.
-#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
-#[serde(deny_unknown_fields)]
-pub struct IssueFormField {
-  /// Canonical destination; display names and agent aliases cannot change it.
-  pub field: IssueFieldTarget,
-  /// Missing optional values preserve the current Issue; selection defaults to required.
-  #[serde(default = "required")]
-  pub required: bool,
+/// Project catalog operations shared by publication and the guarded Issue writer.
+pub trait IssueFieldFormContract {
+  /// Content identity of the exact reviewed selection.
+  fn digest(&self) -> Result<FactoryDigest, StoreError>;
+  /// Validate the accepted closed form and construct a typed write command.
+  fn complete(
+    &self,
+    catalog: &PublishedIssueProperties,
+    result: &serde_json::Value,
+    inputs: IssueClassificationAssessmentInputs,
+  ) -> Result<IssueClassificationUpdate, StoreError>;
+  /// Derive the result grammar from the immutable Project catalog.
+  fn form_schema(&self, catalog: &PublishedIssueProperties) -> Result<FlowValueSchema, StoreError>;
 }
-fn required() -> bool {
-  true
-}
-
-/// Exact reviewed Project selection. The catalog is the only source of value types and bounds.
-#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
-#[serde(deny_unknown_fields)]
-pub struct IssueFieldForm {
-  /// Owning Project, preventing reuse of another Project's same-numbered publication.
-  pub project_id: ProjectId,
-  /// Exact immutable catalog, including the initial configured defaults at version zero.
-  pub definition_version: u64,
-  /// Bounded distinct fields; no output aliases, import paths or clear operations.
-  pub fields: Vec<IssueFormField>,
-}
-impl IssueFieldForm {
+impl IssueFieldFormContract for IssueFieldForm {
   /// Content identity of the reviewed selection, including Project, definition pin and requiredness.
   /// Exact definitions remain in the immutable Project catalog rather than a copied result schema.
-  pub fn digest(&self) -> Result<FactoryDigest, StoreError> {
+  fn digest(&self) -> Result<FactoryDigest, StoreError> {
     let bytes = serde_json::to_vec(self).map_err(|_| super::issue_planning::planning_conflict())?;
     Ok(FactoryDigest::content_sha256(&bytes))
   }
 
   /// Decodes only this form's closed scalar result. Issue identity and provenance are supplied by the caller.
-  pub fn complete(
+  fn complete(
     &self,
     catalog: &PublishedIssueProperties,
     result: &serde_json::Value,
@@ -72,6 +42,7 @@ impl IssueFieldForm {
       .collect::<Result<_, StoreError>>()?;
     let update = IssueClassificationUpdate {
       selection: self.clone(),
+      invocation: None,
       values,
       inputs,
     };
@@ -80,7 +51,7 @@ impl IssueFieldForm {
   }
 
   /// Derives a closed form from the same identities that constrain the writer.
-  pub fn form_schema(&self, catalog: &PublishedIssueProperties) -> Result<FlowValueSchema, StoreError> {
+  fn form_schema(&self, catalog: &PublishedIssueProperties) -> Result<FlowValueSchema, StoreError> {
     let conflict = super::issue_planning::planning_conflict;
     if self.project_id != catalog.project_id
       || self.definition_version != catalog.version
@@ -109,8 +80,17 @@ impl IssueFieldForm {
     Ok(FlowValueSchema::Object { fields })
   }
 }
-impl IssueFieldTarget {
-  pub(crate) fn reference(&self, definition_version: u64) -> IssueClassificationFieldReference {
+/// Stable scalar destinations interpreted against the Project's catalog.
+pub trait IssueFieldTargetContract {
+  /// Retained typed field identity and its catalog pin.
+  fn reference(&self, definition_version: u64) -> IssueClassificationFieldReference;
+  /// Generated transport key, independent of display names.
+  fn key(&self) -> Result<FactoryKey, StoreError>;
+  /// Project value type, unavailable for missing or retired fields.
+  fn kind(&self, catalog: &PublishedIssueProperties) -> Option<IssuePropertyKind>;
+}
+impl IssueFieldTargetContract for IssueFieldTarget {
+  fn reference(&self, definition_version: u64) -> IssueClassificationFieldReference {
     match self {
       Self::Priority => IssueClassificationFieldReference::Priority {
         definition_version: Some(definition_version),
@@ -127,7 +107,7 @@ impl IssueFieldTarget {
     }
   }
   /// Stable generated transport key; property names cannot collide with built-in fields.
-  pub fn key(&self) -> Result<FactoryKey, StoreError> {
+  fn key(&self) -> Result<FactoryKey, StoreError> {
     let key = match self {
       Self::Priority => "priority".to_owned(),
       Self::Component => "component".to_owned(),

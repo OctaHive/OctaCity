@@ -217,6 +217,7 @@ impl<S: IssueExecutionStore + IssueStore + IssuePropertyStore, F: ProjectTextInp
           policy: self.policy.as_ref(),
           context,
           materials: self.materials.as_deref(),
+          observations: self.observations.as_deref(),
         },
         &issue,
         &intent.target,

@@ -170,7 +170,7 @@ async fn retained_issue_assessment(
         content: IssueContent {
           title: "Defect".into(),
           description: String::new(),
-          acceptance: None,
+          acceptance: Some("The configured CI criterion is checked independently".into()),
           priority: None,
         },
       },
@@ -435,3 +435,6 @@ fn issue_classification_evidence_distinguishes_negative_observations_from_techni
     }
   });
 }
+
+#[path = "factory_issue_snapshot_observation_tests.rs"]
+mod snapshots;

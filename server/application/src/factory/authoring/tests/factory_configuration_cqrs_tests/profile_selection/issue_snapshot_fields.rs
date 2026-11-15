@@ -135,3 +135,97 @@ fn flow_publication_reuses_builtin_project_and_dependency_contracts_without_copi
     }
   });
 }
+
+#[test]
+fn direct_choice_thresholds_freeze_size_and_unrelated_project_field_order() {
+  run_ready(async {
+    let project = ProjectId::generate();
+    let properties = properties(project).await;
+    let mut catalog = properties.issue_properties(project, None).await.unwrap();
+    catalog.definition.classification = Default::default();
+    catalog
+      .definition
+      .properties
+      .push(octacity_server_store::IssuePropertyDefinition {
+        id: "queue_lane".into(),
+        name: "Queue lane".into(),
+        retired: false,
+        kind: octacity_server_store::IssuePropertyKind::Choice {
+          choices: ["routine", "review", "deep_review"]
+            .into_iter()
+            .map(|id| octacity_server_store::IssuePropertyChoice {
+              id: id.into(),
+              name: id.into(),
+              retired: false,
+            })
+            .collect(),
+        },
+      });
+    for (source, threshold, values) in [
+      (FlowIssueFieldSource::Size, "medium", ["small", "medium", "large"]),
+      (
+        FlowIssueFieldSource::Property {
+          id: "queue_lane".into(),
+        },
+        "review",
+        ["routine", "review", "deep_review"],
+      ),
+    ] {
+      let program = FlowGateProgram::new(
+        vec![FlowGateRule {
+          when: crate::issue_choice_threshold(&catalog, &source, "/arbitrary_alias", threshold).unwrap(),
+          outcome: key("review_needed"),
+        }],
+        key("ready"),
+      )
+      .unwrap();
+      let schema = FlowDataSchema::new(
+        key("ordinary_choice"),
+        key("1"),
+        FlowValueSchema::Object {
+          fields: [(
+            key("arbitrary_alias"),
+            FlowFieldSchema::required(FlowValueSchema::Enum {
+              values: values.into_iter().map(serde_json::Value::from).collect(),
+            }),
+          )]
+          .into(),
+        },
+      )
+      .unwrap();
+      // Later labels/order cannot alter an already compiled, serializable ordinary gate.
+      let restored: FlowGateProgram = serde_json::from_value(serde_json::to_value(&program).unwrap()).unwrap();
+      let mut edited = catalog.clone();
+      edited.definition.sizes.reverse();
+      if let octacity_server_store::IssuePropertyKind::Choice { choices } =
+        &mut edited.definition.properties.last_mut().unwrap().kind
+      {
+        choices.reverse();
+        choices[0].name = "Renamed".into();
+      }
+      let newer = FlowGateProgram::new(
+        vec![FlowGateRule {
+          when: crate::issue_choice_threshold(&edited, &source, "/arbitrary_alias", threshold).unwrap(),
+          outcome: key("review_needed"),
+        }],
+        key("ready"),
+      )
+      .unwrap();
+      for (index, value) in values.into_iter().enumerate() {
+        let payload = FlowPayload::new(&schema, serde_json::json!({"arbitrary_alias":value})).unwrap();
+        assert_eq!(
+          restored.select(&payload).unwrap(),
+          key(if index == 0 { "ready" } else { "review_needed" })
+        );
+        assert_eq!(
+          newer.select(&payload).unwrap(),
+          key(if index == 2 { "ready" } else { "review_needed" })
+        );
+      }
+      assert!(crate::issue_choice_threshold(&catalog, &source, "/arbitrary_alias", "missing").is_err());
+    }
+    catalog.definition.sizes[1].retired = true;
+    assert!(crate::issue_choice_threshold(&catalog, &FlowIssueFieldSource::Size, "/x", "medium").is_err());
+    assert!(crate::issue_choice_threshold(&catalog, &FlowIssueFieldSource::Title, "/x", "medium").is_err());
+  });
+}

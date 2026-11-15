@@ -38,7 +38,7 @@ pub(crate) async fn freeze(
   Ok(())
 }
 // Unavailable optional content can be omitted; exceeding a reviewed bound cannot.
-enum MaterialFailure {
+pub(crate) enum MaterialFailure {
   Unavailable,
   Limit,
 }
@@ -48,13 +48,11 @@ impl From<ApplicationError> for MaterialFailure {
   }
 }
 
-async fn load(
-  reader: Option<&IssueSnapshotMaterialReaders>,
-  context: &ManagementRequestContext,
+/// Resolves the original ordered selection without reading bodies or renewing availability.
+pub(crate) fn selections(
   issue: &IssueRevision,
   contract: &FlowIssueMaterialSelection,
-) -> Result<(Vec<String>, Vec<IssueSnapshotMaterial>), MaterialFailure> {
-  let reader = reader.ok_or(MaterialFailure::Unavailable)?;
+) -> Result<Vec<IssueMaterialSelection>, MaterialFailure> {
   let selections = match &contract.source {
     FlowIssueMaterialSource::Exact { references } => references
       .iter()
@@ -102,6 +100,17 @@ async fn load(
   if selections.len() > MAX_ISSUE_MATERIALS {
     return Err(MaterialFailure::Limit);
   }
+  Ok(selections)
+}
+
+async fn load(
+  reader: Option<&IssueSnapshotMaterialReaders>,
+  context: &ManagementRequestContext,
+  issue: &IssueRevision,
+  contract: &FlowIssueMaterialSelection,
+) -> Result<(Vec<String>, Vec<IssueSnapshotMaterial>), MaterialFailure> {
+  let reader = reader.ok_or(MaterialFailure::Unavailable)?;
+  let selections = selections(issue, contract)?;
   let mut texts = Vec::new();
   let mut materials = Vec::new();
   let mut bytes = 0usize;

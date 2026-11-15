@@ -466,3 +466,47 @@ fn form_catalog(project_id: ProjectId) -> PublishedIssueProperties {
       ]})).unwrap(),
     }
 }
+
+#[test]
+fn selected_issue_field_form_attributes_the_actual_node_attempt_and_invocation_baseline() {
+  run_ready(async {
+    let (baseline, catalog, mut request) = form_fixture().await;
+    let invocation = IssueFieldInvocation {
+      node: "analyze_ci".parse().unwrap(),
+      attempt_id: octacity_server_factory::NodeAttemptId::generate(),
+      baseline: baseline.version,
+    };
+    request.fields.as_mut().unwrap().invocation = Some(invocation.clone());
+    let actor = testing::management_mutation(()).audit().actor().clone();
+    let next = baseline
+      .classified(
+        &baseline,
+        &request,
+        None,
+        &catalog,
+        &IssueFieldPolicy::default(),
+        &actor,
+      )
+      .unwrap();
+    let metadata = serde_json::to_value(&next.classification).unwrap();
+    let pipeline = metadata["fields"]
+      .as_array()
+      .unwrap()
+      .iter()
+      .filter(|field| field["origin"]["kind"] == "pipeline")
+      .collect::<Vec<_>>();
+    assert!(!pipeline.is_empty());
+    for field in pipeline {
+      assert_eq!(
+        field["origin"]["invocation"],
+        serde_json::to_value(&invocation).unwrap()
+      );
+    }
+    let mut tampered = metadata;
+    tampered["fields"][0]["origin"]["invocation"]["baseline"] = json!(baseline.version.next().unwrap());
+    assert!(
+      serde_json::from_value::<IssueClassificationMetadata>(tampered).is_err(),
+      "retained provenance cannot claim a different invocation baseline than the assessment"
+    );
+  });
+}
