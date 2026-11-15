@@ -182,3 +182,45 @@ python3 tools/check_architecture.py
 openspec validate add-issue-classification-snapshots --strict
 git diff --check
 ```
+
+## Stand restart with a profile catalog larger than a fixture receipt
+
+An ordinary restart failed after Delivery installation growth because both
+classification-upgrade catalog reads reused the 128 KiB fixture receipt limit.
+The installed private catalog was 151036 bytes, a regular file with mode `0600`,
+within the Server's existing 4 MiB profile catalog limit. The original read
+reproduced the exact `Factory fixture receipt has an invalid size` diagnostic.
+
+The public CLI recovery regression first failed with that same diagnostic on a
+valid installed catalog padded above 128 KiB. The separate oversized-receipt
+characterization passed before the fix. Both catalog reads now explicitly use
+the existing Server catalog bound and the catalog diagnostic name, while other
+receipt reads retain their original default. After the fix both tests passed:
+two repeated CLI resumes retain the catalog and original receipt bytes and
+publish no Source configuration. The installed 151036-byte catalog also reads
+successfully through the corrected call without any write to the user's stand.
+
+```sh
+# Red: 1 failed, 1 passed. Green: both passed.
+PYTHONPATH=tools:tools/tests python3 -m unittest \
+  test_factory_stand_recovery.FactoryStandRecoveryTests.test_default_resume_accepts_a_catalog_larger_than_a_fixture_receipt_without_republishing_state \
+  test_factory_stand_recovery.FactoryStandRecoveryTests.test_default_resume_keeps_the_smaller_fixture_receipt_size_limit
+```
+
+The local-stand runbook explains the distinct limits and recovery by rerunning
+the original command/root after updating launcher code. No catalog truncation,
+stand reset or republishing of retained pipeline definitions is required. Full
+native startup of the user's stand was not performed for this fix.
+
+Related regression suites completed successfully: 57 tests run, with 3
+environment-dependent skips. Python compilation, strict OpenSpec validation and
+whitespace checks passed. Documentation changes have no executable TDD behavior.
+
+```sh
+PYTHONPATH=tools:tools/tests python3 -m unittest \
+  test_factory_stand_recovery test_factory_stand_triage \
+  test_factory_stand_policies test_factory_local_stand
+python3 -m py_compile tools/factory_local_stand.py tools/tests/test_factory_stand_recovery.py
+openspec validate add-issue-classification-snapshots --strict
+git diff --check
+```

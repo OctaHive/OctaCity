@@ -587,6 +587,14 @@ verification for its eligibility result; classification consumes that accepted
 handoff using its ordinary classification result contract. Applying that result
 to the Issue is a separately configured local action, not an implied side effect.
 
+On restart, the installed `config/server/factory-profiles.json` uses the Server's
+4 MiB catalog limit; small bootstrap receipts keep their separate 128 KiB limit.
+An older launcher may incorrectly report `Factory fixture receipt has an invalid
+size` for a valid profile catalog larger than 128 KiB after adding Delivery
+bindings. Update the launcher code and rerun the same command with the existing
+root and installation arguments. Do not truncate the catalog or reset the stand:
+profile history and published pipeline pins remain part of the installation.
+
 #### Build both pipelines entirely through UI
 
 The ordinary stand installs the local classification capability, **Triage** and

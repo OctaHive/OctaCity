@@ -223,6 +223,30 @@ class FactoryStandRecoveryTests(unittest.TestCase):
         self._resume()
         self.assertEqual((self.root / 'config/server/factory-profiles.json').read_bytes(), before)
 
+    def test_default_resume_accepts_a_catalog_larger_than_a_fixture_receipt_without_republishing_state(self):
+        self._resume()
+        catalog = self.root / "config/server/factory-profiles.json"
+        # Whitespace grows a valid installed catalog without introducing unrelated capabilities.
+        payload = b" " * (128 * 1024) + catalog.read_bytes()
+        self.assertLess(len(payload), stand.server_config.MAX_FACTORY_PROFILE_BYTES)
+        self.profiles.write_bytes(payload)
+        self._update(self.readers)
+        self.assertEqual(catalog.read_bytes(), payload)
+        receipt = self.root / "evidence/factory-triage.json"
+        original_receipt = receipt.read_bytes()
+        for _ in range(2):
+            self._resume()
+            self.assertEqual(catalog.read_bytes(), payload)
+            self.assertEqual(receipt.read_bytes(), original_receipt)
+        self.assertEqual(self.source_publications, [])
+
+    def test_default_resume_keeps_the_smaller_fixture_receipt_size_limit(self):
+        receipt = self.root / "evidence/factory-triage.json"
+        receipt.write_bytes(b" " * (128 * 1024) + receipt.read_bytes())
+        before = receipt.read_bytes()
+        self._resume(expected_error="Factory fixture receipt has an invalid size")
+        self.assertEqual(receipt.read_bytes(), before)
+
     def test_bootstrap_uses_the_networks_owned_by_its_compose_project(self):
         execute = subprocess.run
         def spawn(arguments, **options):

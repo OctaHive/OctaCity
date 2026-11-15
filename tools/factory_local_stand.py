@@ -37,9 +37,9 @@ def _private_json(path: Path, value: dict) -> None:
             raise ValueError("existing Factory fixture receipt differs from the selected installation")
 
 
-def _read_json(path: Path) -> dict:
-    return state.load_json_object(state.read_regular_file(path, "Factory fixture receipt", max_bytes=131072,
-                                  modes=frozenset({0o600})), "Factory fixture receipt")
+def _read_json(path: Path, *, description: str = "Factory fixture receipt", max_bytes: int = 131072) -> dict:
+    return state.load_json_object(state.read_regular_file(path, description, max_bytes=max_bytes,
+                                  modes=frozenset({0o600})), description)
 
 
 def _prepare_bootstrap_services(root: Path) -> None:
@@ -204,11 +204,13 @@ def run_triage_stand(root: Path, source: str | None, revision: str | None, *,
             catalog = inputs["factory_profiles"]
             if catalog is None or inputs["factory_agent_profile"] is None:
                 raise ValueError("the retained triage installation is incomplete")
-            installed_catalog = _read_json(catalog)
+            installed_catalog = _read_json(catalog, description="Factory profile catalog",
+                max_bytes=server_config.MAX_FACTORY_PROFILE_BYTES)
             triage.install_issue_classification(installed_catalog, retained["project"])
             updated_catalog = Path(temporary) / "classification-profiles.json"
             triage._publish(updated_catalog, installed_catalog)
-            upgraded_classification = _read_json(catalog) != installed_catalog
+            upgraded_classification = _read_json(catalog, description="Factory profile catalog",
+                max_bytes=server_config.MAX_FACTORY_PROFILE_BYTES) != installed_catalog
             if upgraded_classification:
                 catalog = inputs["factory_profiles"] = updated_catalog
             arguments = ["up", "--root", str(root)]
