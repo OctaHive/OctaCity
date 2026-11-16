@@ -7,7 +7,6 @@ import { issueFieldLabel, type IssueFieldChoice } from './IssueFieldContracts';
 type S = components['schemas'];
 export type IssueAdmissionPolicy = S['FactoryFlowIssueAdmissionPolicy'];
 export type AdmissionField = { alias: string; field: IssueFieldChoice; required: boolean };
-type Classification = S['FactoryIssueFieldForm'];
 const scheduling = FACTORY_AUTHORING_SCHEMAS.FactoryWorkClassification.properties;
 const riskValues = scheduling.risk.enum;
 
@@ -16,30 +15,18 @@ function choices(field: AdmissionField) {
     ? field.field.shape.values.filter((value): value is string => typeof value === 'string')
     : [];
 }
-function eligible(field: AdmissionField, classification: Classification | undefined) {
-  const source = field.field.source;
-  return (
-    field.required &&
-    choices(field).length > 0 &&
-    (source.kind === 'property'
-      ? classification?.fields.some(
-          ({ field }) => field.kind === 'property' && field.id === source.id,
-        )
-      : ['priority', 'component', 'type', 'size', 'classification'].includes(source.kind))
-  );
+function eligible(field: AdmissionField) {
+  return field.required && choices(field).length > 0;
 }
 
 /** Validate against the selected published fields; never infer admission from display labels. */
 export function validIssueAdmission(
   policy: IssueAdmissionPolicy | undefined,
   fields: readonly AdmissionField[],
-  classification?: Classification,
 ) {
   if (!policy) return true;
   const mapped = (field: string, values: Record<string, unknown>) => {
-    const selected = fields.find(
-      (entry) => entry.alias === field && eligible(entry, classification),
-    );
+    const selected = fields.find((entry) => entry.alias === field && eligible(entry));
     return (
       selected &&
       Object.keys(values).length > 0 &&
@@ -70,16 +57,14 @@ export function validIssueAdmission(
 export function IssueAdmission({
   value,
   fields,
-  classification,
   onChange,
 }: {
   value: IssueAdmissionPolicy | undefined;
   fields: readonly AdmissionField[];
-  classification?: Classification | undefined;
   onChange: (value: IssueAdmissionPolicy | undefined) => void;
 }) {
   const { t } = usePresentation();
-  const available = fields.filter((field) => eligible(field, classification));
+  const available = fields.filter(eligible);
   const options = (entries: readonly AdmissionField[]) => [
     { value: '', label: t('factory.chooseInput') },
     ...entries.map(({ alias, field }) => ({
@@ -194,7 +179,7 @@ export function IssueAdmission({
               ))}
             </fieldset>
           ))}
-          {!validIssueAdmission(value, fields, classification) ? (
+          {!validIssueAdmission(value, fields) ? (
             <p role="alert">{t('factory.admissionInvalid')}</p>
           ) : null}
         </>

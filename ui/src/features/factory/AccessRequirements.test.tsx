@@ -133,3 +133,48 @@ it('reviews only the selected publication target permissions before applying the
     'different-writer',
   );
 });
+
+it('reviews the selected automatic field writer as controller access without adding it to an agent profile', async () => {
+  const { configuration } = factoryProfileConfigurationFixture();
+  const { reference: _reference, ...root } = configuration.flow.closure.definitions[0]!;
+  void _reference;
+  const node = root.nodes.find((n) => n.profile_selection)!;
+  const profile = Object.values(node.profile_selection!.candidates)[0]!.profile;
+  const writer = { identity: 'selected.fields', version: '1', digest: 'b'.repeat(64) };
+  const before = structuredClone(profile);
+  node.outcomes[0]!.issue_fields = {
+    writer,
+    policy: 'selected',
+    form: {
+      project_id: 'project',
+      definition_version: 2,
+      fields: [{ field: { kind: 'size' }, required: true }],
+    },
+  };
+  node.permissions = emptyFactoryPermissions();
+  const onChange = vi.fn();
+  render(
+    <AccessRequirements
+      value={{
+        root: {
+          ...root,
+          nodes: [node],
+          execution: { ...root.execution, permissions: emptyFactoryPermissions() },
+        },
+        limits: { ...configuration.flow.limits, permissions: emptyFactoryPermissions() },
+        data_schemas: configuration.flow.data_schemas,
+      }}
+      onChange={onChange}
+    />,
+  );
+  await userEvent.click(screen.getByRole('button', { name: 'Review required access' }));
+  expect(onChange).not.toHaveBeenCalled();
+  await userEvent.click(
+    within(screen.getByRole('dialog')).getByRole('button', { name: 'Apply to draft' }),
+  );
+  const applied = onChange.mock.lastCall![0];
+  expect(applied.root.nodes[0].permissions.plugins).toContainEqual(writer);
+  expect(applied.root.execution.permissions.plugins).toContainEqual(writer);
+  expect(applied.limits.permissions.plugins).toContainEqual(writer);
+  expect(profile).toEqual(before);
+});

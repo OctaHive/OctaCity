@@ -73,7 +73,7 @@ may keep a local name with the current published order, or the opposite.
 Create or edit an Issue with explicit requirements and acceptance, then select
 its priority, component, type, size and any custom values in **Properties**.
 A human can prepare it without a triage Run. Alternatively configure the
-[local classification action](#apply-triage-classification-to-the-issue), run
+[selected-field filling](#fill-selected-issue-fields), run
 triage and verify that the Issue shows applied values and their origin. An
 accepted assessment card alone is not an applied classification. Resolve stale
 or conflicting required fields before starting delivery.
@@ -103,8 +103,24 @@ scores for the intended Project choices; select the risk field and map supported
 choices to admission risk. Select allowed type values explicitly. Unmapped
 choices block admission. These mappings grant no launch authority or evidence.
 The editor retains these settings and per-step projections when reopened or an
-input alias is renamed. Mixed bindings, evidence projections and exact-reference
-material policies remain preserved advanced contracts.
+input alias is renamed. Under **Evidence policy**, add an alias, select the
+classified input field, set required/optional and the maximum reference count,
+and include that alias only in the intended step projections. If a trusted
+observation is required, enter the exact environment and criterion references
+(identity, version, digest) and expected finding. An ordinary field value or an
+agent's reproduction claim is not trusted evidence. Reopening the form retains
+these policies and projections; renaming either alias preserves their links.
+Mixed bindings and exact-reference material policies remain preserved advanced
+contracts.
+
+The optional **Triage** example uses the same **Fill Issue fields** selector as an
+ordinary agent. Select fields and required/optional once; opening the draft asks
+the server to generate the result schema and matching save scope from that form.
+No additional schema editor or output mapping is needed. If the Project catalog
+changes while a template is open or resolving, its first displayed field form
+(including untouched defaults, catalog version and writer policy) stays pinned.
+Review the current types and choose **Use current field definitions** before
+opening the draft again. An obsolete response does not replace the draft.
 
 ## Add and configure steps
 
@@ -243,49 +259,42 @@ closing requires its own authorized state change. An unmatched model value uses
 the configured fallback, never an inferred label or close command. Delivery
 pending/failure remains distinct from the accepted action result.
 
-## Apply triage classification to the Issue
+## Fill selected Issue fields
 
-Classification is an explicit local trusted action. An accepted analyst result
-alone does not edit the Issue or start delivery. The installed capability and
-Project field administration remain separate from Flow publication.
+In an ordinary **AI agent** step, edit a successful **Expected result** and enable
+**Fill Issue fields** (off by default). Choose core or supported custom Project
+fields once. The picker shows authoritative types, choices, bounds and the pinned
+catalog version. Each selected field is required by default; use **Required: …**
+to make an individual field optional. Omission preserves its previous Issue value.
+Save the result: the server generates its typed contract and the same guarded
+write scope. No second schema, result-path mapping or manual apply step is needed.
+Free-form result editing remains non-writing. **Show on Issue** is an independent
+optional card; an incompatible existing card must be reviewed or turned off.
 
-For API-authored Flows, read the authorized Project's authoring capabilities and
-reuse `issue_classification.field_contract.schema` as the analyst outcome and
-classification action input schema. It contains optional built-in priority,
-component, type (`kind`) and size fields, plus active semantic properties such as
-severity, risk, reproducibility and recommended route. Choice IDs come from the
-published Project definitions, including the ordered size catalog. Reference the
-same immutable schema in each step rather than maintaining another enum list.
-The all-fields preview is unavailable until a Project catalog is published, or
-when the complete preview exceeds the existing Flow schema limits. A bounded
-selection from a published catalog can still be authored and published without
-that preview; validation compiles only its selected fields.
+Review the existing **Required access** proposal, which requests the local writer
+for the controller without adding it to the Agent Profile. Publication reviews
+fields, types and requiredness under the exact step/outcome. Accepted analysis and
+confirmed application are separate facts: a save can remain pending or fail with
+conflict/denial without undoing the analysis. The trusted controller owns the
+Issue association, invocation baseline and result provenance. It applies only the
+selected accepted values; it does not enable external effects or another pipeline.
 
-Configure `apply_issue_classification` with the offered `plugin`, `policy` and
-`field_contract.selection` under `fields`, the exact accepted `source_node` and
-`source_outcome`, and a successful receipt `outcome`. Bind the accepted record's
-payload explicitly; constants cannot replace its values. Use the offered receipt
-schema and byte budget. A narrower explicit field selection may reuse the
-corresponding subset of the offered schema; it must retain the catalog version
-and semantic bindings. Publication rejects incompatible choices, stale catalog
-pins and substituted mappings. At execution the Issue owner also checks the
-current catalog, Issue baseline, concurrent edits and accepted-result provenance.
+Reopening and step/outcome/display-name edits preserve field identities and the
+existing generated schema. Renaming an agent result also updates downstream
+**Accepted candidate from another step** bindings to that exact producer/outcome;
+other producers and other outcomes retain their references. Catalog changes retain
+the draft and block saving
+until explicit **Use current field definitions** review. Missing fields are not
+substituted: remove them explicitly before saving. Turning off filling removes
+the automatic write and its unused node-local writer permission while retaining
+unrelated permissions and the ordinary result.
 
-If the accepted assessment declares `assessment_inputs`, retain that object in
-the action input and project it unchanged from the same accepted record. It
-records the exact subject and material dependencies used by the assessment;
-publication and execution reject omission or substitution. The Issue owner
-validates the references and detects changes to the selected materials.
-
-Omit `size_labels` for typed size without label effects. Legacy numeric-priority
-and explicit size-label actions remain supported with their reviewed mappings.
-Unavailable legacy labels disable those label effects, while typed classification
-without label effects remains available. Existing immutable examples keep their
-original contracts. The local action
-writes no provider effect, preserves admitted Work scheduling and cannot activate
-another pipeline. Both reviewed manual execution and automatic Source intake
-must retain an exact Issue requirements baseline. A reproduction choice alone
-supplies no independently verified evidence.
+Headless authors use the same `issue_fields` form on the existing schema query and
+outcome write declaration; see [the REST field contract](../reference/issues.md#selected-issue-fields-in-factory-rest-authoring).
+Project setup requires ordinary field definitions, not fixed semantic roles.
+CI reports, documents, accepted-result inputs and Decision Signal routing remain
+separate existing input/control settings. A reproduction choice is data, not an
+independently verified observation.
 
 ## Select code only where needed
 
@@ -459,20 +468,26 @@ scheduling scores, map risk choices, and allow the supported `work_kind` values
 (`defect` and/or `feature_request`). These are selections from the Project catalog;
 do not maintain another set of classification enums in step outputs.
 
-The ordinary snapshot editor also accepts a required choice property bound to a
-Project classification slot as a risk or allowed-values source. Its existing
-`property` source, admission mappings and step projections survive reopening;
-there is no need to replace it with a `classification` source. Unbound ordinary
-properties remain ineligible for admission mappings.
-Once the selected mappings are valid, the admission warning clears, including
-when reopening a snapshot that uses a classification-bound `property`.
+For each **Issue input field**, select the direct built-in or Project property
+that supplies that template input. The current Project descriptor supplies its
+type, labels and required/optional support; no semantic role binding or writer
+plugin is needed to read it. A required Choice property can supply admission risk
+or allowed values directly. Scheduling priority uses the required Priority input.
+The existing admission mappings and per-step projections survive reopening.
+Replacing an input's source clears that alias's scheduling/risk conversions and
+allowed values, even if the new field uses the same choice IDs. Select the
+intended conversions again; unrelated input mappings and thresholds are retained.
+Changing required/optional handling alone does not replace the source.
 
-Before **Open example draft**, select **Create specifications starting at size**.
+Before **Open example draft**, select **Starting choice: Issue size · Requirements needed**
+(the label follows the selected field and configured condition name).
 The choices show Project display names in their published order and retain their
 stable IDs in the request and graph. For example,
 with `xs → s → m → l → xl`, selecting `l` sends `l` and `xl` through OpenSpec
-authoring; lower sizes use the Issue acceptance criteria. The resolved ordinary
-`requirements_needed` gate contains concrete size IDs. Inspect/edit that gate
+authoring; lower sizes use the Issue acceptance criteria. The same control works for another selected Choice field: its published order,
+not a Size-specific branch in Console, defines the threshold. Changing its input
+source clears the previous threshold even if both fields use identical choice
+IDs. The resolved ordinary `requirements_needed` gate contains concrete choice IDs. Inspect/edit that gate
 in the normal Flow editor when revising the policy, then publish a new version.
 Later catalog additions, renames, reordering or retirement do not change its
 published routes or an admitted Run. Human requirements-approval policy is a

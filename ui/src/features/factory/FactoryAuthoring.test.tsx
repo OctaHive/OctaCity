@@ -309,13 +309,14 @@ it('retains concurrent graph edits after schema normalization', async () => {
 });
 
 it.each([
-  { required: true, version: 'v1' },
-  { required: false, version: 'v1' },
-  { required: true, version: 'v2' },
-  { required: false, version: 'v2' },
+  { required: true, version: 'v1', conditionField: 'size', replaceRisk: false },
+  { required: false, version: 'v1', conditionField: 'size', replaceRisk: false },
+  { required: true, version: 'v2', conditionField: 'size', replaceRisk: false },
+  { required: false, version: 'v2', conditionField: 'environment', replaceRisk: false },
+  { required: false, version: 'v2', conditionField: 'size', replaceRisk: true },
 ])(
-  'publishes an example ($version, reproduction required=$required)',
-  async ({ required, version }) => {
+  'publishes an example ($version, reproduction required=$required, replace risk=$replaceRisk)',
+  async ({ required, version, conditionField, replaceRisk }) => {
     const { configuration } = configurationFixture();
     const projectId = configuration.reference.project_id;
     const original = configuration.flow;
@@ -381,12 +382,15 @@ it.each([
           reference: { ...preset, version: 'v2' },
           editor: {
             ...legacyExample.editor,
-            choice_thresholds: { specification_cutoff: { kind: 'size' } },
+            choice_thresholds: { specification_cutoff: 'size' },
             issue_snapshot_fields: {
               priority: { kind: 'priority' },
-              risk: { kind: 'classification', slot: 'severity' },
+              risk: { kind: 'property', id: 'impact' },
               work_kind: { kind: 'type' },
-              size: { kind: 'size' },
+              size:
+                conditionField === 'size'
+                  ? { kind: 'size' }
+                  : { kind: 'property', id: 'environment' },
             },
           },
           parameters: [
@@ -441,15 +445,26 @@ it.each([
         ...factoryIssueFieldsFixture(),
         issue_fields: {
           ...factoryIssueFieldsFixture().issue_fields,
-          fields: factoryIssueFieldsFixture().issue_fields.fields.map((field) =>
-            field.source.kind === 'size'
-              ? {
-                  ...field,
-                  shape: { type: 'enum' as const, values: ['xs', 'medium', 'xl'] },
-                  choice_labels: { xs: 'XS', medium: 'Project medium', xl: 'XL' },
-                }
-              : field,
-          ),
+          fields: factoryIssueFieldsFixture()
+            .issue_fields.fields.concat([
+              {
+                source: { kind: 'property', id: 'other_risk' },
+                name: 'Other risk',
+                write_target: { kind: 'property', id: 'other_risk' },
+                value_key: 'property.other_risk',
+                required_supported: true,
+                shape: { type: 'enum', values: ['major', 'minor'] },
+              },
+            ])
+            .map((field) =>
+              field.source.kind === 'size'
+                ? {
+                    ...field,
+                    shape: { type: 'enum' as const, values: ['xs', 'medium', 'xl'] },
+                    choice_labels: { xs: 'XS', medium: 'Project medium', xl: 'XL' },
+                  }
+                : field,
+            ),
         },
         commands: required ? [command, alternateCommand] : [],
         candidate_publications: [],
@@ -505,7 +520,7 @@ it.each([
         screen.getByRole('spinbutton', { name: 'Scheduling priority: routine' }),
         '20',
       );
-      await choose('Admission risk field', 'Classification: Impact · risk');
+      await choose('Admission risk field', 'Project field: Impact · risk');
       await choose('Admission risk: major', 'High');
       await choose('Admission risk: minor', 'Low');
       await userEvent.click(screen.getByRole('checkbox', { name: 'Allow work_kind: defect' }));
@@ -514,11 +529,18 @@ it.each([
         true,
       );
       const threshold = screen.getByRole('combobox', {
-        name: 'Create specifications starting at size',
+        name:
+          conditionField === 'size'
+            ? 'Starting choice: Issue size · Specification cutoff'
+            : 'Starting choice: Project field: Environment · Specification cutoff',
       });
       threshold.focus();
       await userEvent.keyboard('{Enter}{Home}{ArrowDown}{ArrowDown}');
-      expect(screen.getByRole('option', { name: 'Project medium' })).toBeTruthy();
+      expect(
+        screen.getByRole('option', {
+          name: conditionField === 'size' ? 'Project medium' : 'production',
+        }),
+      ).toBeTruthy();
       await userEvent.keyboard('{Enter}');
       expect(screen.queryByRole('combobox', { name: /predecessor/i })).toBeNull();
     }
@@ -537,6 +559,37 @@ it.each([
       }
       await userEvent.click(options[1]!);
     }
+    if (replaceRisk) {
+      await userEvent.click(screen.getByRole('checkbox', { name: 'Allow risk: major' }));
+      await userEvent.click(screen.getByRole('combobox', { name: 'Issue input field: risk' }));
+      await userEvent.click(screen.getByRole('option', { name: 'Project field: Other risk' }));
+      expect(screen.getByRole('button', { name: 'Open example draft' })).toHaveProperty(
+        'disabled',
+        true,
+      );
+      expect(screen.getByRole('combobox', { name: 'Admission risk: major' }).textContent).toBe(
+        'Choose an option',
+      );
+      expect(screen.getByRole('checkbox', { name: 'Allow risk: major' })).toHaveProperty(
+        'checked',
+        false,
+      );
+      expect(screen.getByRole('checkbox', { name: 'Allow work_kind: defect' })).toHaveProperty(
+        'checked',
+        true,
+      );
+      expect(
+        screen.getByRole('spinbutton', { name: 'Scheduling priority: urgent' }),
+      ).toHaveProperty('value', '90');
+      for (const [choice, risk] of [
+        ['major', 'Critical'],
+        ['minor', 'Medium'],
+      ] as const) {
+        await userEvent.click(screen.getByRole('combobox', { name: `Admission risk: ${choice}` }));
+        await userEvent.click(screen.getByRole('option', { name: risk }));
+      }
+      await userEvent.click(screen.getByRole('checkbox', { name: 'Allow risk: minor' }));
+    }
     await userEvent.click(screen.getByRole('button', { name: 'Open example draft' }));
     const name = await screen.findByDisplayValue('Ticket delivery');
     await userEvent.clear(name);
@@ -550,11 +603,33 @@ it.each([
           ? {
               issue_snapshot: {
                 definition_version: 7,
-                choice_thresholds: { specification_cutoff: 'medium' },
+                choice_thresholds: {
+                  specification_cutoff: conditionField === 'size' ? 'medium' : 'production',
+                },
+                fields: {
+                  priority: { source: { kind: 'priority' }, required: true },
+                  risk: {
+                    source: { kind: 'property', id: replaceRisk ? 'other_risk' : 'impact' },
+                    required: true,
+                  },
+                  work_kind: { source: { kind: 'type' }, required: true },
+                  size: {
+                    source:
+                      conditionField === 'size'
+                        ? { kind: 'size' }
+                        : { kind: 'property', id: 'environment' },
+                    required: true,
+                  },
+                },
                 admission: {
                   priority: { field: 'priority', values: { urgent: 90, routine: 20 } },
-                  risk: { field: 'risk', values: { major: 'high', minor: 'low' } },
-                  allowed: { work_kind: ['defect'] },
+                  risk: {
+                    field: 'risk',
+                    values: replaceRisk
+                      ? { major: 'critical', minor: 'medium' }
+                      : { major: 'high', minor: 'low' },
+                  },
+                  allowed: { work_kind: ['defect'], ...(replaceRisk ? { risk: ['minor'] } : {}) },
                 },
               },
             }

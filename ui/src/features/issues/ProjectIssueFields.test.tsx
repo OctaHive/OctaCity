@@ -20,6 +20,7 @@ it('publishes Project component choices separately from custom fields and retain
   expect(api.planningChoices).not.toHaveBeenCalled();
   await userEvent.click(await screen.findByRole('button', { name: 'Issue field settings' }));
   const components = await screen.findByRole('group', { name: 'Components' });
+  expect(screen.queryByRole('combobox', { name: 'Reproducibility field' })).toBeNull();
   await userEvent.type(
     within(components).getByRole('textbox', { name: 'New option name' }),
     'Payments',
@@ -95,7 +96,7 @@ it('authors ordinary Project fields with typed bounds without duplicating built-
   ]);
 });
 
-it('publishes choice, boolean, integer and date contracts with one optional choice-field semantic binding', async () => {
+it('publishes choice, boolean, integer and date contracts without fixed semantic roles', async () => {
   const { api } = setup('/projects/delivery');
   await userEvent.click(await screen.findByRole('button', { name: 'Issue field settings' }));
   const fields = await screen.findByRole('group', { name: 'Custom Issue fields' });
@@ -118,12 +119,10 @@ it('publishes choice, boolean, integer and date contracts with one optional choi
   await userEvent.clear(within(estimate).getByRole('spinbutton', { name: 'Maximum integer' }));
   await userEvent.type(within(estimate).getByRole('spinbutton', { name: 'Maximum integer' }), '20');
   await add('Review date', 'Date');
-  await userEvent.click(screen.getByRole('combobox', { name: 'Risk field' }));
-  expect(screen.queryByRole('option', { name: 'Customer visible' })).toBeNull();
-  await userEvent.click(screen.getByRole('option', { name: 'Risk band' }));
+  expect(screen.queryByRole('combobox', { name: 'Risk field' })).toBeNull();
   await userEvent.click(screen.getByRole('button', { name: 'Review field definitions' }));
   const dialog = await screen.findByRole('dialog');
-  expect(dialog.textContent).toContain('Risk field');
+  expect(dialog.textContent).toContain('Risk band');
   expect(dialog.textContent).toContain('Normal exposure');
   expect(dialog.textContent).toContain('20');
   api.publishProperties.mockResolvedValue({
@@ -157,7 +156,7 @@ it('publishes choice, boolean, integer and date contracts with one optional choi
     },
     { id: expect.any(String), name: 'Review date', retired: false, kind: { type: 'date' } },
   ]);
-  expect(definition?.classification).toEqual({ risk: definition?.properties[0]?.id });
+  expect(definition?.classification ?? {}).toEqual({});
   expect(api.editPlanning).not.toHaveBeenCalled();
 });
 
@@ -556,7 +555,7 @@ it('retains concurrently added choice IDs when explicitly keeping a local field 
   expect(dialog.textContent).toContain('Routine · routine');
 });
 
-it('can author a supported semantic option ID independently from its display name', async () => {
+it('can author a choice option ID independently from its display name', async () => {
   const { api } = setup('/projects/delivery');
   await userEvent.click(await screen.findByRole('button', { name: 'Issue field settings' }));
   const fields = await screen.findByRole('group', { name: 'Custom Issue fields' });
@@ -577,8 +576,6 @@ it('can author a supported semantic option ID independently from its display nam
     'unknown',
   );
   await userEvent.click(within(options).getByRole('button', { name: 'Add option' }));
-  await userEvent.click(screen.getByRole('combobox', { name: 'Reproducibility field' }));
-  await userEvent.click(screen.getByRole('option', { name: 'Reproduction' }));
   await userEvent.click(screen.getByRole('button', { name: 'Review field definitions' }));
   const dialog = await screen.findByRole('dialog');
   expect(dialog.textContent).toContain('Неизвестно · unknown');

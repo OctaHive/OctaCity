@@ -60,6 +60,12 @@ async function openGraph(
     const { profile, role, choice, capability } = factoryRoleFixture();
     const node = root.nodes[0]!;
     node.kind = 'reasoning';
+    root.input_schema = schema;
+    node.input_schema = schema;
+    node.input_binding = {
+      sources: { work: { source: 'work', path: '' } },
+      mapping: { value: { mapping: 'constant', value: true } },
+    };
     node.code = { kind: 'none' };
     node.profile_selection = {
       role: profile.role,
@@ -444,7 +450,36 @@ for (const language of ['en', 'ru'] as const) {
     await page
       .getByRole('spinbutton', { name: t('factory.maximumMaterialBytes'), exact: true })
       .fill('2048');
+    await page.getByRole('button', { name: t('factory.addEvidence'), exact: true }).click();
+    await page
+      .getByRole('textbox', { name: t('factory.evidenceAlias'), exact: true })
+      .fill('proofs');
+    await page
+      .getByRole('spinbutton', { name: t('factory.evidenceMaximum'), exact: true })
+      .fill('2');
+    await page
+      .getByRole('checkbox', { name: t('factory.requireObservation'), exact: true })
+      .check();
+    await expect(
+      page.getByRole('button', { name: t('factory.useIssueSnapshot'), exact: true }),
+    ).toBeDisabled();
+    for (const [key, identity, digest] of [
+      ['factory.evidenceEnvironment', 'staging', 'd'.repeat(64)],
+      ['factory.evidenceCriterion', 'component-check', 'c'.repeat(64)],
+    ] as const) {
+      const group = page.getByRole('group', { name: t(key), exact: true });
+      await group
+        .getByRole('textbox', { name: t('factory.referenceIdentity'), exact: true })
+        .fill(identity);
+      await group
+        .getByRole('textbox', { name: t('factory.referenceVersion'), exact: true })
+        .fill('v1');
+      await group
+        .getByRole('textbox', { name: t('factory.referenceDigest'), exact: true })
+        .fill(digest);
+    }
     for (const name of [
+      `first: ${translate(language, 'factory.evidenceProjection', { alias: 'proofs' })}`,
       `first: ${t('classification.component')}`,
       `first: ${t('factory.issueMaterials')}`,
       `second: ${t('classification.component')}`,
@@ -455,6 +490,20 @@ for (const language of ['en', 'ru'] as const) {
     await expect(
       page.getByRole('button', { name: t('factory.removeIssueSnapshot'), exact: true }),
     ).toBeVisible();
+    await configure.click();
+    await expect(
+      page.getByRole('spinbutton', { name: t('factory.evidenceMaximum'), exact: true }),
+    ).toHaveValue('2');
+    await expect(
+      page.getByRole('checkbox', {
+        name: `first: ${translate(language, 'factory.evidenceProjection', { alias: 'proofs' })}`,
+        exact: true,
+      }),
+    ).toBeChecked();
+    await expect(
+      page.getByRole('checkbox', { name: t('factory.requireObservation'), exact: true }),
+    ).toBeChecked();
+    await page.getByRole('button', { name: t('factory.useIssueSnapshot'), exact: true }).click();
     await page.getByRole('button', { name: t('factory.validateDraft'), exact: true }).click();
     await expect.poll(() => validations.length).toBe(1);
     const definition = validations[0]!.definition;
@@ -462,6 +511,18 @@ for (const language of ['en', 'ru'] as const) {
     expect(definition.issue_snapshot).toMatchObject({
       definition_version: 7,
       fields: { component: { source: { kind: 'component' }, required: true } },
+      evidence: {
+        proofs: {
+          field: 'component',
+          required: true,
+          maximum: 2,
+          observation: {
+            environment: { identity: 'staging', version: 'v1', digest: 'd'.repeat(64) },
+            criterion: { identity: 'component-check', version: 'v1', digest: 'c'.repeat(64) },
+            finding: 'matched',
+          },
+        },
+      },
       materials: { materials: { source: { kind: 'selected', max_entries: 2 }, max_bytes: 2048 } },
     });
     expect(definition.root.nodes[1]?.input_binding?.mapping.value).toEqual({
@@ -842,6 +903,121 @@ for (const language of ['en', 'ru'] as const) {
       fields: { summary: { required: true, value: { type: 'boolean' } } },
     });
     expect(node.context_binding ?? null).toBeNull();
+    expect(
+      await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth),
+    ).toBe(true);
+  });
+}
+
+for (const language of ['en', 'ru'] as const) {
+  test(`${language}: fills Issue fields with the keyboard and retains the form through step and outcome renames`, async ({
+    page,
+  }, testInfo) => {
+    const { validations } = await openGraph(page, { language, executor: true });
+    await page.setViewportSize({ width: 390, height: 844 });
+    const t = (key: MessageKey) => translate(language, key);
+    const capabilities = factoryIssueFieldsFixture();
+    await page.route('**/api/v1/projects/*/factory-authoring-capabilities', (route) =>
+      route.fulfill({ json: capabilities }),
+    );
+    const requests: components['schemas']['ValidateFactoryFlowDataSchemaRequest'][] = [];
+    await page.route('**/api/v1/flow-data-schemas/validate', async (route) => {
+      const body = route
+        .request()
+        .postDataJSON() as components['schemas']['ValidateFactoryFlowDataSchemaRequest'];
+      requests.push(body);
+      expect(body).toHaveProperty('issue_fields');
+      expect(body).not.toHaveProperty('shape');
+      await route.fulfill({
+        json: {
+          reference: { identity: body.identity, version: body.version, digest: 'e'.repeat(64) },
+          shape: {
+            type: 'object',
+            fields: {
+              size: {
+                required: true,
+                value: { type: 'enum', values: ['small', 'medium', 'large'] },
+              },
+              'property.impact': {
+                required: false,
+                value: { type: 'enum', values: ['major', 'minor'] },
+              },
+            },
+          },
+        },
+      });
+    });
+    const step = page.getByRole('group', { name: t('factory.node'), exact: true });
+    await step.getByRole('button', { name: t('factory.editResult'), exact: true }).press('Enter');
+    const toggle = step.getByRole('checkbox', { name: t('factory.fillIssueFields'), exact: true });
+    await expect(toggle).not.toBeChecked();
+    await toggle.press('Space');
+    await step
+      .getByRole('checkbox', { name: t('classification.size'), exact: true })
+      .press('Space');
+    const impact = translate(language, 'factory.issuePropertyField', { name: 'Impact' });
+    await step.getByRole('checkbox', { name: impact, exact: true }).press('Space');
+    await step
+      .getByRole('checkbox', {
+        name: translate(language, 'factory.requiredIssueField', { name: impact }),
+        exact: true,
+      })
+      .press('Space');
+    await step.screenshot({ path: testInfo.outputPath('fill-issue-fields.png') });
+    await step
+      .getByRole('textbox', { name: t('factory.nodeName'), exact: true })
+      .fill('renamed_analysis');
+    await step.getByText(t('factory.resultDetails'), { exact: true }).click();
+    await step
+      .getByRole('textbox', { name: t('factory.resultName'), exact: true })
+      .fill('classified');
+    await step.getByRole('button', { name: t('factory.saveResult'), exact: true }).press('Enter');
+    await expect(
+      step.getByRole('button', { name: t('factory.editResult'), exact: true }),
+    ).toBeEnabled();
+    await page
+      .getByRole('button', {
+        name: translate(language, 'factory.editGraphStep', { name: 'second' }),
+        exact: true,
+      })
+      .press('Enter');
+    await page
+      .getByRole('button', {
+        name: translate(language, 'factory.editGraphStep', { name: 'renamed_analysis' }),
+        exact: true,
+      })
+      .press('Enter');
+    await step.getByRole('button', { name: t('factory.editResult'), exact: true }).press('Enter');
+    await expect(step.getByRole('checkbox', { name: impact, exact: true })).toBeChecked();
+    await expect(
+      step.getByRole('checkbox', {
+        name: translate(language, 'factory.requiredIssueField', { name: impact }),
+        exact: true,
+      }),
+    ).not.toBeChecked();
+    await step.getByRole('button', { name: t('factory.saveResult'), exact: true }).press('Enter');
+    await page
+      .getByRole('button', { name: t('factory.reviewRequiredAccess'), exact: true })
+      .click();
+    await page
+      .getByRole('dialog')
+      .getByRole('button', { name: t('factory.applyToDraft'), exact: true })
+      .click();
+    await page.getByRole('button', { name: t('factory.validateDraft'), exact: true }).click();
+    await expect.poll(() => validations.length).toBe(1);
+    const first = validations[0]!.definition.root.nodes.find(
+      (node) => node.key === 'renamed_analysis',
+    )!;
+    expect(first.outcomes[0]!.issue_fields?.form.fields).toEqual([
+      { field: { kind: 'size' }, required: true },
+      { field: { kind: 'property', id: 'impact' }, required: false },
+    ]);
+    expect(first.profile_selection!.candidates.selected!.build.result_outcome).toBe('classified');
+    expect(validations[0]!.definition.root.transitions[0]).toMatchObject({
+      predecessor: 'renamed_analysis',
+      outcome: 'classified',
+    });
+    expect(requests).toHaveLength(1);
     expect(
       await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth),
     ).toBe(true);

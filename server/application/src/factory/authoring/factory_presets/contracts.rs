@@ -48,9 +48,12 @@ pub struct FactoryPresetEditor {
   /// Release-owned snapshot aliases; shapes and active choices come from the Project catalog.
   #[serde(skip_serializing_if = "std::collections::BTreeMap::is_empty")]
   pub issue_snapshot_fields: std::collections::BTreeMap<FactoryKey, FlowIssueFieldSource>,
+  /// Configured default forms keyed by ordinary node identity; Project definitions own types.
+  #[serde(skip_serializing_if = "std::collections::BTreeMap::is_empty")]
+  pub issue_fields: std::collections::BTreeMap<FactoryKey, Vec<IssueFormField>>,
   /// Configured condition identities and their Project-backed ordered choice fields.
   #[serde(skip_serializing_if = "std::collections::BTreeMap::is_empty")]
-  pub choice_thresholds: std::collections::BTreeMap<FactoryKey, FlowIssueFieldSource>,
+  pub choice_thresholds: std::collections::BTreeMap<FactoryKey, FactoryKey>,
 }
 /// One independently reviewed executor selection.
 #[derive(Clone, Debug, Serialize)]
@@ -171,6 +174,9 @@ pub struct FactoryPresetIssueSnapshotSelection {
   /// Reviewed conversion to Work scheduling/risk; omission is an unmet preset dependency.
   #[serde(default)]
   pub admission: Option<FlowIssueAdmissionPolicy>,
+  /// Explicit consumer selections for the template's declared local input aliases.
+  #[serde(default)]
+  pub fields: std::collections::BTreeMap<FactoryKey, FlowIssueFieldSelection>,
   /// First active choice for each declared condition; there is no omitted-default fallback.
   #[serde(default)]
   pub choice_thresholds: std::collections::BTreeMap<FactoryKey, String>,

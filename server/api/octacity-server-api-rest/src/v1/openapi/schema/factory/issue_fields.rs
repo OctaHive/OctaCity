@@ -8,7 +8,8 @@ pub(super) fn insert(schemas: &mut Map<String, Value>) {
     .to_vec();
   targets.push(tagged("kind", "property", [("id", property)], &["id"]));
   schemas.insert("FactoryIssueFieldTarget".into(), json!({"oneOf":targets}));
-  let mut fields = bounded_array(
+  schemas.insert(
+    "FactoryIssueFormField".into(),
     object(
       [
         ("field", schema_ref("FactoryIssueFieldTarget")),
@@ -16,6 +17,9 @@ pub(super) fn insert(schemas: &mut Map<String, Value>) {
       ],
       &["field"],
     ),
+  );
+  let mut fields = bounded_array(
+    schema_ref("FactoryIssueFormField"),
     octacity_server_application::MAX_ISSUE_PROPERTIES + 4,
   );
   fields["minItems"] = json!(1);

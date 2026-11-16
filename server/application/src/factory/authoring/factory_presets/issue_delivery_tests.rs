@@ -111,6 +111,7 @@ pub(super) async fn properties(project: ProjectId) -> Arc<octacity_server_store:
 fn issue_input() -> FactoryPresetIssueSnapshotSelection {
   FactoryPresetIssueSnapshotSelection {
     definition_version: 1,
+    fields: Default::default(),
     choice_thresholds: [(key("requirements_needed"), "large".into())].into(),
     admission: Some(
       serde_json::from_value(serde_json::json!({
@@ -163,7 +164,7 @@ fn template_discovery_and_resolution_require_the_configured_choice_threshold() {
     );
     assert_eq!(
       metadata["editor"]["choice_thresholds"]["requirements_needed"],
-      serde_json::json!({"kind":"size"})
+      serde_json::json!("size")
     );
     let mut selection = issue_selection(&fixture).await;
     selection.issue_snapshot = Some(
@@ -826,5 +827,93 @@ fn issue_delivery_reports_the_configured_project_property_that_is_unavailable() 
     .unwrap();
     assert!(result.flow.is_none());
     assert_eq!(result.diagnostics[0].path, "/issue_snapshot/fields/reproducibility");
+  });
+}
+
+#[test]
+fn delivery_template_uses_selected_direct_fields_and_their_choice_order_for_conditions() {
+  run_ready(async {
+    let fixture = delivery_fixture().await;
+    let store = properties(fixture.project).await;
+    let mut definition = store.issue_properties(fixture.project, None).await.unwrap().definition;
+    definition.classification = Default::default();
+    for size in &mut definition.sizes {
+      size.retired = true;
+    }
+    definition
+      .sizes
+      .push(serde_json::from_value(serde_json::json!({"id":"size_xl","name":"Extra large","retired":false})).unwrap());
+    for (id, choices) in [
+      ("effort_band", vec!["small", "medium", "large"]),
+      ("risk_band", vec!["low", "high"]),
+    ] {
+      definition.properties.push(serde_json::from_value(serde_json::json!({"id":id,"name":id,"retired":false,"kind":{"type":"choice","choices":choices.into_iter().map(|id|serde_json::json!({"id":id,"name":id,"retired":false})).collect::<Vec<_>>()}})).unwrap());
+    }
+    store
+      .publish_issue_properties(octacity_server_store::testing::management_mutation(
+        octacity_server_store::PublishIssueProperties {
+          intent: octacity_server_store::PublishIssuePropertiesIntent {
+            project_id: fixture.project,
+            expected_version: 1,
+            definition,
+          },
+          idempotency_key: "chosen-consumer-fields".parse().unwrap(),
+          published_at: Timestamp::from_unix_millis(2).unwrap(),
+        },
+      ))
+      .await
+      .unwrap();
+    let input:FactoryPresetIssueSnapshotSelection=serde_json::from_value(serde_json::json!({
+      "definition_version":2,"admission":issue_input().admission,
+      "fields":{"size":{"source":{"kind":"property","id":"effort_band"},"required":true},"risk":{"source":{"kind":"property","id":"risk_band"},"required":true}},
+      "choice_thresholds":{"requirements_needed":"medium"}
+    })).expect("ordinary consumer field selections are part of the request contract");
+    let mut selection = issue_selection(&fixture).await;
+    selection.issue_snapshot = Some(input);
+    let result = AuthorizedQueryHandler::new(
+      fixture.policy.clone(),
+      Arc::new(
+        FactoryPresetHandlers::new(fixture.store.clone(), fixture.policy.clone())
+          .with_repositories(fixture.reader.clone())
+          .with_issue_properties(store),
+      ),
+    )
+    .handle_query(
+      &fixture.context,
+      ResolveFactoryPresetQuery {
+        project_id: fixture.project,
+        selection,
+      },
+    )
+    .await
+    .unwrap();
+    assert!(result.diagnostics.is_empty(), "{:?}", result.diagnostics);
+    let draft = result.flow.unwrap();
+    let snapshot = draft.issue_snapshot.unwrap();
+    assert_eq!(
+      snapshot.fields[&key("size")].source,
+      FlowIssueFieldSource::Property {
+        id: "effort_band".into()
+      }
+    );
+    assert_eq!(
+      snapshot.fields[&key("risk")].source,
+      FlowIssueFieldSource::Property { id: "risk_band".into() }
+    );
+    let condition = draft
+      .root
+      .nodes
+      .iter()
+      .find(|node| node.key() == &key("requirements_needed"))
+      .unwrap();
+    let program: FlowGateProgram = serde_json::from_value(condition.gate().unwrap().parameters().clone()).unwrap();
+    let json = serde_json::to_value(program).unwrap();
+    assert_eq!(
+      json["rules"],
+      serde_json::json!([{"when":{"operation":"any","predicates":[
+      {"operation":"compare","left":{"source":"path","path":"/size"},"comparison":"equal","right":{"source":"literal","value":"medium"}},
+      {"operation":"compare","left":{"source":"path","path":"/size"},"comparison":"equal","right":{"source":"literal","value":"large"}}
+    ]},"outcome":"specification"}])
+    );
   });
 }

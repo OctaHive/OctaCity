@@ -26,9 +26,10 @@ pub(super) fn insert(schemas: &mut Map<String, Value>) {
     object(
       [
         ("name", non_empty_string()),
+        ("issue_fields", bounded_map(bounded_array(schema_ref("FactoryIssueFormField"),octacity_server_application::MAX_ISSUE_PROPERTIES + 4),b.nodes)),
         ("budget", schema_ref("FactoryBudget")),
         ("max_active_nodes", bounded_integer(1, b.active_nodes.into())),
-        ("choice_thresholds",bounded_map(schema_ref("FactoryFlowIssueFieldSource"),b.nodes)),
+        ("choice_thresholds",bounded_map(key(),b.nodes)),
         ("issue_snapshot_fields", json!({"type":"object","maxProperties":b.schema_entries,"propertyNames":key(),"additionalProperties":schema_ref("FactoryFlowIssueFieldSource")})),
         (
           "steps",

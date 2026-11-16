@@ -465,116 +465,118 @@ it('recognizes an available source regardless of JSON property order', async () 
   );
 });
 
-it('reuses and retires typed classification input schemas without deleting registered results', async () => {
-  const user = userEvent.setup();
-  const { draft, component, api } = snapshotFixture();
-  delete draft.issue_snapshot;
-  const assessment: S['FactoryFlowDataSchema'] = {
-    reference: { identity: 'assessment', version: '1', digest: 'a'.repeat(64) },
-    shape: {
-      type: 'object',
-      fields: {
-        component,
-        'property.impact': { required: false, value: { type: 'enum', values: ['major', 'minor'] } },
-        private_notes: { required: true, value: { type: 'string', min_bytes: 0, max_bytes: 100 } },
+it.each([false, true])(
+  'reopens evidence policy and preserves observation settings and projections (rename: %s)',
+  async (rename) => {
+    const user = userEvent.setup();
+    const base = configurationFixture().configuration.flow;
+    const { reference: _reference, ...root } = base.closure.definitions[0]!;
+    void _reference;
+    const reference = { identity: 'snapshot.evidence', version: '1', digest: 'b'.repeat(64) };
+    const criterion = { identity: 'criterion', version: 'v1', digest: 'c'.repeat(64) };
+    const environment = { identity: 'environment', version: 'v1', digest: 'd'.repeat(64) };
+    const schema: S['FactoryFlowDataSchema'] = {
+      reference,
+      shape: {
+        type: 'object',
+        fields: {
+          priority: { required: true, value: { type: 'enum', values: ['urgent', 'routine'] } },
+          proofs: {
+            required: true,
+            value: {
+              type: 'array',
+              min_items: 1,
+              max_items: 2,
+              item: { type: 'string', min_bytes: 64, max_bytes: 64 },
+            },
+          },
+        },
       },
-    },
-  };
-  const saved: S['FactoryFlowDataSchema'] = {
-    reference: { identity: 'saved', version: '1', digest: 'f'.repeat(64) },
-    shape: { type: 'boolean' },
-  };
-  draft.data_schemas = [assessment, saved];
-  draft.root.input_schema = null;
-  draft.root.entry = 'assess';
-  draft.root.nodes = [
-    {
-      ...draft.root.nodes[0]!,
-      key: 'assess',
-      kind: 'reasoning',
-      input_schema: null,
-      input_binding: null,
-      outcomes: [{ key: 'assessed', kind: 'success', schema: assessment.reference }],
-    },
-    {
-      ...draft.root.nodes[1]!,
-      key: 'apply',
-      kind: 'trusted_action',
-      input_schema: null,
-      input_binding: null,
-      action: null,
-      outcomes: [],
-    },
-  ];
-  draft.root.transitions = [
-    {
-      predecessor: 'assess',
-      outcome: 'assessed',
-      target: { kind: 'node', key: 'apply' },
-      max_repeats: 0,
-      exhausted_terminal: null,
-    },
-  ];
-  let sequence = 0;
-  api.normalizeSchema.mockImplementation(async (body) => ({
-    reference: {
-      identity: body.identity,
-      version: body.version,
-      digest: (++sequence).toString(16).repeat(64),
-    },
-    shape: authoredSchemaShape(body),
-  }));
-  let latest = draft;
-  const changed = vi.fn();
-  function Harness() {
-    const [value, setValue] = useState(draft);
-    return (
-      <FlowGraphEditor
-        value={value}
-        choices={[]}
-        subflows={[]}
-        authoring={{ api, projectId: 'delivery' }}
-        onChange={(next) => {
-          latest = next;
-          changed(next);
-          setValue(next);
-        }}
-      />
+    };
+    const node = {
+      ...root.nodes[0]!,
+      key: 'consumer',
+      input_schema: reference,
+      input_binding: {
+        sources: { issue: { source: 'incoming' as const, schema: reference, path: '' } },
+        mapping: { value: { mapping: 'pointer' as const, path: '/issue' } },
+      },
+    };
+    const draft: S['FactoryFlowDefinitionDraft'] = {
+      root: { ...root, entry: 'consumer', nodes: [node], input_schema: reference },
+      limits: base.limits,
+      data_schemas: [schema],
+      issue_snapshot: {
+        version: 1,
+        definition_version: 7,
+        schema: reference,
+        fields: { priority: { source: { kind: 'priority' }, required: true } },
+        evidence: {
+          proofs: {
+            field: 'priority',
+            required: true,
+            maximum: 2,
+            observation: { criterion, environment, finding: 'matched' },
+          },
+        },
+      },
+    };
+    const api = {
+      ...factoryApi,
+      getAuthoringCapabilities: vi.fn<FactoryApi['getAuthoringCapabilities']>(async () =>
+        factoryIssueFieldsFixture(),
+      ),
+      normalizeSchema: vi.fn<FactoryApi['normalizeSchema']>(async (body) => ({
+        reference,
+        shape: authoredSchemaShape(body),
+      })),
+    };
+    const changed = vi.fn();
+    render(
+      <QueryClientProvider client={createConsoleQueryClient()}>
+        <FlowIssueSnapshot
+          value={draft}
+          services={{ api, projectId: 'delivery' }}
+          onChange={changed}
+          onEditingChange={vi.fn()}
+        />
+      </QueryClientProvider>,
     );
-  }
-  render(
-    <QueryClientProvider client={createConsoleQueryClient()}>
-      <Harness />
-    </QueryClientProvider>,
-  );
-  await user.click(screen.getByRole('combobox', { name: 'Graph step' }));
-  await user.click(screen.getByRole('option', { name: 'apply' }));
-  await user.click(screen.getByRole('checkbox', { name: 'Apply classification to Issue' }));
-  await user.click(await screen.findByRole('checkbox', { name: 'Issue component' }));
-  for (let edit = 0; edit < 4; edit++) {
-    if (edit > 1) await user.click(screen.getByRole('checkbox', { name: 'Project field: Impact' }));
-    await user.click(screen.getByRole('button', { name: 'Use Project classification' }));
-    await waitFor(() => expect(changed).toHaveBeenCalledTimes(edit + 1));
-    expect(latest.data_schemas).toHaveLength(4);
-    expect(latest.data_schemas).toContainEqual(saved);
-    expect(latest.data_schemas).toContainEqual(assessment);
-    const input = latest.root.nodes[1]!.input_schema!;
-    const shape = latest.data_schemas.find(
-      (schema) => schema.reference.digest === input.digest,
-    )!.shape;
-    expect(shape).toEqual({
-      type: 'object',
-      fields: {
-        component,
-        ...(edit === 2
-          ? {
-              'property.impact': {
-                required: false,
-                value: { type: 'enum', values: ['major', 'minor'] },
-              },
-            }
-          : {}),
+    await user.click(screen.getByRole('button', { name: 'Configure Issue snapshot' }));
+    expect(
+      await screen.findByRole('spinbutton', { name: 'Maximum evidence references' }),
+    ).toHaveProperty('value', '2');
+    expect(screen.getByRole('checkbox', { name: 'consumer: Evidence: proofs' })).toHaveProperty(
+      'checked',
+      true,
+    );
+    expect(screen.getByRole('checkbox', { name: 'Require trusted observation' })).toHaveProperty(
+      'checked',
+      true,
+    );
+    if (rename) {
+      const fieldAlias = screen.getByRole('textbox', { name: 'Input alias: Priority' });
+      await user.clear(fieldAlias);
+      await user.type(fieldAlias, 'rank');
+      const evidenceAlias = screen.getByRole('textbox', { name: 'Evidence input alias' });
+      await user.clear(evidenceAlias);
+      await user.type(evidenceAlias, 'observations');
+      expect(
+        screen.getByRole('checkbox', { name: 'consumer: Evidence: observations' }),
+      ).toHaveProperty('checked', true);
+    }
+    await user.click(screen.getByRole('button', { name: 'Use Issue snapshot' }));
+    await waitFor(() => expect(changed).toHaveBeenCalledTimes(1));
+    const result = changed.mock.calls[0]![0];
+    expect(result.issue_snapshot.evidence).toEqual({
+      [rename ? 'observations' : 'proofs']: {
+        field: rename ? 'rank' : 'priority',
+        required: true,
+        maximum: 2,
+        observation: { criterion, environment, finding: 'matched' },
       },
     });
-  }
-});
+    expect(result.root.nodes[0].input_binding).toEqual(node.input_binding);
+    if (!rename) expect(api.normalizeSchema).not.toHaveBeenCalled();
+  },
+);

@@ -12,10 +12,11 @@ import { factoryApi } from './api';
 import { FlowGraphEditor } from './FlowGraphEditor';
 import { FactoryPublication } from './FactoryPublication';
 import { configurationFixture } from '../../../tests/fixtures/factory';
+import { factoryProfileConfigurationFixture } from '../../../tests/fixtures/factoryRoles';
 import { factoryIssueFieldsFixture } from '../../../tests/fixtures/factoryIssueFields';
 import type { components } from '../../../.generated/api/schema';
 afterEach(cleanup);
-it('reviews selected typed classification fields and snapshot step inputs without legacy vocabulary', async () => {
+it('reviews automatic selected-field save scope and snapshot step inputs without manual apply actions', async () => {
   const { config, request } = setup();
   const capabilities = factoryIssueFieldsFixture();
   const node = request.definition.root.nodes.find((node) => node.action)!;
@@ -25,22 +26,23 @@ it('reviews selected typed classification fields and snapshot step inputs withou
     request.definition.limits.permissions,
   ])
     permissions.plugins.push(capabilities.issue_classification.plugin);
-  node.action = {
-    action: 'apply_issue_classification',
-    plugin: capabilities.issue_classification.plugin,
-    parameters: {
-      source_node: 'triage',
-      source_outcome: 'accepted',
-      outcome: node.outcomes[0]!.key,
-      policy: capabilities.issue_classification.policy,
-      fields: {
-        project_id: config.reference.project_id,
-        definition_version: 7,
-        fields: [
-          { field: { kind: 'component' }, required: true },
-          { field: { kind: 'property', id: 'impact' }, required: true },
-        ],
-      },
+  node.kind = 'reasoning';
+  node.profile_selection =
+    factoryProfileConfigurationFixture().configuration.flow.closure.definitions[0]!.nodes.find(
+      (n) => n.profile_selection,
+    )!.profile_selection!;
+  node.action = null;
+  const filledOutcome = node.outcomes.find((outcome) => outcome.kind === 'success')!;
+  filledOutcome.issue_fields = {
+    writer: capabilities.issue_classification.plugin,
+    policy: capabilities.issue_classification.policy,
+    form: {
+      project_id: config.reference.project_id,
+      definition_version: 7,
+      fields: [
+        { field: { kind: 'component' }, required: true },
+        { field: { kind: 'property', id: 'impact' }, required: false },
+      ],
     },
   };
   const input = config.flow.data_schemas[0]!.reference;
@@ -81,6 +83,7 @@ it('reviews selected typed classification fields and snapshot step inputs withou
   await userEvent.click(await screen.findByRole('button', { name: 'Review publication' }));
   const dialog = within(await screen.findByRole('dialog'));
   expect(await dialog.findByText('Project field: Impact')).toBeTruthy();
+  expect(dialog.getByText(`${node.key} · ${filledOutcome.key}`)).toBeTruthy();
   expect(dialog.getByText('component · Required')).toBeTruthy();
   expect(dialog.getByText('context · Optional · selected · 2 · 2048 bytes')).toBeTruthy();
   expect(dialog.getByText(`${node.key} · component`)).toBeTruthy();
@@ -1067,73 +1070,4 @@ it('reviews the normalized Issue card slots and only the fields that will be sho
   ).toBeTruthy();
   expect(custom.getByText('conclusion', { exact: true })).toBeTruthy();
   expect(dialog.queryByText('private_notes', { exact: false })).toBeNull();
-});
-
-it('reviews active Project label names for the exact classification before publication', async () => {
-  const { config, request } = setup();
-  const node = request.definition.root.nodes.find((node) => node.action)!;
-  const plugin = node.action!.plugin;
-  for (const permissions of [
-    node.permissions,
-    request.definition.root.execution.permissions,
-    request.definition.limits.permissions,
-  ]) {
-    if (!permissions.plugins.some(({ digest }) => digest === plugin.digest))
-      permissions.plugins.push(plugin);
-  }
-  node.action = {
-    ...node.action!,
-    action: 'apply_issue_classification',
-    parameters: {
-      source_node: 'triage',
-      source_outcome: 'accepted',
-      outcome: node.outcomes[0]!.key,
-      policy: 'team-triage',
-      size_labels: { small: 'team-small' },
-    },
-  };
-  config.flow.closure.definitions[0]!.nodes = request.definition.root.nodes;
-  const api = {
-    ...factoryApi,
-    validateFlow: vi.fn(async () => config.flow),
-    getAuthoringCapabilities: vi.fn(async () => ({
-      commands: [],
-      human_gates: [],
-      build_resource_modes: ['none' as const],
-      source_free_incompatibility: null,
-      deterministic_gate: {
-        policy: plugin,
-        parameter_contract: 'declarative_gate_v1' as const,
-        max_parameter_bytes: 65536,
-        resource_modes: ['none' as const],
-      },
-      issue_classification: {
-        plugin,
-        receipt_schema: config.flow.data_schemas[0]!,
-        receipt_output_bytes: 317,
-        policy: 'team-triage',
-        priority_maximum: 100,
-        size_labels: [{ size: 'small', label: 'team-small', name: 'Small work' }],
-      },
-    })),
-    createFlow: vi.fn<FactoryApi['createFlow']>(),
-  };
-  render(
-    <QueryClientProvider client={createConsoleQueryClient()}>
-      <RouterProvider
-        router={createMemoryRouter([
-          {
-            path: '*',
-            element: <FactoryPublication api={api} subject={{ kind: 'flow', request }} />,
-          },
-        ])}
-      />
-    </QueryClientProvider>,
-  );
-  await userEvent.click(screen.getByRole('button', { name: 'Validate draft' }));
-  await userEvent.click(await screen.findByRole('button', { name: 'Review publication' }));
-  const dialog = within(await screen.findByRole('dialog'));
-  expect(await dialog.findByText('Small work')).toBeTruthy();
-  expect(dialog.getByText('Priority · 0–100')).toBeTruthy();
-  expect(api.createFlow).not.toHaveBeenCalled();
 });

@@ -6,9 +6,19 @@ import { QueryFailureNotice } from '../../shared/QueryStateNotice';
 import type { FlowAuthoringServices } from './FlowPrimitives';
 import { useFactoryAuthoringCapabilities } from './useFactoryAuthoringCapabilities';
 import { issueFieldLabel, type IssueFieldChoice } from './IssueFieldContracts';
-import { assessmentMapping } from './issueClassification';
+import { assessmentMapping } from './assessmentMapping';
 import { IssueAdmission, validIssueAdmission, type IssueAdmissionPolicy } from './IssueAdmission';
+import {
+  directIssueFields,
+  issueFieldSourceKey as sourceKey,
+  selectedIssueFields,
+} from './issueFields';
 import { editableSnapshotFields } from './issueSnapshotBindings';
+import {
+  SnapshotEvidence,
+  validSnapshotEvidence,
+  type SnapshotEvidenceSelections,
+} from './SnapshotEvidence';
 import { equivalentFlowSchema, registerFlowSchemas } from './flowSchemas';
 
 type S = components['schemas'];
@@ -20,14 +30,6 @@ const keys =
   FACTORY_AUTHORING_SCHEMAS.FactoryFlowIssueSnapshotInput.properties.fields.propertyNames;
 const validKey = (key: string) =>
   new RegExp(keys.pattern).test(key) && key.length <= keys.maxLength;
-const sourceKey = (source: IssueFieldChoice['source']) =>
-  JSON.stringify(
-    source.kind === 'property'
-      ? [source.kind, source.id]
-      : source.kind === 'classification'
-        ? [source.kind, source.slot]
-        : [source.kind],
-  );
 const defaultAlias = (field: IssueFieldChoice, index: number) => {
   const name =
     field.source.kind === 'property'
@@ -147,6 +149,9 @@ function SnapshotDraft({
   const [admission, setAdmission] = useState<IssueAdmissionPolicy | undefined>(
     value.issue_snapshot?.admission,
   );
+  const [evidence, setEvidence] = useState<SnapshotEvidenceSelections>(
+    value.issue_snapshot?.evidence ?? {},
+  );
   const [materials, setMaterials] = useState(!!value.issue_snapshot?.materials?.materials);
   const existingMaterial = value.issue_snapshot?.materials?.materials;
   const [entries, setEntries] = useState(
@@ -168,18 +173,17 @@ function SnapshotDraft({
   useEffect(() => () => controllerRef.current?.abort(), []);
   const latestRef = useRef({ value, choices });
   latestRef.current = { value, choices };
-  const selected = Object.entries(fields).flatMap(([alias, selection]) => {
-    const field = choices?.fields.find(
-      (field) => sourceKey(field.source) === sourceKey(selection.source),
-    );
-    return field ? [{ alias, selection, field }] : [];
-  });
+  const selected = selectedIssueFields(fields, choices);
   const unavailable = Object.entries(fields).filter(
     ([alias]) => !selected.some((field) => field.alias === alias),
   );
   const aliases = [
     ...selected.map(({ alias, field }) => ({ alias, label: issueFieldLabel(field, t) })),
     ...(materials ? [{ alias: 'materials', label: t('factory.issueMaterials') }] : []),
+    ...Object.keys(evidence).map((alias) => ({
+      alias,
+      label: t('factory.evidenceProjection', { alias }),
+    })),
   ];
   // Only replace this editor's exclusive Incoming bindings. Mixed/advanced inputs stay explicit.
   const conflict =
@@ -195,7 +199,6 @@ function SnapshotDraft({
       );
       return !owned && (!!consumed || previous);
     }) ||
-    !!Object.keys(value.issue_snapshot?.evidence ?? {}).length ||
     Object.keys(value.issue_snapshot?.materials ?? {}).some((alias) => alias !== 'materials') ||
     (existingMaterial && existingMaterial.source.kind !== 'selected');
   const valid =
@@ -204,6 +207,7 @@ function SnapshotDraft({
     !query.error &&
     !stale &&
     !conflict &&
+    validSnapshotEvidence(evidence, selected) &&
     validIssueAdmission(
       admission,
       selected.map(({ alias, field, selection }) => ({
@@ -211,7 +215,6 @@ function SnapshotDraft({
         field,
         required: selection.required,
       })),
-      choices?.classification,
     ) &&
     selected.length === Object.keys(fields).length &&
     selected.every(({ selection, field }) => !selection.required || field.required_supported) &&
@@ -251,6 +254,20 @@ function SnapshotDraft({
             min_items: materialRequired ? 1 : 0,
             max_items: entries,
             item: { type: 'string', min_bytes: 0, max_bytes: bytes },
+          },
+        };
+      for (const [alias, selection] of Object.entries(evidence))
+        shapeFields[alias] = {
+          required: selection.required,
+          value: {
+            type: 'array',
+            min_items: selection.required ? 1 : 0,
+            max_items: selection.maximum,
+            item: {
+              type: 'string',
+              min_bytes: FACTORY_AUTHORING_SCHEMAS.FactoryDigest.minLength,
+              max_bytes: FACTORY_AUTHORING_SCHEMAS.FactoryDigest.maxLength,
+            },
           },
         };
       const plans = value.root.nodes.map((node) => {
@@ -328,6 +345,7 @@ function SnapshotDraft({
               definition_version: choices.definition_version,
               schema: input.reference,
               fields,
+              ...(Object.keys(evidence).length ? { evidence } : {}),
               ...(admission ? { admission } : {}),
               ...(materials
                 ? {
@@ -401,7 +419,7 @@ function SnapshotDraft({
               </button>
             </div>
           ))}
-          {choices.fields.map((field, index) => {
+          {directIssueFields(choices).map((field, index) => {
             const current = selected.find(
               ({ selection }) => sourceKey(selection.source) === sourceKey(field.source),
             );
@@ -446,6 +464,17 @@ function SnapshotDraft({
                               Object.entries(fields).map(([key, selection]) => [
                                 key === current.alias ? alias : key,
                                 selection,
+                              ]),
+                            ),
+                          );
+                          setEvidence((policies) =>
+                            Object.fromEntries(
+                              Object.entries(policies).map(([key, policy]) => [
+                                key,
+                                {
+                                  ...policy,
+                                  field: policy.field === current.alias ? alias : policy.field,
+                                },
                               ]),
                             ),
                           );
@@ -553,9 +582,30 @@ function SnapshotDraft({
               </label>
             </>
           ) : null}
+          <SnapshotEvidence
+            value={evidence}
+            fields={selected
+              .filter(({ field }) => field.write_target)
+              .map(({ alias, field }) => ({
+                alias,
+                label: `${issueFieldLabel(field, t)} · ${alias}`,
+              }))}
+            onChange={(next, rename) => {
+              setEvidence(next);
+              if (rename)
+                setProjections(
+                  Object.fromEntries(
+                    Object.entries(projections).map(([node, names]) => [
+                      node,
+                      names.map((name) => (name === rename.from ? rename.to : name)),
+                    ]),
+                  ),
+                );
+            }}
+          />
           <IssueAdmission
             value={admission}
-            classification={choices?.classification}
+
             fields={selected.map(({ alias, field, selection }) => ({
               alias,
               field,

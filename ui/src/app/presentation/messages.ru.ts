@@ -394,9 +394,33 @@ export const ruMessages = {
   'factory.bytes': 'байтов',
   'factory.projectionTooLarge':
     'Проекция превышает лимит входного mapping. Выберите меньше необязательных полей или используйте расширенный редактор входа.',
+  'factory.choiceThreshold': 'Начиная с варианта: {field} · {condition}',
+  'factory.choiceThresholdHelp':
+    'Этот вариант и последующие активные варианты в порядке Project направляются по настроенному маршруту.',
+  'factory.snapshotFieldSource': 'Поле входа Issue: {alias}',
   'factory.specificationFromSize': 'Создавать спецификации начиная с размера',
   'factory.specificationFromSizeHelp':
     'Выбранный размер и все большие размеры по опубликованному порядку Project требуют спецификации. Публикация фиксирует маршруты; последующие изменения каталога не перенаправляют этот pipeline.',
+  'factory.snapshotEvidence': 'Политика доказательств Issue',
+  'factory.snapshotEvidenceHelp':
+    'Выберите ссылки на сохранённые доказательства поля. Для доверенного наблюдения укажите точные окружение, критерий и результат; значение поля и вывод модели не являются доказательством.',
+  'factory.evidenceAlias': 'Имя входа доказательств',
+  'factory.evidenceField': 'Доказательства поля',
+  'factory.evidenceMaximum': 'Максимум ссылок на доказательства',
+  'factory.requireObservation': 'Требовать доверенное наблюдение',
+  'factory.trustedObservation': 'Доверенное наблюдение',
+  'factory.evidenceEnvironment': 'Окружение',
+  'factory.evidenceCriterion': 'Критерий',
+  'factory.evidenceFinding': 'Необходимый результат',
+  'factory.findingMatched': 'Подтверждено',
+  'factory.findingNotMatched': 'Не подтверждено',
+  'factory.findingIndeterminate': 'Не определено',
+  'factory.referenceIdentity': 'Идентификатор',
+  'factory.referenceVersion': 'Версия',
+  'factory.referenceDigest': 'Дайджест',
+  'factory.addEvidence': 'Добавить политику доказательств',
+  'factory.removeEvidence': 'Удалить политику доказательств',
+  'factory.evidenceProjection': 'Доказательства: {alias}',
   'factory.snapshotAdmission': 'Допуск по снимку',
   'factory.snapshotAdmissionHelp':
     'Явно сопоставьте обязательные поля классификации. Значения без сопоставления блокируют допуск; правила не дают прав запуска и не заменяют проверку свидетельств.',
@@ -2313,6 +2337,8 @@ export const ruMessages = {
   'factory.addPipeline': 'Добавить pipeline',
   'factory.examples': 'Начать с примера',
   'factory.noExamples': 'Нет доступных примеров. Pipeline можно собрать с нуля.',
+  'factory.exampleDraftChanged':
+    'Входы примера или контракт полей Project изменились. Выбор сохранён; проверьте его перед повторным открытием черновика.',
   'factory.exampleHelp':
     'Выберите ресурсы для примера. Перед публикацией проверьте доступы в черновике и подключите исходники к нужным шагам.',
   'factory.optionalExampleCommand':
@@ -2553,6 +2579,17 @@ export const ruMessages = {
   'factory.maximum': 'Максимум',
   'factory.addField': 'Добавить поле',
   'factory.fieldName': 'Имя поля',
+  'factory.fieldFormPresentationConflict':
+    'Карточка Issue не соответствует созданной форме полей. Проверьте «Показывать в задаче» или выключите карточку; черновик сохранён.',
+  'factory.fieldFormDraftChanged':
+    'Шаг или контракт полей Project изменился во время проверки. Черновик сохранён; проверьте его перед повторным сохранением.',
+  'factory.fillIssueFields': 'Заполнять поля Issue',
+  'factory.fillIssueFieldsHelp':
+    'Агент возвращает значения выбранных полей. После принятия результата сервер пытается сохранить только их в связанную задачу. Невыбранные и пропущенные необязательные значения сохраняются.',
+  'factory.fieldFormStale':
+    'Контракт полей Project или возможность сохранения изменились. Выбор сохранён; проверьте текущие типы перед применением.',
+  'factory.reconcileFieldForm': 'Использовать текущие определения полей',
+  'factory.exactFieldForm': 'Точные идентификаторы полей и версия',
   'factory.required': 'Обязательное',
   'factory.removeField': 'Удалить поле',
   'factory.addEnumValue': 'Добавить значение enum',

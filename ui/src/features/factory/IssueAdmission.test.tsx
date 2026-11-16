@@ -23,7 +23,10 @@ it.each(['en', 'ru'] as const)(
     };
     const offered = factoryIssueFieldsFixture().issue_fields.fields;
     const fields = offered
-      .filter(({ source }) => source.kind === 'priority' || source.kind === 'classification')
+      .filter(
+        ({ source }) =>
+          source.kind === 'priority' || (source.kind === 'property' && source.id === 'impact'),
+      )
       .map((field) => ({
         field,
         alias: field.source.kind === 'priority' ? 'priority' : 'impact',

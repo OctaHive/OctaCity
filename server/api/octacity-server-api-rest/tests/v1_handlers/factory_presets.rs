@@ -578,6 +578,42 @@ async fn selected_preset_profiles_resolve_to_an_ordinary_immutable_flow_draft() 
 }
 
 #[tokio::test]
+async fn triage_example_discovery_exposes_the_configured_form_without_a_copied_schema() {
+  let (router, project, _) = preset_router().await;
+  let response = router
+    .oneshot(empty_request(
+      "GET",
+      &format!("/api/v1/projects/{project}/factory-presets"),
+      None,
+    ))
+    .await
+    .unwrap();
+  assert_eq!(response.status(), StatusCode::OK);
+  let page = json(response).await;
+  let summary = triage_preset(&page);
+  assert_eq!(summary["editor"]["name"], "Triage");
+  let fields = summary["editor"]["issue_fields"]["classification"]
+    .as_array()
+    .expect("one ordinary configured form");
+  assert_eq!(
+    fields[0],
+    serde_json::json!({"field":{"kind":"priority"},"required":true})
+  );
+  assert!(
+    fields
+      .iter()
+      .any(|field| field["field"] == serde_json::json!({"kind":"property","id":"risk"}))
+  );
+  assert!(
+    summary["parameters"]
+      .as_array()
+      .unwrap()
+      .contains(&serde_json::json!({"path":"/issue_fields/classification","kind":"issue_fields","required":false}))
+  );
+  assert_json_matches_component(&openapi_document(), "FactoryPresetPage", &page);
+}
+
+#[tokio::test]
 async fn preset_discovery_and_resolution_agree_that_project_context_is_optional() {
   use testing::MutationEvidenceProbe;
   let (router, project, store) = preset_router().await;

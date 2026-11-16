@@ -965,8 +965,8 @@ trusted action and management principal; that dispatcher does not prepare inputs
 It reuses the configured Factory worker claim lifetime and batch size; no separate scheduler,
 MCP write tool or local-effect timing configuration is introduced. The outbox
 contains the accepted record digest, not another copy of private result values.
-Generated REST/Console controls and template migration remain tasks 10.4–10.8;
-this runtime integration alone does not expose the field selector in the UI.
+REST/Console now expose this contract through the ordinary **Fill Issue fields**
+selector and configured template forms (tasks 10.6–10.8).
 See the [task 10.3 verification report](../../openspec/changes/add-issue-classification-snapshots/verification-automatic-issue-fields.md)
 for application, installation and PostgreSQL recovery tests.
 
@@ -1337,7 +1337,7 @@ not the original `reserved_at`/`admitted_at` used for stable identity. Both manu
 Source owners pass that observation time explicitly to the common snapshot validator. Once admitted, replay retains the same Work, snapshot and evidence instead
 of refreshing them after an Issue edit or grant change. Host composition must install
 the same reader for preparation and admission. Template/runtime catalog migration
-and Console controls are tracked separately in tasks 10.5–10.8.
+and Console controls are implemented in tasks 10.5–10.8.
 
 `issue_choice_threshold` compiles a selected core/custom choice and its inclusive
 starting choice from the reviewed active Project order into an ordinary
@@ -1386,7 +1386,8 @@ Existing operator publications, Issue values, exact retained Configuration pins
 and disabled intake survive restart. The launcher calls the common resolver and
 ordinary publication owners; it does not recreate field schemas in Python.
 Template resolution never publishes, launches a model or enables provider writes.
-REST/Console selector updates remain tasks 10.6–10.8.
+REST/Console selectors use these configured forms and direct consumer inputs
+(tasks 10.6–10.8).
 
 See [task 10.5 verification](../../openspec/changes/add-issue-classification-snapshots/verification-template-configuration.md).
 
@@ -1619,7 +1620,7 @@ response supplies catalog version 1 in this fresh example.
 ```
 
 Retain `resource.id` and its Issue ETag. If triage prepares the Issue instead,
-configure the [classification action](../operations/factory-pipeline-authoring.md#apply-triage-classification-to-the-issue),
+configure the [classification action](../operations/factory-pipeline-authoring.md#fill-selected-issue-fields),
 execute it, verify applied fields on the Issue and reread its revision. Do not
 copy an assessment's proposed values or Run ID into an execution request.
 
@@ -3377,12 +3378,41 @@ proposed field values, Issue text or worker credentials. Pipeline-origin field
 updates retain the exact `form` digest and invocation baseline/attempt; callers
 cannot manufacture those facts.
 
-The new agent-step controls are task 10.7; generic template and condition controls
-are task 10.8. Existing editor bindings have been aligned with the canonical REST
-contract. See the [task 10.6 verification report](../../openspec/changes/add-issue-classification-snapshots/verification-selected-fields-rest.md).
+The ordinary agent result editor now offers **Fill Issue fields** (task 10.7).
+It shows one Project selector with required/optional controls and generates the
+result/save association. Publication reviews the exact step/outcome and field
+scope; ordinary result editing and **Show on Issue** remain separate. Generic
+template forms use the same selector. `FactoryPresetEditor.issue_fields` advertises
+the configured node's default canonical field selections, without a duplicate
+result schema. The resolver accepts each reviewed form in `issue_fields` and
+derives both the accepted result and save declaration. Existing editor bindings
+have been aligned with the canonical REST contract. See the [task 10.6 verification report](../../openspec/changes/add-issue-classification-snapshots/verification-selected-fields-rest.md).
 
 Preset discovery and resolution agree on optional Project Context:
 `/context/{alias}` is advertised with `required: false`; callers may omit the
 Context map without creating document placeholders. Required executor selections
 remain required, and explicitly supplied Context is checked through its existing
 Project/document owners.
+
+Preset snapshot inputs can override the declared aliases through
+`issue_snapshot.fields` using ordinary `FactoryFlowIssueFieldSelection` values
+(`source`, `required`). Unknown aliases are rejected. Discovery's
+`editor.choice_thresholds` maps condition node keys to these input aliases;
+`issue_snapshot.choice_thresholds` supplies the chosen stable choice ID. Resolution
+uses that selected source's current Project order and publishes concrete gate
+rules. Console clears a threshold when its source changes and rejects an opening
+response if the catalog or reviewed selection changed in flight. Source changes
+also clear admission conversions and allowed values for that alias, while
+preserving policies for other inputs. Matching choice IDs across distinct sources
+are not policy confirmation. Required/optional changes retain the source policy.
+Template write forms pin their initial displayed defaults, catalog and writer;
+refreshes retain that contract until **Use current field definitions** explicitly
+reconciles it. Reading these
+inputs does not require a producer, semantic role or writer installation.
+
+The snapshot editor exposes the existing `evidence` contract directly: a bounded
+set of required/optional evidence references for a selected classified input,
+optionally restricted to an exact trusted environment/criterion/finding. These
+constraints and step projections are retained on reopen and alias rename. Schema
+normalization uses the same digest/reference bounds as the REST contract; this
+UI does not validate evidence authority or grant worker access.

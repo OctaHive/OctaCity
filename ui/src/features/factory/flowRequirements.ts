@@ -1,6 +1,6 @@
 import type { components } from '../../../.generated/api/schema';
+import { emptyFactoryPermissions } from './emptyFlowDraft';
 import { FACTORY_AUTHORING_SCHEMAS } from '../../../.generated/api/factory-authoring';
-import { classificationAction } from './issueClassification';
 import { publicationChoice, publishCandidateAction } from './PublicationStep';
 type S = components['schemas'];
 type Node = S['FactoryFlowNodeDefinition'];
@@ -188,7 +188,7 @@ export function requiredPermissions(
   const action = node.action;
   const target = publicationChoice(action, publications);
   const base =
-    action?.action === classificationAction || action?.action === publishCandidateAction
+    action?.action === publishCandidateAction
       ? mergePermissions(
           node.permissions,
           target?.permissions ?? { ...node.permissions, plugins: [action.plugin] },
@@ -202,7 +202,12 @@ export function requiredPermissions(
           ? (build.execution_permissions ?? node.permissions)
           : profile.definition.permissions,
       ),
-    base,
+    mergePermissions(base, {
+      ...emptyFactoryPermissions(),
+      plugins: node.outcomes.flatMap((outcome) =>
+        outcome.issue_fields ? [outcome.issue_fields.writer] : [],
+      ),
+    }),
   );
 }
 

@@ -1,12 +1,7 @@
-import { useState } from 'react';
 import type { components } from '../../../.generated/api/schema';
 import type { MessageKey } from '../../app/presentation/messages';
 import { usePresentation } from '../../app/presentation/PresentationProvider';
-import { QueryFailureNotice } from '../../shared/QueryStateNotice';
-import { useFactoryAuthoringCapabilities } from './useFactoryAuthoringCapabilities';
-import type { FlowAuthoringServices } from './FlowPrimitives';
 
-import { classificationFields } from './issueFields';
 export { classificationFields, sameIssueFieldTarget } from './issueFields';
 
 type S = components['schemas'];
@@ -38,98 +33,29 @@ export function issueFieldLabel(
       : t(labels[field.source.kind]);
 }
 
-export function ClassificationFieldPicker({
-  choices,
-  selected,
-  onChange,
-}: {
-  choices: IssueFieldChoices;
-  selected: readonly string[];
-  onChange: (selected: string[]) => void;
-}) {
+/** Readable types and bounds are advisory views of the authoritative descriptor. */
+export function IssueFieldType({ field }: { field: IssueFieldChoice }) {
   const { t } = usePresentation();
+  const shape = field.shape;
+  const kind =
+    field.value_type?.type ??
+    (shape.type === 'enum'
+      ? 'choice'
+      : shape.type === 'integer'
+        ? 'number'
+        : shape.type === 'boolean'
+          ? 'boolean'
+          : 'text');
   return (
-    <fieldset>
-      <legend>{t('factory.projectClassificationFields')}</legend>
-      <p>{t('planning.definition', { version: choices.definition_version })}</p>
-      {classificationFields(choices).map(({ name, field }) => (
-        <label key={name}>
-          <input
-            type="checkbox"
-            checked={selected.includes(name)}
-            onChange={(event) =>
-              onChange(
-                event.target.checked ? [...selected, name] : selected.filter((key) => key !== name),
-              )
-            }
-          />
-          {issueFieldLabel(field, t)}
-        </label>
-      ))}
-    </fieldset>
-  );
-}
-
-/** Explicitly reuse selected Project types in a result draft; saving remains the normal schema command. */
-export function ProjectIssueResultFields({
-  services,
-  shape,
-  onChange,
-}: {
-  services: FlowAuthoringServices;
-  shape: S['FactoryFlowValueSchema'];
-  onChange: (shape: S['FactoryFlowValueSchema']) => void;
-}) {
-  const { t } = usePresentation();
-  const [open, setOpen] = useState(false);
-  const [selected, setSelected] = useState<string[]>([]);
-  const query = useFactoryAuthoringCapabilities(services, open);
-  const choices = query.data?.issue_fields;
-  return (
-    <>
-      <button type="button" onClick={() => setOpen(!open)} aria-expanded={open}>
-        {t('factory.reuseProjectFields')}
-      </button>
-      {open ? (
-        <>
-          {query.error ? (
-            <QueryFailureNotice
-              title={t('factory.projectClassificationFields')}
-              error={query.error}
-              onRetry={query.refetch}
-            />
-          ) : null}
-          {query.isFetching ? <p role="status">{t('factory.loadingStepCapabilities')}</p> : null}
-          {choices?.classification ? (
-            <ClassificationFieldPicker
-              choices={choices}
-              selected={selected}
-              onChange={setSelected}
-            />
-          ) : (
-            <p>{t('factory.issueFieldsUnavailable')}</p>
-          )}
-          <button
-            type="button"
-            disabled={!selected.length || query.isFetching || !!query.error}
-            onClick={() => {
-              const fields = shape.type === 'object' ? shape.fields : {};
-              const additions = Object.fromEntries(
-                classificationFields(choices)
-                  .filter(({ name }) => selected.includes(name))
-                  .map(({ name, field }) => [
-                    name,
-                    { required: fields[name]?.required ?? false, value: field.shape },
-                  ]),
-              );
-              onChange({ type: 'object', fields: { ...fields, ...additions } });
-              setOpen(false);
-            }}
-          >
-            {t('factory.useSelectedFieldContracts')}
-          </button>
-        </>
-      ) : null}
-    </>
+    <p>
+      {t(`issueFields.${kind}`)}
+      {shape.type === 'enum'
+        ? ` · ${shape.values.map((id) => field.choice_labels?.[String(id)] ?? String(id)).join(', ')}`
+        : null}
+      {shape.type === 'integer' ? ` · ${shape.minimum}–${shape.maximum}` : null}
+      {shape.type === 'string' && kind !== 'date'
+        ? ` · ${t('issueFields.textLimit')}: ${shape.max_bytes}`
+        : null}
+    </p>
   );
 }

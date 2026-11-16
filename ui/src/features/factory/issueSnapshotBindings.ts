@@ -1,7 +1,7 @@
 import { replaceEqualDeep } from '@tanstack/react-query';
 import type { components } from '../../../.generated/api/schema';
 import { sourceReferenceKey } from '../../shared/sourceReferences';
-import { assessmentMapping } from './issueClassification';
+import { assessmentMapping } from './assessmentMapping';
 
 type S = components['schemas'];
 

@@ -1,12 +1,5 @@
 import type { components } from '../../../.generated/api/schema';
 import { usePresentation } from '../../app/presentation/PresentationProvider';
-import {
-  classificationFields,
-  sameIssueFieldTarget,
-  issueFieldLabel,
-  type IssueFieldChoices,
-} from './IssueFieldContracts';
-import { classificationParameters } from './issueClassification';
 import { sourceReferenceKey } from '../../shared/sourceReferences';
 
 type S = components['schemas'];
@@ -29,41 +22,6 @@ function mappingReads(mapping: S['FactoryFlowValueMapping']): MappingRead[] {
     case 'constant':
       return [];
   }
-}
-
-export function TypedClassificationReview({
-  action,
-  choices,
-}: {
-  action: S['FactoryFlowNodeDefinition']['action'];
-  choices: IssueFieldChoices;
-}) {
-  const { t } = usePresentation();
-  const selected = classificationParameters(action)?.fields;
-  if (!selected || typeof selected !== 'object') return null;
-  return (
-    <>
-      <p>{t('planning.definition', { version: choices.definition_version })}</p>
-      <ul>
-        {classificationFields(choices)
-          .filter(
-            ({ target }) =>
-              'fields' in selected &&
-              Array.isArray(selected.fields) &&
-              selected.fields.some(
-                (item: unknown) =>
-                  !!item &&
-                  typeof item === 'object' &&
-                  'field' in item &&
-                  sameIssueFieldTarget(target, item.field),
-              ),
-          )
-          .map(({ name, field }) => (
-            <li key={name}>{issueFieldLabel(field, t)}</li>
-          ))}
-      </ul>
-    </>
-  );
 }
 
 /** Publication reviews the frozen input policy and step projections, never material bodies. */

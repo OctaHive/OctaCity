@@ -217,12 +217,20 @@ fn summary(
       }
     }
   }
+  for node in setup.field_forms.keys() {
+    parameters.push(FactoryPresetParameter {
+      path: format!("/issue_fields/{node}"),
+      kind: FactoryPresetParameterKind::IssueFields,
+      required: false,
+    });
+  }
   let editor = if let Some(name) = name {
     let schemas = template.data_schemas().map_err(|_| ApplicationError::invalid())?;
     Some(FactoryPresetEditor {
       name,
       budget: template.execution.budget(),
       max_active_nodes: template.execution.max_active_nodes(),
+      issue_fields: setup.field_forms,
       issue_snapshot_fields: if issue_snapshot {
         issue_delivery::field_sources()
       } else {

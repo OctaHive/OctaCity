@@ -9,8 +9,6 @@ import { createConsoleQueryClient } from '../../app/query';
 import { authoredSchemaShape, configurationFixture } from '../../../tests/fixtures/factory';
 import { factoryIssueFieldsFixture } from '../../../tests/fixtures/factoryIssueFields';
 import { factoryApi, type FactoryApi } from './api';
-import { StepResults, type ResultDraft } from './StepResults';
-import { FlowIssueClassification } from './FlowIssueClassification';
 import { emptyFlowDraft } from './emptyFlowDraft';
 import { FlowGraphEditor } from './FlowGraphEditor';
 import { FlowIssueSnapshot } from './FlowIssueSnapshot';
@@ -503,85 +501,46 @@ it('authors a versioned Issue snapshot with optional Project fields, bounded sel
   );
 });
 
-it('applies selected Project fields without legacy labels and retains declared assessment dependencies', async () => {
+it('authors and reopens admission using a direct property without losing snapshot projections', async () => {
   const user = userEvent.setup();
   const capabilities = factoryIssueFieldsFixture();
+  capabilities.issue_fields.fields = capabilities.issue_fields.fields.filter(
+    (field) => field.source.kind !== 'classification',
+  );
+  const impactLabel = 'Project field: Impact';
+  const impactAlias = 'impact';
   const draft = emptyFlowDraft();
-  const dependency = {
-    type: 'object' as const,
-    fields: {
-      subject: { required: true, value: { type: 'string' as const, min_bytes: 1, max_bytes: 64 } },
-    },
-  };
-  const assessment = {
-    reference: { identity: 'assessment', version: 'v1', digest: 'a'.repeat(64) },
-    shape: {
-      type: 'object' as const,
-      fields: {
-        component: { required: true, value: { type: 'enum' as const, values: ['payments'] } },
-        'property.impact': {
-          required: false,
-          value: { type: 'enum' as const, values: ['major', 'minor'] },
-        },
-        private_notes: {
-          required: true,
-          value: { type: 'string' as const, min_bytes: 0, max_bytes: 1024 },
-        },
-        assessment_inputs: { required: true, value: dependency },
-      },
-    },
-  };
-  const node: components['schemas']['FactoryFlowNodeDefinition'] = {
-    ...configurationFixture().configuration.flow.closure.definitions[0]!.nodes[0]!,
-    key: 'apply',
-    kind: 'trusted_action',
-    input_schema: null,
-    input_binding: null,
-    action: null,
-    outcomes: [],
-  };
   draft.root.nodes = [
     {
-      ...node,
-      key: 'assess',
-      kind: 'reasoning',
-      outcomes: [{ key: 'assessed', kind: 'success', schema: assessment.reference }],
-    },
-    node,
-  ];
-  draft.root.entry = 'assess';
-  draft.root.transitions = [
-    {
-      predecessor: 'assess',
-      outcome: 'assessed',
-      target: { kind: 'node', key: 'apply' },
-      max_repeats: 0,
-      exhausted_terminal: null,
+      ...configurationFixture().configuration.flow.closure.definitions[0]!.nodes[0]!,
+      key: 'coder',
+      input_schema: null,
+      input_binding: null,
     },
   ];
+  draft.root.entry = 'coder';
+  let selected = draft;
   const api = {
     ...factoryApi,
     getAuthoringCapabilities: vi.fn<FactoryApi['getAuthoringCapabilities']>(
       async () => capabilities,
     ),
     normalizeSchema: vi.fn<FactoryApi['normalizeSchema']>(async (body) => ({
-      reference: { identity: body.identity, version: body.version, digest: 'c'.repeat(64) },
+      reference: { identity: body.identity, version: body.version, digest: 'a'.repeat(64) },
       shape: authoredSchemaShape(body),
     })),
   };
-  let selected = node;
   function Harness() {
-    const [value, setValue] = useState(node);
+    const [value, setValue] = useState(draft);
     return (
-      <FlowIssueClassification
-        node={value}
-        root={draft.root}
-        schemas={[assessment]}
+      <FlowIssueSnapshot
+        value={value}
         services={{ api, projectId: 'delivery' }}
         onChange={(next) => {
           selected = next;
           setValue(next);
         }}
+        onEditingChange={() => {}}
       />
     );
   }
@@ -590,221 +549,65 @@ it('applies selected Project fields without legacy labels and retains declared a
       <Harness />
     </QueryClientProvider>,
   );
-  await user.click(screen.getByRole('checkbox', { name: 'Apply classification to Issue' }));
-  await user.click(await screen.findByRole('checkbox', { name: 'Issue component' }));
-  await user.click(screen.getByRole('checkbox', { name: 'Project field: Impact' }));
-  await user.click(screen.getByRole('button', { name: 'Use Project classification' }));
-  await waitFor(() => expect(api.normalizeSchema).toHaveBeenCalledTimes(1));
-  expect(selected.action?.parameters).toEqual({
-    source_node: 'assess',
-    source_outcome: 'assessed',
-    outcome: 'applied',
-    policy: 'project-triage',
-    fields: {
-      project_id: 'delivery',
-      definition_version: 7,
-      fields: [
-        { field: { kind: 'component' }, required: true },
-        { field: { kind: 'property', id: 'impact' }, required: false },
-      ],
-    },
-  });
-  expect(authoredSchemaShape(api.normalizeSchema.mock.calls[0]![0])).toEqual({
-    type: 'object',
-    fields: {
-      component: { required: true, value: { type: 'enum', values: ['payments'] } },
-      'property.impact': { required: false, value: { type: 'enum', values: ['major', 'minor'] } },
-      assessment_inputs: { required: true, value: dependency },
-    },
-  });
-  await user.click(screen.getByRole('checkbox', { name: 'Project field: Impact' }));
-  expect(screen.getByRole('button', { name: 'Use Project classification' })).toHaveProperty(
+  await user.click(screen.getByRole('button', { name: 'Configure Issue snapshot' }));
+  const choose = async (name: string, option: string) => {
+    await user.click(screen.getByRole('combobox', { name }));
+    await user.click(screen.getByRole('option', { name: option }));
+  };
+  for (const name of ['Priority', 'Issue type', impactLabel]) {
+    await user.click(await screen.findByRole('checkbox', { name }));
+    await user.click(screen.getByRole('checkbox', { name: `Required: ${name}` }));
+    await user.click(screen.getByRole('checkbox', { name: `coder: ${name}` }));
+  }
+  await user.click(screen.getByRole('checkbox', { name: 'Map Issue fields to admission' }));
+  await choose('Admission priority field', 'Priority · priority');
+  await user.type(screen.getByRole('spinbutton', { name: 'Scheduling priority: urgent' }), '90');
+  await user.type(screen.getByRole('spinbutton', { name: 'Scheduling priority: routine' }), '20');
+  await choose('Admission risk field', `${impactLabel} · ${impactAlias}`);
+  await choose('Admission risk: major', 'High');
+  await choose('Admission risk: minor', 'Low');
+  await user.click(screen.getByRole('checkbox', { name: 'Allow type: defect' }));
+  await user.click(screen.getByRole('checkbox', { name: `Allow ${impactAlias}: major` }));
+  expect(screen.queryByRole('alert')).toBeNull();
+  await user.click(screen.getByRole('button', { name: 'Use Issue snapshot' }));
+  await waitFor(() =>
+    expect(selected.issue_snapshot?.admission).toEqual({
+      priority: { field: 'priority', values: { urgent: 90, routine: 20 } },
+      risk: { field: impactAlias, values: { major: 'high', minor: 'low' } },
+      allowed: { type: ['defect'], [impactAlias]: ['major'] },
+    }),
+  );
+  const previous = structuredClone(selected);
+  await user.click(screen.getByRole('button', { name: 'Configure Issue snapshot' }));
+  expect(
+    await screen.findByRole('spinbutton', { name: 'Scheduling priority: urgent' }),
+  ).toHaveProperty('value', '90');
+  expect(screen.queryByRole('alert')).toBeNull();
+  expect(screen.getByRole('checkbox', { name: 'coder: Priority' })).toHaveProperty('checked', true);
+  expect(screen.getByRole('button', { name: 'Use Issue snapshot' })).toHaveProperty(
     'disabled',
     false,
   );
-  await user.click(screen.getByRole('button', { name: 'Use Project classification' }));
-  await waitFor(() => expect(api.normalizeSchema).toHaveBeenCalledTimes(2));
-  expect(selected.action?.parameters).toMatchObject({
-    fields: {
-      project_id: 'delivery',
-      definition_version: 7,
-      fields: [{ field: { kind: 'component' }, required: true }],
-    },
-  });
-});
-
-it('reuses selected Project classification field contracts in an assessment result without typing enums', async () => {
-  const user = userEvent.setup();
-  const capabilities = factoryIssueFieldsFixture();
-  const node = configurationFixture().configuration.flow.closure.definitions[0]!.nodes[0]!;
-  const api = {
-    ...factoryApi,
-    getAuthoringCapabilities: vi.fn<FactoryApi['getAuthoringCapabilities']>(
-      async () => capabilities,
-    ),
-    normalizeSchema: vi.fn<FactoryApi['normalizeSchema']>(async (body) => ({
-      reference: { identity: body.identity, version: body.version, digest: 'c'.repeat(64) },
-      shape: authoredSchemaShape(body),
-    })),
-  };
-  function Harness() {
-    const [draft, setDraft] = useState<ResultDraft>();
-    return (
-      <StepResults
-        node={{ ...node, kind: 'reasoning', outcomes: [] }}
-        schemas={[]}
-        services={{ api, projectId: 'delivery' }}
-        draft={draft}
-        onDraftChange={setDraft}
-        onChange={() => {}}
-      />
-    );
-  }
-  render(
-    <QueryClientProvider client={createConsoleQueryClient()}>
-      <Harness />
-    </QueryClientProvider>,
+  await user.click(screen.getByRole('button', { name: 'Use Issue snapshot' }));
+  await waitFor(() => expect(selected.issue_snapshot).toEqual(previous.issue_snapshot));
+  expect(selected.root.nodes).toEqual(previous.root.nodes);
+  await user.click(screen.getByRole('button', { name: 'Configure Issue snapshot' }));
+  const alias = await screen.findByRole('textbox', { name: 'Input alias: Priority' });
+  await user.clear(alias);
+  await user.type(alias, 'urgency');
+  expect(screen.getByRole('button', { name: 'Use Issue snapshot' })).toHaveProperty(
+    'disabled',
+    false,
   );
-  await user.click(screen.getByRole('button', { name: 'Add result' }));
-  await user.click(screen.getByRole('button', { name: 'Reuse Project classification fields' }));
-  await user.click(await screen.findByRole('checkbox', { name: 'Issue component' }));
-  await user.click(screen.getByRole('checkbox', { name: 'Project field: Impact' }));
-  await user.click(screen.getByRole('button', { name: 'Use selected field contracts' }));
-  await user.click(screen.getByRole('button', { name: 'Save result' }));
-  await waitFor(() => expect(api.normalizeSchema).toHaveBeenCalledTimes(1));
-  expect(authoredSchemaShape(api.normalizeSchema.mock.calls[0]![0])).toEqual({
-    type: 'object',
-    fields: {
-      component: { required: false, value: { type: 'enum', values: ['payments'] } },
-      'property.impact': { required: false, value: { type: 'enum', values: ['major', 'minor'] } },
-    },
+  expect(screen.getByRole('spinbutton', { name: 'Scheduling priority: urgent' })).toHaveProperty(
+    'value',
+    '90',
+  );
+  await user.click(screen.getByRole('button', { name: 'Use Issue snapshot' }));
+  await waitFor(() => expect(selected.issue_snapshot?.admission?.priority.field).toBe('urgency'));
+  expect(selected.issue_snapshot?.fields.urgency).toEqual(previous.issue_snapshot?.fields.priority);
+  expect(selected.issue_snapshot?.admission?.priority.values).toEqual({
+    urgent: 90,
+    routine: 20,
   });
 });
-
-it.each(['classification', 'property'] as const)(
-  'authors and reopens admission using a %s source without losing snapshot projections',
-  async (source) => {
-    const user = userEvent.setup();
-    const capabilities = factoryIssueFieldsFixture();
-    if (source === 'property') {
-      capabilities.issue_fields.fields = capabilities.issue_fields.fields.filter(
-        (field) => field.source.kind !== 'property' || field.source.id !== 'impact',
-      );
-      capabilities.issue_fields.fields.push({
-        source: { kind: 'property', id: 'impact' },
-        property_id: 'impact',
-        name: 'Impact',
-        required_supported: true,
-        shape: { type: 'enum', values: ['major', 'minor'] },
-      });
-    }
-    const impactLabel = source === 'property' ? 'Project field: Impact' : 'Classification: Impact';
-    const impactAlias = source === 'property' ? 'impact' : 'severity';
-    const draft = emptyFlowDraft();
-    draft.root.nodes = [
-      {
-        ...configurationFixture().configuration.flow.closure.definitions[0]!.nodes[0]!,
-        key: 'coder',
-        input_schema: null,
-        input_binding: null,
-      },
-    ];
-    draft.root.entry = 'coder';
-    let selected = draft;
-    const api = {
-      ...factoryApi,
-      getAuthoringCapabilities: vi.fn<FactoryApi['getAuthoringCapabilities']>(
-        async () => capabilities,
-      ),
-      normalizeSchema: vi.fn<FactoryApi['normalizeSchema']>(async (body) => ({
-        reference: { identity: body.identity, version: body.version, digest: 'a'.repeat(64) },
-        shape: authoredSchemaShape(body),
-      })),
-    };
-    function Harness() {
-      const [value, setValue] = useState(draft);
-      return (
-        <FlowIssueSnapshot
-          value={value}
-          services={{ api, projectId: 'delivery' }}
-          onChange={(next) => {
-            selected = next;
-            setValue(next);
-          }}
-          onEditingChange={() => {}}
-        />
-      );
-    }
-    render(
-      <QueryClientProvider client={createConsoleQueryClient()}>
-        <Harness />
-      </QueryClientProvider>,
-    );
-    await user.click(screen.getByRole('button', { name: 'Configure Issue snapshot' }));
-    const choose = async (name: string, option: string) => {
-      await user.click(screen.getByRole('combobox', { name }));
-      await user.click(screen.getByRole('option', { name: option }));
-    };
-    for (const name of ['Priority', 'Issue type', impactLabel]) {
-      await user.click(await screen.findByRole('checkbox', { name }));
-      await user.click(screen.getByRole('checkbox', { name: `Required: ${name}` }));
-      await user.click(screen.getByRole('checkbox', { name: `coder: ${name}` }));
-    }
-    await user.click(screen.getByRole('checkbox', { name: 'Map Issue fields to admission' }));
-    await choose('Admission priority field', 'Priority · priority');
-    await user.type(screen.getByRole('spinbutton', { name: 'Scheduling priority: urgent' }), '90');
-    await user.type(screen.getByRole('spinbutton', { name: 'Scheduling priority: routine' }), '20');
-    await choose('Admission risk field', `${impactLabel} · ${impactAlias}`);
-    await choose('Admission risk: major', 'High');
-    await choose('Admission risk: minor', 'Low');
-    await user.click(screen.getByRole('checkbox', { name: 'Allow type: defect' }));
-    await user.click(screen.getByRole('checkbox', { name: `Allow ${impactAlias}: major` }));
-    expect(screen.queryByRole('alert')).toBeNull();
-    await user.click(screen.getByRole('button', { name: 'Use Issue snapshot' }));
-    await waitFor(() =>
-      expect(selected.issue_snapshot?.admission).toEqual({
-        priority: { field: 'priority', values: { urgent: 90, routine: 20 } },
-        risk: { field: impactAlias, values: { major: 'high', minor: 'low' } },
-        allowed: { type: ['defect'], [impactAlias]: ['major'] },
-      }),
-    );
-    const previous = structuredClone(selected);
-    await user.click(screen.getByRole('button', { name: 'Configure Issue snapshot' }));
-    expect(
-      await screen.findByRole('spinbutton', { name: 'Scheduling priority: urgent' }),
-    ).toHaveProperty('value', '90');
-    expect(screen.queryByRole('alert')).toBeNull();
-    expect(screen.getByRole('checkbox', { name: 'coder: Priority' })).toHaveProperty(
-      'checked',
-      true,
-    );
-    expect(screen.getByRole('button', { name: 'Use Issue snapshot' })).toHaveProperty(
-      'disabled',
-      false,
-    );
-    await user.click(screen.getByRole('button', { name: 'Use Issue snapshot' }));
-    await waitFor(() => expect(selected.issue_snapshot).toEqual(previous.issue_snapshot));
-    expect(selected.root.nodes).toEqual(previous.root.nodes);
-    await user.click(screen.getByRole('button', { name: 'Configure Issue snapshot' }));
-    const alias = await screen.findByRole('textbox', { name: 'Input alias: Priority' });
-    await user.clear(alias);
-    await user.type(alias, 'urgency');
-    expect(screen.getByRole('button', { name: 'Use Issue snapshot' })).toHaveProperty(
-      'disabled',
-      false,
-    );
-    expect(screen.getByRole('spinbutton', { name: 'Scheduling priority: urgent' })).toHaveProperty(
-      'value',
-      '90',
-    );
-    await user.click(screen.getByRole('button', { name: 'Use Issue snapshot' }));
-    await waitFor(() => expect(selected.issue_snapshot?.admission?.priority.field).toBe('urgency'));
-    expect(selected.issue_snapshot?.fields.urgency).toEqual(
-      previous.issue_snapshot?.fields.priority,
-    );
-    expect(selected.issue_snapshot?.admission?.priority.values).toEqual({
-      urgent: 90,
-      routine: 20,
-    });
-  },
-);

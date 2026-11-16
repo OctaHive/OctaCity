@@ -10,8 +10,10 @@ import { catalogLabels } from './catalogLabels';
 import { commandBuild, commandOptions } from './CommandStep';
 import { emptyFactoryPermissions, emptyFlowDraft } from './emptyFlowDraft';
 import { ExecutorPicker } from './ExecutorPicker';
+import { FillIssueFields, type FieldWrite } from './FillIssueFields';
+import { SnapshotFieldSelectors } from './SnapshotFieldSelectors';
+import { fieldWriteMatches, issueFieldSourceKey, selectedIssueFields } from './issueFields';
 import { IssueAdmission, validIssueAdmission, type IssueAdmissionPolicy } from './IssueAdmission';
-import { issueFieldLabel } from './IssueFieldContracts';
 import { FlowIncomingCompletion } from './FlowIncomingCompletion';
 import { publicationKey } from './PublicationStep';
 import { mergePermissions } from './flowRequirements';
@@ -84,6 +86,7 @@ function ExampleBindings({
   editor,
 }: Props & { preset: Preset; editor: Editor }) {
   const { t } = usePresentation();
+  const [fieldForms, setFieldForms] = useState<Record<string, FieldWrite>>({});
   const [inputs, setInputs] = useState(emptyFlowDraft);
   const [profiles, setProfiles] = useState<
     Record<string, { profile: S['FactoryRoleProfile']; build: S['FactoryFlowBuildBinding'] }>
@@ -91,7 +94,10 @@ function ExampleBindings({
   const [commands, setCommands] = useState<Record<string, string>>({});
   const [target, setTarget] = useState('');
   const [admission, setAdmission] = useState<IssueAdmissionPolicy>();
-  const [specificationFromSize, setSpecificationFromSize] = useState('');
+  const [thresholds, setThresholds] = useState<Record<string, string>>({});
+  const [consumerFields, setConsumerFields] = useState<
+    Record<string, S['FactoryFlowIssueFieldSelection']>
+  >({});
   const [issues, setIssues] = useState<S['FactoryPresetResolution']['diagnostics']>([]);
   const [error, setError] = useState<Error>();
   const [busy, setBusy] = useState(false);
@@ -103,7 +109,10 @@ function ExampleBindings({
   const reasoningSteps = editor.steps.filter((step) => step.kind === 'reasoning');
   const capabilities = useFactoryAuthoringCapabilities(
     { api, projectId },
-    commandSteps.length > 0 || needs('publication') || needs('issue_snapshot'),
+    commandSteps.length > 0 ||
+      needs('publication') ||
+      needs('issue_snapshot') ||
+      Object.keys(editor.issue_fields ?? {}).length > 0,
   );
   const publications = (capabilities.data?.candidate_publications ?? []).filter(
     (choice) => choice.review_url,
@@ -130,18 +139,75 @@ function ExampleBindings({
   const commandRequired = (step: Editor['steps'][number]) =>
     preset.parameters.some((item) => item.path === `/commands/${step.alias}` && item.required);
   const catalog = capabilities.data?.issue_fields;
-  const snapshotSources = Object.entries(editor.issue_snapshot_fields ?? {});
-  const snapshotFields = snapshotSources.flatMap(([alias, source]) => {
-    const field = catalog?.fields.find(
-      (field) =>
-        field.source.kind === source.kind &&
-        (source.kind !== 'classification' ||
-          (field.source.kind === 'classification' && field.source.slot === source.slot)) &&
-        (source.kind !== 'property' ||
-          (field.source.kind === 'property' && field.source.id === source.id)),
+  const configuredForms = Object.entries(editor.issue_fields ?? {});
+  const missingForms = configuredForms.filter(([node]) => !Object.hasOwn(fieldForms, node));
+  const writer = capabilities.data?.issue_classification;
+  // Pin defaults when first displayed, just like an edited form. Refreshes require reconciliation.
+  if (catalog && writer && !capabilities.isFetching && !capabilities.error && missingForms.length) {
+    setFieldForms({
+      ...fieldForms,
+      ...Object.fromEntries(
+        missingForms.map(([node, fields]) => [
+          node,
+          {
+            writer: writer.plugin,
+            policy: writer.policy,
+            form: { project_id: projectId, definition_version: catalog.definition_version, fields },
+          },
+        ]),
+      ),
+    });
+  }
+  const selectedForms = Object.fromEntries(
+    configuredForms.map(([node]) => [node, fieldForms[node] ?? null]),
+  );
+  const formsReady =
+    !Object.keys(selectedForms).length ||
+    (!capabilities.isFetching &&
+      !capabilities.error &&
+      Object.values(selectedForms).every(
+        (form) =>
+          form &&
+          fieldWriteMatches(form, catalog, capabilities.data?.issue_classification, projectId),
+      ));
+  const snapshotSelections = Object.fromEntries(
+    Object.entries(editor.issue_snapshot_fields ?? {}).map(([alias, source]) => [
+      alias,
+      consumerFields[alias] ?? { source, required: true },
+    ]),
+  );
+  // Admission conversions belong to source identities, not just the template's local aliases.
+  function changeSnapshotFields(fields: Record<string, S['FactoryFlowIssueFieldSelection']>) {
+    const changed = new Set(
+      Object.entries(fields).flatMap(([alias, selection]) =>
+        snapshotSelections[alias] &&
+        issueFieldSourceKey(snapshotSelections[alias].source) !==
+          issueFieldSourceKey(selection.source)
+          ? [alias]
+          : [],
+      ),
     );
-    return field?.required_supported ? [{ alias, field, required: true }] : [];
-  });
+    setConsumerFields(fields);
+    if (changed.size)
+      setAdmission((policy) =>
+        policy
+          ? {
+              ...policy,
+              priority: changed.has(policy.priority.field)
+                ? { ...policy.priority, values: {} }
+                : policy.priority,
+              risk: changed.has(policy.risk.field) ? { ...policy.risk, values: {} } : policy.risk,
+              allowed: Object.fromEntries(
+                Object.entries(policy.allowed ?? {}).filter(([alias]) => !changed.has(alias)),
+              ),
+            }
+          : policy,
+      );
+  }
+  const snapshotSources = Object.entries(snapshotSelections);
+  const snapshotFields = selectedIssueFields(snapshotSelections, catalog).map(
+    ({ alias, field, selection }) => ({ alias, field, required: selection.required }),
+  );
   const snapshotReady =
     !needs('issue_snapshot') ||
     (!!catalog &&
@@ -149,25 +215,42 @@ function ExampleBindings({
       !capabilities.error &&
       snapshotSources.length > 0 &&
       snapshotFields.length === snapshotSources.length &&
+      snapshotFields.every(({ field, required }) => !required || field.required_supported) &&
       !!admission &&
-      validIssueAdmission(admission, snapshotFields, catalog.classification));
-  const sizeField = snapshotFields.find(({ field }) => field.source.kind === 'size')?.field;
-  const sizes =
-    sizeField?.shape.type === 'enum'
-      ? sizeField.shape.values.filter((value): value is string => typeof value === 'string')
-      : [];
-  const sizeCondition = Object.entries(editor.choice_thresholds ?? {}).find(
-    ([, source]) => source.kind === 'size',
-  )?.[0];
+      validIssueAdmission(admission, snapshotFields));
+  const conditions = editor.choice_thresholds ?? {};
+  const conditionsReady = Object.entries(conditions).every(([node, alias]) => {
+    const field = snapshotFields.find((field) => field.alias === alias)?.field;
+    return field?.shape.type === 'enum' && field.shape.values.includes(thresholds[node] ?? '');
+  });
   const ready =
     snapshotReady &&
-    (!needs('choice_threshold') || (!!sizeCondition && sizes.includes(specificationFromSize))) &&
+    formsReady &&
+    (!needs('choice_threshold') || (Object.keys(conditions).length > 0 && conditionsReady)) &&
     (!needs('accepted_predecessor') || !!inputs.accepted_predecessor?.outcomes.length) &&
     (!needs('publication') || !!publisher) &&
     commandSteps.every(
       (step) => !commandRequired(step) || commandSelections.some(([alias]) => alias === step.alias),
     ) &&
     reasoningSteps.every((step) => !!profiles[step.alias]);
+
+  const signature = JSON.stringify({
+    projectId,
+    preset: preset.reference,
+    profiles,
+    commands,
+    target,
+    admission,
+    inputs,
+    selectedForms,
+    snapshotSelections,
+    thresholds,
+    catalogVersion: catalog?.definition_version,
+    writer: capabilities.data?.issue_classification?.plugin,
+  });
+  const latestRef = useRef({ signature, ready });
+  latestRef.current = { signature, ready };
+  const [problem, setProblem] = useState(false);
 
   async function open() {
     if (!ready || busy) return;
@@ -176,6 +259,7 @@ function ExampleBindings({
     setBusy(true);
     setError(undefined);
     setIssues([]);
+    setProblem(false);
     const publication = publisher && {
       plugin: publisher.plugin,
       target: publisher.target,
@@ -183,14 +267,20 @@ function ExampleBindings({
     };
     const budget = { ...editor.budget };
     const permissions = [
-      ...Object.values(profiles).map(({ profile }) => {
+      ...Object.values(profiles).map(({ profile, build }) => {
         for (const dimension of Object.keys(budget) as (keyof typeof budget)[]) {
           budget[dimension] = Math.max(budget[dimension], profile.definition.budget[dimension]);
         }
-        return profile.definition.permissions;
+        return profile.definition.execution_binding === 'step'
+          ? (build.execution_permissions ?? emptyFactoryPermissions())
+          : profile.definition.permissions;
       }),
       ...commandSelections.map(([, selection]) => selection.permissions),
       ...(publication ? [publication.permissions] : []),
+      {
+        ...emptyFactoryPermissions(),
+        plugins: Object.values(selectedForms).flatMap((form) => (form ? [form.writer] : [])),
+      },
     ].reduce(mergePermissions, emptyFactoryPermissions());
     try {
       const result = await api.resolvePreset(
@@ -207,15 +297,23 @@ function ExampleBindings({
             ]),
           ),
           commands: Object.fromEntries(commandSelections),
+          ...(Object.keys(selectedForms).length
+            ? {
+                issue_fields: Object.fromEntries(
+                  Object.entries(selectedForms).flatMap(([node, form]) =>
+                    form ? [[node, form.form]] : [],
+                  ),
+                ),
+              }
+            : {}),
           ...(publication ? { publication } : {}),
           ...(needs('issue_snapshot') && catalog && admission
             ? {
                 issue_snapshot: {
                   definition_version: catalog.definition_version,
                   admission,
-                  ...(needs('choice_threshold') && sizeCondition
-                    ? { choice_thresholds: { [sizeCondition]: specificationFromSize } }
-                    : {}),
+                  fields: snapshotSelections,
+                  ...(Object.keys(conditions).length ? { choice_thresholds: thresholds } : {}),
                 },
               }
             : {}),
@@ -226,6 +324,10 @@ function ExampleBindings({
         controller.signal,
       );
       if (controller.signal.aborted) return;
+      if (latestRef.current.signature !== signature || !latestRef.current.ready) {
+        setProblem(true);
+        return;
+      }
       if (result.diagnostics.length) setIssues(result.diagnostics);
       else if (result.flow && !result.dependencies.length) onOpen(result.flow);
       else throw new Error(t('factory.exampleUnavailable'));
@@ -254,41 +356,38 @@ function ExampleBindings({
           {catalog ? (
             <p>{t('planning.definition', { version: catalog.definition_version })}</p>
           ) : null}
-          <ul>
-            {snapshotFields.map(({ alias, field }) => (
-              <li key={alias}>
-                {issueFieldLabel(field, t)} · {alias}
-              </li>
-            ))}
-          </ul>
+          {catalog ? (
+            <SnapshotFieldSelectors
+              fields={snapshotSelections}
+              choices={catalog}
+              onChange={changeSnapshotFields}
+              conditions={conditions}
+              thresholds={thresholds}
+              onThresholdChange={setThresholds}
+            />
+          ) : null}
           {snapshotFields.length !== snapshotSources.length || !snapshotSources.length ? (
             <p role="alert">{t('factory.issueFieldsUnavailable')}</p>
           ) : null}
-          <IssueAdmission
-            value={admission}
-            fields={snapshotFields}
-            classification={catalog?.classification}
-            onChange={setAdmission}
-          />
-          {needs('choice_threshold') ? (
-            <>
-              <SelectMenu
-                ariaLabel={t('factory.specificationFromSize')}
-                value={specificationFromSize}
-                options={[
-                  { value: '', label: t('factory.chooseInput') },
-                  ...sizes.map((size) => ({
-                    value: size,
-                    label: sizeField?.choice_labels?.[size] ?? size,
-                  })),
-                ]}
-                onValueChange={setSpecificationFromSize}
-              />
-              <p>{t('factory.specificationFromSizeHelp')}</p>
-            </>
-          ) : null}
+          <IssueAdmission value={admission} fields={snapshotFields} onChange={setAdmission} />
         </>
       ) : null}
+      {Object.entries(selectedForms).map(([node, form]) => (
+        <fieldset key={node}>
+          <legend>{stepLabel(node)}</legend>
+          {capabilities.isFetching ? (
+            <p role="status">{t('factory.loadingStepCapabilities')}</p>
+          ) : (
+            <FillIssueFields
+              projectId={projectId}
+              choices={catalog}
+              writer={capabilities.data?.issue_classification}
+              value={form}
+              onChange={(next) => setFieldForms((current) => ({ ...current, [node]: next }))}
+            />
+          )}
+        </fieldset>
+      ))}
       {reasoningSteps.map((step) => (
         <details key={step.alias}>
           <summary>
@@ -358,6 +457,7 @@ function ExampleBindings({
           onRetry={() => void capabilities.refetch()}
         />
       ) : null}
+      {problem ? <p role="alert">{t('factory.exampleDraftChanged')}</p> : null}
       {issues.length ? (
         <ul role="alert">
           {issues.map(({ path, reason }) => (

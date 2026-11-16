@@ -95,7 +95,7 @@ pub(super) const TRIAGE: Release = Release {
   version: "v4",
   manifest: asset!("presets/triage/v4.json"),
   completion: asset!("presets/triage/completion-v3.json"),
-  name: None,
+  name: Some("Triage"),
   issue_snapshot: false,
   parameters: Some(asset!("presets/triage/parameters-v1.json")),
 };

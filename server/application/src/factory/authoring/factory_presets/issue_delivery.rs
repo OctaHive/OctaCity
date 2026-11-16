@@ -63,17 +63,31 @@ pub(super) fn bind(
   }
   let mut fields = BTreeMap::new();
   let mut shapes = BTreeMap::new();
+  if selection.fields.keys().any(|alias| !config.fields.contains_key(alias)) {
+    return Err("/issue_snapshot/fields".into());
+  }
   for (alias, source) in &config.fields {
-    let selected = FlowIssueFieldSelection {
-      source: source.clone(),
-      required: true,
-    };
+    let selected = selection
+      .fields
+      .get(alias)
+      .cloned()
+      .unwrap_or_else(|| FlowIssueFieldSelection {
+        source: source.clone(),
+        required: true,
+      });
     let shape = crate::factory::issue_snapshot::field_shape(&selected, catalog)
       .ok_or_else(|| format!("/issue_snapshot/fields/{alias}"))?;
+    shapes.insert(
+      alias.clone(),
+      if selected.required {
+        FlowFieldSchema::required(shape)
+      } else {
+        FlowFieldSchema::optional(shape)
+      },
+    );
     fields.insert(alias.clone(), selected);
-    shapes.insert(alias.clone(), FlowFieldSchema::required(shape));
   }
-  bind_choice_condition(template, &selection.choice_thresholds, catalog, &config)?;
+  bind_choice_condition(template, &selection.choice_thresholds, catalog, &config, &fields)?;
   let invalid = || "/issue_snapshot/schema".to_owned();
   let schema = FlowDataSchema::new(
     config.identity.clone(),
@@ -139,6 +153,7 @@ fn bind_choice_condition(
   thresholds: &BTreeMap<FactoryKey, String>,
   catalog: &PublishedIssueProperties,
   config: &Parameters,
+  fields: &BTreeMap<FactoryKey, FlowIssueFieldSelection>,
 ) -> Result<(), String> {
   let condition = &config.choice_condition;
   let invalid = || format!("/issue_snapshot/choice_thresholds/{}", condition.node);
@@ -146,7 +161,7 @@ fn bind_choice_condition(
     return Err("/issue_snapshot/choice_thresholds".into());
   }
   let threshold = thresholds.get(&condition.node).ok_or_else(invalid)?;
-  let source = config.fields.get(&condition.field).ok_or_else(invalid)?;
+  let source = &fields.get(&condition.field).ok_or_else(invalid)?.source;
   let program = FlowGateProgram::new(
     vec![FlowGateRule {
       when: crate::issue_choice_threshold(catalog, source, &condition.path, threshold).map_err(|_| invalid())?,
@@ -174,11 +189,7 @@ pub(super) fn content() -> serde_json::Value {
   serde_json::from_slice(PARAMETERS).expect("bundled snapshot parameters")
 }
 
-pub(super) fn thresholds() -> BTreeMap<FactoryKey, FlowIssueFieldSource> {
+pub(super) fn thresholds() -> BTreeMap<FactoryKey, FactoryKey> {
   let parameters = parameters().expect("bundled snapshot parameters");
-  [(
-    parameters.choice_condition.node,
-    parameters.fields[&parameters.choice_condition.field].clone(),
-  )]
-  .into()
+  [(parameters.choice_condition.node, parameters.choice_condition.field)].into()
 }

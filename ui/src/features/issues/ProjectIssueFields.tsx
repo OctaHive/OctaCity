@@ -9,7 +9,6 @@ import type { IssuesApi, IssuePropertyCatalog, IssuePropertiesPublication } from
 import { fieldCatalogProblems, reconcileFieldCatalog } from './issueFieldCatalog';
 import { issueBuiltinChoices } from './issueBuiltinFields';
 import { IssueFieldCatalogReview } from './IssueFieldCatalogReview';
-import { IssueFieldSemantics } from './IssueFieldSemantics';
 import { IssueFieldDefinitions } from './IssueFieldDefinitions';
 import { IssueChoiceList } from './IssueChoiceList';
 import styles from './Issues.module.css';
@@ -196,10 +195,6 @@ function Editor({
           choices={draft.sizes}
           ordered
           onChange={(sizes) => setDraft({ ...draft, sizes })}
-        />
-        <IssueFieldSemantics
-          definition={draft}
-          onChange={(classification) => setDraft({ ...draft, classification })}
         />
       </fieldset>
       {problems.length ? (

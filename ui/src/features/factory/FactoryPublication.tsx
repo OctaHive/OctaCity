@@ -1,3 +1,4 @@
+import { fieldWriteMatches } from './issueFields';
 import { ISSUE_SNAPSHOT_PROBLEM_LABELS } from '../../shared/IssueSnapshotProblems';
 import { useFactoryAuthoringCapabilities } from './useFactoryAuthoringCapabilities';
 import { publishCandidateAction } from './PublicationStep';
@@ -21,9 +22,8 @@ import { QueryFailureNotice } from '../../shared/QueryStateNotice';
 import { validateFlowDraft, validateConfigurationDraft, type DraftIssue } from './validateDraft';
 import type { FactoryApi } from './api';
 import { OutcomeIssuePresentationReview } from './OutcomeIssuePresentation';
-import { ClassificationEffects } from './FlowIssueClassification';
-import { classificationAction, matchesClassification } from './issueClassification';
-import { IssueInputReview, TypedClassificationReview } from './IssueInputReview';
+import { IssueFieldSaveReview } from './FillIssueFields';
+import { IssueInputReview } from './IssueInputReview';
 
 type Subject =
   | { kind: 'flow'; request: components['schemas']['CreateFactoryFlowDefinitionRequest'] }
@@ -106,18 +106,21 @@ export function FactoryPublication({
     flow: components['schemas']['FactoryFlowConfiguration'];
     returnFocus: HTMLElement;
   } | null>(null);
-  const localWrites =
+  const fieldWrites =
     review?.flow.closure.definitions.flatMap((definition) =>
       definition.nodes.flatMap((node) =>
-        node.action?.action === classificationAction
-          ? [
-              {
-                key: `${definition.reference.id}:${definition.reference.version}:${node.key}`,
-                node: node.key,
-                action: node.action,
-              },
-            ]
-          : [],
+        node.outcomes.flatMap((outcome) =>
+          outcome.issue_fields
+            ? [
+                {
+                  key: `${definition.reference.id}:${node.key}:${outcome.key}`,
+                  node: node.key,
+                  outcome: outcome.key,
+                  write: outcome.issue_fields,
+                },
+              ]
+            : [],
+        ),
       ),
     ) ?? [];
   const project = subject.request.project_id;
@@ -128,16 +131,16 @@ export function FactoryPublication({
     );
   const capabilities = useFactoryAuthoringCapabilities(
     { api, projectId: project },
-    localWrites.length > 0 || publicationRequested,
+    fieldWrites.length > 0 || publicationRequested,
     0,
   );
-  const currentClassification = capabilities.data?.issue_classification;
-  const classificationReviewed =
-    !!currentClassification &&
+  const currentWriter = capabilities.data?.issue_classification;
+  const fieldsReviewed =
+    !!currentWriter &&
     !capabilities.isFetching &&
     !capabilities.isError &&
-    localWrites.every(({ action }) =>
-      matchesClassification(action, currentClassification, capabilities.data?.issue_fields),
+    fieldWrites.every(({ write }) =>
+      fieldWriteMatches(write, capabilities.data?.issue_fields, currentWriter, project),
     );
   const latestSignatureRef = useRef('');
   const signature = JSON.stringify(subject);
@@ -319,44 +322,31 @@ export function FactoryPublication({
               {!reviewCurrent ? <p role="alert">{t('factory.publicationReviewStale')}</p> : null}
               <OutcomeIssuePresentationReview flow={review.flow} />
               <IssueInputReview flow={review.flow} />
-              {localWrites.length ? (
-                <section aria-label={t('factory.localClassification')}>
-                  <h3>{t('factory.applyIssueClassification')}</h3>
-                  <ul>
-                    {localWrites.map(({ key, node }) => (
-                      <li key={key}>{node}</li>
-                    ))}
-                  </ul>
-                  {classificationReviewed && currentClassification ? (
-                    <>
-                      {localWrites.some(
-                        ({ action }) =>
-                          !!action.parameters &&
-                          typeof action.parameters === 'object' &&
-                          'size_labels' in action.parameters,
-                      ) ? (
-                        <ClassificationEffects choices={currentClassification} />
-                      ) : null}
-                      {capabilities.data?.issue_fields
-                        ? localWrites.map(({ key, action }) => (
-                            <TypedClassificationReview
-                              key={key}
-                              action={action}
-                              choices={capabilities.data!.issue_fields!}
-                            />
-                          ))
-                        : null}
-                    </>
+              {fieldWrites.length ? (
+                <section aria-label={t('factory.fillIssueFields')}>
+                  <h3>{t('factory.fillIssueFields')}</h3>
+                  {fieldsReviewed && capabilities.data?.issue_fields ? (
+                    fieldWrites.map(({ key, node, outcome, write }) => (
+                      <section key={key}>
+                        <h4>
+                          {node} · {outcome}
+                        </h4>
+                        <IssueFieldSaveReview
+                          write={write}
+                          choices={capabilities.data!.issue_fields!}
+                        />
+                      </section>
+                    ))
                   ) : capabilities.isFetching ? (
                     <p role="status">{t('factory.loadingStepCapabilities')}</p>
                   ) : capabilities.error ? (
                     <QueryFailureNotice
-                      title={t('factory.localClassification')}
+                      title={t('factory.fillIssueFields')}
                       error={capabilities.error}
                       onRetry={() => void capabilities.refetch()}
                     />
                   ) : (
-                    <p role="alert">{t('factory.classificationMappingChanged')}</p>
+                    <p role="alert">{t('factory.fieldFormStale')}</p>
                   )}
                 </section>
               ) : null}
@@ -364,7 +354,7 @@ export function FactoryPublication({
           }
           confirmLabel={t('factory.confirmPublish')}
           request={review.subject}
-          ready={ready && reviewCurrent && (!localWrites.length || classificationReviewed)}
+          ready={ready && reviewCurrent && (!fieldWrites.length || fieldsReviewed)}
           execute={execute}
           queryClient={queryClient}
           invalidations={[

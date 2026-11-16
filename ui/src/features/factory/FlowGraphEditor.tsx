@@ -33,7 +33,6 @@ import { BudgetSettings } from './BudgetSettings';
 import { profileBudget, flowBudget, flatGraphLimits } from './flowRequirements';
 import { FlowDocuments, type FlowDocumentServices } from './FlowDocuments';
 import { FlowProcess } from './FlowProcess';
-import { classificationAction } from './issueClassification';
 import { FlowIssueSnapshot } from './FlowIssueSnapshot';
 import { registerFlowSchemas } from './flowSchemas';
 
@@ -165,20 +164,38 @@ export function FlowGraphEditor({
   latestValueRef.current = value;
   const patchNode = (patch: NodePatch, schemas: Draft['data_schemas'] = []): Draft => {
     const current = latestValueRef.current;
-    return registerFlowSchemas(
-      {
-        ...current,
-        root: {
-          ...current.root,
-          nodes: current.root.nodes.map((item, index) =>
-            index === selected ? { ...item, ...patch } : item,
-          ),
-        },
-      },
-      schemas,
-      [],
-    );
+    const root = {
+      ...current.root,
+      nodes: current.root.nodes.map((item, index) =>
+        index === selected ? { ...item, ...patch } : item,
+      ),
+    };
+    const previous = current.root.nodes[selected];
+    const next = root.nodes[selected];
+    if (
+      previous?.kind === 'reasoning' &&
+      next?.kind === 'reasoning' &&
+      previous.outcomes.length === next.outcomes.length
+    ) {
+      const renamed = previous.outcomes.flatMap((outcome, index) => {
+        const replacement = next.outcomes[index];
+        return replacement && outcome.key !== replacement.key
+          ? [{ old: outcome.key, next: replacement.key }]
+          : [];
+      });
+      if (renamed.length === 1)
+        return registerFlowSchemas(
+          {
+            ...current,
+            root: renameAgentOutcome(root, next.key, renamed[0]!.old, renamed[0]!.next),
+          },
+          schemas,
+          [],
+        );
+    }
+    return registerFlowSchemas({ ...current, root }, schemas, []);
   };
+
   const updateNode = (patch: NodePatch, schemas?: Draft['data_schemas']) =>
     onChange(patchNode(patch, schemas));
   const addStep = () => {
@@ -438,18 +455,6 @@ export function FlowGraphEditor({
             />
           ) : null}
           <FlowBindings
-            onRemoveClassification={(root) => {
-              onChange({
-                ...value,
-                root: {
-                  ...root,
-                  ...(root.process
-                    ? { process: updateProcessRecipients(root.process, node.key, null) }
-                    : {}),
-                },
-              });
-              setSelected(Math.max(0, selected - 1));
-            }}
             authoring={authoring}
             onPendingChange={setInputPending}
             sourceDraft={stepDrafts[nodeKeys[selected] ?? '']?.reporter}
@@ -621,6 +626,39 @@ function sameInputSchema(
   );
 }
 
+/** An agent result rename retains routes, accepted inputs/code candidates and compiler result. */
+function renameAgentOutcome(
+  value: Draft['root'],
+  node: string,
+  old: string,
+  name: string,
+): Draft['root'] {
+  const root = structuredClone(value);
+  for (const edge of [...root.transitions, ...root.context_projections, ...root.data_projections])
+    if (edge.predecessor === node && edge.outcome === old) edge.outcome = name;
+  for (const step of root.nodes) {
+    for (const source of Object.values(step.input_binding?.sources ?? {}))
+      if (source.source === 'record' && source.node === node && source.outcome === old)
+        source.outcome = name;
+    if (
+      step.code?.kind === 'source' &&
+      step.code.revision.kind === 'accepted_candidate' &&
+      step.code.revision.node === node &&
+      step.code.revision.outcome === old
+    )
+      step.code.revision.outcome = name;
+    if (step.key !== node) continue;
+    for (const build of [
+      step.build,
+      ...Object.values(step.profile_selection?.candidates ?? {}).map(
+        (candidate) => candidate.build,
+      ),
+    ])
+      if (build?.result_outcome === old) build.result_outcome = name;
+  }
+  return root;
+}
+
 function renameNode(value: Draft, index: number, name: string): Draft {
   const next = structuredClone(value);
   const node = next.root.nodes[index];
@@ -648,16 +686,6 @@ function renameNode(value: Draft, index: number, name: string): Draft {
       target.code = { ...target.code, revision: { ...target.code.revision, node: name } };
     for (const source of Object.values(target.input_binding?.sources ?? {}))
       if (source.source === 'record' && source.node === old) source.node = name;
-    const action = target.action;
-    const parameters = action?.parameters;
-    if (
-      action?.action === classificationAction &&
-      parameters &&
-      typeof parameters === 'object' &&
-      'source_node' in parameters &&
-      parameters.source_node === old
-    )
-      target.action = { ...action, parameters: { ...parameters, source_node: name } };
   }
   return next;
 }

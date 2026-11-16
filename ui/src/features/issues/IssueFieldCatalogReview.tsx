@@ -46,15 +46,6 @@ export function IssueFieldCatalogReview({ definition }: { definition: Definition
           </li>
         ))}
       </ul>
-      <h3>{t('issueFields.semantics')}</h3>
-      <ul>
-        {Object.entries(definition.classification ?? {}).map(([slot, id]) => (
-          <li key={slot}>
-            {t(`issueFields.binding.${slot as keyof NonNullable<Definition['classification']>}`)} ·{' '}
-            {id}
-          </li>
-        ))}
-      </ul>
     </>
   );
 }

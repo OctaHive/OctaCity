@@ -386,9 +386,33 @@ export const enMessages = {
   'factory.bytes': 'bytes',
   'factory.projectionTooLarge':
     'This projection exceeds the input mapping limits. Select fewer optional fields or use the advanced input editor.',
+  'factory.choiceThreshold': 'Starting choice: {field} · {condition}',
+  'factory.choiceThresholdHelp':
+    'This choice and later active choices in the reviewed Project order take the configured route.',
+  'factory.snapshotFieldSource': 'Issue input field: {alias}',
   'factory.specificationFromSize': 'Create specifications starting at size',
   'factory.specificationFromSizeHelp':
     'The selected size and all greater sizes in the published Project order require specifications. Publishing freezes these routes; later catalog changes do not reroute this pipeline.',
+  'factory.snapshotEvidence': 'Issue evidence policy',
+  'factory.snapshotEvidenceHelp':
+    'Select retained evidence references for a field. A trusted observation additionally requires its exact environment, criterion and finding; scalar values and model claims do not establish proof.',
+  'factory.evidenceAlias': 'Evidence input alias',
+  'factory.evidenceField': 'Evidence for field',
+  'factory.evidenceMaximum': 'Maximum evidence references',
+  'factory.requireObservation': 'Require trusted observation',
+  'factory.trustedObservation': 'Trusted observation',
+  'factory.evidenceEnvironment': 'Environment',
+  'factory.evidenceCriterion': 'Criterion',
+  'factory.evidenceFinding': 'Required finding',
+  'factory.findingMatched': 'Matched',
+  'factory.findingNotMatched': 'Not matched',
+  'factory.findingIndeterminate': 'Indeterminate',
+  'factory.referenceIdentity': 'Identity',
+  'factory.referenceVersion': 'Version',
+  'factory.referenceDigest': 'Digest',
+  'factory.addEvidence': 'Add evidence policy',
+  'factory.removeEvidence': 'Remove evidence policy',
+  'factory.evidenceProjection': 'Evidence: {alias}',
   'factory.snapshotAdmission': 'Snapshot admission',
   'factory.snapshotAdmissionHelp':
     'Map required classification fields explicitly. Unmapped values block admission; these rules do not grant launch or evidence authority.',
@@ -2295,6 +2319,8 @@ export const enMessages = {
   'factory.examples': 'Start from an example',
   'factory.noExamples':
     'No editable examples are available. You can still build a pipeline from scratch.',
+  'factory.exampleDraftChanged':
+    'The example inputs or Project field contract changed. Your selections are retained; review them before opening the draft again.',
   'factory.exampleHelp':
     'Choose the resources for this example. In the draft, review step access and connect code where needed before publishing.',
   'factory.optionalExampleCommand':
@@ -2534,6 +2560,17 @@ export const enMessages = {
   'factory.maximum': 'Maximum',
   'factory.addField': 'Add field',
   'factory.fieldName': 'Field name',
+  'factory.fieldFormPresentationConflict':
+    'Issue card does not match the generated field form. Review Show on Issue or turn the card off; the draft is retained.',
+  'factory.fieldFormDraftChanged':
+    'The step or Project field contract changed during validation. Your draft is retained; review it before saving again.',
+  'factory.fillIssueFields': 'Fill Issue fields',
+  'factory.fillIssueFieldsHelp':
+    'The agent returns values for these fields. After acceptance, the server attempts to save only this selection to the linked Issue. Unselected and omitted optional values stay unchanged.',
+  'factory.fieldFormStale':
+    'The Project field contract or installed save capability changed. Your selection is retained; review the current types before using them.',
+  'factory.reconcileFieldForm': 'Use current field definitions',
+  'factory.exactFieldForm': 'Exact field identities and version',
   'factory.required': 'Required',
   'factory.removeField': 'Remove field',
   'factory.addEnumValue': 'Add enum value',

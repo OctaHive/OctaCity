@@ -36,6 +36,10 @@ pub(super) fn insert(schemas: &mut Map<String, Value>) {
         ("definition_version", non_negative_integer()),
         ("admission", nullable(schema_ref("FactoryFlowIssueAdmissionPolicy"))),
         ("choice_thresholds", bounded_map(key(), bounds.nodes)),
+        (
+          "fields",
+          bounded_map(schema_ref("FactoryFlowIssueFieldSelection"), bounds.schema_entries),
+        ),
       ],
       &["definition_version"],
     ),
