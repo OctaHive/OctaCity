@@ -901,6 +901,7 @@ where
       if let Some(metadata) = &mut item.metadata {
         // Resolve planning choices only through the authorized current Issue catalog.
         metadata.issue_classification = None;
+        metadata.decision_signal = None;
         if metadata.permission_declarations.as_ref().is_some_and(|permissions| {
           !crate::factory::authoring::factory_configuration_choices::permissions_selectable(
             permissions,

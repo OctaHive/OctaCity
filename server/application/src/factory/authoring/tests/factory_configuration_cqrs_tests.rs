@@ -658,6 +658,7 @@ fn configuration_choices_apply_reference_visibility_before_filter_count_and_curs
           command_output: None,
           permission_declarations: None,
           issue_classification: None,
+          decision_signal: None,
           profile_selection: Some(octacity_server_factory::FactoryProfileSelectorMetadata {
             provider: exact("private-provider", "v1", 42),
             adapter: exact("private-adapter", "v1", 43),

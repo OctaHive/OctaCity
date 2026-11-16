@@ -413,3 +413,27 @@ it('accepts a HumanGate reached only after exhausting a repeat', () => {
     ),
   ).toBe(false);
 });
+
+it('accepts an installed routing action on a Decision Signal without inventing a deterministic gate', () => {
+  const value = draft();
+  const node = value.root.nodes[0]!;
+  const plugin = { identity: 'finite-route', version: 'v1', digest: '9'.repeat(64) };
+  node.kind = 'decision_signal';
+  node.build = null;
+  node.gate = null;
+  node.profile_selection = null;
+  node.action = {
+    plugin,
+    action: 'choose-route',
+    parameters: { installed_policy_digest: 'a'.repeat(64) },
+  };
+  node.permissions.plugins = [plugin];
+  value.root.execution.permissions.plugins = [plugin];
+  value.limits.permissions.plugins = [plugin];
+  expect(validateFlowDraft(value)).toEqual([]);
+  node.action = null;
+  expect(validateFlowDraft(value)).toContainEqual({
+    field: '/root/nodes/0/action',
+    code: 'unavailable_reference',
+  });
+});

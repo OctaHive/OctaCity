@@ -230,9 +230,24 @@ pub struct FactoryChoiceMetadata {
   /// Read-only facts projected from an installed profile selector, never provider input or credentials.
   #[serde(default, skip_serializing_if = "Option::is_none")]
   pub profile_selection: Option<FactoryProfileSelectorMetadata>,
+  /// Derived installed routing inputs and finite outputs, never a second deployment declaration.
+  #[serde(default, skip_serializing_if = "Option::is_none")]
+  pub decision_signal: Option<FactorySignalNodeContract>,
   /// Reviewed Project size-to-label mapping for an installed local Issue writer.
   #[serde(default, skip_serializing_if = "Option::is_none")]
   pub issue_classification: Option<FactoryIssueClassificationMapping>,
+}
+
+/// Public authoring facts for one installed routing action. The private provider plan stays installed.
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(deny_unknown_fields)]
+pub struct FactorySignalNodeContract {
+  /// Exact installed action, including its policy pin, without credentials.
+  pub action: crate::FlowActionBinding,
+  /// Existing canonical input contract of the installed evaluation.
+  pub input: crate::FlowDataSchema,
+  /// Existing finite output contracts; the Flow author chooses their routes.
+  pub outcomes: BTreeMap<FactoryKey, crate::FlowDataSchema>,
 }
 
 /// A stable policy and exact label identities reused by this Project's Flows.
@@ -419,6 +434,15 @@ impl FactoryConfigurationChoices {
       }
     };
     if !installed(kind, &alias)
+      || metadata.decision_signal.as_ref().is_some_and(|contract| {
+        kind != FactoryChoiceKind::DecisionSignalPolicy
+          || !metadata.node_kinds.contains(&crate::FlowNodeKind::DecisionSignal)
+          || !metadata
+            .signal_purposes
+            .contains(&crate::DecisionSignalPurpose::Routing)
+          || contract.outcomes.is_empty()
+          || contract.outcomes.len() > crate::MAX_DECISION_SIGNAL_CHOICES + 2
+      })
       || metadata
         .compatible_choices
         .iter()

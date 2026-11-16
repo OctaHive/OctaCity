@@ -268,6 +268,42 @@ msb image load --input /absolute/qualified-guest.tar \
   --tag "$OCTACITY_CONTRACT_MICROSANDBOX_IMAGE"
 ```
 
+### Unrelated CI analysis through Console
+
+`packaged_console_analyzes_ci_reports_and_starts_an_independent_snapshot_consumer`
+extends the same packaged journey with three phases: publish five custom scalar
+fields, author/launch the CI pipeline, then inspect saved assessments and author
+an independent snapshot consumer. All business mutations use actual Console
+controls. Test-side HTTP requests only observe them. Technical setup installs one
+retained-report command, the existing finite HTTPS Decision Signal peer, a finite
+model process and the guarded local field writer. No Flow, Configuration, Role,
+Profile, field catalog or Issue is prepared through test-side API mutations.
+
+Use the packaged prerequisites above and set `OCTACITY_FACTORY_PILOT_CLI` to the
+reviewed Linux executable built from `fixtures/factory/pilot-cli.rs`. The qualified
+guest must provide its pinned Node path. The peer renders the selected report
+inputs; it does not write Issue fields or substitute for Server/Agent execution.
+
+```sh
+cargo test --locked -p octacity-release-harness --test factory_manual_authoring \
+  packaged_console_analyzes_ci_reports_and_starts_an_independent_snapshot_consumer \
+  -- --ignored --exact --nocapture
+```
+
+The report cases are passed, failed and absent. A failed test report is valid
+input for analysis; an absent report cannot run the analyst or save fields. The
+Signal fixture receives only the selected public Boolean and uses its existing
+shadow baseline route. Its credential and the raw CI-log canary stay outside the
+agent's input. The browser reopens the generated field form and renames its
+step/result before publication, checks exact pipeline attribution and launches
+the independent consumer from each classified Issue. The snapshots retain the
+five scalar values and producing provenance. Source-free Command results are
+verified against the signed Build/Job source mode: no repository, repository
+version or source revision is invented. Repository-backed commands still match
+their exact selected resource. `manual-ci-analysis.json` records
+the same persisted assessments/snapshots after Server restart. This finite peer
+checks composition and isolation; it does not qualify real provider quality.
+
 ## Three-step isolation and resources
 
 Two additional headless journeys author an unrelated bulletin workflow:
@@ -402,11 +438,14 @@ qualification is described below.
 uses the normal installer with `--no-example-pipeline`. It asserts an empty
 Factory Flow/Configuration/Run catalog, then runs
 `ui/tests/released/issue-delivery-authoring.spec.ts` against the packaged Console.
-The browser creates Project classification fields, a typed triage with an explicit
-local write, both published Flows/Configurations and a manual Issue. It executes
-triage, checks the applied Issue classification, opens Delivery v2, reviews its
-admission mappings and starts Delivery without a predecessor selector. Completion
-requires protected authoring, implementation, review, mandatory validation and a
+The browser creates Project fields and a triage agent result with **Fill Issue
+fields**, then publishes both Flows/Configurations and creates a manual Issue.
+It authors no semantic field roles, duplicate result schema, field mapper or
+separate apply node. It executes triage, checks the guarded save receipt and
+Issue attribution, opens Delivery v2, selects direct Issue fields and reviews
+its scheduling/risk conversions before starting it without a predecessor selector.
+The admitted snapshot and policy references remain frozen for that execution.
+Completion requires protected authoring, implementation, review, mandatory validation and a
 confirmed trusted publication outcome. Test-side HTTP is read-only; it prepares
 neither pipeline nor gates/admission/configurations.
 
@@ -415,10 +454,13 @@ with `native_installation`, `source_tree`, `server_image`, `gateway_image`,
 `github_token_file`, `source_repository`, `source_revision`,
 `delivery_write_directory`, `delivery_file`, `delivery_target_branch` and
 `delivery_token_file`. Use current verified images/native assets, an exact
-published source revision, an unused file inside the approved write directory,
+source revision equal to the current target-branch tip, an unused file inside the
+approved write directory,
 and an explicitly selected test publication target/credential. Credentials stay
 in their selected files and normal private installation owners. The target gets
-a real draft PR. The test owns a unique Compose project and volumes, but the
+a real draft PR. Publication rejects an advanced target branch; choose the new
+exact revision and rerun the full checks rather than bypassing the frozen base.
+The test owns a unique Compose project and volumes, but the
 ordinary gateway port must be free. Cleanup resets only that disposable root and
 its own volumes and restores previous local image tags.
 Evidence collection errors (including disk exhaustion and Docker log timeouts)
@@ -430,9 +472,12 @@ the test as an exception group. These paths have an ordinary unit regression in
 running Docker services or remote publication.
 
 Preserve `ui/test-results` with the optional private `evidence_directory` selected
-in the input file. A passing browser run writes `confirmed-delivery.json` with
-the Run, confirmed PR URL and mandatory completion records; it is retained as a
-private file even when the selected reporter discards in-memory attachments.
+in the input file. The browser writes `delivery-records.json` before final
+assertions, then `confirmed-delivery.json` on success. These private files retain
+the Run, applied field-save receipt and invocation attribution, admitted snapshot,
+exact Configuration and launch/access policy pins, separate Build identities,
+mandatory completion records and confirmed PR URL. The files survive when the
+selected reporter discards in-memory attachments.
 The publication result is explicitly configured through **Show on Issue → Pull
 request**, and the journey requires the confirmed link in Issue Overview.
 
@@ -443,7 +488,10 @@ OCTACITY_TEST_FACTORY_STAND_UI_INPUT=/absolute/private/ui-input.json \
 
 The historical tasks 7.1–7.5 below establish packaged execution and material
 behavior from harness-authored definitions; they do not establish full UI
-pipeline authoring. Section 8's verification report records the new run separately.
+pipeline authoring. Section 8's report records the earlier explicit-apply journey;
+[task 10.10](../../openspec/changes/add-issue-classification-snapshots/verification-10.10.md)
+qualifies the current selected-field path, applied receipts, frozen policy pins,
+independent native Builds and actual draft PR without a user-authored apply node.
 
 
 For new Issue-based consumers, use the

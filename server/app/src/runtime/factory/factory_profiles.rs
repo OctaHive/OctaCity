@@ -3,7 +3,10 @@ use crate::runtime::factory::*;
 use async_trait::async_trait;
 use octacity_server_application::*;
 use octacity_server_domain::ProjectId;
-use octacity_server_factory::{DecisionSignalProvider, FactoryChoiceKind, FactoryConfigurationChoices, FactoryKey};
+use octacity_server_factory::{
+  DecisionSignalProvider, DecisionSignalPurpose, FactoryChoiceKind, FactoryConfigurationChoices, FactoryKey,
+  FlowNodeKind, PermissionCategory,
+};
 use octacity_server_store::{FactoryConfigurationAvailability, StoreError};
 use octacity_server_store_postgres::FactoryCapabilitySource;
 use std::sync::Arc;
@@ -239,6 +242,47 @@ impl FactoryRuntimeInstaller for FactoryProfileRuntimeInstaller {
     let mut projects = self.catalog.projects.clone();
     for profile in &self.catalog.codex {
       install_pipeline_contract(&mut projects, profile.pipeline_contract());
+    }
+    for (project, choices) in &mut projects {
+      for entry in choices.entries().references {
+        if entry.kind != FactoryChoiceKind::DecisionSignalPolicy {
+          continue;
+        }
+        let mut bindings = self
+          .catalog
+          .signals
+          .iter()
+          .flat_map(|profile| &profile.bindings)
+          .filter(|binding| binding.project_id == *project && binding.plan.profile.policy() == &entry.reference);
+        let Some(binding) = bindings.next() else {
+          continue;
+        };
+        let mut metadata = choices
+          .choice_metadata(entry.kind, &entry.alias)
+          .cloned()
+          .unwrap_or_default();
+        // Retained exact bindings remain executable; their order cannot choose a new contract.
+        if bindings.next().is_some() {
+          metadata.decision_signal = None;
+        } else {
+          if !metadata.node_kinds.contains(&FlowNodeKind::DecisionSignal) {
+            metadata.node_kinds.push(FlowNodeKind::DecisionSignal);
+          }
+          if !metadata.signal_purposes.contains(&DecisionSignalPurpose::Routing) {
+            metadata.signal_purposes.push(DecisionSignalPurpose::Routing);
+          }
+          metadata.enforcement = PermissionCategory::ALL
+            .into_iter()
+            .filter(|category| binding.local_permissions.can_enforce(*category))
+            .collect();
+          metadata.permission_declarations = Some(binding.project_permissions.clone());
+          metadata.decision_signal = Some(binding.authoring_contract());
+        }
+        *choices = choices
+          .clone()
+          .with_choice_metadata(entry.kind, entry.alias, metadata)
+          .map_err(|_| FactoryRuntimeInstallationError::Invalid)?;
+      }
     }
     for selector in &self.catalog.profile_selectors {
       for (project, choices) in &mut projects {

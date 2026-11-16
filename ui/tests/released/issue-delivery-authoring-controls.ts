@@ -16,18 +16,17 @@ export async function projectFields(page: Page, project: string) {
   const components = page.getByRole('group', { name: 'Components', exact: true });
   await option(components, 'Console', 'console');
   const fields = page.getByRole('group', { name: 'Custom Issue fields', exact: true });
-  for (const [slot, name, values] of [
-    ['Risk', 'Delivery risk', ['low']],
-    ['Severity', 'Delivery severity', ['low']],
-    ['Recommended route', 'Delivery route', ['development']],
-    ['Reproducibility', 'Delivery reproducibility', ['not_applicable']],
+  for (const [name, values] of [
+    ['Delivery risk', ['low']],
+    ['Delivery severity', ['low']],
+    ['Delivery route', ['development']],
+    ['Delivery reproducibility', ['not_applicable']],
   ] as const) {
     await fields.getByRole('textbox', { name: 'New field name', exact: true }).fill(name);
     await choose(page, fields, 'Field type', 'Choice');
     await fields.getByRole('button', { name: 'Add field', exact: true }).click();
     const field = fields.getByRole('group', { name, exact: true });
     for (const value of values) await option(field, value, value);
-    await choose(page, page, `${slot} field`, name);
   }
   await page.getByRole('button', { name: 'Review field definitions', exact: true }).click();
   const dialog = page.getByRole('dialog');
@@ -222,7 +221,7 @@ export async function triage(page: Page, project: string) {
     .getByRole('textbox', { name: t('factory.pipelineName'), exact: true })
     .fill('UI triage');
   await page.getByRole('button', { name: t('factory.addNode'), exact: true }).click();
-  let node = selectedNode(page);
+  const node = selectedNode(page);
   await node.getByRole('textbox', { name: t('factory.nodeName'), exact: true }).fill('assess');
   await choose(page, node, t('factory.nodeKind'), t('factory.kind.reasoning'));
   await node.getByRole('button', { name: t('factory.addResult'), exact: true }).click();
@@ -230,20 +229,18 @@ export async function triage(page: Page, project: string) {
   await node
     .getByRole('textbox', { name: t('factory.resultName'), exact: true })
     .fill('classified');
-  await node.getByRole('button', { name: t('factory.reuseProjectFields'), exact: true }).click();
-  const picker = node.getByRole('group', {
-    name: t('factory.projectClassificationFields'),
-    exact: true,
-  });
-  for (const checkbox of await picker.getByRole('checkbox').all()) await setChecked(checkbox);
-  await node
-    .getByRole('button', { name: t('factory.useSelectedFieldContracts'), exact: true })
-    .click();
-  await node.getByText(t('factory.resultStructure'), { exact: true }).click();
-  for (const checkbox of await node
-    .getByRole('checkbox', { name: t('factory.required'), exact: true })
-    .all())
-    await setChecked(checkbox);
+  await node.getByRole('checkbox', { name: 'Fill Issue fields', exact: true }).check();
+  for (const name of [
+    'Priority',
+    'Issue component',
+    'Issue type',
+    'Issue size',
+    'Project field: Delivery risk',
+    'Project field: Delivery severity',
+    'Project field: Delivery route',
+    'Project field: Delivery reproducibility',
+  ])
+    await node.getByRole('checkbox', { name, exact: true }).check();
   await node.getByRole('button', { name: t('factory.saveResult'), exact: true }).click();
   await executor(page, node, 'Systems analyst', 'Systems analysis');
   await node
@@ -255,25 +252,9 @@ export async function triage(page: Page, project: string) {
   await node
     .getByRole('textbox', { name: `${t('factory.taskInstructions')} 1`, exact: true })
     .fill(
-      'Classify this small feature request for the Console component. Use priority low, size small, kind feature_request, component console, risk low, severity low, recommended_route development and reproducibility not_applicable. These are assessments under the selected Project definitions. Do not claim verified reproduction or change provider data.',
+      'Classify this small feature request for the Console component. Fill the selected Issue fields with priority low, size small, type feature_request and component console. Fill Delivery risk and Delivery severity with low, Delivery route with development and Delivery reproducibility with not_applicable. These are assessments under the selected Project definitions. Do not claim verified reproduction or change provider data.',
     );
   await setChecked(node.getByRole('checkbox', { name: t('factory.workTask'), exact: true }));
-  await page.getByRole('button', { name: t('factory.addNode'), exact: true }).click();
-  node = selectedNode(page);
-  await node.getByRole('textbox', { name: t('factory.nodeName'), exact: true }).fill('apply');
-  await choose(page, node, t('factory.nodeKind'), t('factory.kind.trusted_action'));
-  await route(page, 'assess', 'classified', 'apply');
-  await setChecked(
-    node.getByRole('checkbox', { name: t('factory.applyIssueClassification'), exact: true }),
-  );
-  const targets = node.getByRole('group', {
-    name: t('factory.projectClassificationFields'),
-    exact: true,
-  });
-  for (const checkbox of await targets.getByRole('checkbox').all()) await setChecked(checkbox);
-  await node
-    .getByRole('button', { name: t('factory.useProjectClassification'), exact: true })
-    .click();
   await page.getByRole('button', { name: t('factory.flowSettings'), exact: true }).click();
   const settings = page.getByRole('group', { name: t('factory.flowSettings'), exact: true });
   await choose(page, settings, t('factory.entry'), 'assess');
@@ -288,10 +269,10 @@ export async function triage(page: Page, project: string) {
     .click();
   await page
     .getByRole('option')
-    .filter({ hasText: /^apply\.applied$/ })
+    .filter({ hasText: /^assess\.classified$/ })
     .click();
   await page.getByRole('button', { name: t('factory.flowSettings'), exact: true }).click();
-  await route(page, 'apply', 'applied', 'classified', true);
+  await route(page, 'assess', 'classified', 'classified', true);
   await processInput(
     page,
     'goals',

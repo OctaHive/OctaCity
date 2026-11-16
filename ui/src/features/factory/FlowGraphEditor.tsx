@@ -422,7 +422,8 @@ export function FlowGraphEditor({
             onChange={updateNode}
           />
           {authoring &&
-          (node.kind === 'deterministic_gate' ||
+          (node.kind === 'decision_signal' ||
+            node.kind === 'deterministic_gate' ||
             node.kind === 'human_gate' ||
             node.kind === 'build_command' ||
             node.kind === 'reasoning' ||
@@ -431,6 +432,8 @@ export function FlowGraphEditor({
               key={`${selected}:${node.kind}:${bindingRevision}`}
               draft={stepDrafts[nodeKeys[selected] ?? '']}
               onDraftChange={changeStepDraft}
+              resultEditing={!!resultDrafts[nodeKeys[selected] ?? '']}
+              inputPending={inputPending}
               node={node}
               services={authoring}
               onChange={updateNode}

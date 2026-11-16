@@ -733,19 +733,13 @@ identity or changing its type. New selections reject retired values; an unchange
 retained value can survive an unrelated edit. Exact old revisions and their
 catalog versions preserve the original display meaning.
 
-A catalog can optionally bind classification semantics to those stable property
-IDs, for example `"classification":{"kind":"type","component":"component",
-"size":"effort_band"}`. Supported slots are `kind`, `component`, `size`,
-`severity`, `risk`, `recommended_route` and `reproducibility`. Each selected
-slot must reference a distinct existing `choice` property; its Project-owned
-choice IDs and the ordinary planning bounds remain the value contract. Other
-property kinds remain available for ordinary planning. Priority continues to
-use the canonical Issue content location and is not a custom binding. New selected
-actions use Project priority choice IDs; numbers remain legacy values only.
-Display labels do not infer semantics. Bindings are optional and retained with
-their exact catalog version; legacy catalogs omit `classification` and ordinary
-Issues need no classification. A binding alone grants no execution or verified
-reproduction authority.
+Current field-filling and snapshot consumers select built-in targets or stable
+Project property IDs directly. There are no required classification roles in
+Project setup. One selected-field form supplies both the generated result schema
+and the guarded save scope; display labels never select write targets. Retained
+historical catalogs may contain optional `classification` bindings, but those
+bindings are not prerequisites for the current authoring path and grant no
+execution or verified reproduction authority.
 
 The retained `IssueRevision.classification` model adds attribution without copying
 effective scalar values out of `content` or `planning.values`. Empty metadata is
@@ -809,7 +803,7 @@ evidence/dependency inventories, preserve attribution across planning/requiremen
 edits and return original creation/edit receipts after later revisions. A physical
 schema-115 snapshot and its independently restored copy migrate forward with their
 original Issue/history/catalog data and replay identities intact. Publishing new
-semantic bindings leaves legacy classification origin unknown.
+field definitions does not infer historical classification origin.
 
 Legacy priority/size-label receipt metadata remains separate from the canonical
 `IssueRevision.classification` field. Both committed and rejected receipts retain
@@ -1596,9 +1590,10 @@ IDs, publication references, sizes, catalog versions and snapshot digests.
 }
 ```
 
-Omitted priority/type lists use the advertised initial choices; custom lists
-belong to this same catalog, separately from `properties`. Size is fixed. The
-response supplies catalog version 1 in this fresh example.
+Omitted priority/type/size lists use the advertised initial choices; custom lists
+belong to this same catalog, separately from `properties`. Delivery thresholds
+use the selected choice ID and the reviewed Project order, not a fixed size
+vocabulary. The response supplies catalog version 1 in this fresh example.
 
 2. With Issue creation rights, POST to `/api/v1/projects/{project_id}/issues`
    with a new key. `CreateIssueRequest` can prepare values manually, without a
@@ -1620,8 +1615,11 @@ response supplies catalog version 1 in this fresh example.
 ```
 
 Retain `resource.id` and its Issue ETag. If triage prepares the Issue instead,
-configure the [classification action](../operations/factory-pipeline-authoring.md#fill-selected-issue-fields),
-execute it, verify applied fields on the Issue and reread its revision. Do not
+select **Fill Issue fields** on an ordinary agent result as described in
+[the authoring guide](../operations/factory-pipeline-authoring.md#fill-selected-issue-fields).
+Publish the generated form/save declaration, execute the pipeline, verify its
+`issue_fields.status: applied` receipt and the Issue values, then reread the Issue
+revision. An accepted analysis with a pending or failed save is insufficient. Do not
 copy an assessment's proposed values or Run ID into an execution request.
 
 3. Publish task-only text with Issue update authority at
@@ -1827,11 +1825,13 @@ Project choice/catalog read and `PublishIssuePropertiesCommand` publication
 contract, rather than Issue value mutation. Publication requires Project
 `Administer`; Issue `Update` does not supply that right. Denial retains the draft.
 
-Dedicated **Priorities**, **Components** and **Issue types** lists edit the
-Project's built-in choices independently of custom fields. Initial priorities
-remain `blocker`, `high`, `medium`, `low`, and initial types remain `defect` and
-`feature_request`. Size is shown as the fixed `small`, `medium`, `large` set and
-has no Project list editor. These defaults describe options, not new Issue values.
+Dedicated **Priorities**, **Components**, **Issue types** and **Sizes** lists
+edit the Project's built-in choices independently of custom fields. Initial
+priorities are `blocker`, `high`, `medium`, `low`; initial types are `defect` and
+`feature_request`; initial sizes are `small`, `medium`, `large`. Sizes can be
+renamed, added, reordered and retired. Delivery publishes explicit routes from
+the selected Project order and threshold; later catalog edits do not rewrite
+admitted policies. These defaults describe options, not new Issue values.
 
 **Custom Issue fields** supports text with a UTF-8 byte bound, choice, boolean,
 bounded integer and date. New fields and options receive stable IDs once added.
@@ -1839,13 +1839,13 @@ An optional new-option ID supports an existing semantic key such as `unknown`
 independently of its display name; IDs must satisfy the advertised key bounds
 and be unique within that list. Existing IDs and field kinds have no conversion
 controls. Rename display names or retire entries instead of removing identities.
-Optional classification selectors accept distinct choice-field IDs. Legacy
-component/kind/size bindings remain explicit custom references; they do not
-promote properties into built-in attributes or establish reproduction evidence.
+The current editor has no semantic-role selectors. Agent results and consumer
+inputs select ordinary fields directly. Those selections do not establish
+reproduction evidence.
 
 Review shows the current baseline version, Project-wide scope, full proposed
 lists, stable IDs, active/retired states, field kinds/bounds, option identities
-and semantic references. Supported kinds and count/UTF-8/integer/catalog bounds
+and ordered size choices. Supported kinds and count/UTF-8/integer/catalog bounds
 come from generated OpenAPI contracts. Invalid definitions cannot be reviewed;
 server publication validation and authorization remain authoritative.
 

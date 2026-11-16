@@ -334,7 +334,8 @@ fn signal_binding_fixture() -> FactoryDecisionSignalNodeBinding {
     )
     .unwrap(),
     project_id: ProjectId::generate(),
-    plan,
+    input_schema: plan.state_schema.clone(),
+    plan: plan.clone(),
     baseline_route: key("stay"),
     credential_profile: key("signal-credential"),
     network_host: octacity_server_factory::NetworkHost::new("signal.internal").unwrap(),
@@ -343,6 +344,7 @@ fn signal_binding_fixture() -> FactoryDecisionSignalNodeBinding {
     outputs: vec![FactoryDecisionSignalNodeOutput {
       disposition: DecisionSignalDisposition::Route(key("stay")),
       outcome: key("declared-completion"),
+      schema: plan.state_schema.clone(),
       projection,
     }],
   }
@@ -634,6 +636,167 @@ async fn private_signal_connector_catalog_installs_only_bounded_operator_owned_f
   assert!(load_factory_signal_connectors(&catalog).await.is_err());
 }
 
+struct NoIoRoutingProvider(DecisionSignalProviderCapability);
+impl DecisionSignalProvider for NoIoRoutingProvider {
+  fn network_destinations(&self) -> Option<&[NetworkHost]> {
+    Some(&[])
+  }
+  fn capability(&self) -> &DecisionSignalProviderCapability {
+    &self.0
+  }
+  fn evaluate<'a>(&'a self, _: &'a DecisionSignalProviderRequest) -> DecisionSignalProviderFuture<'a> {
+    panic!("routing installation must not call the provider")
+  }
+}
+struct RoutingInstallationReady;
+#[async_trait::async_trait]
+impl FactoryRuntimeReadiness for RoutingInstallationReady {
+  async fn available(&self) -> bool {
+    true
+  }
+}
+
+#[tokio::test]
+async fn installed_routing_contract_follows_the_pinned_runtime_binding_without_copied_metadata() {
+  let original = signal_binding_fixture();
+  let output_schema = original.plan.state_schema.clone();
+  for updated in [false, true] {
+    let mut binding = original.clone();
+    if updated {
+      binding.input_schema = FlowDataSchema::new(
+        FactoryKey::new("updated-state").unwrap(),
+        FactoryKey::new("v2").unwrap(),
+        FlowValueSchema::Boolean,
+      )
+      .unwrap();
+    }
+    let expected = binding.clone().pin_policy().unwrap();
+    let alias = FactoryKey::new("installed-router").unwrap();
+    let mut document = serde_json::json!({
+      "version":1,"codex":[],"projects":[{"project_id":binding.project_id,"build_configurations":[],"references":[
+        {"kind":"decision_signal_policy","alias":alias,"reference":binding.plan.profile.policy()},
+        {"kind":"node_capability","alias":"routing-adapter","reference":binding.action.plugin()}
+      ]}],
+      "signals":[{
+        "action":original.action,"project_id":binding.project_id,"input_schema":binding.input_schema,"plan":binding.plan,
+        "baseline_route":binding.baseline_route,"credential_profile":binding.credential_profile,
+        "network_host":binding.network_host.as_str(),"project_permissions":binding.project_permissions,
+        "local_permissions":{"grants":binding.local_permissions.grants(),"enforceable":PermissionCategory::ALL},
+        "outputs":[{"disposition":binding.outputs[0].disposition,"outcome":binding.outputs[0].outcome,
+          "projection":binding.outputs[0].projection,"schema":output_schema}]
+      }]
+    });
+    let provider = FactoryRuntimeSignalConnector::new(
+      binding.credential_profile.clone(),
+      Arc::new(NoIoRoutingProvider(binding.plan.capability.clone())),
+    );
+    let parsed = FactoryRuntimeProfileCatalog::parse_json_with_signal_providers(
+      &serde_json::to_vec(&document).unwrap(),
+      std::slice::from_ref(&provider),
+    )
+    .expect("routing output schemas belong to the installed binding, not copied choice metadata");
+    let installed = FactoryProfileRuntimeInstaller::new(parsed, Arc::new(RoutingInstallationReady), vec![])
+      .unwrap()
+      .install(resources())
+      .await
+      .unwrap();
+    let octacity_server_store::FactoryConfigurationAvailability::Available(choices) =
+      installed.capabilities.availability(binding.project_id).await.unwrap()
+    else {
+      panic!("installed choices")
+    };
+    let metadata = choices
+      .choice_metadata(FactoryChoiceKind::DecisionSignalPolicy, &alias)
+      .expect("derived routing metadata");
+    let contract = metadata.decision_signal.as_ref().expect("installed routing contract");
+    assert_eq!(contract.action, expected.action);
+    assert_eq!(contract.input, binding.input_schema);
+    assert_eq!(contract.outcomes[&binding.outputs[0].outcome], output_schema);
+    assert_eq!(
+      metadata.permission_declarations.as_ref(),
+      Some(&binding.project_permissions)
+    );
+    document["projects"][0]["references"][0]["metadata"] = serde_json::to_value(metadata).unwrap();
+    assert!(
+      FactoryRuntimeProfileCatalog::parse_json_with_signal_providers(
+        &serde_json::to_vec(&document).unwrap(),
+        std::slice::from_ref(&provider)
+      )
+      .is_err(),
+      "a copied authoring contract cannot become a second installation source"
+    );
+  }
+}
+
+#[tokio::test]
+async fn ambiguous_routing_policy_is_not_authorable_in_either_retained_binding_order() {
+  let original = signal_binding_fixture();
+  let mut replacement = original.clone();
+  replacement.input_schema = FlowDataSchema::new(
+    FactoryKey::new("replacement-input").unwrap(),
+    FactoryKey::new("v2").unwrap(),
+    FlowValueSchema::Boolean,
+  )
+  .unwrap();
+  let replacement = replacement.pin_policy().unwrap();
+  assert_ne!(original.action, replacement.action);
+  let alias = FactoryKey::new("routing-policy").unwrap();
+  let choices = FactoryConfigurationChoices::try_new(FactoryConfigurationChoiceEntries {
+    references: vec![FactoryReferenceChoice {
+      kind: FactoryChoiceKind::DecisionSignalPolicy,
+      alias: alias.clone(),
+      reference: original.plan.profile.policy().clone(),
+    }],
+    build_configurations: vec![],
+  })
+  .unwrap();
+  for bindings in [
+    vec![original.clone(), replacement.clone()],
+    vec![replacement, original.clone()],
+  ] {
+    let catalog = FactoryRuntimeProfileCatalog {
+      projects: vec![(original.project_id, choices.clone())],
+      codex: vec![],
+      signals: vec![FactoryRuntimeSignalProfile {
+        provider: Arc::new(NoIoRoutingProvider(original.plan.capability.clone())),
+        bindings,
+      }],
+      profile_selectors: vec![],
+      tool_risk: vec![],
+      review_planning: vec![],
+      executors: vec![],
+    };
+    let installation = FactoryProfileRuntimeInstaller::new(catalog, Arc::new(RoutingInstallationReady), vec![])
+      .unwrap()
+      .install(resources())
+      .await
+      .unwrap();
+    assert!(
+      installation
+        .executors
+        .iter()
+        .any(|(kind, identity, _)| *kind == FlowNodeKind::DecisionSignal
+          && *identity == NodeExecutionIdentity::External(original.action.plugin().clone())),
+      "retained routing executors remain installed for admitted Runs"
+    );
+    let octacity_server_store::FactoryConfigurationAvailability::Available(choices) = installation
+      .capabilities
+      .availability(original.project_id)
+      .await
+      .unwrap()
+    else {
+      panic!("available installation")
+    };
+    assert!(
+      choices
+        .choice_metadata(FactoryChoiceKind::DecisionSignalPolicy, &alias)
+        .and_then(|metadata| metadata.decision_signal.as_ref())
+        .is_none(),
+      "an ambiguous policy must not silently choose a retained binding for new authoring"
+    );
+  }
+}
+
 #[tokio::test]
 async fn deployment_routing_and_profile_policies_share_an_exact_installed_connector() {
   struct Provider(DecisionSignalProviderCapability);
@@ -677,14 +840,14 @@ async fn deployment_routing_and_profile_policies_share_an_exact_installed_connec
     .iter()
     .map(|output| {
       serde_json::json!({
-        "disposition":output.disposition,"outcome":output.outcome,"projection":output.projection,
+        "disposition":output.disposition,"outcome":output.outcome,"schema":output.schema,"projection":output.projection,
       })
     })
     .collect::<Vec<_>>();
   let document = serde_json::json!({
     "version":1,"projects":[{"project_id":binding.project_id,"references":[],"build_configurations":[]}],
     "codex":[],"signals":[{
-      "action":binding.action,"project_id":binding.project_id,"plan":binding.plan,
+      "action":binding.action,"project_id":binding.project_id,"input_schema":binding.input_schema,"plan":binding.plan,
       "baseline_route":binding.baseline_route,"credential_profile":binding.credential_profile,
       "network_host":binding.network_host.as_str(),"project_permissions":binding.project_permissions,
       "local_permissions":{"grants":binding.local_permissions.grants(),"enforceable":PermissionCategory::ALL},

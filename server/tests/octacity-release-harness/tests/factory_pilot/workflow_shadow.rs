@@ -189,16 +189,16 @@ impl Shadow {
     pin_questions(&mut plan, "shadow-routing-question-pack");
     assert_eq!(plan.capability, tools.binding.plan.capability);
     assert_ne!(plan.profile.question_set(), tools.binding.plan.profile.question_set());
+    let receipt = FlowDataSchema::new(key("shadow-observed"), key("v1"), FlowValueSchema::Boolean).unwrap();
     let routing = signals::routing_binding(
       resources.project.parse().unwrap(),
       key("installed-shadow-routing"),
-      key("observed"),
+      (key("observed"), receipt.clone()),
       plan,
       FlowDataMapping::new(FlowValueMapping::Constant { value: json!(true) }).unwrap(),
       routes[0].clone(),
       NetworkHost::new("localhost").unwrap(),
     );
-    let receipt = FlowDataSchema::new(key("shadow-observed"), key("v1"), FlowValueSchema::Boolean).unwrap();
     let tool_result = FlowDataSchema::new(
       key("original-source-tool-result"),
       key("v1"),

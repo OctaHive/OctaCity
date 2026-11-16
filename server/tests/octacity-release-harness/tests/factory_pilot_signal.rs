@@ -155,7 +155,7 @@ async fn exercise(mode: jev::JevResponseMode) {
   let binding = signals::routing_binding(
     project.parse().unwrap(),
     operation,
-    outcome.clone(),
+    (outcome.clone(), schema.clone()),
     plan,
     mapping(json!(true)),
     choices[0].clone(),

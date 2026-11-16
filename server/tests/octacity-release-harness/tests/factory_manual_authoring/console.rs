@@ -8,6 +8,7 @@ pub(super) async fn author(
   directory: &Path,
   locale: &str,
   code: &code::CodeInstallation,
+  phase: Option<&str>,
 ) -> String {
   let release =
     octacity_release_harness::validate_installed_browser_release(&octacity_release_harness::BrowserReleaseBundles {
@@ -37,21 +38,28 @@ pub(super) async fn author(
   );
   let origin = format!("http://{address}");
   browser_proxy::wait_for_proxy(client, &origin, &mut nginx, &directory.join("nginx.stderr.log")).await;
+  let mut environment = vec![
+    ("OCTACITY_RELEASE_PROJECT_ID", project),
+    ("OCTACITY_RELEASE_AUTHORING_LOCALE", locale),
+    ("OCTACITY_RELEASE_CODE_REVISION", code.revision.as_str()),
+    ("OCTACITY_RELEASE_CODE_REPOSITORY", code.repository.as_str()),
+  ];
+  if let Some(phase) = phase {
+    environment.push(("OCTACITY_RELEASE_CI_PHASE", phase));
+  }
   browser_proxy::run_browser_scenario(
     &required_path("OCTACITY_RELEASE_UI_ROOT", true),
     &origin,
     "factory-manual-authoring.spec.ts",
-    &[
-      ("OCTACITY_RELEASE_PROJECT_ID", project),
-      ("OCTACITY_RELEASE_AUTHORING_LOCALE", locale),
-      ("OCTACITY_RELEASE_CODE_REVISION", &code.revision),
-      ("OCTACITY_RELEASE_CODE_REPOSITORY", &code.repository),
-    ],
+    &environment,
     directory,
   )
   .await
   .unwrap();
   browser_proxy::shutdown_process(&mut nginx, &directory.join("nginx.stderr.log"), "nginx").await;
+  if phase.is_some() {
+    return String::new();
+  }
   let runs = get_json(
     client,
     format!("{management}/api/v1/projects/{project}/factory-runs?limit=100"),

@@ -296,6 +296,49 @@ CI reports, documents, accepted-result inputs and Decision Signal routing remain
 separate existing input/control settings. A reproduction choice is data, not an
 independently verified observation.
 
+## Analyze CI reports with ordinary steps
+
+A CI-analysis pipeline uses the same primitives as any other pipeline. Select an
+installed **Command** and its typed retained report. Connect only the needed
+report fields through **Accepted results** to an **AI agent**. Select its primary
+**Task from admitted Work**, independently of those typed report inputs. Enable **Fill Issue
+fields** on its successful result and choose the Project fields to update. The
+report's test verdict and successful completion of its analysis are separate facts.
+A missing required report fails the producing command; it is not a passing report
+and cannot supply an accepted input to the analyst.
+
+For advisory routing, add a **Decision Signal** step, select **Decision Signal
+policy**, then **Use Decision Signal policy**. This copies the installed finite
+input/output contract and requests its declared access. Connect the selected input
+and wire each output through ordinary routes. A published Flow is not required as
+a template. Provider configuration, credentials, calibration and control mode stay
+with the installation; the selector grants no additional authority. Only visible
+installed adapter/policy dependencies are offered. The selector shows the exact
+policy version, independently of the adapter version. A policy with multiple
+retained bindings for the same Project/reference is not offered for new
+selection; the installation must supply an unambiguous policy reference.
+Existing admitted Runs keep their exact executors. Save or cancel an open result
+form before applying a policy: the editor retains the draft and disables
+**Use Decision Signal policy** until the form is resolved. Applying a policy
+also waits for an in-flight **Accepted results → Use selected field**
+request to finish. The editor explains the wait and then re-enables the button;
+applying the policy afterwards uses its own input contract, without a late
+schema-normalization response overwriting it. Reapplying an unchanged
+result contract preserves its Issue card and public-result disclosure settings.
+A different result contract requires fresh display/disclosure review.
+A shadow policy retains its configured baseline route regardless of the
+provider's advisory choice.
+
+An independent consumer selects the saved fields in **Configure Issue snapshot**
+and starts from the Issue. It retains values, catalog pins and their original
+assessment provenance without selecting a producer Run. No output-to-Issue mapping,
+duplicate result schema or separate apply node is authored.
+
+For real PR publication, select an exact source revision matching the current
+target-branch tip. If the branch advances, publication returns `conflict`. Start a
+new execution on the new exact base and repeat the frozen candidate checks; do
+not reuse old review or validation as authority for another candidate.
+
 ## Select code only where needed
 
 Declare authorized repositories in **Available code sources**, with revision

@@ -182,10 +182,9 @@ for (const language of ['en', 'ru'] as const) {
       .getByRole('spinbutton', { name: ru ? 'Максимальное целое' : 'Maximum integer', exact: true })
       .fill('20');
     await addField('Review day', ru ? 'Дата' : 'Date');
-    await page
-      .getByRole('combobox', { name: ru ? 'Поле риска' : 'Risk field', exact: true })
-      .click();
-    await page.getByRole('option', { name: 'Exposure', exact: true }).click();
+    await expect(
+      page.getByRole('combobox', { name: ru ? 'Поле риска' : 'Risk field', exact: true }),
+    ).toHaveCount(0);
     await toggle.click();
     await toggle.click();
     await expect(environment.getByRole('spinbutton')).toHaveValue('128');
@@ -241,6 +240,7 @@ for (const language of ['en', 'ru'] as const) {
       'defect',
       'feature_request',
     ]);
+    expect(catalog.definition.classification).toBeUndefined();
     expect(planning).toHaveLength(0);
     expect(catalog.definition.sizes?.map((c) => c.id)).toEqual(['small', 'medium', 'xl', 'large']);
     await dialog.getByRole('button', { name: names.close, exact: true }).click();

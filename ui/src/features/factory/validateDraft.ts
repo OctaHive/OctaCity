@@ -183,12 +183,10 @@ export function validateFlowDraft(
       add(`${field}/build`, 'unavailable_reference');
     if (node.kind === 'trusted_action' && !node.action && !node.build)
       add(`${field}/action`, 'unavailable_reference');
-    if (
-      (node.kind === 'deterministic_gate' || node.kind === 'decision_signal') &&
-      !node.gate &&
-      !node.build
-    )
+    if (node.kind === 'deterministic_gate' && !node.gate && !node.build)
       add(`${field}/gate`, 'unavailable_reference');
+    if (node.kind === 'decision_signal' && !node.action && !node.gate && !node.build)
+      add(`${field}/action`, 'unavailable_reference');
   });
   const terminalNames = new Set<string>();
   value.root.terminals.forEach((terminal, index) => {

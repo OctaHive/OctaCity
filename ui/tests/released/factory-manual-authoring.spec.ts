@@ -1,3 +1,4 @@
+import { ciAnalysisJourney } from './ciAnalysisJourney';
 import { setChecked } from './manualAuthoringControls';
 import { expect, test } from '@playwright/test';
 import {
@@ -17,6 +18,12 @@ import { gate, handoff, route } from './manualGraphControls';
 test('authors the first document-guided pipeline through the packaged Console', async ({
   page,
 }) => {
+  const ciPhase = process.env.OCTACITY_RELEASE_CI_PHASE;
+  if (ciPhase) {
+    test.setTimeout(600_000);
+    await ciAnalysisJourney(page, ciPhase);
+    return;
+  }
   test.setTimeout(180_000);
   page.setDefaultTimeout(10_000);
   const project = process.env.OCTACITY_RELEASE_PROJECT_ID!;

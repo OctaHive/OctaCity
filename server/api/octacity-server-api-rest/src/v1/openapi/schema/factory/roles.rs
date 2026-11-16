@@ -176,9 +176,39 @@ pub(super) fn insert(schemas: &mut Map<String, Value>) {
     ),
   );
   schemas.insert(
+    "FactorySignalNodeContract".into(),
+    object(
+      [
+        ("action", schema_ref("FactoryFlowAction")),
+        ("input", schema_ref("FactoryFlowDataSchema")),
+        (
+          "outcomes",
+          bounded_map(schema_ref("FactoryFlowDataSchema"), b.schema_entries),
+        ),
+      ],
+      &["action", "input", "outcomes"],
+    ),
+  );
+  schemas.insert(
+    "FactoryDecisionSignalAuthoringContract".into(),
+    object(
+      [
+        ("alias", key()),
+        ("policy", schema_ref("FactoryImmutableReferenceResource")),
+        ("contract", schema_ref("FactorySignalNodeContract")),
+        ("permissions", schema_ref("FactoryPermissions")),
+      ],
+      &["alias", "policy", "contract", "permissions"],
+    ),
+  );
+  schemas.insert(
     "FactoryAuthoringCapabilities".into(),
     object(
       [
+        (
+          "decision_signals",
+          bounded_array(schema_ref("FactoryDecisionSignalAuthoringContract"), b.choice_entries),
+        ),
         (
           "commands",
           bounded_array(schema_ref("FactoryCommandAuthoringContract"), b.choice_entries),

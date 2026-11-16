@@ -583,19 +583,48 @@ async fn prepared_with_report(
   primary: PrimaryReport,
   configure: impl FnOnce(&mut FactoryCommandBuildProfile),
 ) -> Fixture {
-  prepared_scoped_report(profile, media_type, output_schema, primary, configure, None, None).await
+  prepared_scoped_report(
+    profile,
+    media_type,
+    output_schema,
+    primary,
+    configure,
+    FixtureCode::Inherited,
+    None,
+  )
+  .await
 }
+enum FixtureCode {
+  Inherited,
+  Scoped(FlowCodeScope),
+  SourceFree,
+}
+
 async fn prepared_scoped_report(
   mut profile: FactoryCommandBuildProfile,
   media_type: &str,
   output_schema: Option<FlowDataSchema>,
   primary: impl FnOnce(&FlowBuildIntent, &FactoryCommandBuildProfile) -> Option<serde_json::Value>,
   configure: impl FnOnce(&mut FactoryCommandBuildProfile),
-  code_scope: Option<FlowCodeScope>,
+  code: FixtureCode,
   author: Option<&RetainedAuthorFixture>,
 ) -> Fixture {
   let work = author.map_or_else(fixtures::work, |author| author.work.clone());
+  let work = if matches!(code, FixtureCode::SourceFree) {
+    crate::factory_node_test_support::repository_free_work(&work)
+  } else {
+    work
+  };
   configure_profile(&mut profile, &work);
+  if matches!(code, FixtureCode::SourceFree) {
+    let mut grants = serde_json::to_value(&profile.project_permissions).unwrap();
+    grants["mounts"]
+      .as_array_mut()
+      .unwrap()
+      .retain(|mount| mount["root"] != "/workspace/source");
+    profile.project_permissions = serde_json::from_value(grants).unwrap();
+    profile.local_permissions = LocalPermissionCeiling::fully_enforced(profile.project_permissions.clone());
+  }
   configure(&mut profile);
   let mut binding = fixtures::binding(work.subject().project_id());
   binding.tool = profile.executor.clone();
@@ -605,7 +634,15 @@ async fn prepared_scoped_report(
   binding.task_digest = profile.task_digest();
   binding.result_output = profile.outputs[0].kind().clone();
   binding.evidence = profile.outputs[1..].to_vec();
-  let (_, admitted, schema, input, _) = if let Some(scope) = code_scope {
+  let (_, admitted, schema, input, _) = if matches!(code, FixtureCode::SourceFree) {
+    assert!(output_schema.is_none());
+    fixtures::execution_fixture_without_code(
+      FlowNodeKind::BuildCommand,
+      work.clone(),
+      binding,
+      profile.project_permissions.clone(),
+    )
+  } else if let FixtureCode::Scoped(scope) = code {
     assert!(output_schema.is_none());
     fixtures::execution_fixture_with_code_scope(
       FlowNodeKind::BuildCommand,
@@ -854,10 +891,23 @@ async fn finish_prepared_with_primary(
   let base = authoritative_store_contract_fixture();
   let mut build = base.request.build;
   build.project_id = intent.input().subject().project_id();
-  build.repository_id = Some(intent.input().exact_resource().unwrap().repository_id());
+  build.repository_id = intent
+    .input()
+    .exact_resource()
+    .ok()
+    .map(|resource| resource.repository_id());
   build.configuration_id = profile.build_configuration.id();
   build.configuration_version = profile.build_configuration.version();
-  build.immutable_revision = Some(intent.input().exact_resource().unwrap().base_revision().clone());
+  build.immutable_revision = intent
+    .input()
+    .exact_resource()
+    .ok()
+    .map(|resource| resource.base_revision().clone());
+  if matches!(intent.input().code(), Some(FlowNodeCode::None)) {
+    build.repository_version = None;
+    build.source = Some(BuildSourceMode::SourceFreeV1);
+    build.input_snapshot = serde_json::json!({"parameters":{}, "source":{"kind":"source_free_v1"}});
+  }
   if let Some(FixtureSource::Deployment(deployment)) = &source {
     let context = crate::factory::commands::tests::factory_command_materializer_tests::deployment_context(
       &profile,
@@ -891,14 +941,18 @@ async fn finish_prepared_with_primary(
     profile.plugin.digest().to_string(),
   )]);
   job.job_spec_template = derive_factory_managed_job_spec_template(FactoryManagedJobSpecInput {
-    build: JobSpecBuildSnapshot::new(
-      build.id,
-      build.immutable_revision.clone().unwrap(),
-      None,
-      RepositoryLocator::new("https://example.test/ordinary.git").unwrap(),
-      BTreeMap::new(),
-    )
-    .unwrap(),
+    build: if build.source == Some(BuildSourceMode::SourceFreeV1) {
+      JobSpecBuildSnapshot::source_free(build.id, Default::default())
+    } else {
+      JobSpecBuildSnapshot::new(
+        build.id,
+        build.immutable_revision.clone().unwrap(),
+        None,
+        RepositoryLocator::new("https://example.test/ordinary.git").unwrap(),
+        BTreeMap::new(),
+      )
+      .unwrap()
+    },
     pipeline_node_id: profile.pipeline_node.clone(),
     execution: program.execution,
     protected_inputs: program.protected_inputs,
@@ -2389,7 +2443,7 @@ fn scoped_command_results_settle_with_the_executed_source_visibility_guarantee()
       None,
       count_report,
       |_| {},
-      Some(
+      FixtureCode::Scoped(
         serde_json::from_value(serde_json::json!({"kind":"selected","entries":[{"kind":"path","path":"README.md"}]}))
           .unwrap(),
       ),
@@ -2417,7 +2471,7 @@ fn scoped_command_observation_rejects_a_different_retained_source_scope() {
       None,
       count_report,
       |_| {},
-      Some(
+      FixtureCode::Scoped(
         serde_json::from_value(serde_json::json!({"kind":"selected","entries":[{"kind":"path","path":"README.md"}]}))
           .unwrap(),
       ),
@@ -2516,7 +2570,7 @@ fn protected_baseline_rejects_conclusive_observations_without_required_test_resu
           Some(value)
         },
         |_| {},
-        None,
+        FixtureCode::Inherited,
         Some(&author),
       )
       .await;
@@ -2557,7 +2611,7 @@ fn protected_baseline_observation_rechecks_the_signed_private_test_files() {
         Some(result)
       },
       |_| {},
-      None,
+      FixtureCode::Inherited,
       Some(&author),
     )
     .await;
@@ -2636,5 +2690,54 @@ fn protected_baseline_observation_rechecks_the_signed_private_test_files() {
         .is_err(),
       "a valid report from a Job missing a required private file cannot qualify",
     );
+  });
+}
+
+#[test]
+fn retained_source_free_command_report_recovers_without_repository_provenance() {
+  crate::factory::admission::tests::factory_admission_tests::run_ready(async {
+    let (_, _, profile) = crate::factory::commands::tests::factory_command_tests::command_fixture();
+    let fixture = prepared_scoped_report(
+      profile,
+      "application/json",
+      None,
+      count_report,
+      |_| {},
+      FixtureCode::SourceFree,
+      None,
+    )
+    .await;
+    assert!(fixture.query.build.build.repository_id.is_none());
+    assert!(fixture.query.build.build.immutable_revision.is_none());
+    assert!(
+      fixture.query.attempt.jobs[0]
+        .job
+        .job_spec_template
+        .source_revision()
+        .is_none()
+    );
+    let source = fixture.source(fixture.query.clone());
+    for _ in 0..2 {
+      let observed = source
+        .published_outputs(fixture.query.build.build.id, fixture.query.attempt.id, 1000)
+        .await;
+      let Ok(FactoryNodeBuildOutputObservation::Verified(outputs)) = observed else {
+        panic!("retained no-code command report must verify");
+      };
+      assert_eq!(
+        outputs.documents[0].data.as_ref().unwrap().payload().value(),
+        &serde_json::json!({"count":9})
+      );
+      assert_eq!(outputs.execution.input_digest, fixture.intent.input().digest().unwrap());
+    }
+    let mut substituted = fixture.query.clone();
+    substituted.build.build.repository_id = Some(RepositoryId::generate());
+    assert!(matches!(
+      fixture
+        .source(substituted)
+        .published_outputs(fixture.query.build.build.id, fixture.query.attempt.id, 1000)
+        .await,
+      Err(OrdinaryBuildApplicationError::Invalid)
+    ));
   });
 }

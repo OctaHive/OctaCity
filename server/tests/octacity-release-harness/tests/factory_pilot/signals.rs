@@ -104,7 +104,7 @@ pub fn plan(
 pub fn routing_binding(
   project_id: ProjectId,
   action: FactoryKey,
-  outcome: FactoryKey,
+  result: (FactoryKey, FlowDataSchema),
   plan: FactoryDecisionSignalRequestPlan,
   projection: FlowDataMapping,
   baseline_route: FactoryKey,
@@ -119,6 +119,7 @@ pub fn routing_binding(
   FactoryDecisionSignalNodeBinding {
     action: FlowActionBinding::new(plan.capability.adapter().clone(), action, json!({})).unwrap(),
     project_id,
+    input_schema: plan.state_schema.clone(),
     plan,
     baseline_route: baseline_route.clone(),
     credential_profile: key("pilot-signal-credential"),
@@ -127,7 +128,8 @@ pub fn routing_binding(
     local_permissions: LocalPermissionCeiling::fully_enforced(grants),
     outputs: vec![FactoryDecisionSignalNodeOutput {
       disposition: DecisionSignalDisposition::Route(baseline_route),
-      outcome,
+      outcome: result.0,
+      schema: result.1,
       projection,
     }],
   }
@@ -135,5 +137,5 @@ pub fn routing_binding(
   .unwrap()
 }
 pub fn routing_entry(binding: &FactoryDecisionSignalNodeBinding) -> Value {
-  json!({"action":binding.action,"project_id":binding.project_id,"plan":binding.plan,"baseline_route":binding.baseline_route,"credential_profile":binding.credential_profile,"network_host":binding.network_host.as_str(),"project_permissions":binding.project_permissions,"local_permissions":{"grants":binding.local_permissions.grants(),"enforceable":PermissionCategory::ALL},"outputs":binding.outputs.iter().map(|output|json!({"disposition":output.disposition,"outcome":output.outcome,"projection":output.projection})).collect::<Vec<_>>()})
+  json!({"action":binding.action,"project_id":binding.project_id,"input_schema":binding.input_schema,"plan":binding.plan,"baseline_route":binding.baseline_route,"credential_profile":binding.credential_profile,"network_host":binding.network_host.as_str(),"project_permissions":binding.project_permissions,"local_permissions":{"grants":binding.local_permissions.grants(),"enforceable":PermissionCategory::ALL},"outputs":binding.outputs.iter().map(|output|json!({"disposition":output.disposition,"outcome":output.outcome,"schema":output.schema,"projection":output.projection})).collect::<Vec<_>>()})
 }

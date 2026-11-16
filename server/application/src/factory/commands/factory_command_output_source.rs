@@ -203,14 +203,18 @@ impl<R: FactoryRunStore, Q: BuildQueryStore, A: ArtifactRecordStore, B: Artifact
       .iter()
       .filter(|intent| intent.node().id() == origin.node_attempt_id);
     let intent = intents.next().ok_or(Invalid)?.clone();
+    let resource = intent.input().exact_resource().ok();
+    let source_mode = matches!(intent.input().code(), Some(octacity_server_factory::FlowNodeCode::None))
+      .then_some(octacity_server_domain::BuildSourceMode::SourceFreeV1);
     if intents.next().is_some()
+      || build.build.validate().is_err()
+      || build.build.source != source_mode
       || FactoryBuildOrigin::from_intent(&intent).map_err(|_| Invalid)? != *origin
       || build.build.project_id != intent.input().subject().project_id()
-      || build.build.repository_id != Some(intent.input().exact_resource().map_err(|_| Invalid)?.repository_id())
+      || build.build.repository_id != resource.map(|resource| resource.repository_id())
       || build.build.configuration_id != intent.profile().build_configuration.id()
       || build.build.configuration_version != intent.profile().build_configuration.version()
-      || build.build.immutable_revision.as_ref()
-        != Some(intent.input().exact_resource().map_err(|_| Invalid)?.base_revision())
+      || build.build.immutable_revision.as_ref() != resource.map(|resource| resource.base_revision())
     {
       return Err(Invalid);
     }
@@ -676,7 +680,12 @@ fn verify_compiled_command_job(
   let causality = managed.factory().ok_or(Invalid)?;
   let origin = FactoryBuildOrigin::from_intent(intent).map_err(|_| Invalid)?;
   if template.build_id() != build_id
-    || template.source_revision() != Some(intent.input().exact_resource().map_err(|_| Invalid)?.base_revision())
+    || template.source_revision()
+      != intent
+        .input()
+        .exact_resource()
+        .ok()
+        .map(|resource| resource.base_revision())
     || template.execution_deadline() != Some(intent.node().deadline())
     || template.pipeline_node_id() != &profile.pipeline_node
     || managed.permissions() != &factory_job_permissions(&permissions).map_err(|_| Invalid)?

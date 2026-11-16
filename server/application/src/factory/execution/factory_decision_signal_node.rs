@@ -14,6 +14,8 @@ pub struct FactoryDecisionSignalNodeOutput {
   pub disposition: DecisionSignalDisposition,
   /// Outcome declared by the immutable Flow node.
   pub outcome: FactoryKey,
+  /// Canonical result schema advertised by the installed routing capability.
+  pub schema: FlowDataSchema,
   /// Schema-checked projection of safe retained Signal facts.
   pub projection: FlowDataMapping,
 }
@@ -24,6 +26,8 @@ pub struct FactoryDecisionSignalNodeBinding {
   pub action: FlowActionBinding,
   /// Project owning the installed capability and credentials.
   pub project_id: ProjectId,
+  /// Canonical node input, separately from the provider's projected state schema.
+  pub input_schema: FlowDataSchema,
   /// Frozen provider preparation and redaction contract.
   pub plan: FactoryDecisionSignalRequestPlan,
   /// Baseline preserved by shadow and advisory modes.
@@ -63,6 +67,19 @@ impl FactoryDecisionSignalNodeBinding {
       .map_err(|_| ApplicationError::invalid())?;
     Ok(self)
   }
+  /// Derives public authoring facts from the same installed binding used by execution.
+  #[must_use]
+  pub fn authoring_contract(&self) -> FactorySignalNodeContract {
+    FactorySignalNodeContract {
+      action: self.action.clone(),
+      input: self.input_schema.clone(),
+      outcomes: self
+        .outputs
+        .iter()
+        .map(|output| (output.outcome.clone(), output.schema.clone()))
+        .collect(),
+    }
+  }
   fn policy_digest(&self) -> Result<FactoryDigest, ApplicationError> {
     if self.outputs.is_empty() || self.outputs.len() > MAX_DECISION_SIGNAL_CHOICES + 2 {
       return Err(ApplicationError::invalid());
@@ -75,7 +92,7 @@ impl FactoryDecisionSignalNodeBinding {
     let outputs = self
       .outputs
       .iter()
-      .map(|output| (&output.disposition, &output.outcome, &output.projection))
+      .map(|output| (&output.disposition, &output.outcome, &output.schema, &output.projection))
       .collect::<Vec<_>>();
     let enforcement = PermissionCategory::ALL
       .into_iter()
@@ -86,6 +103,7 @@ impl FactoryDecisionSignalNodeBinding {
       self.action.action(),
       parameters,
       self.project_id,
+      &self.input_schema,
       &self.plan,
       &self.baseline_route,
       &self.credential_profile,

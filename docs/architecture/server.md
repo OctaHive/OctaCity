@@ -504,7 +504,21 @@ Decision Signal nodes use the same exact immutable operation binding as trusted
 actions. Their installed adapter owns the parameter contract and provider policy;
 logical node names do not choose a provider or confer transition authority.
 Installed routing bindings pin their complete preparation/consumption policy,
-output mappings and independent authority into the published action parameters.
+node input/result schemas, output mappings and independent authority into the
+published action parameters. The routing entry declares `input_schema` separately
+from `plan.state_schema`: the former describes the node input, while the latter
+validates the provider's explicitly projected state. Each `outputs[]` item owns
+its canonical `schema` beside its disposition, outcome and projection.
+The composition root derives routing authoring metadata from that same pinned
+binding, including schemas and permissions. Private Project reference metadata
+must not supply a second `decision_signal` contract; the loader rejects that
+obsolete development declaration. The public authoring choice also carries the
+exact policy reference, whose version is independent of the adapter version.
+Only a unique binding for that Project/policy reference is offered for new
+routing authoring. Multiple retained bindings make that choice unavailable;
+installation order never picks one. Their exact executors stay installed for
+admitted Runs. Independently authorable replacements use distinct immutable
+policy references/versions.
 A changed plan cannot retain the action selected by an admitted node or turn an
 earlier pending reservation into a zero-usage cancellation. Older policy bindings
 can remain installed under their original exact action alongside a replacement.

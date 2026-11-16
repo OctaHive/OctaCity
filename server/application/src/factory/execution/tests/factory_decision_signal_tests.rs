@@ -48,6 +48,7 @@ fn installed_signal_node_rejects_ambiguous_disposition_mappings() {
   let output = FactoryDecisionSignalNodeOutput {
     disposition: DecisionSignalDisposition::Route(key("right")),
     outcome: key("accepted"),
+    schema: plan.state_schema.clone(),
     projection: FlowDataMapping::new(FlowValueMapping::Constant {
       value: serde_json::json!({"count":9}),
     })
@@ -63,6 +64,7 @@ fn installed_signal_node_rejects_ambiguous_disposition_mappings() {
     )
     .unwrap(),
     project_id: input.subject().project_id(),
+    input_schema: plan.state_schema.clone(),
     plan,
     baseline_route: key("right"),
     credential_profile: key("decision-credential"),
@@ -214,6 +216,7 @@ fn installed_signal_node_uses_shadow_baseline_and_replays_without_another_provid
     let policy = FactoryDecisionSignalNodeBinding {
       action: binding,
       project_id: fixture.admission.work.subject().project_id(),
+      input_schema: fixture.schema.clone(),
       plan,
       baseline_route: key("right"),
       credential_profile: key("decision-credential"),
@@ -223,6 +226,7 @@ fn installed_signal_node_uses_shadow_baseline_and_replays_without_another_provid
       outputs: vec![FactoryDecisionSignalNodeOutput {
         disposition: DecisionSignalDisposition::Route(key("right")),
         outcome: observed.clone(),
+        schema: fixture.schema.clone(),
         projection: FlowDataMapping::new(FlowValueMapping::Constant {
           value: serde_json::json!({"count":9}),
         })

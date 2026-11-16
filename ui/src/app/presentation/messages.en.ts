@@ -2564,6 +2564,15 @@ export const enMessages = {
     'Issue card does not match the generated field form. Review Show on Issue or turn the card off; the draft is retained.',
   'factory.fieldFormDraftChanged':
     'The step or Project field contract changed during validation. Your draft is retained; review it before saving again.',
+  'factory.signalPolicy': 'Decision Signal policy',
+  'factory.signalPolicyHelp':
+    'Select an installed finite routing policy, then connect its retained inputs and outcomes. Provider credentials stay in the installation. This grants no Issue write or approval authority.',
+  'factory.noSignalPolicies': 'No installed routing policies are available.',
+  'factory.signalResultEditing':
+    'Save or cancel result editing before applying another Decision Signal policy.',
+  'factory.signalInputPending':
+    'Wait for the input field to finish connecting before applying a Decision Signal policy.',
+  'factory.useSignalPolicy': 'Use Decision Signal policy',
   'factory.fillIssueFields': 'Fill Issue fields',
   'factory.fillIssueFieldsHelp':
     'The agent returns values for these fields. After acceptance, the server attempts to save only this selection to the linked Issue. Unselected and omitted optional values stay unchanged.',

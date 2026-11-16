@@ -9,7 +9,7 @@ async fn installed_command_compiler_facts_match_the_public_authoring_contract() 
   let project = ProjectId::generate();
   let store = Arc::new(testing::InMemoryFactoryConfigurationStore::new());
   store.seed_project(project).unwrap();
-  let choices = testing::installed_command_execution_choices(project);
+  let choices = testing::installed_signal_execution_choices(project);
   store.enable_project(project, choices).unwrap();
   let policy = Arc::new(TrustedNetworkManagementPolicy);
   let handlers = Arc::new(
@@ -33,6 +33,23 @@ async fn installed_command_compiler_facts_match_the_public_authoring_contract() 
     .unwrap();
   assert_eq!(response.status(), StatusCode::OK);
   let body = json_response(response).await;
+  assert_eq!(body["decision_signals"][0]["alias"], "finite-route");
+  assert_eq!(
+    body["decision_signals"][0]["policy"],
+    serde_json::json!({"identity":"finite-signal","version":"v1","digest":"1f".repeat(32)})
+  );
+  assert_eq!(
+    body["decision_signals"][0]["contract"]["input"]["shape"],
+    serde_json::json!({"type":"boolean"})
+  );
+  assert_eq!(
+    body["decision_signals"][0]["contract"]["input"]["reference"]["identity"],
+    "signal-input"
+  );
+  assert_eq!(
+    body["decision_signals"][0]["contract"]["outcomes"]["review"]["reference"]["identity"],
+    "signal-output"
+  );
   assert_eq!(body["commands"][0]["execution"]["task_digest"], "49".repeat(32));
   assert_eq!(body["issue_fields"]["definition_version"], 0);
   let fields = body["issue_fields"]["fields"].as_array().unwrap();

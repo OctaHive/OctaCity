@@ -30,6 +30,8 @@ mod backend;
 #[allow(dead_code)]
 #[path = "release_vertical_slice/browser_proxy.rs"]
 mod browser_proxy;
+#[path = "factory_manual_authoring/ci_analysis.rs"]
+mod ci_analysis;
 #[path = "factory_manual_authoring/code.rs"]
 mod code;
 #[path = "factory_manual_authoring/console.rs"]
@@ -45,6 +47,9 @@ mod environment;
 mod installation;
 #[path = "factory_manual_authoring/isolation.rs"]
 mod isolation;
+#[allow(dead_code)]
+#[path = "factory_pilot/jev.rs"]
+mod jev;
 #[path = "factory_pilot/source.rs"]
 mod local_mirror;
 #[path = "factory_manual_authoring/policies.rs"]
@@ -54,6 +59,9 @@ mod recovery;
 #[allow(dead_code)]
 #[path = "release_vertical_slice/server.rs"]
 mod server;
+#[allow(dead_code)]
+#[path = "factory_pilot/signals.rs"]
+mod signals;
 #[allow(dead_code)]
 #[path = "release_vertical_slice/support.rs"]
 mod support;
@@ -95,6 +103,7 @@ async fn packaged_console_authors_and_executes_two_isolated_agents_from_empty_pr
 #[derive(Clone, Copy)]
 enum Scenario<'a> {
   Headless,
+  CiAnalysis,
   Console(&'a str),
   RepositoryFree,
   Repositories,
@@ -119,9 +128,16 @@ async fn manual_workflow_recovers_after_accepted_result_with_original_documents_
   journey(Scenario::Recovery).await;
 }
 
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+#[ignore = "requires packaged Console/Server, disposable services and qualified Microsandbox"]
+async fn packaged_console_analyzes_ci_reports_and_starts_an_independent_snapshot_consumer() {
+  journey(Scenario::CiAnalysis).await;
+}
+
 async fn journey(scenario: Scenario<'_>) {
   let locale = match scenario {
     Scenario::Console(locale) => Some(locale),
+    Scenario::CiAnalysis => Some("en"),
     _ => None,
   };
   let backend = ReleaseBackend::from_environment();
@@ -213,7 +229,7 @@ async fn journey(scenario: Scenario<'_>) {
     let published: Value = response.json().await.unwrap();
     resources.policy_version = published["resource"]["version"].as_u64().unwrap();
   }
-  let profile = installation::profile(&directory, &resources, &backend, &runtime.octa_root);
+  let mut profile = installation::profile(&directory, &resources, &backend, &runtime.octa_root);
   let observed_plugins = code::observe_git(&directory, &runtime.source_plugins);
   let code = if locale.is_some() || matches!(scenario, Scenario::Repositories) {
     Some(
@@ -250,14 +266,27 @@ async fn journey(scenario: Scenario<'_>) {
   } else {
     None
   };
+  if matches!(scenario, Scenario::CiAnalysis) {
+    let catalog = ci_analysis::fields(&client, &origin, &resources.project, &directory, code.as_ref().unwrap()).await;
+    ci_analysis::model(&directory, &mut profile, &catalog);
+  }
   shutdown_server(&mut server, &log).await;
   let codes: Vec<_> = code
     .iter()
+    .filter(|_| !matches!(scenario, Scenario::CiAnalysis))
     .chain(second_code.iter())
     .map(|code| &code.profile)
     .collect();
   let profiles = installation::catalog(&directory, &resources, &profile, &codes);
-  let connectors = private_file(&directory, "connectors.json", r#"{"version":1,"connectors":[]}"#);
+  let ci = if matches!(scenario, Scenario::CiAnalysis) {
+    Some(ci_analysis::install(&directory, &resources, &profile, &profiles).await)
+  } else {
+    None
+  };
+  let connectors = ci.as_ref().map_or_else(
+    || private_file(&directory, "connectors.json", r#"{"version":1,"connectors":[]}"#),
+    |installation| installation.connectors.clone(),
+  );
   let config = write_factory_server_config(
     &directory,
     &input,
@@ -266,6 +295,19 @@ async fn journey(scenario: Scenario<'_>) {
       connectors: &connectors,
     },
   );
+  if matches!(scenario, Scenario::CiAnalysis) {
+    let mut configured: toml::Value = toml::from_str(&fs::read_to_string(&config).unwrap()).unwrap();
+    configured.as_table_mut().unwrap().insert(
+      "integration_management".into(),
+      toml::Value::try_from(json!({
+        "socket_path": directory.join("management.sock"),
+        "peer_uid": rustix::process::geteuid().as_raw(),
+        "principal": "ci-field-controller",
+      }))
+      .unwrap(),
+    );
+    fs::write(&config, toml::to_string(&configured).unwrap()).unwrap();
+  }
   private_file(
     &directory,
     "object-access-key",
@@ -306,7 +348,19 @@ async fn journey(scenario: Scenario<'_>) {
       .contains(&json!("none"))
   );
   let mut isolated = None;
-  let run = if let Some(locale) = locale {
+  let run = if matches!(scenario, Scenario::CiAnalysis) {
+    console::author(
+      &client,
+      &origin,
+      &resources.project,
+      &directory,
+      "en",
+      code.as_ref().unwrap(),
+      Some("author"),
+    )
+    .await;
+    ci_analysis::passed_run(&client, &origin, &resources.project).await
+  } else if let Some(locale) = locale {
     console::author(
       &client,
       &origin,
@@ -314,6 +368,7 @@ async fn journey(scenario: Scenario<'_>) {
       &directory,
       locale,
       code.as_ref().unwrap(),
+      None,
     )
     .await
   } else {
@@ -367,8 +422,15 @@ async fn journey(scenario: Scenario<'_>) {
     r#"{"OCTACITY_CODEX_AUTH":"manual-private-model-credential"}"#,
   );
   let credentials = BTreeMap::from([("manual-model".to_owned(), credential)]);
+  let agent_profile = if matches!(scenario, Scenario::CiAnalysis) {
+    &profile
+  } else {
+    code.as_ref().map_or(&profile, |code| &code.profile)
+  };
   let grants = octacity_server_store::factory_job_permissions(
-    &code.as_ref().map_or(&profile, |code| &code.profile).project_permissions,
+    ci.as_ref().map_or(&agent_profile.project_permissions, |installation| {
+      &installation.permissions
+    }),
   )
   .unwrap();
   let digest = profile.toolchain.executable.digest().to_string();
@@ -440,7 +502,9 @@ async fn journey(scenario: Scenario<'_>) {
   let state = timeout(Duration::from_secs(240), async {
     loop {
       let state = get_json(&client, format!("{origin}/api/v1/factory-runs/{run}")).await;
-      diagnostics::assert_no_failed_builds(&client, &origin, &resources.project, &directory).await;
+      if !matches!(scenario, Scenario::CiAnalysis) {
+        diagnostics::assert_no_failed_builds(&client, &origin, &resources.project, &directory).await;
+      }
       if ["completed", "failed", "cancelled"].contains(&state["state"].as_str().unwrap_or("")) {
         break state;
       }
@@ -458,13 +522,36 @@ async fn journey(scenario: Scenario<'_>) {
     "{state}; private evidence: {}",
     directory.display()
   );
-  let retained = if let Some(authored) = &isolated {
+  let retained = if matches!(scenario, Scenario::CiAnalysis) {
+    console::author(
+      &client,
+      &origin,
+      &resources.project,
+      &directory,
+      "en",
+      code.as_ref().unwrap(),
+      Some("verify"),
+    )
+    .await;
+    let requests = ci.as_ref().unwrap().peer.captured();
+    assert_eq!(requests.len(), 2, "only retained reports may reach the Decision Signal");
+    let states: std::collections::BTreeSet<_> = requests
+      .iter()
+      .map(|request| request.body["state"].to_string())
+      .collect();
+    assert_eq!(states, ["false".to_owned(), "true".to_owned()].into_iter().collect());
+    for request in &requests {
+      assert!(request.credential_matched);
+      assert!(!request.body.to_string().contains("CI_PRIVATE_LOG_CANARY"));
+    }
+    ci_analysis::retained(&client, &origin, &resources.project).await
+  } else if let Some(authored) = &isolated {
     isolation::completed(&client, &origin, authored).await
   } else {
     verification::completed(&client, &origin, &run, locale.is_none(), code.as_ref()).await
   };
   match scenario {
-    Scenario::RepositoryFree | Scenario::Recovery => assert!(
+    Scenario::CiAnalysis | Scenario::RepositoryFree | Scenario::Recovery => assert!(
       !directory.join("git-invocations").exists(),
       "repository-free execution must not invoke Git"
     ),
@@ -501,7 +588,9 @@ async fn journey(scenario: Scenario<'_>) {
   server = spawn_server(&binary, &config, &log, &directory.join("server.err"));
   wait_for_server_ready(&client, &origin, &mut server, &log).await;
   assert_eq!(
-    if let Some(authored) = &isolated {
+    if matches!(scenario, Scenario::CiAnalysis) {
+      ci_analysis::retained(&client, &origin, &resources.project).await
+    } else if let Some(authored) = &isolated {
       isolation::completed(&client, &origin, authored).await
     } else {
       verification::completed(&client, &origin, &run, locale.is_none(), code.as_ref()).await
@@ -514,6 +603,7 @@ async fn journey(scenario: Scenario<'_>) {
     fs::write(
       evidence_root.join(match scenario {
         Scenario::Headless => "manual-authoring.json".to_owned(),
+        Scenario::CiAnalysis => "manual-ci-analysis.json".to_owned(),
         Scenario::Console(locale) => format!("manual-console-{locale}.json"),
         Scenario::RepositoryFree => "manual-isolation-no-code.json".to_owned(),
         Scenario::Repositories => "manual-isolation-a-b.json".to_owned(),

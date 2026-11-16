@@ -443,8 +443,10 @@ async fn visible_factory_choices_from<S: octacity_server_store::FactoryConfigura
           entry.alias,
           octacity_server_factory::FactoryChoiceMetadata {
             node_kinds: metadata.node_kinds.clone(),
+            signal_purposes: metadata.signal_purposes.clone(),
             command_output: metadata.command_output.clone(),
             profile_selection: metadata.profile_selection.clone(),
+            decision_signal: metadata.decision_signal.clone(),
             issue_classification: metadata.issue_classification.clone(),
             // Internal qualification consumes the exact visible ceiling's declarations.
             // Generic discovery uses its separate safe metadata projection.

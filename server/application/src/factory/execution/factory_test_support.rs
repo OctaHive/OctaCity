@@ -77,6 +77,24 @@ pub fn installed_role_execution_choices(
 }
 
 /// Installed ordinary command compiler for clean-state HTTP authoring conformance.
+/// Installed routing facts for authoring tests; no Flow, Configuration or provider call is seeded.
+#[cfg(feature = "test-support")]
+pub fn installed_signal_execution_choices(project: ProjectId) -> octacity_server_factory::FactoryConfigurationChoices {
+  use octacity_server_factory::*;
+  let key = |name: &str| FactoryKey::new(name).unwrap();
+  let reference = ImmutableReference::new(key("finite-signal"), key("v1"), FactoryDigest::from_bytes([31; 32]));
+  let input = FlowDataSchema::new(key("signal-input"), key("v1"), FlowValueSchema::Boolean).unwrap();
+  let output = FlowDataSchema::new(key("signal-output"), key("v1"), FlowValueSchema::Boolean).unwrap();
+  installed_command_execution_choices(project)
+    .with_reference_choice(FactoryReferenceChoice{kind:FactoryChoiceKind::NodeCapability,alias:key("finite-adapter"),reference:reference.clone()}).unwrap()
+    .with_reference_choice(FactoryReferenceChoice{kind:FactoryChoiceKind::DecisionSignalPolicy,alias:key("finite-route"),reference:reference.clone()}).unwrap()
+    .with_choice_metadata(FactoryChoiceKind::DecisionSignalPolicy,key("finite-route"),serde_json::from_value(serde_json::json!({
+      "node_kinds":["decision_signal"],"signal_purposes":["routing"],"enforcement":[],"compatible_choices":[],
+      "decision_signal":{"action":{"plugin":reference,"action":"choose-route","parameters":{"installed_policy_digest":"a".repeat(64)}},"input":input,"outcomes":{"analyze":output,"review":output}}
+    })).unwrap()).unwrap()
+}
+
+/// Installed ordinary command with its canonical primary output; no business Flow is created.
 pub fn installed_command_execution_choices(project: ProjectId) -> octacity_server_factory::FactoryConfigurationChoices {
   use octacity_server_factory::*;
   let (installed, _) = installed_role_execution_choices(project);

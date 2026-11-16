@@ -856,6 +856,22 @@ publication. Missing metadata means compatibility is undeclared. These bounded
 hints never grant permissions or replace server-side exact contract validation;
 provider options, credentials and raw payloads are absent.
 
+The existing `factory-authoring-capabilities` response additionally includes
+`decision_signals` when installed routing contracts are available. Each entry
+contains an alias, an exact `policy` reference (identity/version/digest), the
+runtime action (including its complete installation pin), canonical input and
+finite outcome schemas, and required permission declarations. These descriptors
+are derived from the installed runtime binding, independently of published Flows;
+there is no second schema/action declaration to maintain. Entries are filtered by Project choice
+visibility, including the action's `node_capability` and permission dependencies.
+A routing policy reference with multiple retained bindings in the same Project
+has no authoring entry; array order does not resolve ambiguity. Its execution
+bindings remain installed for admitted Runs.
+Private connector plans, provider credentials and raw provider requests are not
+returned. Generic choice discovery omits this descriptor. Selecting it requests
+access; ordinary publication, admission and execution still validate the exact
+installed action and enforce authoritative ceilings.
+
 Flow Definition details may include `native_gate_policies`: exact immutable
 references recognized by the server's built-in gate contract in that published
 closure. Native gates require no deployment alias. Clients must match the whole

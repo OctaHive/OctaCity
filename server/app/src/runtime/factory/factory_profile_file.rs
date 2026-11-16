@@ -712,6 +712,7 @@ struct ToolRiskProfile {
 struct RoutingProfile {
   action: FlowActionBinding,
   project_id: ProjectId,
+  input_schema: FlowDataSchema,
   plan: FactoryDecisionSignalRequestPlan,
   baseline_route: FactoryKey,
   credential_profile: FactoryKey,
@@ -736,6 +737,7 @@ struct ProfileSelector {
 struct RoutingOutput {
   disposition: DecisionSignalDisposition,
   outcome: FactoryKey,
+  schema: FlowDataSchema,
   projection: FlowDataMapping,
 }
 #[derive(Deserialize)]
@@ -1026,6 +1028,10 @@ impl FactoryRuntimeProfileCatalog {
         })
         .map_err(|_| Invalid)?;
         for (kind, alias, metadata) in metadata {
+          // Routing contracts are derived from bindings, not another file declaration.
+          if metadata.decision_signal.is_some() {
+            return Err(Invalid);
+          }
           choices = choices
             .with_choice_metadata(kind, alias, metadata)
             .map_err(|_| Invalid)?;
@@ -1159,6 +1165,7 @@ impl FactoryRuntimeProfileCatalog {
         let binding = FactoryDecisionSignalNodeBinding {
           action: profile.action,
           project_id: profile.project_id,
+          input_schema: profile.input_schema,
           plan: profile.plan,
           baseline_route: profile.baseline_route,
           credential_profile: profile.credential_profile,
@@ -1175,6 +1182,7 @@ impl FactoryRuntimeProfileCatalog {
             .map(|output| FactoryDecisionSignalNodeOutput {
               disposition: output.disposition,
               outcome: output.outcome,
+              schema: output.schema,
               projection: output.projection,
             })
             .collect(),

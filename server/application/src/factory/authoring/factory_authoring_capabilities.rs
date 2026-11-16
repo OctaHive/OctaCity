@@ -152,6 +152,9 @@ pub struct FactoryVerificationAuthorChoice {
 /// Technical installation facts only; Source/Reporter choices retain action authority.
 #[derive(Clone, Debug, serde::Serialize)]
 pub struct FactoryAuthoringCapabilities {
+  /// Visible installed routing policies, requiring no pre-published business Flow.
+  #[serde(skip_serializing_if = "Vec::is_empty")]
+  pub decision_signals: Vec<FactoryDecisionSignalAuthoringContract>,
   /// Readable Project contracts independent of an installed local classification writer.
   #[serde(skip_serializing_if = "Option::is_none")]
   pub issue_fields: Option<FactoryIssueFieldChoices>,
@@ -184,6 +187,19 @@ pub struct FactoryAuthoringCapabilities {
   /// Unsupported protocol prerequisite, if any. Selected Build and Agent support
   /// are still checked independently during validation and placement.
   pub source_free_incompatibility: Option<&'static str>,
+}
+
+/// Project-visible installed routing contract. It grants no provider or Issue-write authority.
+#[derive(Clone, Debug, serde::Serialize)]
+pub struct FactoryDecisionSignalAuthoringContract {
+  /// Exact policy identity, independently versioned from its execution adapter.
+  pub policy: ImmutableReference,
+  /// Exact installed policy alias.
+  pub alias: FactoryKey,
+  /// Canonical input, action and finite result contracts supplied by the installation.
+  pub contract: FactorySignalNodeContract,
+  /// Installed request ceiling, narrowed again by publication and execution.
+  pub permissions: FactoryPermissionSet,
 }
 
 /// Current, visible Project classification settings for authoring and review.
@@ -297,6 +313,7 @@ impl<S: FactoryConfigurationStore> ManagementQueryUseCase<GetFactoryAuthoringCap
       verification_runners,
       candidate_publications,
       issue_classification,
+      decision_signals,
     ) = match crate::factory::authoring::factory_configuration_choices::visible_installed_factory_choices(
       self.store.as_ref(),
       self.policy.as_ref(),
@@ -371,12 +388,14 @@ impl<S: FactoryConfigurationStore> ManagementQueryUseCase<GetFactoryAuthoringCap
             .collect(),
           publications,
           classification,
+          signal_contracts(&choices),
         )
       }
-      Err(ApplicationError::CapabilityUnavailable) => (vec![], vec![], vec![], vec![], vec![], vec![], None),
+      Err(ApplicationError::CapabilityUnavailable) => (vec![], vec![], vec![], vec![], vec![], vec![], None, vec![]),
       Err(error) => return Err(error),
     };
     Ok(FactoryAuthoringCapabilities {
+      decision_signals,
       issue_fields: catalog.as_ref().map(issue_fields::contracts),
       commands,
       verification_authors,
@@ -530,5 +549,41 @@ fn command_contracts(choices: &FactoryConfigurationChoices) -> Vec<FactoryComman
     })
     .flatten()
     .take(MAX_CONFIGURATION_CHOICES_PER_KIND)
+    .collect()
+}
+
+fn signal_contracts(choices: &FactoryConfigurationChoices) -> Vec<FactoryDecisionSignalAuthoringContract> {
+  let entries = choices.entries();
+  entries
+    .references
+    .iter()
+    .filter_map(|entry| {
+      if entry.kind != FactoryChoiceKind::DecisionSignalPolicy {
+        return None;
+      }
+      let metadata = choices.choice_metadata(entry.kind, &entry.alias)?;
+      let contract = metadata.decision_signal.as_ref()?;
+      if !entries.references.iter().any(|reference| {
+        reference.kind == FactoryChoiceKind::NodeCapability && reference.reference == *contract.action.plugin()
+      }) {
+        return None;
+      }
+      let permissions = metadata
+        .permission_declarations
+        .clone()
+        .unwrap_or_else(FactoryPermissionSet::deny_all);
+      if !crate::factory::authoring::factory_configuration_choices::permissions_selectable(
+        &permissions,
+        &entries.references,
+      ) {
+        return None;
+      }
+      Some(FactoryDecisionSignalAuthoringContract {
+        policy: entry.reference.clone(),
+        alias: entry.alias.clone(),
+        contract: contract.clone(),
+        permissions,
+      })
+    })
     .collect()
 }

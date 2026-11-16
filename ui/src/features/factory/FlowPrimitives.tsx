@@ -10,6 +10,7 @@ import { FACTORY_AUTHORING_SCHEMAS } from '../../../.generated/api/factory-autho
 import { isFactoryGateProgram } from './validateDraft';
 import { CommandStep } from './CommandStep';
 import { HumanDecision } from './HumanDecision';
+import { SignalStep } from './SignalStep';
 import { ValueMappingEditor } from './ValueMappingEditor';
 import type { SourceUpdateDraft } from './FlowSourceUpdate';
 import { PredicateEditor } from './PredicateEditor';
@@ -36,8 +37,12 @@ export function FlowPrimitives({
   onChange,
   draft,
   onDraftChange,
+  resultEditing = false,
+  inputPending = false,
 }: {
   node: Node;
+  resultEditing?: boolean;
+  inputPending?: boolean;
   services: FlowAuthoringServices;
   onChange: (patch: Partial<Node>, schemas?: Schema['FactoryFlowDataSchema'][]) => void;
 } & PrimitiveDraftProps) {
@@ -82,6 +87,14 @@ export function FlowPrimitives({
       node={node}
       services={services}
       contracts={capabilities.data.human_gates}
+      onChange={onChange}
+    />
+  ) : node.kind === 'decision_signal' ? (
+    <SignalStep
+      node={node}
+      resultEditing={resultEditing}
+      inputPending={inputPending}
+      signals={capabilities.data.decision_signals ?? []}
       onChange={onChange}
     />
   ) : publication ? (

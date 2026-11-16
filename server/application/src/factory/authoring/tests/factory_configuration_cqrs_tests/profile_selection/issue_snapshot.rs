@@ -419,3 +419,94 @@ fn configuration_publication_reuses_snapshot_validation_and_pins_the_original_co
     assert_eq!(replay.configuration, applied.configuration);
   });
 }
+
+#[test]
+fn authoring_discovers_installed_signal_contract_without_a_published_flow() {
+  run_ready(async {
+    for adapter_visible in [true, false] {
+      let project = ProjectId::generate();
+      let reference = ImmutableReference::new(
+        key("finite-signal"),
+        key("v1"),
+        FactoryDigest::content_sha256(b"signal"),
+      );
+      let policy_reference = ImmutableReference::new(
+        key("routing-policy"),
+        key("policy-v2"),
+        FactoryDigest::content_sha256(b"policy"),
+      );
+      let input = FlowDataSchema::new(key("signal-input"), key("v1"), FlowValueSchema::Boolean).unwrap();
+      let output = FlowDataSchema::new(key("signal-output"), key("v1"), FlowValueSchema::Boolean).unwrap();
+      let action = FlowActionBinding::new(
+        reference.clone(),
+        key("choose-route"),
+        serde_json::json!({"installed_policy_digest":FactoryDigest::content_sha256(b"installed")}),
+      )
+      .unwrap();
+      let metadata = serde_json::from_value(serde_json::json!({
+        "node_kinds":["decision_signal"],"signal_purposes":["routing"],"enforcement":[],"compatible_choices":[],
+        "decision_signal":{"action":action,"input":input,"outcomes":{"analyze":output,"review":output}}
+      }))
+      .expect("installed routing contracts are authorable without a saved Flow");
+      let mut references = vec![FactoryReferenceChoice {
+        kind: FactoryChoiceKind::DecisionSignalPolicy,
+        alias: key("finite-route"),
+        reference: policy_reference.clone(),
+      }];
+      if adapter_visible {
+        references.push(FactoryReferenceChoice {
+          kind: FactoryChoiceKind::NodeCapability,
+          alias: key("finite-adapter"),
+          reference: reference.clone(),
+        });
+      }
+      let choices = FactoryConfigurationChoices::try_new(FactoryConfigurationChoiceEntries {
+        references,
+        build_configurations: vec![],
+      })
+      .unwrap()
+      .with_choice_metadata(FactoryChoiceKind::DecisionSignalPolicy, key("finite-route"), metadata)
+      .unwrap();
+      let policy = Arc::new(TrustedNetworkManagementPolicy);
+      let result = AuthorizedQueryHandler::new(
+        policy.clone(),
+        Arc::new(crate::FactoryRoleProfileHandlers::with_policy(
+          Arc::new(PublicationChoices::for_publication(choices)),
+          policy,
+        )),
+      )
+      .handle_query(
+        &context(),
+        crate::GetFactoryAuthoringCapabilitiesQuery { project_id: project },
+      )
+      .await
+      .unwrap();
+      let wire = serde_json::to_value(result).unwrap();
+      if !adapter_visible {
+        assert!(
+          wire.get("decision_signals").is_none(),
+          "a hidden adapter cannot become an authorable action"
+        );
+        continue;
+      }
+      assert_eq!(wire["decision_signals"][0]["alias"], "finite-route");
+      assert_eq!(
+        wire["decision_signals"][0]["policy"],
+        serde_json::to_value(policy_reference).unwrap()
+      );
+      assert_eq!(
+        wire["decision_signals"][0]["contract"]["action"],
+        serde_json::to_value(action).unwrap()
+      );
+      assert_eq!(
+        wire["decision_signals"][0]["contract"]["input"],
+        serde_json::to_value(input).unwrap()
+      );
+      assert_eq!(
+        wire["decision_signals"][0]["contract"]["outcomes"]["analyze"],
+        serde_json::to_value(output).unwrap()
+      );
+      assert!(wire["decision_signals"][0].get("credentials").is_none());
+    }
+  });
+}

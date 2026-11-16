@@ -26,6 +26,46 @@ function setup(
   const api = {
     ...factoryApi,
     getAuthoringCapabilities: vi.fn(async () => ({
+      ...(kind === 'decision_signal'
+        ? {
+            decision_signals: [
+              {
+                alias: 'finite-report-router',
+                policy: { identity: 'routing-policy', version: 'v2', digest: 'e'.repeat(64) },
+                contract: {
+                  action: {
+                    plugin: policy,
+                    action: 'choose-route',
+                    parameters: { installed_policy_digest: 'e'.repeat(64) },
+                  },
+                  input: {
+                    reference: { identity: 'signal-input', version: 'v1', digest: '1'.repeat(64) },
+                    shape: { type: 'boolean' as const },
+                  },
+                  outcomes: {
+                    analyze: {
+                      reference: {
+                        identity: 'signal-output',
+                        version: 'v1',
+                        digest: '2'.repeat(64),
+                      },
+                      shape: { type: 'boolean' as const },
+                    },
+                    review: {
+                      reference: {
+                        identity: 'signal-output',
+                        version: 'v1',
+                        digest: '2'.repeat(64),
+                      },
+                      shape: { type: 'boolean' as const },
+                    },
+                  },
+                },
+                permissions: emptyFlowDraft().limits.permissions,
+              },
+            ],
+          }
+        : {}),
       commands: [
         {
           alias: 'Check formatting',
@@ -670,4 +710,185 @@ it('normalizes an explicit guard and a retained outcome projection before applyi
     },
     expect.any(AbortSignal),
   );
+});
+
+it('authors an installed finite Decision Signal without copying a published Flow or provider parameters', async () => {
+  const user = userEvent.setup();
+  const { api, draft, policy } = setup(undefined, 'decision_signal');
+  await user.click(await screen.findByRole('combobox', { name: 'Decision Signal policy' }));
+  await user.click(screen.getByRole('option', { name: 'finite-report-router · v2' }));
+  await user.click(screen.getByRole('button', { name: 'Use Decision Signal policy' }));
+  expect(draft().root.nodes[0]).toMatchObject({
+    kind: 'decision_signal',
+    action: {
+      plugin: policy,
+      action: 'choose-route',
+      parameters: { installed_policy_digest: 'e'.repeat(64) },
+    },
+    input_schema: { identity: 'signal-input', version: 'v1', digest: '1'.repeat(64) },
+    outcomes: [
+      {
+        key: 'analyze',
+        kind: 'success',
+        schema: { identity: 'signal-output', version: 'v1', digest: '2'.repeat(64) },
+      },
+      {
+        key: 'review',
+        kind: 'success',
+        schema: { identity: 'signal-output', version: 'v1', digest: '2'.repeat(64) },
+      },
+    ],
+  });
+  expect(draft().data_schemas.map((schema) => schema.reference.identity)).toEqual([
+    'signal-input',
+    'signal-output',
+  ]);
+  expect(api.normalizeSchema).not.toHaveBeenCalled();
+  expect(api.normalizeGateProgram).not.toHaveBeenCalled();
+});
+
+it.each(['Save result', 'Cancel result edit'] as const)(
+  'keeps an open result draft intact until %s before applying another Signal policy',
+  async (resolve) => {
+    const user = userEvent.setup();
+    const { api, client, draft } = setup(undefined, 'decision_signal');
+    await user.click(await screen.findByRole('combobox', { name: 'Decision Signal policy' }));
+    await user.click(screen.getByRole('option', { name: 'finite-report-router · v2' }));
+    await user.click(screen.getByRole('button', { name: 'Use Decision Signal policy' }));
+    const capabilities = await api.getAuthoringCapabilities();
+    const installed = capabilities.decision_signals![0]!;
+    const replacement: NonNullable<
+      components['schemas']['FactoryAuthoringCapabilities']['decision_signals']
+    >[number] = {
+      ...installed,
+      alias: 'replacement-policy',
+      policy: { ...installed.policy, version: 'v3' },
+      contract: {
+        ...installed.contract,
+        action: {
+          ...installed.contract.action,
+          parameters: { installed_policy_digest: '9'.repeat(64) },
+        },
+        outcomes: { replacement: installed.contract.outcomes.analyze },
+      },
+    };
+    await act(async () => {
+      client.setQueryData(queryKeys.factoryAuthoringCapabilities('delivery'), {
+        ...capabilities,
+        decision_signals: [installed, replacement],
+      });
+    });
+    await user.click(screen.getByRole('combobox', { name: 'Decision Signal policy' }));
+    await user.click(screen.getByRole('option', { name: 'replacement-policy · v3' }));
+    await user.click(
+      within(screen.getByRole('group', { name: 'analyze' })).getByRole('button', {
+        name: 'Edit result',
+      }),
+    );
+    await user.click(screen.getByText('Technical details and reuse', { exact: true }));
+    const name = screen.getByRole('textbox', { name: 'Result key' });
+    await user.clear(name);
+    await user.type(name, 'operator_note');
+    const apply = screen.getByRole('button', { name: 'Use Decision Signal policy' });
+    expect(apply).toHaveProperty('disabled', true);
+    await user.click(apply);
+    expect(name).toHaveProperty('value', 'operator_note');
+    expect(draft().root.nodes[0]!.outcomes.map(({ key }) => key)).toEqual(['analyze', 'review']);
+    expect(
+      screen.getByText(
+        'Save or cancel result editing before applying another Decision Signal policy.',
+      ),
+    ).toBeTruthy();
+    await user.click(screen.getByRole('button', { name: resolve }));
+    expect(apply).toHaveProperty('disabled', false);
+    await user.click(apply);
+    expect(draft().root.nodes[0]!.action).toEqual(replacement.contract.action);
+    expect(draft().root.nodes[0]!.outcomes.map(({ key }) => key)).toEqual(['replacement']);
+    expect(screen.queryByRole('button', { name: 'Save result' })).toBeNull();
+  },
+);
+
+it('waits for accepted-field normalization before applying a Signal policy', async () => {
+  const user = userEvent.setup();
+  const { api, draft } = setup(undefined, 'decision_signal');
+  await screen.findByRole('combobox', { name: 'Decision Signal policy' });
+  await user.click(screen.getByRole('button', { name: 'Add step' }));
+  await user.type(screen.getByRole('textbox', { name: 'Step name' }), 'route_report');
+  await user.click(screen.getByRole('combobox', { name: 'Step type' }));
+  await user.click(screen.getByRole('option', { name: 'Decision Signal' }));
+  await user.click(screen.getByRole('combobox', { name: 'Decision Signal policy' }));
+  await user.click(screen.getByRole('option', { name: 'finite-report-router · v2' }));
+  let finish!: (value: Awaited<ReturnType<typeof api.normalizeSchema>>) => void;
+  api.normalizeSchema.mockImplementationOnce(
+    () =>
+      new Promise((resolve) => {
+        finish = resolve;
+      }),
+  );
+  const inputs = within(screen.getByRole('group', { name: 'Accepted results' }));
+  await user.click(inputs.getByRole('combobox', { name: 'Result from step' }));
+  await user.click(screen.getByRole('option', { name: 'check' }));
+  await user.click(inputs.getByRole('combobox', { name: 'Transition outcome' }));
+  await user.click(screen.getByRole('option', { name: 'accepted' }));
+  await user.click(inputs.getByRole('combobox', { name: 'Result field' }));
+  await user.click(screen.getByRole('option', { name: 'Entire typed value' }));
+  await user.clear(inputs.getByRole('textbox', { name: 'Input name' }));
+  await user.type(inputs.getByRole('textbox', { name: 'Input name' }), 'ci_report');
+  await user.click(inputs.getByRole('button', { name: 'Use selected field' }));
+  expect(finish).toBeTypeOf('function');
+  const apply = screen.getByRole('button', { name: 'Use Decision Signal policy' });
+  expect(apply).toHaveProperty('disabled', true);
+  await user.click(apply);
+  expect(draft().root.nodes[1]!.input_schema).toBeNull();
+  expect(draft().root.nodes[1]!.action).toBeNull();
+  expect(
+    screen.getByText(
+      'Wait for the input field to finish connecting before applying a Decision Signal policy.',
+    ),
+  ).toBeTruthy();
+  const connectedInput: components['schemas']['FactoryFlowDataSchema'] = {
+    reference: { identity: 'connected-ci-input', version: '1', digest: 'f'.repeat(64) },
+    shape: {
+      type: 'object',
+      fields: { ci_report: { required: true, value: { type: 'boolean' } } },
+    },
+  };
+  await act(async () => {
+    finish(connectedInput);
+  });
+  expect(draft().root.nodes[1]!.input_schema).toEqual(connectedInput.reference);
+  expect(draft().root.nodes[1]!.input_binding).toEqual({
+    sources: {
+      accepted_0: {
+        source: 'record',
+        node: 'check',
+        outcome: 'accepted',
+        view: 'payload',
+        path: '',
+      },
+    },
+    mapping: {
+      value: {
+        mapping: 'object',
+        fields: { ci_report: { mapping: 'pointer', path: '/accepted_0' } },
+      },
+    },
+  });
+  expect(apply).toHaveProperty('disabled', false);
+  await user.click(apply);
+  expect(draft().root.nodes[1]!.action).toMatchObject({
+    action: 'choose-route',
+    parameters: { installed_policy_digest: 'e'.repeat(64) },
+  });
+  expect(draft().root.nodes[1]!.input_schema).toEqual({
+    identity: 'signal-input',
+    version: 'v1',
+    digest: '1'.repeat(64),
+  });
+  expect(draft().root.nodes[1]!.outcomes.map(({ key }) => key)).toEqual(['analyze', 'review']);
+  expect(
+    screen.queryByText(
+      'Wait for the input field to finish connecting before applying a Decision Signal policy.',
+    ),
+  ).toBeNull();
 });

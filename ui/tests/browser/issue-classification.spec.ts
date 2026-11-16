@@ -15,6 +15,11 @@ for (const language of ['en', 'ru'] as const) {
     await page.setViewportSize({ width: 390, height: 844 });
     const ru = language === 'ru';
     const f = issueClassificationFixture(FIXTURE_IDS.project);
+    // Choice names belong to the Project, even when the Console language changes.
+    f.catalog.definitions.definition.sizes = [
+      { id: 'small', name: 'Project small', retired: false },
+      { id: 'large', name: 'Project large', retired: false },
+    ];
     let issue = f.issue;
     const base = `/api/v1/projects/${FIXTURE_IDS.project}/issues/${issue.id}`;
     const commands: { body: unknown; match: string | undefined }[] = [];
@@ -118,7 +123,7 @@ for (const language of ['en', 'ru'] as const) {
     await page.keyboard.press('ArrowDown');
     await page.keyboard.press('End');
     await page.keyboard.press('Enter');
-    await expect(size).toContainText(ru ? 'Большой' : 'Large');
+    await expect(size).toContainText('Project large');
     const review = panel.getByRole('button', {
       name: ru ? 'Проверить свойства' : 'Review properties',
     });
@@ -137,7 +142,7 @@ for (const language of ['en', 'ru'] as const) {
     await dialog
       .getByRole('button', { name: ru ? 'Обновить текущие данные' : 'Refresh current data' })
       .click();
-    await expect(size).toContainText(ru ? 'Большой' : 'Large');
+    await expect(size).toContainText('Project large');
     await expect(review).toBeDisabled();
     await panel
       .getByRole('button', {

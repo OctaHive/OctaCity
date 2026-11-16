@@ -52,8 +52,9 @@ test('authors triage and Delivery through the ordinary stand Console without API
   // The driver may observe the real server, but never seeds business definitions.
   for (const collection of ['flow-definitions', 'factory-configurations', 'factory-runs'])
     expect((await read(page, project, `${collection}?limit=100`)).items).toEqual([]);
+  await page.goto(`/projects/${project}`);
   const capabilities = await read(page, project, 'factory-authoring-capabilities');
-  expect(capabilities.issue_classification?.plugin.identity).toBe('stand.issue-classification');
+  expect(capabilities.issue_classification?.plugin.identity).toBe('stand.issue-fields');
   await projectFields(page, project);
   const triageTarget = await triage(page, project);
 
@@ -83,11 +84,29 @@ test('authors triage and Delivery through the ordinary stand Console without API
   const before = (await read(page, project, `issues/${issue.id}/executions`)).items;
   expect(before).toHaveLength(1);
   await settle(before[0].association.run_id);
+  const triageCompletions = await (
+    await page.request.get(`/api/v1/factory-runs/${before[0].association.run_id}/node-completions`)
+  ).json();
+  expect(triageCompletions.items).toHaveLength(1);
+  const saved = triageCompletions.items[0].record;
+  expect(saved).toMatchObject({
+    node_key: 'assess',
+    outcome: 'classified',
+    issue_fields: { status: 'applied' },
+  });
+  expect(saved.issue_fields.delivery_record).toMatch(/^[0-9a-f]{64}$/);
   const classified = await read(page, project, `issues/${issue.id}`);
   expect(classified.content.priority).toBe('low');
   expect(classified.classification.fields).toHaveLength(8);
   for (const field of classified.classification.fields) {
-    expect(field.origin).toMatchObject({ kind: 'pipeline', run_id: before[0].association.run_id });
+    expect(field.origin).toMatchObject({
+      kind: 'pipeline',
+      run_id: before[0].association.run_id,
+      record: saved.output_digest,
+      operation_id: saved.issue_fields.operation_id,
+      invocation: { node: 'assess', attempt_id: saved.node_attempt_id },
+    });
+    expect(field.origin.form).toMatch(/^[0-9a-f]{64}$/);
   }
   expect(classified.planning).toMatchObject({
     component: 'console',
@@ -98,6 +117,13 @@ test('authors triage and Delivery through the ordinary stand Console without API
   await page.getByRole('button', { name: t('factory.addPipeline'), exact: true }).click();
   await page.getByText('Start from an example', { exact: true }).click();
   await page.getByRole('button', { name: 'Ticket delivery · v2', exact: true }).click();
+  for (const [alias, field] of [
+    ['risk', 'Delivery risk'],
+    ['severity', 'Delivery severity'],
+    ['recommended_route', 'Delivery route'],
+    ['reproducibility', 'Delivery reproducibility'],
+  ])
+    await choose(page, page, `Issue input field: ${alias}`, `Project field: ${field}`);
   await setChecked(
     page.getByRole('checkbox', { name: 'Map Issue fields to admission', exact: true }),
   );
@@ -111,9 +137,9 @@ test('authors triage and Delivery through the ordinary stand Console without API
     await page
       .getByRole('spinbutton', { name: `Scheduling priority: ${value}`, exact: true })
       .fill(score!);
-  await choose(page, page, 'Admission risk field', 'Classification: Delivery risk · risk');
+  await choose(page, page, 'Admission risk field', 'Project field: Delivery risk · risk');
   await choose(page, page, 'Admission risk: low', 'Low');
-  await choose(page, page, 'Create specifications starting at size', 'Large');
+  await choose(page, page, 'Starting choice: Issue size · Requirements needed', 'Large');
   await setChecked(
     page.getByRole('checkbox', { name: 'Allow work_kind: feature_request', exact: true }),
   );
@@ -229,10 +255,37 @@ test('authors triage and Delivery through the ordinary stand Console without API
     });
   }
   const run = delivery.association.run_id;
+  const admitted = await (await page.request.get(`/api/v1/factory-runs/${run}`)).json();
+  expect(admitted).toMatchObject({
+    configuration_id: deliveryTarget.id,
+    configuration_version: deliveryTarget.version,
+  });
+  for (const binding of ['admission_policy', 'permission_ceiling']) {
+    expect(flow.configuration[binding].project_policy).toMatchObject({
+      project_id: project,
+      version: expect.any(Number),
+      digest: expect.stringMatching(/^[0-9a-f]{64}$/),
+    });
+  }
   await settle(run);
+  const after = await read(page, project, `issues/${issue.id}/executions/${delivery.id}/snapshot`);
+  expect(after.snapshot).toEqual(snapshot.snapshot);
+  const retained = await (
+    await page.request.get(`/api/v1/factory-configurations/${deliveryTarget.id}/versions/1`)
+  ).json();
+  expect(retained).toEqual(flow);
   const completions = await (
     await page.request.get(`/api/v1/factory-runs/${run}/node-completions`)
   ).json();
+  // Retain publication/guard evidence before assertions or disposable-stand cleanup.
+  await retainJsonEvidence(test.info(), 'delivery-records', {
+    run,
+    completions,
+    field_save: saved,
+    classification: classified.classification,
+    snapshot,
+    configuration: flow,
+  });
   const nodes = completions.items.map(
     (entry: { record: { node_key: string } }) => entry.record.node_key,
   );
@@ -251,6 +304,30 @@ test('authors triage and Delivery through the ordinary stand Console without API
       }),
     ]),
   );
+  const builds = await (
+    await page.request.get(`/api/v1/factory-runs/${run}/builds?limit=100`)
+  ).json();
+  const independentBuilds = [
+    'protected_tests',
+    'implementation',
+    'review',
+    'protected_validation',
+  ].map((key) => {
+    const completion = completions.items.find(
+      (entry: { record: { node_key: string } }) => entry.record.node_key === key,
+    );
+    const build = builds.items.find(
+      (entry: { record: { node_attempt_id: string } }) =>
+        entry.record.node_attempt_id === completion.record.node_attempt_id,
+    );
+    expect(build, key).toBeTruthy();
+    return build.record.build_id;
+  });
+  expect(new Set(independentBuilds).size).toBe(4);
+  const validation = completions.items.find(
+    (entry: { record: { node_key: string } }) => entry.record.node_key === 'protected_validation',
+  );
+  expect(validation.record.verified_report).toBeTruthy();
   await page.goto(`/projects/${project}/issues/${issue.id}`);
   const pullRequest = page.getByRole('link', {
     name: t('issueOutcomes.openPullRequest'),
@@ -265,6 +342,11 @@ test('authors triage and Delivery through the ordinary stand Console without API
     run,
     url: await pullRequest.getAttribute('href'),
     completions,
+    field_save: saved,
+    classification: classified.classification,
+    snapshot,
+    configuration: flow,
+    builds,
   });
 
   async function settle(run: string) {

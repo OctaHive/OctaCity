@@ -125,10 +125,19 @@ capable of processing new admitted subject or execution forms.
 ## Issue-snapshot cutover and spec order
 
 Provision Project field definitions and independently authorized text readers
-before enabling a new consumer. Publish explicit new triage application and
-Issue-snapshot delivery Flow/Configuration versions; old accepted-result
-publications, numeric priority receipts, requests and Runs retain their original
-encoding and policy. The local classification action remains opt-in. Do not
+before enabling a new consumer. Select **Fill Issue fields** on an ordinary
+agent result and choose the core/custom fields once. The server derives its
+result contract and guarded save declaration from that selection; no semantic
+role, hand-written result schema, mapping or separate apply node is required.
+The agent may analyze task text or an ordinary CI command result. A configured
+Decision Signal can route that report before analysis or route the accepted
+analysis afterward; neither route grants evidence authority.
+
+Publish explicit producer and Issue-snapshot consumer Flow/Configuration
+versions. Confirm the producer completion has an `applied` field-save receipt
+and current Issue values before starting an independent consumer. Accepted
+analysis alone does not confirm a save. Explicit producer-result inputs remain
+available for workflows that actually require a particular result. Do not
 promote every historical assessment card into current Issue values or ingest
 all discussion on upgrade. New Issue documents stay Issue-owned and never become
 Project publications through backfill or catalog discovery.
