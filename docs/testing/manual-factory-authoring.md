@@ -547,7 +547,18 @@ even if another one fails. If the journey has already failed, secondary errors
 are attached to that original exception; otherwise evidence/cleanup errors fail
 the test as an exception group. These paths have an ordinary unit regression in
 `tools/tests/test_factory_stand_native_cleanup.py`, requiring no credentials,
-running Docker services or remote publication.
+running Docker services or remote publication. Its mocked native temporary directory
+is rooted in the test-owned host temporary directory, not the native journey's
+macOS `/tmp` socket location. The budget-upgrade unit case similarly supplies
+catalog bytes at the private-reader boundary; POSIX ownership validation has its
+own tests. Both unit cases run on Windows rather than being skipped. Fault
+injection with unavailable POSIX ownership and `/tmp` reproduced seven failures
+before these corrections and none afterwards.
+
+```sh
+python3 -m unittest discover -s tools/tests -p test_factory_delivery_setup.py
+python3 -m unittest discover -s tools/tests -p test_factory_stand_native_cleanup.py
+```
 
 Preserve `ui/test-results` with the optional private `evidence_directory` selected
 in the input file. The browser writes `delivery-records.json` before final

@@ -353,7 +353,10 @@ class FactoryDeliverySetupTests(unittest.TestCase):
                 class Client:
                     def get(self, path):
                         return {"definition": {"runtime": {"immutable_image": "qualified-guest", "cpu_millis": 2000}}}
-                with mock.patch.object(setup.triage, "prepare_guest_image", return_value="qualified-guest"), \
+                # This unit case checks upgrade selection after reading the catalog;
+                # private filesystem ownership is covered by separate POSIX tests.
+                with mock.patch.object(setup.state, "read_regular_file", return_value=installed_catalog.read_bytes()), \
+                        mock.patch.object(setup.triage, "prepare_guest_image", return_value="qualified-guest"), \
                         mock.patch.object(setup, "_standard_verifiers_current", return_value=True), \
                         mock.patch("configure_local_stand_agent.read_factory_agent_profile", return_value={}), \
                         mock.patch.object(setup, "install_controller", side_effect=RuntimeError("budget upgrade selected")):

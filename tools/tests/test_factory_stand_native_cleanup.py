@@ -12,6 +12,7 @@ from tools.tests import test_factory_stand_native as native
 
 class FactoryStandNativeCleanupTests(unittest.TestCase):
     def test_evidence_failures_preserve_the_journey_error_and_release_owned_resources(self):
+        temporary_directory = tempfile.TemporaryDirectory
         for failure in (None, "directory", "copy", "docker", "reset", "tag"):
             with self.subTest(failure=failure), tempfile.TemporaryDirectory() as temporary, ExitStack() as mocks:
                 root = Path(temporary)
@@ -38,6 +39,10 @@ class FactoryStandNativeCleanupTests(unittest.TestCase):
                     return subprocess.CompletedProcess(arguments, 0,
                         stdout="retained-image" if kwargs.get("text") else b"", stderr=b"")
                 stand = native.stand
+                # The real native journey needs short macOS socket paths. This
+                # unit fixture owns no sockets and must also run without /tmp.
+                mocks.enter_context(patch.object(native.tempfile, "TemporaryDirectory",
+                    side_effect=lambda *args, **kwargs: temporary_directory(*args, **{**kwargs, "dir": root})))
                 mocks.enter_context(patch.object(native.state, "DEFAULT_ROOT", root / "absent"))
                 mocks.enter_context(patch.object(native.subprocess, "check_output", return_value=b""))
                 commands = mocks.enter_context(patch.object(native.subprocess, "run", side_effect=docker))
