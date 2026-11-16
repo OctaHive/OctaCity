@@ -11,6 +11,46 @@ MODEL = Path(__file__).resolve().parents[2] / "server/tests/octacity-release-har
 
 @unittest.skipUnless(os.name == "posix", "qualification peer uses the pinned Unix CLI contract")
 class ManualFactoryModelTests(unittest.TestCase):
+    def test_model_accepts_the_pinned_plugins_workspace_arguments(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            workspace = Path(temporary).resolve()
+            scratch = workspace / "scratch"
+            output = workspace / "output"
+            scratch.mkdir()
+            output.mkdir()
+            schema = output / "schema.json"
+            schema.write_text(json.dumps({"type":"object","properties":{"eligible":{"type":"boolean"}}}))
+            command = ["/bin/sh", str(MODEL), "--ask-for-approval=never", "exec", "--json",
+                       "--sandbox=workspace-write", "--model=finite-model", f"--output-schema={schema}",
+                       "--ignore-user-config", "--config=mcp_servers={}",
+                       f"--cd={scratch}", f"--add-dir={output}", "-"]
+            result = subprocess.run(
+                command, input="Assess Project fit. ticket-request-canary process-criteria-canary project-goals-canary",
+                cwd=workspace, text=True, capture_output=True, check=False, timeout=5,
+            )
+            self.assertEqual(result.returncode, 0, result.stderr)
+            events = [json.loads(line) for line in result.stdout.splitlines()]
+            self.assertEqual([event["type"] for event in events], ["turn.started", "item.completed", "turn.completed"])
+            self.assertEqual(events[-1]["result"], {
+                "eligible":True, "summary":"eligible-public-summary", "duplicate_search":"not_requested",
+            })
+            self.assertEqual(result.stderr, "")
+            for rejected_options in (
+                [f"--cd={workspace}", f"--add-dir={output}"],
+                [f"--cd={scratch}", f"--add-dir={workspace}"],
+                [f"--cd={scratch}"],
+                [f"--cd={scratch}", f"--add-dir={output}", "--undeclared-option"],
+            ):
+                with self.subTest(options=rejected_options):
+                    rejected = subprocess.run(
+                        [*command[:-3], *rejected_options, "-"],
+                        input="Assess Project fit. ticket-request-canary process-criteria-canary project-goals-canary",
+                        cwd=workspace, text=True, capture_output=True, check=False, timeout=5,
+                    )
+                    self.assertEqual(rejected.returncode, 64)
+                    self.assertEqual(rejected.stdout, "")
+                    self.assertEqual(rejected.stderr, "manual model fixture rejected its input contract\n")
+
     def test_bulletin_steps_receive_only_their_selected_handoff_and_document(self):
         cases = [
             ("caption", "Compose a bulletin.", "style-guide-canary", "", {"caption":"selected-caption","private_note":"compose-unselected-canary"}),

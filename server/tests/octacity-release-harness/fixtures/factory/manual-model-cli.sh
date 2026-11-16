@@ -6,13 +6,7 @@ if [ "$#" = 1 ] && [ "$1" = --version ]; then
   exit 0
 fi
 fail() { printf '%s\n' 'manual model fixture rejected its input contract' >&2; exit 64; }
-if [ "$#" = 9 ]; then
-  [ "$7" = --ignore-user-config ] && [ "$8" = '--config=mcp_servers={}' ] && [ "$9" = - ] || fail
-elif [ "$#" = 7 ]; then
-  [ "$7" = - ] || fail
-else
-  fail
-fi
+[ "$#" -ge 7 ] || fail
 [ "$5" = --model=finite-model ] || fail
 if [ "$1" = --ask-for-approval=never ]; then
   [ "$2" = exec ] && [ "$3" = --json ] && [ "$4" = --sandbox=workspace-write ] || fail
@@ -22,6 +16,25 @@ else
 fi
 case "$6" in --output-schema=*) schema=${6#--output-schema=} ;; *) fail ;; esac
 [ -f "$schema" ] && [ ! -L "$schema" ] || fail
+shift 6
+if [ "$1" = --ignore-user-config ]; then
+  [ "$#" -ge 3 ] && [ "$2" = '--config=mcp_servers={}' ] || fail
+  shift 2
+fi
+case "$1" in
+  --cd=*)
+    # Match the pinned plugin's explicit workspace contract, not arbitrary CLI options.
+    workspace=$(pwd -P)
+    [ "$#" = 3 ] && [ "$1" = "--cd=$workspace/scratch" ] \
+      && [ "$2" = "--add-dir=$workspace/output" ] || fail
+    for directory in "$workspace/scratch" "$workspace/output"; do
+      [ -d "$directory" ] && [ ! -L "$directory" ] || fail
+    done
+    cd "$workspace/scratch"
+    shift 2
+    ;;
+esac
+[ "$#" = 1 ] && [ "$1" = - ] || fail
 prompt=$(head -c 1048577)
 [ "$(printf %s "$prompt" | wc -c)" -le 1048576 ] || fail
 contains() { printf %s "$prompt" | grep -Fq -- "$1"; }

@@ -181,6 +181,30 @@ multi-page events, private file modes, exact output bytes, partial availability
 and an oversized output. They do not qualify or repair a native runtime failure;
 the retained diagnostics from the next qualified run identify that failure.
 
+The [Linux Microsandbox run on 2026-11-16](https://github.com/OctaHive/OctaCity/actions/runs/43843141392/job/133216713348)
+retained `invalid Codex stdout stream`, an empty trace and an unpublished
+`codex-run-result`. Its exact `finite-model` bytes matched the checked-in manual
+peer. The pinned Octa plugin supplies `--cd=<workspace>/scratch` and
+`--add-dir=<workspace>/output`; the peer previously rejected that argv before
+emitting events (exit 64), which the plugin then reported as an invalid stream.
+
+The peer now accepts that exact directory pair, requires existing non-symlink
+directories and rejects other paths, incomplete pairs and unknown options before
+emitting events. Model/result checks and isolated source checks remain in place.
+This changes the finite test process, not native execution or permission policy.
+The public process regression is:
+
+```sh
+python3 -m unittest discover -s tools/tests -p test_manual_factory_model.py
+```
+
+The new workspace invocation failed with exit 64 before the correction (Red),
+then completed with valid ordered JSON events (Green); all **8** process tests
+passed. The same old/new peer comparison also passed on the pinned Linux ARM64
+Alpine image as user `65532:65532`, with a read-only filesystem and networking
+disabled. This isolates the reported CLI mismatch; the complete Linux
+Microsandbox release journey must still be rerun in CI on the corrected revision.
+
 The first case qualifies headless authoring and isolated execution. The packaged
 Console and recovery cases are described below. Additional compatibility matrices
 retain their separate tasks. A finite peer does not qualify real-model quality,
