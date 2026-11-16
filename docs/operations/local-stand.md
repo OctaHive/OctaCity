@@ -323,6 +323,11 @@ effects/delivery bounds. The ordinary Source acceptance rule reads `## Acceptanc
 the native body; missing acceptance blocks Factory admission, not task import.
 Default triage instead selects its Project-bound versioned process-completion
 document and preserves missing ticket-authored acceptance.
+The current `triage-completion/v3` preset covers the analyst filling selected
+Issue fields and distinguishes accepted analysis from the guarded save receipt;
+it does not establish implementation acceptance. The Source installation test
+pins its version, digest and criteria when checking the frozen preparation mapping:
+`python3 -m unittest discover -s tools/tests -p test_factory_source_installation.py`.
 Default native effects support explicit open/closed state changes. On a fresh
 public-repository installation, the launcher also reads the existing GitHub label
 catalogue and installs those names as selectable additions/removals. The snapshot
