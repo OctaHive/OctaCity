@@ -125,6 +125,24 @@ class ArchitecturePolicyTests(unittest.TestCase):
             with self.subTest(name=name, kinds=kinds):
                 self.assertEqual(violations(name, kinds), ["ARCH010_LAYER_IMPLEMENTATION_DEPENDENCY"])
 
+    def test_verification_yaml_parser_stays_application_specific(self):
+        from dataclasses import replace
+
+        for name, dependency, expected in (
+            ("octacity-server-application", "serde-saphyr", []),
+            ("another-application", "serde-saphyr", ["ARCH010_LAYER_IMPLEMENTATION_DEPENDENCY"]),
+            ("octacity-server-application", "serde_yaml_ng", ["ARCH010_LAYER_IMPLEMENTATION_DEPENDENCY"]),
+        ):
+            with self.subTest(name=name, dependency=dependency):
+                package = replace(package_fixture(
+                    name, REPOSITORY / "server/application/Cargo.toml",
+                    external_dependencies=(dependency,),
+                ), role="application")
+                self.assertEqual(
+                    [item.code for item in ARCHITECTURE.check(ARCHITECTURE.Graph(packages=(package,), edges=()))],
+                    expected,
+                )
+
     def test_artifact_raster_validation_is_application_specific_without_transport_authority(self):
         from dataclasses import replace
 

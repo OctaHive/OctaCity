@@ -6,6 +6,50 @@ use octacity_runner::RunnerPrivateVariables;
 use sha2::{Digest as _, Sha256};
 
 #[test]
+fn private_inputs_accept_yaml_booleans_and_literal_command_blocks() {
+  let bytes = br#"version: 1
+vars:
+  PRIVATE_AUTH:
+    required: true
+    secret: true
+tasks:
+  execute:
+    cmds:
+      - shell: |
+          printf '%s\n' 'immutable public command'
+"#;
+  let input = ProtectedInputV3 {
+    artifact_id: "immutable-yaml-task".into(),
+    destination: "/octacity/protected/Octafile.yml".into(),
+    media_type: "application/yaml".into(),
+    size_bytes: bytes.len() as u64,
+    sha256: hex::encode(Sha256::digest(bytes)),
+  };
+  let private = RunnerPrivateVariables::new(BTreeMap::from([("PRIVATE_AUTH".into(), "secret-canary".into())])).unwrap();
+  assert!(private.authorize(&input, bytes, &["execute".into()]).is_ok());
+}
+
+#[test]
+fn yaml_merge_keys_cannot_create_private_variable_authority() {
+  let bytes = br#"<<:
+  version: 1
+  vars:
+    PRIVATE_AUTH: {required: true, secret: true}
+  tasks:
+    execute: {cmds: [{shell: echo checked}]}
+"#;
+  let input = ProtectedInputV3 {
+    artifact_id: "immutable-yaml-merge".into(),
+    destination: "/octacity/protected/Octafile.yml".into(),
+    media_type: "application/yaml".into(),
+    size_bytes: bytes.len() as u64,
+    sha256: hex::encode(Sha256::digest(bytes)),
+  };
+  let private = RunnerPrivateVariables::new(BTreeMap::from([("PRIVATE_AUTH".into(), "secret-canary".into())])).unwrap();
+  assert!(private.authorize(&input, bytes, &["execute".into()]).is_err());
+}
+
+#[test]
 fn independent_credential_selection_cannot_reuse_values_or_exceed_the_private_budget() {
   let model = RunnerPrivateVariables::new(BTreeMap::from([("MODEL".into(), "model-only-canary".into())])).unwrap();
   let reused = RunnerPrivateVariables::new(BTreeMap::from([("TOKEN".into(), "model-only-canary".into())])).unwrap();

@@ -211,7 +211,10 @@ fn verify_plugins(
   capabilities: &RunnerCapabilities,
 ) -> Result<VerifiedPlugins, HarnessError> {
   let lock_path = root.join("Octa.lock");
-  let lock: PluginLock = serde_yaml_ng::from_slice(&read_bounded(&lock_path, MAX_METADATA_BYTES)?)?;
+  let lock: PluginLock = serde_saphyr::from_slice_with_options(
+    &read_bounded(&lock_path, MAX_METADATA_BYTES)?,
+    serde_saphyr::options! { merge_keys: serde_saphyr::MergeKeyPolicy::AsOrdinary },
+  )?;
   if lock.version != PLUGIN_LOCK_VERSION || lock.plugins.is_empty() {
     return Err(invalid("Octa.lock has an unsupported version or empty plugin set"));
   }

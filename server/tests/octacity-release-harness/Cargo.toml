@@ -29,7 +29,7 @@ octacity-vcs-protocol = { path = "../../protocols/octacity-vcs-protocol" }
 octacity-webhook-provider-protocol = { path = "../../protocols/octacity-webhook-provider-protocol" }
 serde.workspace = true
 serde_json.workspace = true
-serde_yaml_ng.workspace = true
+serde-saphyr.workspace = true
 sha2.workspace = true
 hex.workspace = true
 thiserror.workspace = true

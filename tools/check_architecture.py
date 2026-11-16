@@ -116,7 +116,7 @@ PACKAGE_ALLOWED_EXTERNAL_DEPENDENCIES = {
     # The private verification publisher parses bounded Octafile bytes in memory
     # to reject references outside the frozen file selection.
     "octacity-server-application": frozenset({
-        "base64", "image", "serde_path_to_error", "serde_yaml_ng", "url", "zeroize",
+        "base64", "image", "serde_path_to_error", "serde-saphyr", "url", "zeroize",
     }),
     # Cache namespace syntax follows Octa's public protocol while HMAC protects
     # the server-private credential derivation boundary.
@@ -180,7 +180,7 @@ V1_APPROVED_EXTERNAL_DEPENDENCIES = frozenset({
     "seccompiler",
     "serde",
     "serde_json",
-    "serde_yaml_ng",
+    "serde-saphyr",
     "sha2",
     "sqlx",
     "sysinfo",

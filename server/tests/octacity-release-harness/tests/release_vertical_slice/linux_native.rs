@@ -929,7 +929,7 @@ mod tests {
     let fixture_path = Path::new(FIXTURE_OCTAFILE);
     let fixture_root = fixture_path.parent().unwrap();
     let fixture = repository.join(fixture_path);
-    let document: serde_yaml_ng::Value = serde_yaml_ng::from_str(&fs::read_to_string(fixture).unwrap()).unwrap();
+    let document: serde_json::Value = serde_saphyr::from_str(&fs::read_to_string(fixture).unwrap()).unwrap();
     let shell = document["tasks"]["cacheable"]["shell"].as_str().unwrap();
     let shell = shell.strip_prefix("sleep 2 && ").unwrap();
     let temporary = tempfile::tempdir().unwrap();
@@ -967,14 +967,14 @@ mod tests {
     let repository = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../..");
     let cache_fixture = repository.join(FIXTURE_OCTAFILE);
     let codex_fixture = repository.join(CODEX_FIXTURE_OCTAFILE);
-    let cache_document: serde_yaml_ng::Value =
-      serde_yaml_ng::from_str(&fs::read_to_string(cache_fixture).unwrap()).unwrap();
-    let codex_document: serde_yaml_ng::Value =
-      serde_yaml_ng::from_str(&fs::read_to_string(codex_fixture).unwrap()).unwrap();
+    let cache_document: serde_json::Value =
+      serde_saphyr::from_str(&fs::read_to_string(cache_fixture).unwrap()).unwrap();
+    let codex_document: serde_json::Value =
+      serde_saphyr::from_str(&fs::read_to_string(codex_fixture).unwrap()).unwrap();
 
     assert!(
       cache_document["vars"]
-        .as_mapping()
+        .as_object()
         .is_none_or(|variables| variables.values().all(|value| value["secret"] != true)),
       "root secrets make every task ineligible for the result cache"
     );

@@ -219,7 +219,7 @@ pub enum HarnessError {
   Json(#[from] serde_json::Error),
   /// An Octa plugin lock was invalid.
   #[error("invalid Octa.lock: {0}")]
-  PluginLock(#[from] serde_yaml_ng::Error),
+  PluginLock(#[from] serde_saphyr::Error),
   /// An Agent source-plugin manifest was invalid.
   #[error("invalid source-plugin manifest: {0}")]
   SourceManifest(#[from] toml::de::Error),

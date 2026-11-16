@@ -1352,6 +1352,42 @@ fn named_project_document_recovers_an_unknown_write_and_replays_without_renewing
 }
 
 #[test]
+fn verification_octafile_rejects_root_merge_before_publishing() {
+  use base64::{Engine as _, engine::general_purpose::STANDARD};
+  run(async {
+    let project = ProjectId::generate();
+    let store = Arc::new(InMemoryFactoryConfigurationStore::new());
+    store.seed_project(project).unwrap();
+    let bytes = Arc::new(DocumentBytes::default());
+    let owner = ProjectTextIntake::new(
+      store,
+      bytes.clone(),
+      Arc::new(RecordingResolver::default()),
+      Arc::new(TrustedNetworkManagementPolicy),
+      Arc::new(Clock),
+    );
+    let request = ProjectDocumentSubmission {
+      project_id: project,
+      name: "Merged Octa suite".parse().unwrap(),
+      purpose: ProjectDocumentPurpose::Verification,
+      content: serde_json::json!({
+        "files": [{"path": "Octafile.yml", "content_base64": STANDARD.encode(
+          "<<: {version: 1, tasks: {_Verify-0: {shell: echo checked}}}\n"
+        )}],
+        "entries": [{"kind": "octafile", "path": "Octafile.yml", "task": "_Verify-0"}]
+      })
+      .to_string(),
+      idempotency_key: "merged-octafile".parse().unwrap(),
+    };
+    assert!(matches!(
+      owner.publish_document(&context(), request).await,
+      Err(ApplicationError::InvalidInput)
+    ));
+    assert_eq!(bytes.writes.load(Ordering::SeqCst), 0);
+  });
+}
+
+#[test]
 fn verification_octafile_accepts_only_frozen_includes_for_each_selected_task() {
   use base64::{Engine as _, engine::general_purpose::STANDARD};
   run(async {

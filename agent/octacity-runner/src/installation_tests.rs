@@ -94,6 +94,16 @@ fn capabilities() -> RunnerCapabilities {
 }
 
 #[test]
+fn installed_inventory_does_not_expand_a_yaml_merge_into_a_plugin_lock() {
+  let (release, _, _) = codex_release();
+  let lock = release.path().join("Octa.lock");
+  let contents = fs::read_to_string(&lock).unwrap();
+  let indented = contents.lines().map(|line| format!("  {line}\n")).collect::<String>();
+  fs::write(lock, format!("<<:\n{indented}")).unwrap();
+  assert!(RunnerInstallation::load(release.path()).is_err());
+}
+
+#[test]
 fn installed_inventory_accepts_an_exact_signed_plugin_subset_without_implicit_plugins() {
   let (release, _, _) = codex_release();
   let shell = release.path().join("plugins/shell");

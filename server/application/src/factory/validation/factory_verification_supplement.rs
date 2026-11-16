@@ -141,7 +141,7 @@ impl VerificationSupplement {
     path: &FactoryRepositoryPath,
     expansions: &mut BTreeMap<FactoryRepositoryPath, Option<usize>>,
   ) -> Option<usize> {
-    use serde_yaml_ng::Value;
+    use serde_json::Value;
     if let Some(size) = expansions.get(path) {
       return *size;
     }
@@ -150,15 +150,20 @@ impl VerificationSupplement {
     expansions.insert(path.clone(), None);
     let file = self.files.iter().find(|file| &file.path == path)?;
     let bytes = STANDARD.decode(&file.content_base64).ok()?;
-    let document: Value = serde_yaml_ng::from_slice(&bytes).ok()?;
-    let root = document.as_mapping()?;
+    // The closed include check must see merge declarations before any expansion.
+    let document: Value = serde_saphyr::from_slice_with_options(
+      &bytes,
+      serde_saphyr::options! { merge_keys: serde_saphyr::MergeKeyPolicy::AsOrdinary },
+    )
+    .ok()?;
+    let root = document.as_object()?;
     if root.contains_key("monorepo") || root.contains_key("<<") {
       return None;
     }
     let mut size = 1;
     if let Some(includes) = root.get("includes") {
       let parent = path.as_str().rsplit_once('/').map(|(parent, _)| parent);
-      for include in includes.as_mapping()?.values() {
+      for include in includes.as_object()?.values() {
         let relative = include.as_str().or_else(|| include.get("octafile")?.as_str())?;
         let relative = FactoryRepositoryPath::new(relative).ok()?;
         if !portable(&relative) {

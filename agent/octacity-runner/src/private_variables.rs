@@ -125,7 +125,14 @@ impl RunnerPrivateVariables {
     {
       return invalid();
     }
-    let document: Value = serde_yaml_ng::from_slice(bytes).map_err(|_| error())?;
+    // Keep merge declarations visible to the closed-scope checks below.
+    let document: Value = serde_saphyr::from_slice_with_options(
+      bytes,
+      serde_saphyr::options! {
+        merge_keys: serde_saphyr::MergeKeyPolicy::AsOrdinary,
+      },
+    )
+    .map_err(|_| error())?;
     // Private overrides support the closed, flat shape emitted by trusted
     // compilers. Includes, environment files, discovered tasks, dependencies,
     // and scoped variable overrides cannot acquire authority from this proof.

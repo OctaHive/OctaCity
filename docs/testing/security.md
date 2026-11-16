@@ -35,6 +35,84 @@ and detected-secret findings fail the job. Informational RustSec warnings
 remain visible and must be evaluated rather than silently ignored or converted
 into permanent blanket exceptions.
 
+### Compatible-release remediation (2026-11-16)
+
+The owner selected published compatible dependencies without local third-party
+patches or vendored forks. The YAML consumers now use published `serde-saphyr
+2.1.1` with only its `deserialize` feature. The `serde_yaml_ng` branch using
+archived `unsafe-libyaml` is absent from both production and fuzz lockfiles, so
+[RUSTSEC-2024-0449](https://rustsec.org/advisories/RUSTSEC-2024-0449) no longer
+appears. No advisory ignore, source exception or disabled backend was added.
+
+Runner private-input authorization, installed `Octa.lock` loading, protected
+verification documents and release-harness inspection retain their existing
+wire types. Dynamic verification inspection uses the existing JSON value type;
+plugin locks still deserialize directly into the shared Octa schema. YAML merge
+keys remain ordinary visible keys at authorization and lock boundaries, rather
+than being expanded before closed-scope checks. The parser's default resource
+budgets remain enabled; include/property expansion and serialization features
+are not enabled.
+
+The existing Runner suite passed before migration. A YAML boolean/literal-block
+characterization passed before and after it. Separate negative regressions
+detect automatic merge expansion into private-variable authority, plugin locks
+and protected verification submissions; those must retain their original
+refusal behavior. The production audit's YAML warning disappeared after the
+dependency change, while the independent fuzz audit has no findings.
+
+Observed migration regressions (Red with automatic merge expansion, Green with
+merge keys kept visible):
+
+| Public boundary | Regression |
+| --- | --- |
+| Runner private input | `yaml_merge_keys_cannot_create_private_variable_authority` |
+| Installed runner inventory | `installed_inventory_does_not_expand_a_yaml_merge_into_a_plugin_lock` |
+| Project verification publication | `verification_octafile_rejects_root_merge_before_publishing` |
+
+The architecture inventory replaces its existing YAML parser entry rather than
+widening the application-layer grant. Its regression first rejected the new
+parser and still accepted the obsolete one (Red), then accepted the replacement
+only for the owning application package and refused the old parser (Green).
+
+```shell
+export CARGO_INCREMENTAL=0 CARGO_PROFILE_DEV_DEBUG=0 CARGO_PROFILE_TEST_DEBUG=0
+export CARGO_BUILD_JOBS=4
+cargo test --locked -p octacity-runner --test private_variables
+cargo test --locked -p octacity-runner --lib installed_inventory_does_not_expand_a_yaml_merge
+cargo test --locked -p octacity-server-application --lib verification_octafile
+python3 -m unittest discover -s tools/tests -p test_check_architecture.py
+```
+
+The production audit **still fails** on
+[RUSTSEC-2026-0459](https://rustsec.org/advisories/RUSTSEC-2026-0459): released
+`sqlx-sqlite 0.9.0` excludes patched `libsqlite3-sys >=0.39.0`. The latest
+published Microsandbox `0.7.15` still brings `astral-tokio-tar` and `bincode`
+through its local image/filesystem/VMM dependencies. Their unmaintained warnings
+remain visible. Removing those three findings requires compatible upstream
+releases or a separately authorized third-party patch/migration; replacing or
+disabling Microsandbox is not part of this follow-up. Keep its database/WAL state
+private. Recheck upstream releases by 2026-11-21, or when SQLx/Microsandbox
+publishes a compatible fix, whichever comes first.
+
+Final checks for this follow-up:
+
+- `cargo test --locked -p octacity-runner -p octacity-server-application
+  --all-features`: **1,356 passed**, one explicitly ignored case, zero failures.
+- `cargo clippy --locked -p octacity-runner -p octacity-server-application
+  -p octacity-release-harness --all-features --lib -- -D warnings`: passed.
+- `cargo check --locked --manifest-path fuzz/Cargo.toml --bins`: passed using
+  the existing macOS SDK C++ header workaround documented below, with shared
+  `CARGO_TARGET_DIR=target` to avoid duplicating build caches.
+- Both `cargo deny ... check licenses sources` commands above: passed without
+  policy changes. Architecture checks and their **34 tests**, Rust formatting,
+  documentation file links and `git diff --check`: passed.
+- `cargo audit --no-fetch`: one SQLite vulnerability and two unmaintained
+  warnings remain. `cargo audit --no-fetch --file fuzz/Cargo.lock`: no findings.
+
+These checks do not repeat native VM/released-bundle qualification. The earlier
+local-stand Docker toolchain correction is independent of this dependency
+follow-up.
+
 ### Workspace crate refresh (2026-11-14–15)
 
 The workspace and GitHub adapter manifests now require the latest stable direct
