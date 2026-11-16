@@ -589,6 +589,15 @@ Its environment/commands are documented in
 The broader API/Console regressions and actual limits are recorded in
 [7.3](../../openspec/changes/add-issue-classification-snapshots/verification-7.3.md).
 
+The hermetic retained-snapshot verifier runs without the packaged services:
+`cargo test --locked -p octacity-release-harness --test factory_pilot workflow_issue_snapshot::tests`.
+Its typed pipeline attribution includes the required `origin.form` digest,
+distinct from both the assessment record and the save receipt. Keep this fixture
+aligned with the current attribution contract; do not make the production form
+pin optional to accommodate old test data. The exact assessment/Work control must
+pass, while receipt-record and unrelated-Work substitutions must fail their
+respective provenance checks.
+
 With those journeys' qualified packaged installation, distinct pinned CLI
 executables and disposable PostgreSQL/MinIO (`octacity-artifacts` provisioned), run:
 

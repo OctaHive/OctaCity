@@ -15,6 +15,7 @@ async fn verify(attribution: Attribution) -> Result<(), tokio::task::JoinError> 
   let execution = Uuid::from_u128(4).to_string();
   let assessment = FactoryDigest::from_bytes([11; 32]).to_string();
   let receipt = FactoryDigest::from_bytes([12; 32]).to_string();
+  let form = FactoryDigest::from_bytes([14; 32]).to_string();
   let actor = json!({"kind":"unauthenticated_management","identity":null});
   let mut origins = serde_json::Map::new();
   for (alias, field) in [
@@ -28,7 +29,8 @@ async fn verify(attribution: Attribution) -> Result<(), tokio::task::JoinError> 
     let field: octacity_server_store::IssueClassificationAttribution = serde_json::from_value(json!({
       "field":field,"origin":{"kind":"pipeline","actor":actor,
         "run_id":triage,"work_id":if wrong_work {&delivery} else {&source_work},
-        "record":if wrong_record {&receipt} else {&assessment},"policy":"triage","operation_id":receipt},
+        "record":if wrong_record {&receipt} else {&assessment},"form":form,
+        "policy":"triage","operation_id":receipt},
       "assessed_version":1,"requirements_version":1,"assessed_at":1,"evidence":[]
     }))
     .unwrap();
