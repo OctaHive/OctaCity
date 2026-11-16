@@ -80,6 +80,20 @@ and `browser` for its enrollment/archive/delete journey, replacing the current
 multi-step setup with its own UI actions. It must not duplicate this provider or
 start a second stand harness. That change's setup/lifecycle tasks remain pending.
 
+## Hermetic connection-check privacy regression
+
+Run `cargo test --locked -p octacity-github --test connection_checks`.
+The successful read check asserts the complete closed report: request correlation
+and configuration pins, native repository identity, readiness states and retry
+advice only. Issue data, credentials, cursors and candidate payloads cannot add
+fields or replace those values. Provider requests remain bounded GETs.
+
+Do not search opaque report identifiers for short Issue-number substrings: a
+configuration digest can independently contain `9001`. The regression also uses
+a valid correlation ID containing those digits. Observed Red: the old substring
+assertion rejected that safe report; Green: both identities and all ten
+connection-check tests pass. No provider implementation was changed.
+
 ## Observed TDD evidence, 2026-10-27
 
 At production revision `f8135d29281c88ac1058100096e4a957b7059f60`, the Source-only

@@ -48,35 +48,46 @@ fn writer_check(installation: &Installation, endpoint: &str) -> Request {
 
 #[tokio::test]
 async fn connection_check_confirms_authenticated_native_issue_read_without_retaining_tasks_or_mutating() {
-  let forge = Forge::start().await;
-  forge
-    .replies
-    .lock()
-    .await
-    .push_back(Reply::json(json!([issue(9001, 17)])));
-  let installation = Installation::new(&forge, selector());
-  let request = check(&installation, &forge.endpoint);
-  let response = installation
-    .provider()
-    .execute(&request, CancellationToken::new())
-    .await;
-  response.validate_for(&request).unwrap();
-  let result = report(response);
-  assert_eq!(result["configuration"], "ready");
-  assert_eq!(result["authentication"], "ready");
-  assert_eq!(result["resource_access"], "ready");
-  assert_eq!(result["resource_id"], "1234");
-  assert_eq!(result["capability"], "ready");
-  let text = serde_json::to_string(&result).unwrap();
-  for private in ["private-fixture-token", "Private task", "9001", "cursor", "candidate"] {
-    assert!(!text.contains(private));
+  // A safe correlation identity may contain the same digits as a private Issue ID.
+  for check_id in ["a".repeat(64), "9001".repeat(16)] {
+    let forge = Forge::start().await;
+    forge
+      .replies
+      .lock()
+      .await
+      .push_back(Reply::json(json!([issue(9001, 17)])));
+    let installation = Installation::new(&forge, selector());
+    let mut wire = serde_json::to_value(check(&installation, &forge.endpoint)).unwrap();
+    wire["message"]["command"]["payload"]["check_id"] = json!(check_id);
+    let request = decode_request(&serde_json::to_vec(&wire).unwrap()).unwrap();
+    let response = installation
+      .provider()
+      .execute(&request, CancellationToken::new())
+      .await;
+    response.validate_for(&request).unwrap();
+    let result = report(response);
+    // Check the closed safe report, rather than scanning opaque digests/IDs for
+    // Issue-number substrings that can occur there independently of task data.
+    assert_eq!(
+      result,
+      json!({
+        "check_id": check_id,
+        "configuration_digest": wire["message"]["command"]["payload"]["configuration_digest"],
+        "resource_id": "1234",
+        "configuration": "ready",
+        "authentication": "ready",
+        "resource_access": "ready",
+        "capability": "ready",
+        "retry_after_millis": null
+      })
+    );
+    let requests = forge.requests.lock().await;
+    assert_eq!(requests.len(), 2);
+    assert!(requests[0].starts_with("GET /api/v3/repos/owner/tickets HTTP/"));
+    assert!(requests[1].starts_with("GET /api/v3/repos/owner/tickets/issues?"));
+    assert!(requests[1].contains("per_page=1"));
+    assert!(requests.iter().all(|r| r.starts_with("GET ")));
   }
-  let requests = forge.requests.lock().await;
-  assert_eq!(requests.len(), 2);
-  assert!(requests[0].starts_with("GET /api/v3/repos/owner/tickets HTTP/"));
-  assert!(requests[1].starts_with("GET /api/v3/repos/owner/tickets/issues?"));
-  assert!(requests[1].contains("per_page=1"));
-  assert!(requests.iter().all(|r| r.starts_with("GET ")));
 }
 
 #[tokio::test]
