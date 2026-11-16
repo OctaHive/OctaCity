@@ -5,6 +5,8 @@ ARG ALPINE_IMAGE=scratch
 ARG GUEST_RUST_IMAGE=scratch
 
 FROM ${GUEST_RUST_IMAGE} AS factory-control-builder
+# Use the image's pinned compiler without installing development clippy/rustfmt.
+ENV RUSTUP_TOOLCHAIN=${RUST_VERSION}
 WORKDIR /workspace
 COPY --from=octa-source . /workspace/octa
 COPY . /workspace/octacity
@@ -18,6 +20,7 @@ RUN --mount=type=cache,target=/usr/local/cargo/registry,sharing=locked \
     cp target/release/octacity-protected-reader target/release/octacity-codex-reader /out/
 
 FROM ${RUST_IMAGE} AS rust-builder
+ENV RUSTUP_TOOLCHAIN=${RUST_VERSION}
 WORKDIR /workspace
 COPY --from=octa-source . /workspace/octa
 COPY . /workspace/octacity

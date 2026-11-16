@@ -1378,6 +1378,37 @@ and are not deleted by reset.
 
 ## Troubleshooting
 
+### Rustup downloads development components during an image build
+
+The checked-in `rust-toolchain.toml` requests `clippy` and `rustfmt` for
+development. The pinned Rust images contain a minimal compiler toolchain. If a
+Docker build logs `syncing channel updates` and then fails to resolve
+`static.rust-lang.org`, rustup may be trying to install those additional
+components even though the compiler is already present. Clearing build caches
+can expose this previously cached step.
+
+The shared GNU builder and the Alpine Factory control builder explicitly select
+the image's own `RUST_VERSION` through `RUSTUP_TOOLCHAIN`. They keep the pinned
+compiler and do not install the repository's development components. This does
+not make a cold build offline: image pulls, source archives and Cargo dependency
+downloads still require network access. After updating and committing the
+Dockerfile, rerun the same `tools/factory-stand` command with the original root
+and installation arguments. The launcher builds committed `HEAD`.
+
+The regression runs the real `factory-control-builder` and `openapi-builder`
+stages with dependency-free fixture packages and Docker build networking disabled:
+
+```shell
+OCTACITY_TEST_DOCKER_BUILDS=1 python3 -m unittest discover \
+  -s tools/tests -p test_build_local_stand_server.py \
+  -k test_rust_builders_use_the_image_toolchain_without_installing_development_components
+```
+
+With the pinned images available, both cases failed before the fix on rustup's
+channel download (Red); both stages built successfully afterwards without build
+network access (Green). This checks toolchain selection, not a complete Server
+or stand rebuild. Without the opt-in flag the Docker regression is skipped.
+
 ### Docker API is unavailable
 
 Start OrbStack and verify that the active Docker server reports `linux/arm64`:

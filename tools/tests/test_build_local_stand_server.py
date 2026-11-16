@@ -4,7 +4,10 @@ from __future__ import annotations
 
 import importlib.util
 import json
+import os
 from pathlib import Path
+import shutil
+import subprocess
 import sys
 import tempfile
 import unittest
@@ -26,6 +29,45 @@ SPEC.loader.exec_module(BUILDER)
 class LocalStandServerBuildTests(unittest.TestCase):
     def setUp(self):
         self.document = json.loads(MANIFEST.read_text(encoding="utf-8"))
+
+    @unittest.skipUnless(os.environ.get("OCTACITY_TEST_DOCKER_BUILDS") == "1",
+                         "requires Docker and the pinned ARM64 builder images")
+    def test_rust_builders_use_the_image_toolchain_without_installing_development_components(self):
+        """Exercise the real build stages offline with dependency-free Rust packages."""
+        guest = json.loads((REPOSITORY / "config/runtime/microsandbox-agentd-v1/inputs.json").read_text())
+        with tempfile.TemporaryDirectory(prefix="octacity-rust-builder-test-") as temporary:
+            context = Path(temporary)
+            octa = context / "octa"
+            octa.mkdir()
+            (octa / "README").write_text("No Octa dependencies are needed for this build fixture.\n")
+            shutil.copyfile(REPOSITORY / "rust-toolchain.toml", context / "rust-toolchain.toml")
+            (context / "Cargo.toml").write_text(
+                '[workspace]\nmembers = ["controls", "api"]\nresolver = "2"\n')
+            (context / "Cargo.lock").write_text(
+                'version = 4\n\n[[package]]\nname = "octacity-lifecycle"\nversion = "0.1.0"\n'
+                '\n[[package]]\nname = "octacity-server-api-rest"\nversion = "0.1.0"\n')
+            controls = context / "controls"
+            controls.mkdir()
+            (controls / "Cargo.toml").write_text(
+                '[package]\nname = "octacity-lifecycle"\nversion = "0.1.0"\nedition = "2021"\n'
+                '\n[[bin]]\nname = "octacity-protected-reader"\npath = "main.rs"\n'
+                '\n[[bin]]\nname = "octacity-codex-reader"\npath = "main.rs"\n')
+            (controls / "main.rs").write_text('fn main() { println!("protected build fixture"); }\n')
+            api = context / "api"
+            (api / "examples").mkdir(parents=True)
+            (api / "Cargo.toml").write_text(
+                '[package]\nname = "octacity-server-api-rest"\nversion = "0.1.0"\nedition = "2021"\n')
+            (api / "examples/export_openapi.rs").write_text('fn main() { println!("{{}}"); }\n')
+            for target in ("factory-control-builder", "openapi-builder"):
+                with self.subTest(target=target):
+                    result = subprocess.run([
+                        "docker", "build", "--platform", "linux/arm64", "--network", "none",
+                        "--progress", "plain", "--file", str(REPOSITORY / "deployment/local-stand/server.Dockerfile"),
+                        "--target", target, "--build-context", f"octa-source={octa}",
+                        "--build-arg", f"GUEST_RUST_IMAGE={guest['builders']['aarch64']['image']}",
+                        "--build-arg", f"RUST_IMAGE={self.document['images']['rust']['reference']}", str(context),
+                    ], capture_output=True, text=True, timeout=180)
+                    self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
 
     def test_octa_source_policy_uses_the_pinned_archive_and_bounds(self):
         octa = self.document["native"]["octa"]
