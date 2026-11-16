@@ -13,7 +13,7 @@ export function equivalentFlowSchema(
   return schemas.find((schema) => replaceEqualDeep(schema.shape, shape) === schema.shape);
 }
 
-function references(value: unknown, reference: Reference): boolean {
+export function referencesFlowSchema(value: unknown, reference: Reference): boolean {
   if (!value || typeof value !== 'object') return false;
   if (
     'identity' in value &&
@@ -24,7 +24,7 @@ function references(value: unknown, reference: Reference): boolean {
     value.digest === reference.digest
   )
     return true;
-  return Object.values(value).some((child) => references(child, reference));
+  return Object.values(value).some((child) => referencesFlowSchema(child, reference));
 }
 
 function pinnedDefinitions(
@@ -75,8 +75,8 @@ export function registerFlowSchemas(
     return (
       !obsolete.has(key) ||
       children === null ||
-      references(consumers, schema.reference) ||
-      references(children, schema.reference)
+      referencesFlowSchema(consumers, schema.reference) ||
+      referencesFlowSchema(children, schema.reference)
     );
   });
   return { ...draft, data_schemas };

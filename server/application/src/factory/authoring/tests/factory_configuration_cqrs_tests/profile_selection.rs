@@ -295,6 +295,8 @@ fn standalone_flow_publication_uses_the_same_profile_compatibility_validation() 
     let flow = fixture.draft.flow.unwrap();
     let root = flow.closure.definition(flow.closure.root()).unwrap();
     let draft = crate::FactoryFlowDefinitionDraft {
+      execution_defaults: Default::default(),
+      schema_slots: Default::default(),
       accepted_predecessor: None,
       issue_snapshot: None,
       root: crate::FactoryFlowRootDraft {
@@ -555,6 +557,8 @@ fn standalone_flow_requires_compatible_verification_and_current_retention() {
       id: FlowDefinitionId::generate(),
       project_id: project,
       draft: crate::FactoryFlowDefinitionDraft {
+        execution_defaults: Default::default(),
+        schema_slots: Default::default(),
         accepted_predecessor: None,
         issue_snapshot: None,
         root: draft,
@@ -990,6 +994,8 @@ fn decision_profile_answers_are_checked_before_flow_publication() {
       Arc::new(crate::FactoryFlowDefinitionHandlers::new(store, policy)),
     );
     let draft = crate::FactoryFlowDefinitionDraft {
+      execution_defaults: Default::default(),
+      schema_slots: Default::default(),
       accepted_predecessor: None,
       issue_snapshot: None,
       root: crate::FactoryFlowRootDraft {

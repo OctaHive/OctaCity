@@ -209,6 +209,11 @@ impl TryFrom<ProgramWire> for FlowGateProgram {
   }
 }
 impl FlowGateProgram {
+  /// Declared rules in their configured evaluation order.
+  #[must_use]
+  pub fn rules(&self) -> &[FlowGateRule] {
+    &self.rules
+  }
   pub(super) fn has_precondition(&self) -> bool {
     self.precondition.is_some() || self.precondition_failure_output.is_some()
   }

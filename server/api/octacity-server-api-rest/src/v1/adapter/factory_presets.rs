@@ -2,28 +2,62 @@
 use super::*;
 use octacity_server_application::{
   ApplicationError, AuthorizedManagementQueryHandler, FactoryPresetResolutionRequest, ListFactoryPresetsQuery,
-  ResolveFactoryPresetQuery,
+  OpenFactoryPresetDraftQuery, OpenFactoryPresetDraftRequest, ResolveFactoryPresetQuery,
 };
 
 /// Installed shared preset setup queries, independent of execution/provider availability.
 pub struct FactoryPresetManagementApplication {
   list: Arc<dyn AuthorizedManagementQueryHandler<ListFactoryPresetsQuery, Error = ApplicationError>>,
   resolve: Arc<dyn AuthorizedManagementQueryHandler<ResolveFactoryPresetQuery, Error = ApplicationError>>,
+  draft: Arc<dyn AuthorizedManagementQueryHandler<OpenFactoryPresetDraftQuery, Error = ApplicationError>>,
 }
 impl FactoryPresetManagementApplication {
   /// Erases the common application owner behind authorized management queries.
   pub fn new<
     Q: AuthorizedManagementQueryHandler<ListFactoryPresetsQuery, Error = ApplicationError>
       + AuthorizedManagementQueryHandler<ResolveFactoryPresetQuery, Error = ApplicationError>
+      + AuthorizedManagementQueryHandler<OpenFactoryPresetDraftQuery, Error = ApplicationError>
       + 'static,
   >(
     queries: Arc<Q>,
   ) -> Self {
     Self {
       list: queries.clone(),
+      draft: queries.clone(),
       resolve: queries,
     }
   }
+}
+pub(super) async fn draft(
+  State(app): State<Arc<ManagementApplication>>,
+  Extension(crate::ManagementRequest(id, context)): Extension<crate::ManagementRequest>,
+  Path(project): Path<String>,
+  payload: Result<Json<OpenFactoryPresetDraftRequest>, JsonRejection>,
+) -> Result<impl IntoResponse, ApiError> {
+  let selection = body(payload, &id)?;
+  let project_id = project
+    .parse()
+    .map_err(|_| application_error(ApplicationFailure::Invalid, &id))?;
+  let service = app
+    .factory_presets
+    .as_ref()
+    .ok_or_else(|| application_error(ApplicationFailure::Unavailable, &id))?;
+  let result = service
+    .draft
+    .handle_authorized_query(
+      &context,
+      OpenFactoryPresetDraftQuery {
+        project_id,
+        flow_id: selection.flow_id,
+        preset: selection.preset,
+      },
+    )
+    .await
+    .map_err(|error| authorized_handler_error(error, &id))?;
+  Ok((
+    [("cache-control", "no-store")],
+    Json(super::factory_schema_wire::flow(encode(result, &id)?)),
+  ))
 }
 pub(super) async fn resolve(
   State(app): State<Arc<ManagementApplication>>,

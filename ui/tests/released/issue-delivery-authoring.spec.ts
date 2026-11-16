@@ -1,7 +1,7 @@
 import { expect } from '@playwright/test';
 import { test } from './sourceTest';
 import { retainJsonEvidence } from './retainedEvidence';
-import { choose, setChecked, t } from './manualAuthoringControls';
+import { choose, selectedNode, setChecked, t } from './manualAuthoringControls';
 import {
   configuration,
   deliveryAssignments,
@@ -116,7 +116,17 @@ test('authors triage and Delivery through the ordinary stand Console without API
   await page.goto(`/factory?project_id=${project}`);
   await page.getByRole('button', { name: t('factory.addPipeline'), exact: true }).click();
   await page.getByText('Start from an example', { exact: true }).click();
+  const opened = page.waitForResponse((response) =>
+    new URL(response.url()).pathname.endsWith('/factory-presets/draft'),
+  );
   await page.getByRole('button', { name: 'Ticket delivery · v2', exact: true }).click();
+  const openedResponse = await opened;
+  expect(openedResponse.ok(), await openedResponse.text()).toBe(true);
+  const draft = await openedResponse.json();
+  await expect(
+    page.getByRole('textbox', { name: t('factory.pipelineName'), exact: true }),
+  ).toHaveValue('Ticket delivery');
+  await page.getByRole('button', { name: 'Configure Issue snapshot', exact: true }).click();
   for (const [alias, field] of [
     ['risk', 'Delivery risk'],
     ['severity', 'Delivery severity'],
@@ -139,77 +149,58 @@ test('authors triage and Delivery through the ordinary stand Console without API
       .fill(score!);
   await choose(page, page, 'Admission risk field', 'Project field: Delivery risk · risk');
   await choose(page, page, 'Admission risk: low', 'Low');
-  await choose(page, page, 'Starting choice: Issue size · Requirements needed', 'Large');
   await setChecked(
     page.getByRole('checkbox', { name: 'Allow work_kind: feature_request', exact: true }),
   );
-  const presets = (await read(page, project, 'factory-presets?limit=100')).items;
-  const preset = presets.find(
-    (item: { reference: { identity: string; version: string } }) =>
-      item.reference.identity === 'ticket-delivery' && item.reference.version === 'v2',
-  );
-  expect(preset).toBeTruthy();
-  for (const step of preset.editor.steps) {
+  await page.getByRole('button', { name: 'Use Issue snapshot', exact: true }).click();
+  for (const step of draft.root.nodes) {
     if (step.kind !== 'reasoning') continue;
-    const name = step.alias.replace(/[._-]/g, ' ');
-    const label = name.charAt(0).toUpperCase() + name.slice(1);
-    await page.getByText(label, { exact: true }).click();
-    const scope = page
-      .getByRole('group', { name: 'Ticket delivery', exact: true })
-      .locator('details')
-      .filter({
-        has: page.locator('summary').filter({ hasText: new RegExp(`^${label}(?: · |$)`) }),
-      });
-    const [role, profile] =
-      step.alias === 'implementation'
-        ? ['Coder', 'Coder · Delivery']
-        : step.alias === 'protected_tests'
-          ? ['Tester', 'Tester · Delivery']
-          : step.alias === 'delivery_devops'
-            ? ['DevOps', 'DevOps · Delivery']
-            : ['Reviewer', 'Reviewer · Delivery'];
+    await choose(page, page, t('factory.graphNode'), step.key);
+    const [role, profile] = ['implementation', 'specification_author'].includes(step.key)
+      ? ['Coder', 'Coder · Delivery']
+      : step.key === 'protected_tests'
+        ? ['Tester', 'Tester · Delivery']
+        : step.key === 'prepare_pull_request'
+          ? ['DevOps', 'DevOps · Delivery']
+          : ['Reviewer', 'Reviewer · Delivery'];
     await executor(
       page,
-      scope,
+      selectedNode(page),
       role!,
       profile!,
-      step.alias === 'protected_tests' ? 'Prepare protected tests' : undefined,
+      step.key === 'protected_tests' ? 'Prepare protected tests' : undefined,
     );
-    // The shared Tester requires an explicit mode, scoped to this one step.
   }
-  const commandChoices = await read(page, project, 'factory-authoring-capabilities');
-  for (const step of preset.editor.steps.filter(
+  for (const step of draft.root.nodes.filter(
     (step: { kind: string }) => step.kind === 'build_command',
   )) {
-    const parameter = preset.parameters.find(
-      (parameter: { path: string }) => parameter.path === `/commands/${step.alias}`,
-    );
-    if (!parameter?.required) continue;
-    const name = step.alias.replace(/[._-]/g, ' ');
-    const label = name.charAt(0).toUpperCase() + name.slice(1);
-    const select = page.getByRole('combobox', { name: label, exact: true });
-    await select.click();
-    // Compatibility is filtered by the product from installed typed report contracts.
-    const report = step.alias === 'tests_on_base' ? 'baseline.report' : 'validation_report';
+    await choose(page, page, t('factory.graphNode'), step.key);
+    const scope = selectedNode(page);
+    await scope.getByRole('combobox', { name: 'Installed command', exact: true }).click();
+    const report = step.key === 'tests_on_base' ? 'baseline.report' : 'validation_report';
     const options = page.getByRole('option').filter({ hasText: ` · ${report} · ` });
-    expect(commandChoices.commands.length).toBeGreaterThan(0);
     await expect(options).toHaveCount(1);
     await options.click();
+    await scope.getByRole('button', { name: 'Use command', exact: true }).click();
   }
-  await page.getByRole('combobox', { name: t('factory.publicationTarget'), exact: true }).click();
-  await page
-    .getByRole('option')
-    .filter({ hasNotText: t('factory.chooseInput') })
-    .click();
-  const resolved = page.waitForResponse((response) =>
-    new URL(response.url()).pathname.endsWith('/factory-presets/resolve'),
+  await choose(page, page, t('factory.graphNode'), 'publish_pull_request');
+  const publisher = selectedNode(page);
+  const target = capabilities.candidate_publications[0].target;
+  await choose(
+    page,
+    publisher,
+    t('factory.publicationTarget'),
+    `${target.identity} · ${target.version}`,
   );
-  await page.getByRole('button', { name: 'Open example draft', exact: true }).click();
-  const resolution = await resolved;
-  expect(resolution.ok(), await resolution.text()).toBe(true);
-  await expect(
-    page.getByRole('textbox', { name: t('factory.pipelineName'), exact: true }),
-  ).toHaveValue('Ticket delivery', { timeout: 20_000 });
+  await publisher
+    .getByRole('button', { name: t('factory.usePublicationTarget'), exact: true })
+    .click();
+  await choose(page, page, t('factory.graphNode'), 'requirements_needed');
+  await choose(page, selectedNode(page), 'Choice field', 'size');
+  await choose(page, selectedNode(page), 'Starting choice: size · Requirements needed', 'large');
+  await selectedNode(page)
+    .getByRole('button', { name: 'Validate and use condition', exact: true })
+    .click();
   await page
     .getByRole('textbox', { name: t('factory.pipelineName'), exact: true })
     .fill('UI Delivery');

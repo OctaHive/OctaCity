@@ -19,6 +19,34 @@ impl ManagementAuthorizationTarget for ListFactoryPresetsQuery {
     management_security::instance_resource(ManagementResourceKind::Project, self.page.project_id())
   }
 }
+/// Loads an example into the common editor without execution selections or publication.
+#[derive(Clone, Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct OpenFactoryPresetDraftRequest {
+  /// Prospective caller-owned Flow identity; loading does not reserve it.
+  pub flow_id: FlowDefinitionId,
+  /// Exact release chosen from discovery.
+  pub preset: ImmutableReference,
+}
+/// Authorized read of an ordinary unconfigured graph draft.
+#[derive(Clone, Debug)]
+pub struct OpenFactoryPresetDraftQuery {
+  /// Owning, authorized Project.
+  pub project_id: octacity_server_domain::ProjectId,
+  /// Prospective caller-owned Flow identity; loading does not reserve it.
+  pub flow_id: FlowDefinitionId,
+  /// Exact release chosen from discovery.
+  pub preset: ImmutableReference,
+}
+impl Query for OpenFactoryPresetDraftQuery {
+  type Outcome = FactoryFlowDefinitionDraft;
+}
+impl ManagementAuthorizationTarget for OpenFactoryPresetDraftQuery {
+  const AUTHORIZATION: ManagementAuthorizationMapping = ListFactoryPresetsQuery::AUTHORIZATION;
+  fn management_resource(&self) -> ManagementResourceResult {
+    management_security::instance_resource(ManagementResourceKind::Project, self.project_id)
+  }
+}
 /// Credential-free release metadata; aliases require independent exact Project profile selections.
 #[derive(Clone, Debug, Serialize)]
 pub struct FactoryPresetSummary {

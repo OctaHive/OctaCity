@@ -44,6 +44,8 @@ pub(super) fn ordinary_draft(
   data_schemas: Vec<FlowDataSchema>,
 ) -> FactoryFlowDefinitionDraft {
   FactoryFlowDefinitionDraft {
+    execution_defaults: Default::default(),
+    schema_slots: Default::default(),
     accepted_predecessor: None,
     issue_snapshot: None,
     root: FactoryFlowRootDraft {

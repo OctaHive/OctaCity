@@ -395,6 +395,9 @@ export const ruMessages = {
   'factory.projectionTooLarge':
     'Проекция превышает лимит входного mapping. Выберите меньше необязательных полей или используйте расширенный редактор входа.',
   'factory.choiceThreshold': 'Начиная с варианта: {field} · {condition}',
+  'factory.choiceField': 'Поле с вариантами',
+  'factory.inputChoiceThresholdHelp':
+    'Выбранный и следующие варианты в порядке входного контракта направляются по этому условию.',
   'factory.choiceThresholdHelp':
     'Этот вариант и последующие активные варианты в порядке Project направляются по настроенному маршруту.',
   'factory.snapshotFieldSource': 'Поле входа Issue: {alias}',

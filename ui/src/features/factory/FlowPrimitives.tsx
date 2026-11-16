@@ -1,3 +1,4 @@
+import { ChoiceThreshold } from './ChoiceThreshold';
 import { useFactoryAuthoringCapabilities } from './useFactoryAuthoringCapabilities';
 import { useEffect, useRef, useState } from 'react';
 import type { components } from '../../../.generated/api/schema';
@@ -34,6 +35,7 @@ export type FlowAuthoringServices = { api: FactoryApi; projectId: string };
 export function FlowPrimitives({
   node,
   services,
+  schemas = [],
   onChange,
   draft,
   onDraftChange,
@@ -44,6 +46,7 @@ export function FlowPrimitives({
   resultEditing?: boolean;
   inputPending?: boolean;
   services: FlowAuthoringServices;
+  schemas?: readonly Schema['FactoryFlowDataSchema'][] | undefined;
   onChange: (patch: Partial<Node>, schemas?: Schema['FactoryFlowDataSchema'][]) => void;
 } & PrimitiveDraftProps) {
   const { t } = usePresentation();
@@ -73,6 +76,9 @@ export function FlowPrimitives({
   if (!capabilities.data) return <p role="status">{t('factory.loadingStepCapabilities')}</p>;
   return node.kind === 'deterministic_gate' ? (
     <ConditionEditor
+      inputShape={
+        schemas.find((schema) => schema.reference.digest === node.input_schema?.digest)?.shape
+      }
       draft={draft}
       onDraftChange={onDraftChange}
       node={node}
@@ -115,6 +121,7 @@ export function FlowPrimitives({
 }
 
 function ConditionEditor({
+  inputShape,
   node,
   services,
   contract,
@@ -122,6 +129,7 @@ function ConditionEditor({
   draft,
   onDraftChange,
 }: {
+  inputShape?: Schema['FactoryFlowValueSchema'] | undefined;
   node: Node;
   services: FlowAuthoringServices;
   contract: Schema['FactoryAuthoringCapabilities']['deterministic_gate'];
@@ -184,6 +192,21 @@ function ConditionEditor({
       {program.rules.map((rule, index) => (
         <fieldset key={ruleKeys[index]}>
           <legend>{t('factory.conditionNumber', { number: index + 1 })}</legend>
+          {inputShape ? (
+            <ChoiceThreshold
+              shape={inputShape}
+              value={rule.when}
+              condition={node.key
+                .replace(/[._-]/g, ' ')
+                .replace(/^./, (letter) => letter.toUpperCase())}
+              onChange={(when) =>
+                edit({
+                  ...program,
+                  rules: program.rules.map((item, at) => (at === index ? { ...item, when } : item)),
+                })
+              }
+            />
+          ) : null}
           <PredicateEditor
             value={rule.when}
             onChange={(when) =>

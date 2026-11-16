@@ -37,28 +37,57 @@ pub(super) fn bind(
   selection: &FactoryPresetIssueSnapshotSelection,
   catalog: &PublishedIssueProperties,
 ) -> Result<FlowIssueSnapshotInput, String> {
+  bind_contract(template, selection, catalog, true)
+}
+
+/// The common snapshot editor owns admission mapping and threshold edits after opening.
+pub(super) fn draft(
+  template: &mut FlowDefinitionTemplate,
+  catalog: &PublishedIssueProperties,
+) -> Result<FlowIssueSnapshotInput, String> {
+  bind_contract(
+    template,
+    &FactoryPresetIssueSnapshotSelection {
+      definition_version: catalog.version,
+      admission: None,
+      fields: BTreeMap::new(),
+      choice_thresholds: BTreeMap::new(),
+    },
+    catalog,
+    false,
+  )
+}
+
+fn bind_contract(
+  template: &mut FlowDefinitionTemplate,
+  selection: &FactoryPresetIssueSnapshotSelection,
+  catalog: &PublishedIssueProperties,
+  configured: bool,
+) -> Result<FlowIssueSnapshotInput, String> {
   let config = parameters()?;
-  let invalid_admission = || "/issue_snapshot/admission".to_owned();
-  let admission = selection.admission.as_ref().ok_or_else(invalid_admission)?;
-  let source = template
-    .schemas
-    .get(&config.admission_schema)
-    .ok_or_else(invalid_admission)?;
-  let FlowValueSchema::Object { fields: declared } = &source.shape else {
-    return Err(invalid_admission());
-  };
-  for field in &config.admission_allowed {
-    let values = admission
-      .allowed
-      .get(field)
-      .filter(|v| !v.is_empty())
+  if configured {
+    let invalid_admission = || "/issue_snapshot/admission".to_owned();
+    let admission = selection.admission.as_ref().ok_or_else(invalid_admission)?;
+    let source = template
+      .schemas
+      .get(&config.admission_schema)
       .ok_or_else(invalid_admission)?;
-    let shape = declared.get(field).ok_or_else(invalid_admission)?;
-    if values
-      .iter()
-      .any(|value| !shape.value().accepts_value(&serde_json::json!(value)))
-    {
+    let FlowValueSchema::Object { fields: declared } = &source.shape else {
       return Err(invalid_admission());
+    };
+    for field in &config.admission_allowed {
+      let values = admission
+        .allowed
+        .get(field)
+        .filter(|v| !v.is_empty())
+        .ok_or_else(invalid_admission)?;
+      let shape = declared.get(field).ok_or_else(invalid_admission)?;
+      if values
+        .iter()
+        .any(|value| !shape.value().accepts_value(&serde_json::json!(value)))
+      {
+        return Err(invalid_admission());
+      }
     }
   }
   let mut fields = BTreeMap::new();
@@ -76,6 +105,18 @@ pub(super) fn bind(
         required: true,
       });
     let shape = crate::factory::issue_snapshot::field_shape(&selected, catalog)
+      .or_else(|| {
+        (!configured)
+          .then(|| {
+            config.schema_fields.keys().find_map(|schema| {
+              let FlowValueSchema::Object { fields } = &template.schemas.get(schema)?.shape else {
+                return None;
+              };
+              fields.get(alias).map(|field| field.value().clone())
+            })
+          })
+          .flatten()
+      })
       .ok_or_else(|| format!("/issue_snapshot/fields/{alias}"))?;
     shapes.insert(
       alias.clone(),
@@ -87,7 +128,37 @@ pub(super) fn bind(
     );
     fields.insert(alias.clone(), selected);
   }
-  bind_choice_condition(template, &selection.choice_thresholds, catalog, &config, &fields)?;
+  if configured {
+    bind_choice_condition(template, &selection.choice_thresholds, catalog, &config, &fields)?;
+  } else {
+    let condition = &config.choice_condition;
+    let initial = template
+      .nodes
+      .iter()
+      .find(|node| node.key == condition.node)
+      .and_then(|node| node.gate.as_ref())
+      .and_then(|gate| gate.rules().first())
+      .and_then(|rule| match &rule.when {
+        FlowPredicate::Compare {
+          comparison: FlowComparison::Equal,
+          left: FlowOperand::Path { path },
+          right: FlowOperand::Literal { value },
+        } if rule.outcome == condition.outcome && path == &condition.path => value.as_str().map(str::to_owned),
+        _ => None,
+      });
+    let thresholds = initial
+      .map(|value| [(condition.node.clone(), value)].into())
+      .unwrap_or_default();
+    if bind_choice_condition(template, &thresholds, catalog, &config, &fields).is_err() {
+      // An absent Project choice is an unfinished gate, never an inferred cutoff.
+      template
+        .nodes
+        .iter_mut()
+        .find(|node| node.key == condition.node)
+        .ok_or_else(|| "/issue_snapshot/choice_thresholds".to_owned())?
+        .gate = None;
+    }
+  }
   let invalid = || "/issue_snapshot/schema".to_owned();
   let schema = FlowDataSchema::new(
     config.identity.clone(),

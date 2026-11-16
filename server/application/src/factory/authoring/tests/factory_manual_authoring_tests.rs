@@ -311,6 +311,8 @@ fn layout_draft() -> crate::FactoryFlowDefinitionDraft {
     nodes.push(node);
   }
   crate::FactoryFlowDefinitionDraft {
+    execution_defaults: Default::default(),
+    schema_slots: Default::default(),
     accepted_predecessor: None,
     issue_snapshot: None,
     root: crate::FactoryFlowRootDraft {

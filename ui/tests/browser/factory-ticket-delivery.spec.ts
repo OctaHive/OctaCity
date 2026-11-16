@@ -80,18 +80,29 @@ test('offers a reviewed example without changing existing triage or enabling int
       },
     }),
   );
+  const { reference: _reference, ...root } = configuration.flow.closure.definitions[0]!;
+  void _reference;
+  await page.route(`${scope}/factory-presets/draft`, (route) =>
+    route.fulfill({
+      json: {
+        root: { ...root, name: 'Ticket delivery' },
+        limits: configuration.flow.limits,
+        data_schemas: configuration.flow.data_schemas,
+      },
+    }),
+  );
   await page.goto(`/factory?project_id=${project}`);
   await page.getByRole('button', { name: 'Add pipeline', exact: true }).click();
   await page.getByText('Start from an example', { exact: true }).click();
   await page.getByRole('button', { name: 'Ticket delivery · v1', exact: true }).click();
-  await expect(page.getByRole('group', { name: 'Reproduction', exact: true })).toContainText(
-    /install/i,
+  await expect(page.getByRole('textbox', { name: 'Pipeline name', exact: true })).toHaveValue(
+    'Ticket delivery',
   );
-  await expect(page.getByText(/Publish a Flow with a typed result/)).toBeVisible();
-  await expect(
-    page.getByRole('button', { name: 'Open example draft', exact: true }),
-  ).toBeDisabled();
-  expect(writes).toEqual([]);
+  await expect(page.getByRole('button', { name: 'Add step', exact: true })).toBeVisible();
+  await expect(page.getByRole('button', { name: 'Open example draft', exact: true })).toHaveCount(
+    0,
+  );
+  expect(writes).toEqual([`/api/v1/projects/${project}/factory-presets/draft`]);
 });
 
 test('submits the reviewed Flow, Project policies, and manual Issue start to the management API', async ({

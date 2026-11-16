@@ -342,6 +342,8 @@ fn ticket_delivery_roles_run_separate_invocations_with_only_their_declared_input
     }
     let last_result = schemas.last().unwrap().reference().clone();
     let draft = crate::FactoryFlowDefinitionDraft {
+      execution_defaults: Default::default(),
+      schema_slots: Default::default(),
       accepted_predecessor: None,
       issue_snapshot: None,
       root: crate::FactoryFlowRootDraft {

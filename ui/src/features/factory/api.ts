@@ -24,6 +24,11 @@ export interface FactoryApi extends FactoryNodeControlApi {
     cursor: string | null,
     signal?: AbortSignal,
   ): Promise<components['schemas']['FactoryPresetPage']>;
+  openPresetDraft(
+    projectId: string,
+    body: { preset: components['schemas']['FactoryImmutableReferenceResource']; flow_id: string },
+    signal?: AbortSignal,
+  ): Promise<components['schemas']['FactoryFlowDefinitionDraft']>;
   resolvePreset(
     projectId: string,
     body: components['schemas']['FactoryPresetResolutionRequest'],
@@ -134,6 +139,17 @@ export const factoryApi: FactoryApi = {
       params: { path: { project_id: projectId }, ...(cursor ? { query: { after: cursor } } : {}) },
       signal: signal ?? null,
     });
+    return requireManagementResponse(data);
+  },
+  async openPresetDraft(projectId, body, signal) {
+    const { data } = await managementApi.POST(
+      '/api/v1/projects/{project_id}/factory-presets/draft',
+      {
+        params: { path: { project_id: projectId } },
+        body,
+        signal: signal ?? null,
+      },
+    );
     return requireManagementResponse(data);
   },
   async resolvePreset(projectId, body, signal) {

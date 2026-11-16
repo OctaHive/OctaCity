@@ -555,8 +555,8 @@ pub const MAX_WEBHOOK_HEADER_VALUE_BYTES: usize = octacity_server_store::MAX_WEB
 
 pub use factory::authoring::factory_flow_definition::{
   FactoryFlowDataSchemaSource, FactoryFlowDefinitionDraft, FactoryFlowDefinitionHandlers,
-  FactoryFlowDefinitionValidation, FactoryFlowRootDraft, ValidateFactoryFlowDataSchemaQuery,
-  ValidateFactoryFlowDefinitionQuery, factory_native_gate_policies,
+  FactoryFlowDefinitionValidation, FactoryFlowExecutionDefaults, FactoryFlowRootDraft,
+  ValidateFactoryFlowDataSchemaQuery, ValidateFactoryFlowDefinitionQuery, factory_native_gate_policies,
 };
 
 pub use factory::authoring::factory_flow_definition::{

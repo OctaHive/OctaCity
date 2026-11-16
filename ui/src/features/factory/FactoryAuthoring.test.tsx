@@ -8,7 +8,6 @@ import { createConsoleQueryClient } from '../../app/query';
 import { FactoryAuthoring } from './FactoryAuthoring';
 import { factoryApi, type FactoryApi } from './api';
 import { configurationFixture } from '../../../tests/fixtures/factory';
-import { factoryIssueFieldsFixture } from '../../../tests/fixtures/factoryIssueFields';
 import { projectDocumentsApi } from '../../api/projectDocuments';
 afterEach(cleanup);
 
@@ -308,174 +307,56 @@ it('retains concurrent graph edits after schema normalization', async () => {
   );
 });
 
-it.each([
-  { required: true, version: 'v1', conditionField: 'size', replaceRisk: false },
-  { required: false, version: 'v1', conditionField: 'size', replaceRisk: false },
-  { required: true, version: 'v2', conditionField: 'size', replaceRisk: false },
-  { required: false, version: 'v2', conditionField: 'environment', replaceRisk: false },
-  { required: false, version: 'v2', conditionField: 'size', replaceRisk: true },
-])(
-  'publishes an example ($version, reproduction required=$required, replace risk=$replaceRisk)',
-  async ({ required, version, conditionField, replaceRisk }) => {
+it.each(['Triage', 'Ticket delivery'])(
+  'opens %s directly in the shared editor and retains normal publication review',
+  async (name) => {
     const { configuration } = configurationFixture();
-    const projectId = configuration.reference.project_id;
     const original = configuration.flow;
     const { reference: _reference, ...root } = original.closure.definitions[0]!;
     void _reference;
-    const preset = { identity: 'ticket-delivery', version, digest: '3'.repeat(64) };
-    const report = original.data_schemas[0]!;
-    const command = {
-      alias: 'Reviewed reproduction',
-      execution: {
-        build_configuration: {
-          project_id: projectId,
-          id: 'build',
-          version: 1,
-          definition_digest: '4'.repeat(64),
-        },
-        tool: preset,
-        plugin: preset,
-        model_or_tool: preset,
-        task_digest: `aaaaaaaa${'5'.repeat(56)}`,
-        result_output: 'reproduction.json',
-        result_output_kind: 'report' as const,
-      },
-      output_schema: report.reference,
-      output_definition: report,
-    };
-    const example = {
-      root: { ...root, name: 'Ticket delivery' },
+    const draft = {
+      root: { ...root, name },
       limits: original.limits,
       data_schemas: original.data_schemas,
     };
-    const alternateCommand = {
-      ...command,
-      execution: {
-        ...command.execution,
-        task_digest: 'a'.repeat(64),
-      },
+    const preset = {
+      identity: name.toLowerCase().replaceAll(' ', '-'),
+      version: 'v1',
+      digest: '3'.repeat(64),
     };
-    const legacyExample = {
-      reference: { ...preset, version: 'v1' },
-      profile_aliases: [],
-      required_node_kinds: ['build_command' as const],
-      parameters: [{ path: '/commands/reproduction', kind: 'command' as const, required }],
-      editor: {
-        name: 'Ticket delivery',
-        budget: original.limits.budget,
-        max_active_nodes: 1,
-        steps: [
-          {
-            alias: 'reproduction',
-            kind: 'build_command' as const,
-            outcome: 'observed',
-            result: null,
-          },
-        ],
-      },
-    };
-    const listPresets = vi.fn<FactoryApi['listPresets']>(async () => ({
-      items: [
-        legacyExample,
-        {
-          ...legacyExample,
-          reference: { ...preset, version: 'v2' },
-          editor: {
-            ...legacyExample.editor,
-            choice_thresholds: { specification_cutoff: 'size' },
-            issue_snapshot_fields: {
-              priority: { kind: 'priority' },
-              risk: { kind: 'property', id: 'impact' },
-              work_kind: { kind: 'type' },
-              size:
-                conditionField === 'size'
-                  ? { kind: 'size' }
-                  : { kind: 'property', id: 'environment' },
-            },
-          },
-          parameters: [
-            ...legacyExample.parameters,
-            { path: '/issue_snapshot', kind: 'issue_snapshot' as const, required: true },
-            {
-              path: '/issue_snapshot/choice_thresholds/specification_cutoff',
-              kind: 'choice_threshold' as const,
-              required: true,
-            },
-          ],
-        },
-      ],
-      total: 2,
-      next_cursor: null,
-    }));
-    const resolvePreset = vi.fn<FactoryApi['resolvePreset']>(async () => ({
-      preset,
-      diagnostics: [],
-      flow: example,
-      configuration: null,
-      input: null,
-      dependencies: [],
-      completion: {
-        kind: 'draft',
-        project_id: projectId,
-        preset,
-        content: 'Retain the reviewed result.',
-      },
-    }));
     const published = {
       ...original,
       closure: {
         ...original.closure,
-        definitions: [{ ...original.closure.definitions[0]!, name: 'Ticket delivery' }],
+        definitions: [{ ...original.closure.definitions[0]!, name: 'Edited pipeline' }],
       },
     };
-    const validateFlow = vi.fn<FactoryApi['validateFlow']>(async () => published);
-    const createFlow = vi.fn<FactoryApi['createFlow']>(async () => ({
-      disposition: 'applied',
-      resource: { flow: published, project_id: projectId, published_at_unix_ms: 1 },
-    }));
     const api = {
       ...factoryApi,
-      listPresets,
-      resolvePreset,
-      validateFlow,
-      createFlow,
       listChoices: vi.fn(async () => ({ items: [], total: 0, next_cursor: null })),
       listFlows: vi.fn(async () => ({ items: [], total: 0, next_cursor: null })),
-      getAuthoringCapabilities: vi.fn<FactoryApi['getAuthoringCapabilities']>(async () => ({
-        ...factoryIssueFieldsFixture(),
-        issue_fields: {
-          ...factoryIssueFieldsFixture().issue_fields,
-          fields: factoryIssueFieldsFixture()
-            .issue_fields.fields.concat([
-              {
-                source: { kind: 'property', id: 'other_risk' },
-                name: 'Other risk',
-                write_target: { kind: 'property', id: 'other_risk' },
-                value_key: 'property.other_risk',
-                required_supported: true,
-                shape: { type: 'enum', values: ['major', 'minor'] },
-              },
-            ])
-            .map((field) =>
-              field.source.kind === 'size'
-                ? {
-                    ...field,
-                    shape: { type: 'enum' as const, values: ['xs', 'medium', 'xl'] },
-                    choice_labels: { xs: 'XS', medium: 'Project medium', xl: 'XL' },
-                  }
-                : field,
-            ),
-        },
-        commands: required ? [command, alternateCommand] : [],
-        candidate_publications: [],
-        human_gates: [],
-        build_resource_modes: [],
-        source_free_incompatibility: null,
-        deterministic_gate: {
-          policy: preset,
-          parameter_contract: 'declarative_gate_v1',
-          max_parameter_bytes: 64,
-          resource_modes: [],
+      listPresets: vi.fn(async () => ({
+        items: [
+          {
+            reference: preset,
+            profile_aliases: [],
+            parameters: [],
+            required_node_kinds: [],
+            editor: { name, budget: original.limits.budget, max_active_nodes: 1, steps: [] },
+          },
+        ],
+        total: 1,
+        next_cursor: null,
+      })),
+      openPresetDraft: vi.fn(async () => draft),
+      resolvePreset: vi.fn(),
+      validateFlow: vi.fn<FactoryApi['validateFlow']>(async () => published),
+      createFlow: vi.fn<FactoryApi['createFlow']>(async () => ({
+        disposition: 'applied',
+        resource: {
+          flow: published,
+          project_id: configuration.reference.project_id,
+          published_at_unix_ms: 1,
         },
       })),
     };
@@ -488,7 +369,7 @@ it.each([
               element: (
                 <FactoryAuthoring
                   api={api}
-                  projectId={projectId}
+                  projectId={configuration.reference.project_id}
                   kind="flow"
                   onDiscard={() => {}}
                 />
@@ -498,165 +379,24 @@ it.each([
         />
       </QueryClientProvider>,
     );
-    expect(listPresets).not.toHaveBeenCalled();
     await userEvent.click(await screen.findByText('Start from an example'));
-    await userEvent.click(
-      await screen.findByRole('button', { name: `Ticket delivery · ${version}` }),
-    );
-    if (version === 'v2') {
-      const choose = async (name: string, option: string) => {
-        await userEvent.click(await screen.findByRole('combobox', { name }));
-        await userEvent.click(screen.getByRole('option', { name: option }));
-      };
-      await userEvent.click(
-        await screen.findByRole('checkbox', { name: 'Map Issue fields to admission' }),
-      );
-      await choose('Admission priority field', 'Priority · priority');
-      await userEvent.type(
-        screen.getByRole('spinbutton', { name: 'Scheduling priority: urgent' }),
-        '90',
-      );
-      await userEvent.type(
-        screen.getByRole('spinbutton', { name: 'Scheduling priority: routine' }),
-        '20',
-      );
-      await choose('Admission risk field', 'Project field: Impact · risk');
-      await choose('Admission risk: major', 'High');
-      await choose('Admission risk: minor', 'Low');
-      await userEvent.click(screen.getByRole('checkbox', { name: 'Allow work_kind: defect' }));
-      expect(screen.getByRole('button', { name: 'Open example draft' })).toHaveProperty(
-        'disabled',
-        true,
-      );
-      const threshold = screen.getByRole('combobox', {
-        name:
-          conditionField === 'size'
-            ? 'Starting choice: Issue size · Specification cutoff'
-            : 'Starting choice: Project field: Environment · Specification cutoff',
-      });
-      threshold.focus();
-      await userEvent.keyboard('{Enter}{Home}{ArrowDown}{ArrowDown}');
-      expect(
-        screen.getByRole('option', {
-          name: conditionField === 'size' ? 'Project medium' : 'production',
-        }),
-      ).toBeTruthy();
-      await userEvent.keyboard('{Enter}');
-      expect(screen.queryByRole('combobox', { name: /predecessor/i })).toBeNull();
-    }
-    if (!required) {
-      expect(screen.getByRole('group', { name: 'Reproduction' }).textContent).toContain(
-        'Optional. Without a command, tickets that need this check are sent for review.',
-      );
-    }
-    if (required) {
-      await userEvent.click(await screen.findByRole('combobox', { name: 'Reproduction' }));
-      const options = screen.getAllByRole('option', { name: /Reviewed reproduction/ });
-      expect(new Set(options.map((option) => option.textContent)).size).toBe(2);
-      for (const option of options) {
-        expect(option.textContent).toContain('Reviewed reproduction');
-        expect(option.textContent).not.toMatch(/[0-9a-f]{20}/);
-      }
-      await userEvent.click(options[1]!);
-    }
-    if (replaceRisk) {
-      await userEvent.click(screen.getByRole('checkbox', { name: 'Allow risk: major' }));
-      await userEvent.click(screen.getByRole('combobox', { name: 'Issue input field: risk' }));
-      await userEvent.click(screen.getByRole('option', { name: 'Project field: Other risk' }));
-      expect(screen.getByRole('button', { name: 'Open example draft' })).toHaveProperty(
-        'disabled',
-        true,
-      );
-      expect(screen.getByRole('combobox', { name: 'Admission risk: major' }).textContent).toBe(
-        'Choose an option',
-      );
-      expect(screen.getByRole('checkbox', { name: 'Allow risk: major' })).toHaveProperty(
-        'checked',
-        false,
-      );
-      expect(screen.getByRole('checkbox', { name: 'Allow work_kind: defect' })).toHaveProperty(
-        'checked',
-        true,
-      );
-      expect(
-        screen.getByRole('spinbutton', { name: 'Scheduling priority: urgent' }),
-      ).toHaveProperty('value', '90');
-      for (const [choice, risk] of [
-        ['major', 'Critical'],
-        ['minor', 'Medium'],
-      ] as const) {
-        await userEvent.click(screen.getByRole('combobox', { name: `Admission risk: ${choice}` }));
-        await userEvent.click(screen.getByRole('option', { name: risk }));
-      }
-      await userEvent.click(screen.getByRole('checkbox', { name: 'Allow risk: minor' }));
-    }
-    await userEvent.click(screen.getByRole('button', { name: 'Open example draft' }));
-    const name = await screen.findByDisplayValue('Ticket delivery');
-    await userEvent.clear(name);
-    await userEvent.type(name, 'Reviewed delivery');
-    expect(resolvePreset).toHaveBeenCalledWith(
-      projectId,
-      expect.objectContaining({
-        preset,
-        flow_only: true,
-        ...(version === 'v2'
-          ? {
-              issue_snapshot: {
-                definition_version: 7,
-                choice_thresholds: {
-                  specification_cutoff: conditionField === 'size' ? 'medium' : 'production',
-                },
-                fields: {
-                  priority: { source: { kind: 'priority' }, required: true },
-                  risk: {
-                    source: { kind: 'property', id: replaceRisk ? 'other_risk' : 'impact' },
-                    required: true,
-                  },
-                  work_kind: { source: { kind: 'type' }, required: true },
-                  size: {
-                    source:
-                      conditionField === 'size'
-                        ? { kind: 'size' }
-                        : { kind: 'property', id: 'environment' },
-                    required: true,
-                  },
-                },
-                admission: {
-                  priority: { field: 'priority', values: { urgent: 90, routine: 20 } },
-                  risk: {
-                    field: 'risk',
-                    values: replaceRisk
-                      ? { major: 'critical', minor: 'medium' }
-                      : { major: 'high', minor: 'low' },
-                  },
-                  allowed: { work_kind: ['defect'], ...(replaceRisk ? { risk: ['minor'] } : {}) },
-                },
-              },
-            }
-          : {}),
-        flow_id: expect.any(String),
-        commands: required
-          ? {
-              reproduction: {
-                build: { ...alternateCommand.execution, result_outcome: 'observed' },
-                result: report,
-                permissions: expect.any(Object),
-              },
-            }
-          : {},
-      }),
-      expect.any(AbortSignal),
-    );
-    expect(createFlow).not.toHaveBeenCalled();
+    await userEvent.click(await screen.findByRole('button', { name: `${name} · v1` }));
+    const title = await screen.findByDisplayValue(name);
+    expect(screen.getByRole('button', { name: 'Add step' })).toBeTruthy();
+    expect(screen.queryByRole('button', { name: 'Open example draft' })).toBeNull();
+    expect(api.resolvePreset).not.toHaveBeenCalled();
+    expect(api.createFlow).not.toHaveBeenCalled();
+    await userEvent.clear(title);
+    await userEvent.type(title, 'Edited pipeline');
     await userEvent.click(screen.getByRole('button', { name: 'Validate draft' }));
     await screen.findByText('Authoritative validation passed.');
-    expect(validateFlow.mock.calls[0]?.[0].definition.root.name).toBe('Reviewed delivery');
+    expect(api.validateFlow.mock.calls[0]?.[0].definition.root.name).toBe('Edited pipeline');
     await userEvent.click(screen.getByRole('button', { name: 'Review publication' }));
-    expect(createFlow).not.toHaveBeenCalled();
+    expect(api.createFlow).not.toHaveBeenCalled();
     await userEvent.click(
       within(await screen.findByRole('dialog')).getByRole('button', { name: 'Confirm publish' }),
     );
-    expect(await screen.findByText('Immutable version published.')).toBeTruthy();
-    expect(createFlow.mock.calls[0]?.[0].definition.root.name).toBe('Reviewed delivery');
+    await screen.findByText('Immutable version published.');
+    expect(api.createFlow.mock.calls[0]?.[0].definition.root.name).toBe('Edited pipeline');
   },
 );

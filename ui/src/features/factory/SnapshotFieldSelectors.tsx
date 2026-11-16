@@ -10,16 +10,10 @@ export function SnapshotFieldSelectors({
   fields,
   choices,
   onChange,
-  conditions,
-  thresholds,
-  onThresholdChange,
 }: {
   fields: Record<string, S['FactoryFlowIssueFieldSelection']>;
   choices: S['FactoryIssueFieldChoices'];
   onChange: (fields: Record<string, S['FactoryFlowIssueFieldSelection']>) => void;
-  conditions: Record<string, string>;
-  thresholds: Record<string, string>;
-  onThresholdChange: (thresholds: Record<string, string>) => void;
 }) {
   const { t } = usePresentation();
   const offered = directIssueFields(choices);
@@ -45,11 +39,6 @@ export function SnapshotFieldSelectors({
                 const field = offered.find((field) => issueFieldSourceKey(field.source) === key);
                 if (field && key !== issueFieldSourceKey(selection.source)) {
                   onChange({ ...fields, [alias]: { ...selection, source: field.source } });
-                  onThresholdChange(
-                    Object.fromEntries(
-                      Object.entries(thresholds).filter(([node]) => conditions[node] !== alias),
-                    ),
-                  );
                 }
               }}
             />
@@ -67,35 +56,6 @@ export function SnapshotFieldSelectors({
               />
               {t('factory.requiredIssueField', { name: alias })}
             </label>
-          </fieldset>
-        );
-      })}
-      {Object.entries(conditions).map(([node, alias]) => {
-        const field = selected.find((field) => field.alias === alias)?.field;
-        const values =
-          field?.shape.type === 'enum'
-            ? field.shape.values.filter((value): value is string => typeof value === 'string')
-            : [];
-        return (
-          <fieldset key={node}>
-            <SelectMenu
-              ariaLabel={t('factory.choiceThreshold', {
-                field: field ? issueFieldLabel(field, t) : alias,
-                condition: node
-                  .replace(/[._-]/g, ' ')
-                  .replace(/^./, (letter) => letter.toUpperCase()),
-              })}
-              value={thresholds[node] ?? ''}
-              options={[
-                { value: '', label: t('factory.chooseInput') },
-                ...values.map((value) => ({
-                  value,
-                  label: field?.choice_labels?.[value] ?? value,
-                })),
-              ]}
-              onValueChange={(value) => onThresholdChange({ ...thresholds, [node]: value })}
-            />
-            <p>{t('factory.choiceThresholdHelp')}</p>
           </fieldset>
         );
       })}

@@ -1022,6 +1022,8 @@ fn native_observation_command_is_selectable_with_its_exact_report_and_evidence()
     root["nodes"][0]["build"]["task_digest"] = exposed["execution"]["task_digest"].clone();
     root["nodes"][0]["build"]["evidence"] = exposed["evidence"].clone();
     let mut exact = FactoryFlowDefinitionDraft {
+      execution_defaults: Default::default(),
+      schema_slots: Default::default(),
       accepted_predecessor: None,
       issue_snapshot: None,
       root: serde_json::from_value(root.clone()).unwrap(),

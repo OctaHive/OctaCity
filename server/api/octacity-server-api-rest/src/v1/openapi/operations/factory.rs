@@ -143,6 +143,20 @@ pub(super) const OPERATIONS: &[ManagementOperation] = &[
   )
   .with_no_store_response(),
   operation!(
+    octacity_server_application::OpenFactoryPresetDraftQuery,
+    "POST",
+    "/api/v1/projects/{project_id}/factory-presets/draft",
+    "openFactoryPresetDraft",
+    "Factory",
+    "Open an example in the ordinary editor without selecting executors or publishing",
+    Some("OpenFactoryPresetDraftRequest"),
+    "FactoryFlowDefinitionDraft",
+    "200",
+    false,
+    false
+  )
+  .with_no_store_response(),
+  operation!(
     octacity_server_application::ResolveFactoryPresetQuery,
     "POST",
     "/api/v1/projects/{project_id}/factory-presets/resolve",

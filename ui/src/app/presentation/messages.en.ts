@@ -387,6 +387,9 @@ export const enMessages = {
   'factory.projectionTooLarge':
     'This projection exceeds the input mapping limits. Select fewer optional fields or use the advanced input editor.',
   'factory.choiceThreshold': 'Starting choice: {field} · {condition}',
+  'factory.choiceField': 'Choice field',
+  'factory.inputChoiceThresholdHelp':
+    'This choice and subsequent choices in the input contract order match this condition.',
   'factory.choiceThresholdHelp':
     'This choice and later active choices in the reviewed Project order take the configured route.',
   'factory.snapshotFieldSource': 'Issue input field: {alias}',

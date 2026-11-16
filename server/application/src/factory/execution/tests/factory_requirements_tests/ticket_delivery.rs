@@ -1601,6 +1601,8 @@ async fn publish_manual_delivery_configuration(
         id: root.reference().id(),
         project_id: project,
         draft: FactoryFlowDefinitionDraft {
+          execution_defaults: Default::default(),
+          schema_slots: Default::default(),
           accepted_predecessor: None,
           issue_snapshot: None,
           root: serde_json::from_value(wire).unwrap(),

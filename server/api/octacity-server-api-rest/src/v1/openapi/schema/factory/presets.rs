@@ -53,6 +53,10 @@ pub(super) fn insert(schemas: &mut Map<String, Value>) {
   let uuid = || json!({"type":"string","format":"uuid"});
   let text = || json!({"type":"string","maxLength":b.text_bytes});
   let reference = || schema_ref("FactoryImmutableReferenceResource");
+  schemas.insert(
+    "OpenFactoryPresetDraftRequest".into(),
+    object([("preset", reference()), ("flow_id", uuid())], &["preset", "flow_id"]),
+  );
   let digest = || schema_ref("FactoryDigest");
   schemas.insert(
     "FactoryPresetProfileSelection".into(),

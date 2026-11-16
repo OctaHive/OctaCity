@@ -186,6 +186,43 @@ impl FlowDefinitionTemplate {
     version: FlowDefinitionVersion,
     profiles: &BTreeMap<FactoryKey, FlowBuildBinding>,
   ) -> Result<PublishedFlowTemplate, FactoryError> {
+    self.compile(id, version, Some(profiles))
+  }
+  /// Opens the configured graph without selecting installed executors. The result
+  /// is authoring content; ordinary publication must resolve every required binding.
+  pub fn draft(
+    &self,
+    id: FlowDefinitionId,
+    version: FlowDefinitionVersion,
+  ) -> Result<PublishedFlowTemplate, FactoryError> {
+    let mut template = self.clone();
+    // Installed commands supply these report contracts later. A bounded empty
+    // format keeps their shared graph slots editable without inventing a compiler.
+    for outcome in self
+      .nodes
+      .iter()
+      .filter(|node| node.kind == FlowNodeKind::BuildCommand)
+      .flat_map(|node| &node.outcomes)
+    {
+      template
+        .schemas
+        .entry(outcome.schema.clone())
+        .or_insert_with(|| FlowTemplateSchema {
+          identity: outcome.schema.clone(),
+          version: FactoryKey::new("draft").unwrap(),
+          shape: FlowValueSchema::Object {
+            fields: BTreeMap::new(),
+          },
+        });
+    }
+    template.compile(id, version, None)
+  }
+  fn compile(
+    &self,
+    id: FlowDefinitionId,
+    version: FlowDefinitionVersion,
+    profiles: Option<&BTreeMap<FactoryKey, FlowBuildBinding>>,
+  ) -> Result<PublishedFlowTemplate, FactoryError> {
     if self.schemas.is_empty()
       || self.schemas.len() > MAX_FLOW_SCHEMA_ENTRIES
       || self.nodes.len() > MAX_FLOW_DEFINITION_NODES
@@ -237,7 +274,9 @@ impl FlowDefinitionTemplate {
         if let Some(action) = &choice.action {
           node = node.with_action(action.clone())?;
         }
-        if let Some(profile) = &choice.build_profile {
+        if let Some(profiles) = profiles
+          && let Some(profile) = &choice.build_profile
+        {
           let mut binding = profiles.get(profile).ok_or_else(invalid)?.clone();
           choice.bind_capture(&mut binding, &self.deliverable_policies)?;
           node = node.with_build(binding)?;
@@ -261,18 +300,20 @@ impl FlowDefinitionTemplate {
         if let Some(pool) = &choice.pool {
           node = node.with_phase_pool(pool.clone());
         }
-        if (choice.capture_write_paths.is_some() || choice.capture_deliverables.is_some())
+        if profiles.is_some()
+          && (choice.capture_write_paths.is_some() || choice.capture_deliverables.is_some())
           && choice.build_profile.is_none()
           && choice.profile_selection.is_none()
         {
           return Err(invalid());
         }
-        if matches!(choice.kind, FlowNodeKind::BuildCommand | FlowNodeKind::Reasoning)
-          && choice.build_profile.is_none()
-          && choice.profile_selection.is_none()
-          || choice.kind == FlowNodeKind::DeterministicGate && choice.gate.is_none()
-          || matches!(choice.kind, FlowNodeKind::TrustedAction | FlowNodeKind::DecisionSignal)
-            && choice.action.is_none()
+        if profiles.is_some()
+          && (matches!(choice.kind, FlowNodeKind::BuildCommand | FlowNodeKind::Reasoning)
+            && choice.build_profile.is_none()
+            && choice.profile_selection.is_none()
+            || choice.kind == FlowNodeKind::DeterministicGate && choice.gate.is_none()
+            || matches!(choice.kind, FlowNodeKind::TrustedAction | FlowNodeKind::DecisionSignal)
+              && choice.action.is_none())
         {
           return Err(invalid());
         }

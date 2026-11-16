@@ -98,13 +98,7 @@ export function FactoryAuthoring({
         <details onToggle={(event) => setExamplesOpen(event.currentTarget.open)}>
           <summary>{t('factory.examples')}</summary>
           {examplesOpen ? (
-            <FactoryExample
-              api={api}
-              projectId={projectId}
-              flowId={newId}
-              flows={visibleFlows}
-              onOpen={setDraft}
-            />
+            <FactoryExample api={api} projectId={projectId} flowId={newId} onOpen={setDraft} />
           ) : null}
         </details>
       ) : null}

@@ -35,6 +35,11 @@ Choose exact independent Role/Profile/Build bindings for each reasoning step.
 Project Context is independently selected per step; the handoff exposes only its
 declared data projections. Accepted Context provenance remains retained through
 reasoning steps and nested Flow returns for later applicability checks.
+Both reasoning nodes explicitly select the admitted Work task as Context `task`
+in the template assets. This lets the ordinary example resolver use published
+profiles that require `task` before Project documents are selected in the graph
+editor. Goals, rules and supporting documents are not inferred. An explicit
+per-step Project Context selection still replaces that node's template binding.
 
 The common installed local writer is selected from ordinary capability metadata.
 Its grant belongs to the field-filling node and its enclosing Flow ceiling. It is
@@ -62,7 +67,7 @@ producer-result handoffs remain available for pipelines that require them.
 `completion-v3.json`, initial Project property definitions and the common writer.
 Only an unpublished catalog is initialized; published operator definitions and
 Issue values are preserved on restart. For a published custom catalog, select its
-actual fields in the example form or author an ordinary Flow; the installer does
+actual fields on the result in the ordinary editor; the installer does
 not invent missing properties. Built-in choice defaults come from the Project
 owner, not another installer schema.
 
@@ -74,6 +79,8 @@ change its access. Installation never invokes a model or performs provider write
 
 `completion-v3.json` describes current selected-field completion and receipt checks.
 Older versioned files are explicit historical/compiler fixtures, not advertised
-fallbacks or a compatibility path in the installer. The Console/API selectors are
-being updated in change tasks 10.6–10.8; these assets alone do not establish native
-UI qualification.
+fallbacks or a compatibility path in the installer. The Console opens the example directly in the ordinary graph editor, without
+executor or field preconfiguration. Configure executors and the selected-field
+result there before publishing. The read-only draft endpoint is distinct from
+the fully bound resolver used by headless installers; neither enables intake.
+These assets alone do not establish native UI qualification.

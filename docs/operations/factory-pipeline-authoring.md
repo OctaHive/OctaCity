@@ -113,14 +113,14 @@ these policies and projections; renaming either alias preserves their links.
 Mixed bindings and exact-reference material policies remain preserved advanced
 contracts.
 
-The optional **Triage** example uses the same **Fill Issue fields** selector as an
-ordinary agent. Select fields and required/optional once; opening the draft asks
-the server to generate the result schema and matching save scope from that form.
-No additional schema editor or output mapping is needed. If the Project catalog
-changes while a template is open or resolving, its first displayed field form
-(including untouched defaults, catalog version and writer policy) stays pinned.
-Review the current types and choose **Use current field definitions** before
-opening the draft again. An obsolete response does not replace the draft.
+Selecting the optional **Triage** example immediately opens the ordinary graph
+editor with configured steps and routes. It has no preliminary setup form or
+**Open example draft** action. Select executors on the steps and edit
+**Fill Issue fields** on `classification.observed` using the same controls as any
+ordinary agent. The server generates the result schema and matching save scope
+from that selection. Review changed catalog definitions through
+**Use current field definitions** in the result form. Opening an example never
+publishes a Flow, enables intake or executes a model.
 
 ## Add and configure steps
 
@@ -505,8 +505,9 @@ publication receipt in the Run. Check the corresponding cards in the Issue's **O
 reproducible test environment, see [ticket delivery qualification](../testing/manual-factory-authoring.md#ticket-delivery-qualification).
 
 To use the optional example, choose **Add pipeline → Start from an example →
-Ticket delivery · v2**. The form shows the exact Project definition version and
-required Issue fields. Under **Snapshot admission**, map priority choices to
+Ticket delivery · v2**. This immediately opens the ordinary graph editor.
+Choose **Configure Issue snapshot** to inspect the Project definition version
+and required Issue fields. Under **Snapshot admission**, map priority choices to
 scheduling scores, map risk choices, and allow the supported `work_kind` values
 (`defect` and/or `feature_request`). These are selections from the Project catalog;
 do not maintain another set of classification enums in step outputs.
@@ -522,19 +523,18 @@ allowed values, even if the new field uses the same choice IDs. Select the
 intended conversions again; unrelated input mappings and thresholds are retained.
 Changing required/optional handling alone does not replace the source.
 
-Before **Open example draft**, select **Starting choice: Issue size · Requirements needed**
-(the label follows the selected field and configured condition name).
-The choices show Project display names in their published order and retain their
-stable IDs in the request and graph. For example,
-with `xs → s → m → l → xl`, selecting `l` sends `l` and `xl` through OpenSpec
-authoring; lower sizes use the Issue acceptance criteria. The same control works for another selected Choice field: its published order,
-not a Size-specific branch in Console, defines the threshold. Changing its input
-source clears the previous threshold even if both fields use identical choice
-IDs. The resolved ordinary `requirements_needed` gate contains concrete choice IDs. Inspect/edit that gate
-in the normal Flow editor when revising the policy, then publish a new version.
-Later catalog additions, renames, reordering or retirement do not change its
-published routes or an admitted Run. Human requirements-approval policy is a
-separate setting; review its component/priority/size rules as well.
+After saving the snapshot, select the `requirements_needed` gate. Choose
+**Choice field: size** and **Starting choice: size · Requirements needed**, then
+**Validate and use condition**. The control uses the gate input schema's enum
+order, supplied by the selected Project catalog. For example, with
+`xs → s → m → l → xl`, choosing `l` routes `l` and `xl` through specification
+authoring. It works for any enum input, without a Size-specific Console branch.
+The released default expands against the current catalog when the draft opens;
+if that choice is absent, the gate remains unconfigured until an explicit
+selection. After replacing a snapshot source, review and validate the gate again.
+Published gates contain concrete choice IDs: later catalog edits do not change
+published routes or admitted Runs. Human requirements approval is a separate
+policy; review its component/priority/size conditions as well.
 
 Select each reasoning step's agent/Profile and installed execution mode. Use
 **Tester · Delivery → Prepare protected tests** for protected test authoring.
@@ -554,8 +554,11 @@ original pins. A Profile edited in **AI agents** may request a lower budget
 within its installed capability ceiling.
 Select the compatible installed baseline/candidate verification commands and the
 reviewed publication target. Reproduction is optional only under the example's
-explicit unresolved-defect stop route. **Open example draft** resolves an ordinary
-editable Flow. Examples start with no code attached. In **Available code sources**,
+explicit unresolved-defect stop route. Reproduction starts disabled in the
+example draft. Configure all bindings in this editor before normal publication;
+unconfigured executor bindings and report slots cannot be published. Choosing
+an installed command connects its report contract to downstream typed consumers
+and retains the configured capture policy. Examples start with no code attached. In **Available code sources**,
 add the Project repository and reviewed revision, then set its access ceiling.
 Use **Code scope → Selected paths** to limit the available tree to the task's
 directories rather than giving every agent the entire repository.

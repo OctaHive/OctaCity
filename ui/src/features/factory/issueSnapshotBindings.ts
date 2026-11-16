@@ -31,7 +31,13 @@ export function editableSnapshotFields(
       (schema) => sourceReferenceKey(schema.reference) === sourceReferenceKey(node.input_schema!),
     )?.shape;
   if (input?.type !== 'object' || target?.type !== 'object') return null;
-  const names = Object.keys(target.fields);
+  const names = Object.keys(target.fields).filter((name) => Object.hasOwn(input.fields, name));
+  if (
+    Object.entries(target.fields).some(
+      ([name, field]) => !Object.hasOwn(input.fields, name) && field.required,
+    )
+  )
+    return null;
   if (
     !names.every(
       (name) =>

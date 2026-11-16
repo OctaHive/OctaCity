@@ -139,10 +139,25 @@ pub struct FactoryFlowRootDraft {
   #[serde(default, skip_serializing_if = "Option::is_none")]
   pub code_sources: Option<octacity_server_factory::FlowCodeSources>,
 }
+/// Executor-independent settings retained while an ordinary step is being configured.
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(deny_unknown_fields)]
+pub struct FactoryFlowExecutionDefaults {
+  /// Explicit writable paths retained until an executor is selected.
+  pub capture_write_paths: Option<Vec<octacity_server_factory::FactoryRepositoryPath>>,
+  /// Resolved deliverable rules, independent of executor identity.
+  pub capture_deliverables: Option<octacity_server_factory::CandidateDeliverableBinding>,
+}
 /// Root content and bounded executable contracts; subflows resolve from published exact references.
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
 #[serde(deny_unknown_fields)]
 pub struct FactoryFlowDefinitionDraft {
+  /// Unconfigured command report slots. Selecting a command replaces their graph references.
+  #[serde(default, skip_serializing_if = "BTreeSet::is_empty")]
+  pub schema_slots: BTreeSet<ImmutableReference>,
+  /// Unconfigured execution slots with their executor-independent capture settings.
+  #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+  pub execution_defaults: BTreeMap<FactoryKey, FactoryFlowExecutionDefaults>,
   /// Producer-independent Issue input selection; absent on legacy drafts.
   #[serde(default, skip_serializing_if = "Option::is_none")]
   pub issue_snapshot: Option<octacity_server_factory::FlowIssueSnapshotInput>,
@@ -236,6 +251,9 @@ impl<S: octacity_server_store::FactoryConfigurationStore + 'static>
 }
 impl FactoryFlowDefinitionDraft {
   fn root(&self, id: FlowDefinitionId, version: FlowDefinitionVersion) -> Result<FlowDefinition, ApplicationError> {
+    if !self.schema_slots.is_empty() || !self.execution_defaults.is_empty() {
+      return Err(crate::FactoryValidationDiagnostics::invalid("/root/nodes"));
+    }
     let root = &self.root;
     FlowDefinition::new(FlowDefinitionInput {
       id,

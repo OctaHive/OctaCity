@@ -7,9 +7,8 @@ import { ValueMappingEditor } from './ValueMappingEditor';
 
 type Schema = components['schemas'];
 type Node = Schema['FactoryFlowNodeDefinition'];
-type Build = Schema['FactoryFlowBuildBinding'];
 type Policy = Schema['FactoryDeliverablePolicy'];
-type Capture = Pick<Build, 'capture_write_paths' | 'capture_deliverables'>;
+type Capture = Partial<Schema['FactoryFlowExecutionDefaults']>;
 const bounds = FACTORY_AUTHORING_SCHEMAS;
 
 // Rust orders repository paths by Unicode scalar value (UTF-8 byte order).
@@ -27,18 +26,24 @@ function comparePaths(left: string, right: string) {
 /** Capture is a step contract shared by every candidate, independent of executor identity. */
 export function StepCapture({
   node,
+  defaults,
+  onDefaultsChange,
   onChange,
 }: {
   node: Node;
+  defaults?: Schema['FactoryFlowExecutionDefaults'] | undefined;
+  onDefaultsChange?: ((capture: Capture) => void) | undefined;
   onChange: (patch: Partial<Node>) => void;
 }) {
   const { t } = usePresentation();
   const selection = node.profile_selection;
   const build = node.build ?? Object.values(selection?.candidates ?? {})[0]?.build;
-  const deliverables = build?.capture_deliverables;
+  const capture = build ?? defaults;
+  const deliverables = capture?.capture_deliverables;
   const required = deliverables?.policy.required ?? [];
   const rowKeys = useDraftRowKeys(required);
-  if (!build) return null;
+  if (!capture || (!build && !defaults?.capture_write_paths && !defaults?.capture_deliverables))
+    return null;
   const change = (capture: Capture) => {
     if (node.build) onChange({ build: { ...node.build, ...capture } });
     else if (selection)
@@ -53,6 +58,7 @@ export function StepCapture({
           ),
         },
       });
+    else onDefaultsChange?.(capture);
   };
   const changePolicy = (patch: Partial<Policy>) => {
     if (deliverables)
@@ -66,7 +72,7 @@ export function StepCapture({
       <p>{t('factory.candidateCaptureHelp')}</p>
       <Paths
         label="factory.captureDirectories"
-        value={build.capture_write_paths ?? []}
+        value={capture.capture_write_paths ?? []}
         onChange={(paths) => change({ capture_write_paths: paths.length ? paths : null })}
       />
       <label>

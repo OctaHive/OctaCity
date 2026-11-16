@@ -437,6 +437,8 @@ fn explicit_producer_result_publication_executes_and_recovers_without_issue_clas
     )
     .unwrap();
     let draft = FactoryFlowDefinitionDraft {
+      execution_defaults: Default::default(),
+      schema_slots: Default::default(),
       issue_snapshot: None,
       root: FactoryFlowRootDraft {
         name: Some(FactoryText::new("Manually authored delivery").unwrap()),

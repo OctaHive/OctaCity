@@ -28,6 +28,10 @@
         "max_output_bytes": 1048576
       },
       "required": true,
+      "context_binding": {
+        "work_task": "task",
+        "entries": {}
+      },
       "input_binding": {
         "sources": {
           "task": {

@@ -508,6 +508,14 @@ pub(super) fn insert_factory_schemas(schemas: &mut Map<String, Value>) {
     "FactoryFlowDefinitionDraft".to_owned(),
     object(
       [
+        (
+          "schema_slots",
+          bounded_array(schema_ref("FactoryImmutableReferenceResource"), bounds.schema_entries),
+        ),
+        (
+          "execution_defaults",
+          bounded_map(schema_ref("FactoryFlowExecutionDefaults"), bounds.nodes),
+        ),
         ("root", schema_ref("FactoryFlowRootDraft")),
         ("accepted_predecessor", schema_ref("FactoryFlowAcceptedPredecessor")),
         ("issue_snapshot", schema_ref("FactoryFlowIssueSnapshotInput")),
@@ -580,6 +588,22 @@ pub(super) fn insert_factory_schemas(schemas: &mut Map<String, Value>) {
   );
   data::insert(schemas);
   bindings::insert(schemas);
+  schemas.insert(
+    "FactoryFlowExecutionDefaults".to_owned(),
+    object(
+      [
+        (
+          "capture_write_paths",
+          schemas["FactoryFlowBuildBinding"]["properties"]["capture_write_paths"].clone(),
+        ),
+        (
+          "capture_deliverables",
+          schemas["FactoryFlowBuildBinding"]["properties"]["capture_deliverables"].clone(),
+        ),
+      ],
+      &["capture_write_paths", "capture_deliverables"],
+    ),
+  );
   permissions::insert(schemas);
   schemas.insert(
     "FactoryDigest".to_owned(),

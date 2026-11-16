@@ -7,19 +7,17 @@ import type { components } from '../../../.generated/api/schema';
 import { factoryIssueFieldsFixture } from '../../../tests/fixtures/factoryIssueFields';
 import { SnapshotFieldSelectors } from './SnapshotFieldSelectors';
 afterEach(cleanup);
-it('requires a fresh threshold choice when a different source happens to have the same choice IDs', async () => {
+it('rebinds an existing alias without changing its requiredness when choice IDs happen to match', async () => {
   const user = userEvent.setup();
   const choices = factoryIssueFieldsFixture().issue_fields;
   choices.fields.find(
     (field) => field.source.kind === 'property' && field.source.id === 'impact',
   )!.shape = { type: 'enum', values: ['small', 'medium', 'large'] };
   const changed = vi.fn();
-  const changedThreshold = vi.fn();
   function Harness() {
     const [fields, setFields] = useState<
       Record<string, components['schemas']['FactoryFlowIssueFieldSelection']>
     >({ size: { source: { kind: 'size' }, required: true } });
-    const [thresholds, setThresholds] = useState({ branch: 'medium' } as Record<string, string>);
     return (
       <SnapshotFieldSelectors
         fields={fields}
@@ -27,12 +25,6 @@ it('requires a fresh threshold choice when a different source happens to have th
         onChange={(value) => {
           changed(value);
           setFields(value);
-        }}
-        conditions={{ branch: 'size' }}
-        thresholds={thresholds}
-        onThresholdChange={(value) => {
-          changedThreshold(value);
-          setThresholds(value);
         }}
       />
     );
@@ -43,5 +35,4 @@ it('requires a fresh threshold choice when a different source happens to have th
   expect(changed).toHaveBeenCalledWith({
     size: { source: { kind: 'property', id: 'impact' }, required: true },
   });
-  expect(changedThreshold).toHaveBeenCalledWith({});
 });

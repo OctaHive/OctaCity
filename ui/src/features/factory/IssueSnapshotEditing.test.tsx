@@ -580,3 +580,55 @@ it.each([false, true])(
     if (!rename) expect(api.normalizeSchema).not.toHaveBeenCalled();
   },
 );
+
+it('edits an example snapshot source in the common form without losing its consumer projection', async () => {
+  const { draft, schema, component, api } = snapshotFixture();
+  const extended = {
+    reference: { identity: 'with-optional-details', version: '1', digest: 'c'.repeat(64) },
+    shape: {
+      type: 'object',
+      fields: {
+        component,
+        details: { required: false, value: { type: 'string', min_bytes: 0, max_bytes: 128 } },
+      },
+    },
+  } satisfies S['FactoryFlowDataSchema'];
+  draft.data_schemas.push(extended);
+  draft.root.nodes[0]!.input_schema = extended.reference;
+  draft.root.input_schema = extended.reference;
+  api.normalizeSchema.mockImplementation(async (request) => ({
+    reference: { identity: request.identity, version: request.version, digest: 'b'.repeat(64) },
+    shape: authoredSchemaShape(request),
+  }));
+  const changed = vi.fn<(draft: S['FactoryFlowDefinitionDraft']) => void>();
+  const user = userEvent.setup();
+  render(
+    <QueryClientProvider client={createConsoleQueryClient()}>
+      <FlowIssueSnapshot
+        value={draft}
+        services={{ api, projectId: 'delivery' }}
+        onChange={changed}
+        onEditingChange={() => {}}
+      />
+    </QueryClientProvider>,
+  );
+  await user.click(screen.getByRole('button', { name: 'Configure Issue snapshot' }));
+  expect(await screen.findByRole('checkbox', { name: 'first: Issue component' })).toHaveProperty(
+    'checked',
+    true,
+  );
+  await user.click(screen.getByRole('combobox', { name: 'Issue input field: component' }));
+  await user.click(screen.getByRole('option', { name: 'Project field: Impact' }));
+  await user.click(screen.getByRole('button', { name: 'Use Issue snapshot' }));
+  await waitFor(() => expect(changed).toHaveBeenCalledTimes(1));
+  const next = changed.mock.calls[0]![0];
+  expect(next.issue_snapshot!.fields.component!.source).toEqual({ kind: 'property', id: 'impact' });
+  for (const node of next.root.nodes) {
+    expect(node.input_binding?.sources.issue).toMatchObject({
+      source: 'incoming',
+      schema: next.issue_snapshot!.schema,
+    });
+    expect(node.input_schema).toEqual(next.issue_snapshot!.schema);
+  }
+  expect(next.issue_snapshot!.schema).not.toEqual(schema.reference);
+});

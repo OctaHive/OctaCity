@@ -8,6 +8,13 @@ pub(super) fn management_requests() -> Vec<Request<Body>> {
     empty_request("GET", path, None),
     json_request(
       "POST",
+      &format!("{path}/draft"),
+      "unused-read",
+      None,
+      &serde_json::json!({"flow_id":"22222222-2222-4222-8222-222222222222","preset":{"identity":"triage","version":"v4","digest":"d".repeat(64)}}).to_string(),
+    ),
+    json_request(
+      "POST",
       &format!("{path}/resolve"),
       "unused-read",
       None,
@@ -509,7 +516,7 @@ async fn selected_parameters_with_runtime(
   let artifact = |byte: char| serde_json::json!({"artifact_id":uuid::Uuid::new_v4().to_string(),"content_digest":byte.to_string().repeat(64),"encoded_size":64});
   let context = serde_json::json!({"project_id":project,"goals":artifact('b'),"rules":artifact('c'),"documents":{}});
   let budget = serde_json::json!({"max_attempts":10,"max_elapsed_millis":300000,"max_tokens":40000,"max_cost_micro_units":4000000,"max_output_bytes":8388608});
-  serde_json::json!({"preset":triage_preset(&page)["reference"],"flow_id":uuid::Uuid::new_v4().to_string(),"configuration_id":uuid::Uuid::new_v4().to_string(),
+  serde_json::json!({"preset":triage_preset(&page)["reference"],"flow_id":uuid::Uuid::new_v4().to_string().to_string(),"configuration_id":uuid::Uuid::new_v4().to_string(),
     "profiles":profiles,"repository":{"project_id":project,"id":repository(project).id,"version":1,"definition_digest":repository(project).definition_digest().unwrap()},
     "context":{"eligibility":context,"classification":context},
     "execution":{"budget":budget,"permissions":execution_permissions,"max_active_nodes":1},
@@ -653,7 +660,8 @@ async fn preset_discovery_and_resolution_agree_that_project_context_is_optional(
       .iter()
       .find(|n| n["key"] == alias)
       .unwrap();
-    assert!(node["context_binding"].is_null());
+    assert_eq!(node["context_binding"]["work_task"], "task");
+    assert_eq!(node["context_binding"]["entries"], serde_json::json!({}));
     assert_eq!(
       advertised
         .iter()
@@ -1754,4 +1762,42 @@ async fn preset_properties(project: ProjectId) -> Arc<testing::InMemoryProjectSt
     .await
     .unwrap();
   properties
+}
+
+#[tokio::test]
+async fn an_example_opens_an_unconfigured_editor_draft_through_read_only_http() {
+  use testing::MutationEvidenceProbe;
+  let (router, project, store) = preset_router().await;
+  let before = store.mutation_evidence_counts().await;
+  let path = format!("/api/v1/projects/{project}/factory-presets");
+  let page = json(router.clone().oneshot(empty_request("GET", &path, None)).await.unwrap()).await;
+  for preset in page["items"].as_array().unwrap() {
+    let response = router
+      .clone()
+      .oneshot(json_request(
+        "POST",
+        &format!("{path}/draft"),
+        "unused-read",
+        None,
+        &serde_json::json!({"preset":preset["reference"],"flow_id":uuid::Uuid::new_v4().to_string()}).to_string(),
+      ))
+      .await
+      .unwrap();
+    let status = response.status();
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(response.headers()["cache-control"], "no-store");
+    let draft = json(response).await;
+    assert_eq!(status, StatusCode::OK, "{draft}");
+    assert_json_matches_component(&openapi_document(), "FactoryFlowDefinitionDraft", &draft);
+    assert!(!draft["root"]["nodes"].as_array().unwrap().is_empty());
+    assert!(
+      draft["root"]["nodes"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .filter(|n| n["kind"] == "reasoning")
+        .all(|n| n.get("profile_selection").is_none() && n.get("build").is_none())
+    );
+  }
+  assert_eq!(store.mutation_evidence_counts().await, before);
 }

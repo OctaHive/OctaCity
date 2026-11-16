@@ -24,6 +24,60 @@ below remains the execution and isolation qualification.
 The separate [ticket delivery qualification](#ticket-delivery-qualification)
 covers the post-triage path.
 
+The Triage example explicitly attaches the admitted Work task to both reasoning
+steps before any Project documents are selected. Its resolver regression uses
+published profiles requiring Context `task`, in both profile-bound and step-bound
+execution modes, and opens an ordinary editable Flow without an apply node or
+implicit Project documents. Before the correction, this returned `invalid_contract`
+at `/profiles`; afterwards both modes resolve and retain the selected Issue form.
+
+The example picker now opens the ordinary editor immediately through the read-only
+`POST /api/v1/projects/{project}/factory-presets/draft` query. No preliminary
+profile/field/admission form is required. The fully bound `/resolve` query remains
+available to headless installers. Both use the same template compiler. The
+ordinary draft retains unresolved executor settings and report schema slots;
+normal publication rejects these until configured. Installed commands replace
+shared report references in consumers, typed projections and terminal results,
+while keeping edited capture settings through a step rename.
+
+Observed Red/Green at public boundaries:
+
+- Required-task Triage profiles: `/profiles` returned `invalid_contract`; both
+  execution modes now retain Work Context without implicit Project documents.
+- HTTP draft opening: 404 before the endpoint; all three releases now return a
+  schema-valid, `no-store` ordinary draft without mutations or executors.
+- Console example selection: the callback was unreachable without preconfiguration;
+  now a click opens the common editor, and obsolete responses are ignored.
+- Capture and typed report handoff: capture settings and then a typed projection
+  were lost before correction; rename, pre-binding edits, downstream schemas and
+  projection references now survive command selection.
+- Common snapshot source edits: direct input projection was lost when consumers
+  declared additional optional inputs; source replacement now preserves consumers.
+- Ordered gate: the editor lacked an inclusive choice control, and its displayed
+  cutoff was then lost after server JSON key reordering. Both are covered.
+- Project default threshold: the opened gate only matched `large`; it now expands
+  to `large` plus later Project sizes. Missing defaults leave an unconfigured gate.
+
+```sh
+cargo test --locked -p octacity-server-application --lib factory::authoring::factory_presets
+cargo test --locked -p octacity-server-api-rest --test v1_handlers factory_presets
+cargo test --locked -p octacity-server-factory --lib
+pnpm --dir ui exec vitest run src/features/factory/FactoryAuthoring.test.tsx src/features/factory/FactoryExampleFields.test.tsx src/features/factory/FlowGraphEditor.test.tsx src/features/factory/FlowPrimitives.test.tsx src/features/factory/IssueSnapshotEditing.test.tsx src/features/factory/SnapshotFieldSelectors.test.tsx
+pnpm --dir ui exec playwright test tests/browser/factory-ticket-delivery.spec.ts
+```
+
+Observed Green on macOS ARM64: 30 application preset tests, 356 Factory unit
+tests, all 297 REST handler tests, 75 affected Console unit tests and both
+browser scenarios. API generation, TypeScript, ESLint, Prettier, Rust formatting,
+Clippy (`--all-features --lib -- -D warnings`), architecture checks and the
+Console production build passed. The all-handler command was
+`cargo test --locked -p octacity-server-api-rest --test v1_handlers`.
+
+The fixture browser test verifies authoring, not a live model, VM execution or PR
+publication. The existing native UI journey uses the new common-editor path but
+has not been rerun for this correction. A running stand needs rebuilt Server and
+Console images from the committed revision to expose this UI.
+
 `factory_manual_authoring` qualifies tasks 5.1–5.4 of
 `enable-manual-factory-pipeline-authoring`. It starts the actual Server and Agent
 executables against PostgreSQL and S3 and executes ordinary Jobs in separate

@@ -1,3 +1,4 @@
+import { resolveDraftBindings } from './draftBindings';
 import { publishCandidateAction } from './PublicationStep';
 import { StepResults, type ResultDraft } from './StepResults';
 import { FACTORY_AUTHORING_SCHEMAS } from '../../../.generated/api/factory-authoring';
@@ -94,6 +95,7 @@ export function FlowGraphEditor({
   const [budgetCalculation, setBudgetCalculation] = useState({ run: newFlow, admission: newFlow });
   const [stepBudgetCalculation, setStepBudgetCalculation] = useState<Record<string, boolean>>({});
   const onChange = (next: Draft, calculateBounds = automaticBounds) => {
+    next = resolveDraftBindings(value, next);
     const priorInput =
       value.root.nodes.find((node) => node.key === value.root.entry)?.input_schema ?? null;
     const entry = next.root.nodes.find((node) => node.key === next.root.entry);
@@ -435,6 +437,7 @@ export function FlowGraphEditor({
               resultEditing={!!resultDrafts[nodeKeys[selected] ?? '']}
               inputPending={inputPending}
               node={node}
+              schemas={value.data_schemas}
               services={authoring}
               onChange={updateNode}
             />
@@ -448,7 +451,20 @@ export function FlowGraphEditor({
             services={roles}
             onChange={updateNode}
           />
-          <StepCapture node={node} onChange={updateNode} />
+          <StepCapture
+            node={node}
+            onChange={updateNode}
+            defaults={value.execution_defaults?.[node.key]}
+            onDefaultsChange={(patch) =>
+              onChange({
+                ...value,
+                execution_defaults: {
+                  ...value.execution_defaults,
+                  [node.key]: { ...value.execution_defaults![node.key]!, ...patch },
+                },
+              })
+            }
+          />
           {authoring && node.kind === 'build_command' ? (
             <InstalledVerificationLaunch
               root={value.root}
@@ -668,6 +684,10 @@ function renameNode(value: Draft, index: number, name: string): Draft {
   if (node === undefined) return next;
   const old = node.key;
   node.key = name;
+  if (next.execution_defaults && Object.hasOwn(next.execution_defaults, old)) {
+    next.execution_defaults[name] = next.execution_defaults[old]!;
+    delete next.execution_defaults[old];
+  }
   if (next.root.process) next.root.process = updateProcessRecipients(next.root.process, old, name);
   if (next.root.entry === old) next.root.entry = name;
   for (const edge of next.root.transitions) {

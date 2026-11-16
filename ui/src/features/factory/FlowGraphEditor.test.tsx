@@ -1402,3 +1402,124 @@ it.each(['remove', 'change kind'] as const)(
     ).toBeNull();
   },
 );
+
+it('keeps example capture rules through a step rename and connects an installed report to every shared slot', async () => {
+  type S = components['schemas'];
+  const { configuration } = configurationFixture();
+  const flow = configuration.flow;
+  const sample = structuredClone(flow.closure.definitions[0]!.nodes[0]!);
+  const report = flow.data_schemas[0]!;
+  const slot = { identity: 'unconfigured.report', version: 'draft', digest: 'e'.repeat(64) };
+  let observed: S['FactoryFlowDefinitionDraft'] = emptyFlowDraft();
+  observed.root.input_schema = sample.input_schema;
+  observed.root.entry = 'checks';
+  observed.root.nodes = [
+    {
+      ...sample,
+      key: 'checks',
+      kind: 'build_command',
+      build: null,
+      profile_selection: null,
+      outcomes: [{ key: 'checked', kind: 'success', schema: slot }],
+    },
+    {
+      ...sample,
+      key: 'consumer',
+      kind: 'join',
+      build: null,
+      profile_selection: null,
+      input_schema: slot,
+      outcomes: [{ key: 'done', kind: 'success', schema: slot }],
+    },
+  ];
+  observed.root.terminals = [{ key: 'finished', schema: slot }];
+  observed.data_schemas = [
+    ...flow.data_schemas,
+    { reference: slot, shape: { type: 'object', fields: {} } },
+  ];
+  observed.root.data_projections = [
+    { predecessor: 'checks', outcome: 'checked', successor: 'consumer', schema: slot },
+  ];
+  observed.schema_slots = [slot];
+  observed.execution_defaults = {
+    checks: {
+      capture_write_paths: null,
+      capture_deliverables: {
+        accepted_contract: { value: { mapping: 'pointer', path: '' } },
+        policy: { permitted_paths: ['tools'], forbidden_paths: [], required: [] },
+      },
+    },
+  };
+  const ref = { identity: 'installed.checker', version: 'v1', digest: '4'.repeat(64) };
+  const command: S['FactoryAuthoringCapabilities']['commands'][number] = {
+    alias: 'Repository checks',
+    execution: {
+      build_configuration: configuration.reference,
+      plugin: ref,
+      tool: ref,
+      model_or_tool: ref,
+      task_digest: '5'.repeat(64),
+      result_output: 'checks.json',
+      result_output_kind: 'report',
+    },
+    output_definition: report,
+    permissions: sample.permissions,
+  };
+  const api = {
+    ...factoryApi,
+    getAuthoringCapabilities: vi.fn(async () => ({
+      commands: [command],
+      human_gates: [],
+      build_resource_modes: [],
+      source_free_incompatibility: null,
+      deterministic_gate: {
+        policy: ref,
+        parameter_contract: 'declarative_gate_v1' as const,
+        max_parameter_bytes: 65536,
+        resource_modes: [],
+      },
+    })),
+  };
+  function Harness() {
+    const [value, setValue] = useState(observed);
+    return (
+      <FlowGraphEditor
+        value={value}
+        choices={[]}
+        subflows={[]}
+        authoring={{ api, projectId: configuration.reference.project_id }}
+        onChange={(next) => {
+          observed = next;
+          setValue(next);
+        }}
+      />
+    );
+  }
+  const user = userEvent.setup();
+  render(
+    <QueryClientProvider client={createConsoleQueryClient()}>
+      <Harness />
+    </QueryClientProvider>,
+  );
+  const name = screen.getByRole('textbox', { name: 'Step name' });
+  await user.clear(name);
+  await user.type(name, 'renamed_checks');
+  await user.click(screen.getByText('Candidate capture', { exact: true }));
+  const permitted = screen.getByRole('textbox', { name: 'Permitted paths' });
+  expect(permitted).toHaveProperty('value', 'tools');
+  await user.type(permitted, '\nui');
+  await user.click(await screen.findByRole('combobox', { name: 'Installed command' }));
+  await user.click(screen.getByRole('option', { name: /Repository checks/ }));
+  await user.click(screen.getByRole('button', { name: 'Use command' }));
+  expect(observed.root.nodes[0]!.build?.capture_deliverables?.policy.permitted_paths).toEqual([
+    'tools',
+    'ui',
+  ]);
+  expect(observed.root.nodes[0]!.outcomes[0]!.schema).toEqual(report.reference);
+  expect(observed.root.nodes[1]!.input_schema).toEqual(report.reference);
+  expect(observed.root.nodes[1]!.outcomes[0]!.schema).toEqual(report.reference);
+  expect(observed.root.terminals[0]!.schema).toEqual(report.reference);
+  expect(observed.root.data_projections[0]!.schema).toEqual(report.reference);
+  expect(observed.execution_defaults).toEqual({});
+  expect(observed.schema_slots).toEqual([]);
+});

@@ -503,6 +503,10 @@ unavailable_query!(
   "resolve_factory_preset"
 );
 unavailable_query!(
+  octacity_server_application::OpenFactoryPresetDraftQuery,
+  "open_factory_preset_draft"
+);
+unavailable_query!(
   octacity_server_application::GetFactoryReadinessQuery,
   "get_factory_readiness"
 );
@@ -1964,6 +1968,7 @@ async fn every_management_operation_is_allowed_before_application_dispatch() {
       "resolve_factory_legacy_policy",
       "provision_factory_project_policies",
       "list_factory_presets",
+      "open_factory_preset_draft",
       "resolve_factory_preset",
       "get_factory_readiness",
     ]

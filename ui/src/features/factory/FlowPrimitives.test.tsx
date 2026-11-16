@@ -21,6 +21,7 @@ function setup(
     shape: components['schemas']['FactoryFlowValueSchema'];
     presentation: NonNullable<components['schemas']['FactoryFlowOutcome']['issue_presentation']>;
   },
+  inputShape?: components['schemas']['FactoryFlowValueSchema'],
 ) {
   const policy = { identity: 'factory.declarative-gate', version: 'v1', digest: 'c'.repeat(64) };
   const api = {
@@ -130,7 +131,7 @@ function setup(
   let observed = emptyFlowDraft();
   const schema = {
     reference: { identity: 'assessment', version: 'v1', digest: 'a'.repeat(64) },
-    shape: issueCard?.shape ?? { type: 'boolean' as const },
+    shape: inputShape ?? issueCard?.shape ?? { type: 'boolean' as const },
   };
   observed.data_schemas = [schema];
   observed.root.entry = 'check';
@@ -891,4 +892,88 @@ it('waits for accepted-field normalization before applying a Signal policy', asy
       'Wait for the input field to finish connecting before applying a Decision Signal policy.',
     ),
   ).toBeNull();
+});
+
+it('authors an inclusive choice threshold in an ordinary gate using the input enum order', async () => {
+  const user = userEvent.setup();
+  const { api, policy } = setup(undefined, 'deterministic_gate', undefined, undefined, {
+    type: 'object',
+    fields: {
+      effort: {
+        required: true,
+        value: { type: 'enum', values: ['tiny', 'normal', 'big', 'huge'] },
+      },
+    },
+  });
+  api.normalizeGateProgram.mockResolvedValue({
+    policy,
+    parameters: {
+      fallback: 'review',
+      rules: [
+        {
+          outcome: 'accepted',
+          when: {
+            operation: 'any',
+            predicates: ['normal', 'big', 'huge'].map((value) => ({
+              left: { path: '/effort', source: 'path' },
+              right: { value, source: 'literal' },
+              comparison: 'equal',
+              operation: 'compare',
+            })),
+          },
+        },
+      ],
+    },
+  });
+  const editor = within(await screen.findByRole('group', { name: 'Condition check' }));
+  await user.click(editor.getByRole('button', { name: 'Add condition' }));
+  await user.click(editor.getByRole('combobox', { name: 'Choice field' }));
+  await user.click(screen.getByRole('option', { name: 'effort' }));
+  await user.click(editor.getByRole('combobox', { name: 'Starting choice: effort · Check' }));
+  await user.click(screen.getByRole('option', { name: 'normal' }));
+  await user.click(editor.getByRole('combobox', { name: 'Condition outcome' }));
+  await user.click(screen.getByRole('option', { name: 'accepted' }));
+  await user.click(editor.getByRole('combobox', { name: 'If no condition matches' }));
+  await user.click(screen.getByRole('option', { name: 'review' }));
+  await user.click(editor.getByRole('button', { name: 'Validate and use condition' }));
+  await screen.findByText('Condition check is configured');
+  expect(
+    editor.getByRole('combobox', { name: 'Starting choice: effort · Check' }).textContent,
+  ).toBe('normal');
+  expect(api.normalizeGateProgram).toHaveBeenCalledWith(
+    'delivery',
+    expect.objectContaining({
+      program: expect.objectContaining({
+        rules: [
+          {
+            outcome: 'accepted',
+            when: {
+              operation: 'any',
+              predicates: [
+                {
+                  operation: 'compare',
+                  comparison: 'equal',
+                  left: { source: 'path', path: '/effort' },
+                  right: { source: 'literal', value: 'normal' },
+                },
+                {
+                  operation: 'compare',
+                  comparison: 'equal',
+                  left: { source: 'path', path: '/effort' },
+                  right: { source: 'literal', value: 'big' },
+                },
+                {
+                  operation: 'compare',
+                  comparison: 'equal',
+                  left: { source: 'path', path: '/effort' },
+                  right: { source: 'literal', value: 'huge' },
+                },
+              ],
+            },
+          },
+        ],
+      }),
+    }),
+    expect.any(AbortSignal),
+  );
 });

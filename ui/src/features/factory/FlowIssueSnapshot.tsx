@@ -1,3 +1,4 @@
+import { SnapshotFieldSelectors } from './SnapshotFieldSelectors';
 import { useEffect, useRef, useState } from 'react';
 import type { components } from '../../../.generated/api/schema';
 import { FACTORY_AUTHORING_SCHEMAS } from '../../../.generated/api/factory-authoring';
@@ -173,6 +174,31 @@ function SnapshotDraft({
   useEffect(() => () => controllerRef.current?.abort(), []);
   const latestRef = useRef({ value, choices });
   latestRef.current = { value, choices };
+  const changeFields = (next: Record<string, Selection>) => {
+    const changed = new Set(
+      Object.entries(next).flatMap(([alias, selection]) =>
+        fields[alias] && sourceKey(fields[alias].source) !== sourceKey(selection.source)
+          ? [alias]
+          : [],
+      ),
+    );
+    setFields(next);
+    if (changed.size)
+      setAdmission((policy) =>
+        policy
+          ? {
+              ...policy,
+              priority: changed.has(policy.priority.field)
+                ? { ...policy.priority, values: {} }
+                : policy.priority,
+              risk: changed.has(policy.risk.field) ? { ...policy.risk, values: {} } : policy.risk,
+              allowed: Object.fromEntries(
+                Object.entries(policy.allowed ?? {}).filter(([alias]) => !changed.has(alias)),
+              ),
+            }
+          : undefined,
+      );
+  };
   const selected = selectedIssueFields(fields, choices);
   const unavailable = Object.entries(fields).filter(
     ([alias]) => !selected.some((field) => field.alias === alias),
@@ -419,6 +445,7 @@ function SnapshotDraft({
               </button>
             </div>
           ))}
+          <SnapshotFieldSelectors fields={fields} choices={choices} onChange={changeFields} />
           {directIssueFields(choices).map((field, index) => {
             const current = selected.find(
               ({ selection }) => sourceKey(selection.source) === sourceKey(field.source),
